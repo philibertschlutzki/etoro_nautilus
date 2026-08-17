@@ -10,10 +10,13 @@ warnte also praktisch immer, ohne eine echte Gefahr zu markieren.
 
 #948/#1114 definiert die Funktion neu: sie misst jetzt die Streuung des EINEN studienweiten,
 gepoolten Annualisierungsfaktors (``holdout_sortino_annualized / holdout_sortino_period``) ÜBER
-Studies DESSELBEN Symbols (severity ``low``, Diagnose statt Blocker) — siehe
-``test_issue_948_1114_fold_annualization_period_scale.py`` für die neuen Akzeptanztests. Diese Datei
-bleibt als historischer Marker erhalten (verweist auf die neue Signatur), damit ihr Dateiname im
-Issue-Katalog auffindbar bleibt.
+Studies DESSELBEN Symbols — siehe ``test_issue_948_1114_fold_annualization_period_scale.py`` für
+die neuen Akzeptanztests. Diese Datei bleibt als historischer Marker erhalten (verweist auf die
+neue Signatur), damit ihr Dateiname im Issue-Katalog auffindbar bleibt.
+
+Issue #980/#1134 (Katalog #986) — severity ist seit diesem Fix ``high`` (vorher ``low``): F wird
+je Symbol EINMAL bestimmt (``backtest_runner._get_annualization_factor_with_source``), eine
+verbleibende Abweichung ist damit kein strukturelles Artefakt mehr.
 """
 from automation.optimizer import invariants as inv
 
@@ -32,7 +35,7 @@ def test_single_study_per_symbol_is_not_applicable():
         _study("NVDA.ETORO", 1.0, 35.0),
     ])
     assert result.passed is True
-    assert result.severity == "low"
+    assert result.severity == "high"
 
 
 def test_commensurable_factor_across_studies_of_the_same_symbol_passes():
@@ -51,5 +54,5 @@ def test_large_factor_jump_across_studies_of_the_same_symbol_fails():
     ])
     assert result.passed is False
     assert result.actual == 2.0
-    assert result.severity == "low"
+    assert result.severity == "high"
     assert "TSLA.ETORO" in result.provenance["offenders"]

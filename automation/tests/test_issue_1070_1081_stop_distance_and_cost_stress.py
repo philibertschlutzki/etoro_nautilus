@@ -23,10 +23,12 @@ def _record(strategy, symbol, *, atr_bps, k, loss_bps, n_stop_exits=50):
         "atr_median_bps": atr_bps, "atr_trailing_multiplier_median": k,
         "oos_gross_loss_mean_bps_trailing_stop": loss_bps,
         "oos_n_trailing_stop_losses": n_stop_exits,
-        # Issue #1097 (Katalog #930) — check_effective_stop_distance konsumiert seither
-        # ausschliesslich die gepoolte Grösse; fuer diese Einzel-Trial-Fixtures identisch zum
-        # medianbasierten Wert oben (keine echte Mehr-Trial-Poolung in diesen Tests).
+        # Issue #1097 (Katalog #930) — der vormalige gepoolte Konsum; fuer diese Einzel-Trial-
+        # Fixtures identisch zum medianbasierten Wert oben (keine echte Mehr-Trial-Poolung).
         "oos_gross_loss_mean_bps_trailing_stop_pooled": loss_bps,
+        # Issue #972/#1126 — check_effective_stop_distance konsumiert seither die robuste Median-
+        # Variante als primaeren Zaehler (Pitfall #405 in AGENTS.md).
+        "gross_loss_median_bps_trailing_stop": loss_bps,
     }
 
 
@@ -38,21 +40,21 @@ def test_high_ratio_now_fails_and_is_visible_in_actual():
     assert result.passed is False
     assert result.actual is not None
     assert "DynamicBreakoutStrategy/TSLA.ETORO" in result.actual
-    assert result.actual["DynamicBreakoutStrategy/TSLA.ETORO"] > 10.0
+    assert result.actual["DynamicBreakoutStrategy/TSLA.ETORO"]["ratio_median"] > 10.0
 
 
 def test_actual_always_carries_all_measured_ratios_even_when_passing():
     records = [_record("S", "X", atr_bps=20.0, k=2.0, loss_bps=16.0)]  # ratio == 0.4 (min bound)
     result = inv.check_effective_stop_distance(records)
     assert result.passed is True
-    assert result.actual == {"S/X": 0.4}
+    assert result.actual == {"S/X": {"ratio_median": 0.4, "ratio_pooled_mean": 0.4}}
 
 
 def test_low_ratio_still_fails_as_before():
     records = [_record("S", "X", atr_bps=20.0, k=2.0, loss_bps=3.6)]  # ratio 0.09 < 0.4
     result = inv.check_effective_stop_distance(records)
     assert result.passed is False
-    assert result.actual["S/X"] == 0.09
+    assert result.actual["S/X"]["ratio_median"] == 0.09
 
 
 def test_custom_max_ratio_is_respected():
@@ -78,7 +80,7 @@ def test_five_offenders_reference_scenario_from_the_866_catalog():
     ]
     result = inv.check_effective_stop_distance(high + low)
     assert result.passed is False
-    offenders_high = {k: v for k, v in result.actual.items() if v > 10.0}
+    offenders_high = {k: v for k, v in result.actual.items() if v["ratio_median"] > 10.0}
     assert len(offenders_high) == 5
     assert "AdxAtrMomentumStrategy/TSLA.ETORO" not in offenders_high
 

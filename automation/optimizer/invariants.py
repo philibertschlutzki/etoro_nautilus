@@ -69,6 +69,23 @@ class InvariantResult:
     # ``cohort`` traegt, siehe dort) — jeder Eintrag im ARTEFAKT traegt ``cohort``, unabhaengig
     # davon, ob die einzelne Check-Funktion es selbst gesetzt hat.
     cohort: dict[str, Any] | None = None
+    # Issue #973/#1127 (Pitfall #404 in AGENTS.md) — strukturierte Evaluierbarkeits-Auskunft fuer
+    # ``severity='blocking'``-Checks: ``{"evaluable": bool, "inconclusive_reason": str | None,
+    # "n_studies_measured": int}``. ``inconclusive=True`` (oben) markiert den Fall bereits als
+    # "kein sauberes PASS"; ``evaluability`` macht ihn zusaetzlich MASCHINENLESBAR strukturiert
+    # auswertbar (statt nur ueber den freien ``detail``-Text), damit ein Report-/Summary-Konsument
+    # "PASS" von "INCONCLUSIVE" unterscheiden kann, OHNE den Detail-String zu parsen. Optional
+    # (``None`` fuer bestehende Aufrufer, rueckwaertskompatibel); von JEDEM ``severity='blocking'``-
+    # Check gesetzt, der ``inconclusive=True`` liefert.
+    evaluability: dict[str, Any] | None = None
+    # Issue #985/#1139 (Katalog #986, Pitfall #411 in AGENTS.md) — Preflight-Checks
+    # (``sweep.assert_required_config_keys_valid``/``assert_instrument_metadata_coherence``) liefen
+    # VOR dem eigentlichen Sweep und meldeten Verstoesse nur ueber stderr + Exit-Code 2 — bestand der
+    # Preflight, existierte im Report-Artefakt eines erfolgreichen Laufs KEIN Nachweis, dass er
+    # ueberhaupt ausgefuehrt wurde. ``phase="preflight"`` markiert Eintraege, die vor dem
+    # eigentlichen Study-Loop liefen (optional, ``None``/unset fuer alle bestehenden Checks —
+    # rueckwaertskompatibel; ``report._build_report`` stempelt sie in ``invariant_checks`` ein).
+    phase: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -90,6 +107,10 @@ class InvariantResult:
             d["inconclusive"] = True
         if self.cohort is not None:
             d["cohort"] = self.cohort
+        if self.evaluability is not None:
+            d["evaluability"] = self.evaluability
+        if self.phase is not None:
+            d["phase"] = self.phase
         return d
 
 
@@ -1534,7 +1555,13 @@ def check_annualization_commensurability(
     Holdout-Equity-Kurve — #532/#595) ÜBER Studies DESSELBEN Symbols. Ein grosser Sprung zwischen
     zwei Studies desselben Symbols zeigt eine echte Verschiebung des effektiven Handelszeitfensters
     (RTH-Abdeckung, Datenlücken, 24/7-Padding) — eine Datenintegritätsfrage, keine triviale
-    Fold-Streuung. severity ``low`` (Diagnose, kein Blocker — Fix-Punkt 3 des Issues).
+    Fold-Streuung.
+
+    Issue #980/#1134 (Katalog #986) — severity ``high`` (vorher ``low``): mit
+    ``backtest_runner._get_annualization_factor_with_source`` F je Symbol EINMAL bestimmt statt je
+    Study aus deren eigenem (positions-abhaengigen) mtm_series-Fenster — eine verbleibende
+    Abweichung ist damit kein strukturelles Artefakt mehr, sondern ein echter Befund (die
+    Hochstufung war an diesen Fix gebunden, analog #979/#1133).
 
     Prüft je Symbol mit >= 2 Studies mit definiertem sqrt(F): ``max(√F) / min(√F) <= max_ratio``.
     ``study_records``: Report-``studies[]``-artige Dicts mit ``symbol``/``holdout_sortino_period``/
@@ -1575,7 +1602,7 @@ def check_annualization_commensurability(
             passed=True,
             expected=f"max(sqrt(F))/min(sqrt(F)) <= {max_ratio} je Symbol ueber dessen Studies",
             actual=None,
-            severity="low",
+            severity="high",
             detail="Kein Symbol mit >= 2 Studies mit definiertem studienweiten sqrt(F) — "
                    "nicht anwendbar.",
         )
@@ -1586,7 +1613,7 @@ def check_annualization_commensurability(
         passed=passed,
         expected=f"max(sqrt(F))/min(sqrt(F)) <= {max_ratio} je Symbol ueber dessen Studies",
         actual=round(worst_ratio, 4),
-        severity="low",
+        severity="high",
         detail=("OK" if passed else
                 f"{len(offenders)}/{n_symbols_comparable} Symbole — schlechtestes {worst_symbol}: "
                 f"sqrt(F)-Spannweite über dessen Studies beträgt Faktor {worst_ratio:.4g} "
@@ -2469,7 +2496,17 @@ def check_trailing_stop_loss_share(
     Beide Schwellen sind ``optimizer.json``-Keys (``trailing_stop_max_loss_share``/
     ``trailing_stop_max_mean_loss_ratio``, Pitfall #369 — zweiseitig dokumentiert). Studies ohne
     Trailing-Stop-Exit-Telemetrie (Pre-#899-JSON, kein Trade) werden uebersprungen (fail-open auf
-    fehlender Evidenz)."""
+    fehlender Evidenz).
+
+    Issue #972/#1126 (Pitfall #405 in AGENTS.md) — der Zaehler von Bedingung 2 ist seit diesem Fix
+    ``gross_loss_median_bps_trailing_stop`` (robuster Median-der-Trial-Mediane) statt des
+    ungeschuetzten ``oos_gross_loss_mean_bps_trailing_stop``. Der Nenner (``oos_gross_loss_mean_
+    bps``, ALLE Verlust-Trades) bleibt unveraendert — ausserhalb des #1126-Scopes (der auf
+    ``losses_bps_trailing_stop`` beschraenkt ist).
+
+    Issue #983/#1137 — solange dieser Check in 10/10 Läufen auf 100 % der Grundgesamtheit failt, ist
+    seine Schwelle NICHT kalibriert: die #1126-Umstellung auf den robusten Zaehler ist die
+    Vorbedingung fuer eine Neukalibrierung (nicht Teil dieses Fixes, siehe AGENTS.md)."""
     offenders: dict[str, dict] = {}
     for r in study_records:
         label = f"{r.get('strategy')}/{r.get('symbol')}"
@@ -2481,7 +2518,7 @@ def check_trailing_stop_loss_share(
         violation = {}
         if loss_share > max_loss_share:
             violation["loss_share"] = round(loss_share, 4)
-        mean_loss_ts = r.get("oos_gross_loss_mean_bps_trailing_stop")
+        mean_loss_ts = r.get("gross_loss_median_bps_trailing_stop")
         mean_loss_all = r.get("oos_gross_loss_mean_bps")
         if mean_loss_ts is not None and mean_loss_all:
             mean_loss_ratio = mean_loss_ts / mean_loss_all
@@ -2523,10 +2560,18 @@ def check_family_n_stability(
     als der finale Report derselben Familie. ``frozen`` ist ab Symbol-Dispatch-Beginn bekannt und
     bit-identisch ueber jeden Lesezeitpunkt.
 
-    FAIL (severity ``high``, reine Diagnose — kein Promotion-Gate), wenn fuer irgendein Symbol
+    FAIL (severity ``blocking`` seit #979/#1133, vorher ``high``), wenn fuer irgendein Symbol
     ``|frozen - observed| / max(frozen, 1) > max_relative_gap`` (Default 5 %) — der Report ist
     dann entweder ein Zwischenstand (harmlos, ``report_source != 'final'``) ODER die #1091-
-    Kohorten-Luecke ist zurueckgekehrt."""
+    Kohorten-Luecke ist zurueckgekehrt.
+
+    Issue #979/#1133 (Katalog #986) — dieser Check ist die ABNAHMEMESSUNG fuer #977/#1131 (die
+    Umstellung von ``deflation_n_family_frozen`` auf die per-Strategie-Quelle, siehe sweep._
+    run_confirm_and_export-Docstring): VOR #1131 haette ``blocking`` 8 von 8 Läufen blockiert (die
+    eingefrorene, symbolweite Zahl widersprach der beobachteten per-Strategie-Summe strukturell,
+    nicht nur bei einer echten Kohorten-Luecke) — die Hochstufung war deshalb an #1131 GEBUNDEN,
+    nicht unabhaengig moeglich. Mit #1131 gemergt ist eine Abweichung > 5 % wieder ein echter Befund
+    (Zwischenreport oder erneute Kohorten-Luecke), kein strukturelles Artefakt."""
     offenders: dict[str, dict] = {}
     for symbol, frozen in frozen_by_symbol.items():
         observed = observed_by_symbol.get(symbol)
@@ -2542,7 +2587,7 @@ def check_family_n_stability(
         passed=passed,
         expected=f"|frozen - observed_at_report_time| / frozen <= {max_relative_gap}",
         actual=offenders or None,
-        severity="high",
+        severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} Symbol(e) mit > {max_relative_gap:.0%} Abweichung zwischen "
                 "eingefrorener und beobachteter Familien-Multiplizitaet — Zwischenreport oder "
@@ -4287,39 +4332,54 @@ def check_effective_stop_distance(study_records: list[dict], *,
     (``n_studies_measured=0``), während ``passed=True, actual={...}`` "gemessen, nichts auffällig"
     bedeutet — vorher waren beide Zustände identisch (``actual=None``).
 
-    Issue #1097 (Katalog #930) — konsumiert seit diesem Fix AUSSCHLIESSLICH die GEPOOLTEN,
-    trade-gewichteten Felder (``oos_gross_loss_mean_bps_trailing_stop_pooled``/
-    ``oos_gross_loss_mean_bps_pooled``, ``report._pooled_mean_of_trial_field``), NICHT mehr die
-    medianbasierten ``oos_gross_loss_mean_bps_trailing_stop``/``oos_gross_loss_mean_bps`` — die
-    Stichprobengrösse ``oos_n_trailing_stop_losses`` (SUMME über Trials) ist nur mit einer ebenso
-    gepoolten (nicht medianbasierten) Mittelwert-Grösse kommensurabel (Pitfall #304)."""
+    Issue #1097 (Katalog #930) — konsumierte diesen Check AUSSCHLIESSLICH ueber die GEPOOLTEN,
+    trade-gewichteten Felder (``oos_gross_loss_mean_bps_trailing_stop_pooled``), NICHT die
+    medianbasierten — Kommensurabilitaets-Argument: die Stichprobengrösse
+    ``oos_n_trailing_stop_losses`` (SUMME über Trials) sei nur mit einer ebenso gepoolten Mittelwert-
+    Grösse kommensurabel (Pitfall #304).
+
+    Issue #972/#1126 (Pitfall #405 in AGENTS.md) — der gepoolte Mittelwert ist SELBST ein
+    ungeschuetztes arithmetisches Mittel ueber eine potenziell extrem schiefe bps-Verteilung (kein
+    Notional-/Ausreisser-Boden im Zaehler). Der Zaehler ist deshalb seit diesem Fix
+    ``gross_loss_median_bps_trailing_stop`` (Median-der-Trial-Mediane, robust) statt des gepoolten
+    Mittels — ``oos_n_trailing_stop_losses`` bleibt unveraendert der Stichprobengroessen-Gate (ein
+    reiner Zaehler, unabhaengig davon, ob der Zaehler Mittel oder Median ist). Der gepoolte
+    Mittelwert bleibt in ``actual``/``provenance`` als Vergleichsgroesse sichtbar (Pitfall #405:
+    Mittel und Median nie ohne Ausreisser-Telemetrie gegeneinanderstellen).
+
+    Issue #983/#1137 (Katalog #986) — severity ``blocking`` (vorher ``high``): dieser Check steht
+    seit langem in ``optimizer.json['fail_fast_invariants']``, OHNE dass sein severity-Feld das
+    ausgewiesen hatte — zwei entkoppelte Taxonomien fuer "darf einen Sweep abbrechen" (Pitfall #410
+    in AGENTS.md). ``severity='blocking'`` IMPLIZIERT seither fail-fast-Faehigkeit; siehe
+    ``check_fail_fast_invariants_are_blocking`` fuer den neuen Regressionswaechter gegen ein
+    erneutes Auseinanderlaufen."""
     candidates = [
         r for r in study_records
         if r.get("atr_median_bps")
         and r.get("atr_trailing_multiplier_median") is not None
-        and (r.get("oos_gross_loss_mean_bps_trailing_stop_pooled") is not None
+        and (r.get("gross_loss_median_bps_trailing_stop") is not None
              or r.get("oos_gross_loss_mean_bps_pooled") is not None)
     ]
     if not candidates:
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=True,
-            expected=f"{min_ratio} <= Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
+            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
                      f"<= {max_ratio} je Study",
             actual=None,
             detail="Keine Studies mit Exit-Telemetrie (Issue #899) — nicht auswertbar "
                    "(n_studies_measured=0).",
-            severity="high",
+            severity="blocking",
         )
     offenders_low: dict[str, float] = {}
     offenders_high: dict[str, float] = {}
-    all_ratios: dict[str, float] = {}
+    all_ratios: dict[str, dict] = {}
     inconclusive_studies: dict[str, int] = {}
     with_data: list[dict] = []
     for r in candidates:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         n_stop_exits = int(r.get("oos_n_trailing_stop_losses") or 0)
-        loss_bps = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
+        loss_bps = r.get("gross_loss_median_bps_trailing_stop")
         if loss_bps is None or n_stop_exits < min_trailing_stop_exits:
             # Issue #1035 — auch OHNE #1034/#1035-Telemetrie (Legacy-Report, nur das ungefilterte
             # oos_gross_loss_mean_bps) ist die Grundgesamtheit unbekannt/unbelegt: INCONCLUSIVE
@@ -4331,7 +4391,11 @@ def check_effective_stop_distance(study_records: list[dict], *,
         if configured_distance_bps <= 0:
             continue
         ratio = round(float(loss_bps) / configured_distance_bps, 4)
-        all_ratios[key] = ratio
+        _pooled_mean_loss = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
+        _pooled_ratio = (
+            round(float(_pooled_mean_loss) / configured_distance_bps, 4)
+            if _pooled_mean_loss is not None else None)
+        all_ratios[key] = {"ratio_median": ratio, "ratio_pooled_mean": _pooled_ratio}
         if ratio < min_ratio:
             offenders_low[key] = ratio
         elif ratio > max_ratio:
@@ -4342,10 +4406,10 @@ def check_effective_stop_distance(study_records: list[dict], *,
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=True,
-            expected=f"{min_ratio} <= Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
+            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
                      f"<= {max_ratio} je Study",
             actual=inconclusive_studies if inconclusive_studies else None,
-            severity="high",
+            severity="blocking",
             detail=f"Keine Study mit >= {min_trailing_stop_exits} nachweislichen TRAILING_STOP-"
                    "Exits (#1034 Voraussetzung) — INCONCLUSIVE statt eines Urteils auf zu kleiner "
                    f"Stichprobe (n_studies_measured=0 von {len(candidates)} Kandidaten).",
@@ -4365,10 +4429,10 @@ def check_effective_stop_distance(study_records: list[dict], *,
     return InvariantResult(
         name="check_effective_stop_distance",
         passed=passed,
-        expected=f"{min_ratio} <= Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
+        expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
                  f"<= {max_ratio} je Study",
         actual=all_ratios,
-        severity="high",
+        severity="blocking",
         detail=("OK (n_studies_measured=%d)" % len(with_data) if passed else " ".join(detail_parts)),
     )
 
@@ -4433,6 +4497,38 @@ def check_stop_cost_ratio(study_records: list[dict], *,
     )
 
 
+def _resolve_causal_hypothesis_state(
+    candidates: list[dict], *, anchor_control_run_available: bool = False,
+) -> str:
+    """Issue #974/#1128 (Pitfall #403 in AGENTS.md) — leitet den Kausal-Zustand AUS DEN GEMESSENEN
+    Feldern her, statt ihn als Konstante zu behaupten. Eine Invariante darf keine Ursache nennen,
+    fuer die sie keinen Eingang hat.
+
+    ``ANCHOR_REFUTED`` — nur, wenn ``#1092`` (Anker-Aufloesung, bereits gemergt) UND ein dedizierter
+    Kontrolllauf vorliegen; ein Kontrolllauf ist ein Sitzungs-Ereignis, das keine reine Report-
+    Kohorte automatisiert nachweisen kann — deshalb der explizite, per Default False gesetzte
+    Parameter ``anchor_control_run_available`` (vom Aufrufer zu setzen, sobald ein solcher Lauf
+    tatsaechlich vorliegt).
+
+    ``LATENCY_REFUTED`` — nur, wenn ``stop_exit_lag_bars`` UEBER ALLE Kandidaten-Studies ≡ 0 UND die
+    Absetzen-zu-Fill-Latenz SEPARAT gemessen ist (``#976/#1130``: ``n_trailing_stop_exits_with_
+    fill_lag_telemetry > 0`` in mindestens einer Study) — vor #1130 war diese zweite Bedingung nie
+    erfuellt, der Zustand war strukturell immer ``UNRESOLVED``.
+
+    ``UNRESOLVED`` — Default, wenn keine der beiden Bedingungen erfuellt ist."""
+    if anchor_control_run_available:
+        return "ANCHOR_REFUTED"
+    if not candidates:
+        return "UNRESOLVED"
+    lag_values = [r.get("oos_stop_exit_lag_bars") for r in candidates]
+    all_lag_zero = bool(lag_values) and all(v is not None and float(v) == 0.0 for v in lag_values)
+    fill_lag_measured = any(
+        int(r.get("n_trailing_stop_exits_with_fill_lag_telemetry") or 0) > 0 for r in candidates)
+    if all_lag_zero and fill_lag_measured:
+        return "LATENCY_REFUTED"
+    return "UNRESOLVED"
+
+
 def check_trailing_stop_risk_calibration_acceptance(
     study_records: list[dict], *,
     min_spearman: float = 0.3,
@@ -4440,6 +4536,7 @@ def check_trailing_stop_risk_calibration_acceptance(
     min_ratio_in_band_fraction: float = 0.8,
     max_trailing_stop_exit_share: float = 0.35,
     min_trailing_stop_exits: int = 30,
+    anchor_control_run_available: bool = False,
 ) -> InvariantResult:
     """Issue #950/#1116 (Katalog #960) — die verbindliche ABNAHMEMESSUNG für die #1092/#1094-
     Hypothese (Anker/Auslöser-Auflösung + monotone Ratsche): B-11 (39 saubere Studies vor dem Fix)
@@ -4464,8 +4561,18 @@ def check_trailing_stop_risk_calibration_acceptance(
        gemittelt — dieselbe Grundgesamtheit wie B-11s 825 064 Round-Trips) liegt unter
        ``max_trailing_stop_exit_share`` (Default 35 %).
 
-    Wird EINES der drei Kriterien verfehlt, ist die #1092-Hypothese (Anker/Auslöser-Auflösung)
-    WIDERLEGT und Issue #953/#1119 (Ein-Bar-Ausführungslatenz) ist die verbleibende Erklärung.
+    Issue #974/#1128 (Pitfall #403 in AGENTS.md) — dieser Check MISST drei Akzeptanzkriterien; er
+    hat KEINEN Eingang für die Ursache eines Scheiterns. Der Meldungstext benennt seit diesem Fix
+    ausschliesslich das Gemessene ("Kalibrierung nicht erreicht"); die Ursachenzuweisung
+    (Anker/Auslöser-Auflösung widerlegt vs. Ein-Bar-Ausführungslatenz die verbleibende Erklärung)
+    steht separat im Feld ``causal_hypothesis_state`` (siehe ``_resolve_causal_hypothesis_state``),
+    dessen Wert aus TATSAECHLICH gemessenen Feldern hergeleitet wird, nicht als Konstante behauptet.
+
+    Issue #972/#1126 (Pitfall #405 in AGENTS.md) — Kriterium 1 (Spearman) konsumiert seit diesem Fix
+    ``gross_loss_median_bps_trailing_stop`` (robuster Median-der-Trial-Mediane) statt des
+    ungeschuetzten gepoolten Mittels ``oos_gross_loss_mean_bps_trailing_stop_pooled``; Kriterium 2
+    (``realized_stop_loss_ratio``) ist bereits ueber ``report._study_record`` median-basiert (siehe
+    dortigen Fix).
 
     ``INCONCLUSIVE`` (statt eines Urteils), wenn weniger als 3 Studies mit ausreichender
     Stop-Exit-Evidenz für BEIDE Eingangsgrössen der Spearman-Korrelation vorliegen — dieselbe
@@ -4477,7 +4584,7 @@ def check_trailing_stop_risk_calibration_acceptance(
         r for r in study_records
         if r.get("atr_median_bps")
         and r.get("atr_trailing_multiplier_median") is not None
-        and r.get("oos_gross_loss_mean_bps_trailing_stop_pooled") is not None
+        and r.get("gross_loss_median_bps_trailing_stop") is not None
         and int(r.get("oos_n_trailing_stop_losses") or 0) >= min_trailing_stop_exits
     ]
     k_atr_values: list[float] = []
@@ -4487,7 +4594,7 @@ def check_trailing_stop_risk_calibration_acceptance(
         k_atr = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
         if k_atr <= 0:
             continue
-        loss = float(r["oos_gross_loss_mean_bps_trailing_stop_pooled"])
+        loss = float(r["gross_loss_median_bps_trailing_stop"])
         k_atr_values.append(k_atr)
         loss_values.append(loss)
         key = f"{r.get('strategy')}/{r.get('symbol')}"
@@ -4503,13 +4610,16 @@ def check_trailing_stop_risk_calibration_acceptance(
                 f"{min_ratio_in_band_fraction:.0%} der Studies UND TRAILING_STOP-Anteil < "
                 f"{max_trailing_stop_exit_share:.0%}")
 
+    causal_hypothesis_state = _resolve_causal_hypothesis_state(
+        candidates, anchor_control_run_available=anchor_control_run_available)
     if len(k_atr_values) < 3:
         return InvariantResult(
             name="check_trailing_stop_risk_calibration_acceptance",
             passed=True,
             expected=expected,
             actual={"trailing_stop_exit_share": round(trailing_stop_share, 4)
-                    if trailing_stop_share is not None else None},
+                    if trailing_stop_share is not None else None,
+                    "causal_hypothesis_state": causal_hypothesis_state},
             severity="high",
             inconclusive=True,
             detail=f"Nur {len(k_atr_values)} Study/Studies mit >= {min_trailing_stop_exits} "
@@ -4547,12 +4657,15 @@ def check_trailing_stop_risk_calibration_acceptance(
             "trailing_stop_exit_share": round(trailing_stop_share, 4)
                 if trailing_stop_share is not None else None,
             "n_studies_measured": len(k_atr_values),
+            # Issue #974/#1128 — die Ursachenzuweisung steht HIER, getrennt vom Meldungstext, und
+            # wird aus gemessenen Feldern hergeleitet (siehe _resolve_causal_hypothesis_state).
+            "causal_hypothesis_state": causal_hypothesis_state,
         },
         severity="high",
-        detail=("OK — die #1092/#1094-Hypothese besteht die Abnahmemessung." if passed else
-                "Die #1092/#1094-Hypothese (Anker/Auslöser-Auflösung) ist WIDERLEGT — "
-                "#953/#1119 (Ein-Bar-Ausführungslatenz) ist die verbleibende Erklärung: "
-                + " ".join(reasons)),
+        # Issue #974/#1128 (Pitfall #403 in AGENTS.md) — der Text nennt nur das GEMESSENE, keine
+        # Kausalaussage, fuer die dieser Check keinen Eingang hat.
+        detail=("OK — die drei Abnahmekriterien sind erfuellt." if passed else
+                "Kalibrierung nicht erreicht: " + " ".join(reasons)),
         provenance={"ratio_by_study": ratio_by_study} if ratio_by_study else None,
     )
 
@@ -4590,7 +4703,20 @@ def check_stop_loss_vs_bar_range(
 
     Nur Studies mit >= ``min_trailing_stop_exits`` (Default 30) nachweislichen TRAILING_STOP-Exits
     UND definiertem ``bar_range_median_bps`` werden geprüft — ``INCONCLUSIVE`` sonst (dieselbe
-    Konvention wie ``check_effective_stop_distance``, kein Urteil auf zu kleiner Stichprobe)."""
+    Konvention wie ``check_effective_stop_distance``, kein Urteil auf zu kleiner Stichprobe).
+
+    Issue #973/#1127 (Pitfall #404 in AGENTS.md) — Root-Cause des vormaligen fail-open-Symptoms
+    (8/8 Läufe ``passed=True`` mit "nicht auswertbar", ``bar_range_median_bps`` in 112/112 Studies
+    ``null``): fehlende Evidenz wurde als PASS gewertet, OHNE strukturiert von einem echten,
+    sauberen PASS unterscheidbar zu sein — ``inconclusive=True`` allein war nur im freien
+    ``detail``-Text sichtbar. ``passed=True`` bleibt bei fehlender Evidenz bewusst erhalten (dieser
+    Check ist ``severity='blocking'`` — ein Abbruch AUF FEHLENDER EVIDENZ waere ein zweiter, eigener
+    Fehler, kein Fix), aber ``evaluability`` macht den Zustand seither MASCHINENLESBAR strukturiert
+    aus jedem Report ablesbar: ``evaluability.evaluable`` ist die kanonische Auskunft "war dieser
+    Check ueberhaupt in der Lage, ein Urteil zu faellen", unabhaengig vom freien Text. Die
+    NEUE ``check_exit_telemetry_completeness`` (severity ``high``) ist der Wächter, der den
+    112/112-``null``-Fall selbst aktiv erkennt und meldet (dieser Check hier kann das strukturell
+    nicht — er hat keinen Eingang, WARUM die Evidenz fehlt)."""
     candidates = [
         r for r in study_records
         if r.get("bar_range_median_bps")
@@ -4608,8 +4734,14 @@ def check_stop_loss_vs_bar_range(
             actual=None,
             severity="blocking",
             inconclusive=True,
+            evaluability={
+                "evaluable": False,
+                "inconclusive_reason": "no_study_with_sufficient_stop_exits_and_bar_range_telemetry",
+                "n_studies_measured": 0,
+            },
             detail=f"Keine Study mit >= {min_trailing_stop_exits} nachweislichen TRAILING_STOP-"
-                   "Exits UND definierter Bar-Spannen-Telemetrie — nicht auswertbar.",
+                   "Exits UND definierter Bar-Spannen-Telemetrie — nicht auswertbar (INCONCLUSIVE, "
+                   "siehe evaluability; kein PASS im Sinne einer geprueften Grundgesamtheit).",
         )
     offenders: dict[str, dict] = {}
     all_ratios: dict[str, dict] = {}
@@ -4632,12 +4764,74 @@ def check_stop_loss_vs_bar_range(
         expected=expected,
         actual=all_ratios if all_ratios else None,
         severity="blocking",
+        evaluability={
+            "evaluable": True, "inconclusive_reason": None, "n_studies_measured": len(candidates),
+        },
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies: der Stop-Verlust liegt in der Grössenordnung "
                 "EINER Bar-Spanne UND ist gleichzeitig ein grosses Vielfaches der konfigurierten "
                 f"Stopdistanz: {offenders} — der Verlust ist latenz-, nicht stopgetrieben (#1119); "
                 "jede Stop-Parametrisierung ist unter dieser Bedingung wirkungslos, siehe #1092B."),
         provenance={"ratios_by_study": all_ratios} if all_ratios else None,
+    )
+
+
+def check_exit_telemetry_completeness(
+    study_records: list[dict], *,
+    telemetry_fields: tuple[str, ...] = (
+        "bar_range_median_bps", "atr_median_bps", "atr_raw_median_bps",
+        "atr_trailing_multiplier_median", "realized_stop_loss_ratio",
+    ),
+    min_populated_fraction: float = 0.5,
+) -> InvariantResult:
+    """Issue #973/#1127 (Pitfall #406 in AGENTS.md) — ein Telemetriefeld, das ueber die GESAMTE
+    Grundgesamtheit EXAKT konstant ``null`` ist, ist ein BEFUND, kein Messwert. Root-Cause des
+    #1127-Symptoms: ``bar_range_median_bps`` war in 112/112 Studies ``null`` — die Emissionskette
+    (``hourly_strategy_base`` → ``backtest_runner`` → ``parsing`` → ``report``) existierte im HEAD,
+    war aber in den Lauf-Commits, die die 112 Studies erzeugten, nicht enthalten. Kein Check im HEAD
+    hat das SELBST gemeldet — ``check_stop_loss_vs_bar_range`` (dessen EINGANGSGROESSE das Feld ist)
+    kann es strukturell nicht: fehlende Evidenz macht IHN inconclusive, nicht das Fehlen selbst zu
+    einem Befund.
+
+    Fuer jedes Feld in ``telemetry_fields`` wird der Anteil der Studies mit einem NICHT-``None``-Wert
+    gemessen. FAIL (severity ``high``), wenn dieser Anteil unter ``min_populated_fraction`` (Default
+    50 %) liegt — ein Feld, das die Emissionskette im HEAD verdrahtet, aber im Lauf nie ankommt,
+    alarmiert damit VON SICH AUS, statt erst indirekt ueber einen nachgelagerten INCONCLUSIVE-Check
+    aufzufallen. Leere ``study_records`` ⇒ INCONCLUSIVE (kein Urteil ohne Studies)."""
+    if not study_records:
+        return InvariantResult(
+            name="check_exit_telemetry_completeness",
+            passed=True,
+            expected=f"populated_fraction >= {min_populated_fraction} je Telemetriefeld",
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_studies",
+                         "n_studies_measured": 0},
+            detail="Keine Studies — nicht auswertbar.",
+        )
+    n = len(study_records)
+    populated_fraction: dict[str, float] = {}
+    offenders: dict[str, float] = {}
+    for field in telemetry_fields:
+        n_populated = sum(1 for r in study_records if r.get(field) is not None)
+        fraction = round(n_populated / n, 4)
+        populated_fraction[field] = fraction
+        if fraction < min_populated_fraction:
+            offenders[field] = fraction
+    passed = not offenders
+    return InvariantResult(
+        name="check_exit_telemetry_completeness",
+        passed=passed,
+        expected=f"populated_fraction >= {min_populated_fraction} je Telemetriefeld",
+        actual=populated_fraction,
+        severity="high",
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": n},
+        detail=("OK" if passed else
+                f"{len(offenders)} Telemetriefeld(er) unter {min_populated_fraction:.0%} befuellt: "
+                f"{offenders} — die Emissionskette ist im HEAD verdrahtet, kommt aber im Lauf nicht "
+                "an (Pitfall #406 in AGENTS.md: null ueber die gesamte Grundgesamtheit ist ein "
+                "Befund, kein Messwert)."),
     )
 
 
@@ -4657,9 +4851,17 @@ def check_n_periods_homogeneity(study_records: list[dict], *,
     ``max(oos_n_periods_median) / min(oos_n_periods_median)`` gegen ``max_ratio`` (Default 6.0,
     der Kalibrierpunkt für ``deflation_max_n_periods_ratio``, dort heute 4.0). ``severity='high'``
     (nicht ``'blocking'``) — die Heterogenität selbst blockiert keine einzelne Study, sie ist ein
-    Diagnosesignal für die #865-Kalibrierung."""
+    Diagnosesignal für die #865-Kalibrierung.
+
+    Issue #981/#1135 (Katalog #986) — Studies mit ``family_membership == 'excluded_degenerate'``
+    (strukturell zu wenige OOS-Perioden, siehe ``sweep._study_oos_n_periods_median``) sind aus dem
+    Nenner ausgeschlossen: eine 2-Perioden-Study treibt sonst JEDE Symbol-Spannweite trivial über
+    ``max_ratio``, ohne dass das ein neuer Befund ist (der degenerierte Status ist bereits
+    separat, EXPLIZIT ausgewiesen)."""
     by_symbol: dict[str, list[tuple[str, float]]] = {}
     for r in study_records:
+        if r.get("family_membership") == "excluded_degenerate":
+            continue
         symbol = r.get("symbol")
         median = r.get("oos_n_periods_median")
         if symbol is None or median is None:
@@ -4894,6 +5096,44 @@ def check_gate_collinearity_decision_required(gate_correlations: dict[tuple[str,
     )
 
 
+def check_invariant_registry_wired(
+    defined_check_names: list[str], wired_check_names: list[str], *,
+    deliberately_unwired: tuple[str, ...] = (),
+) -> InvariantResult:
+    """Issue #984/#1138 (Pitfall #409 in AGENTS.md) — eine Invariante ohne Aufrufstelle ist
+    Dokumentation, keine Prüfung. Symptom, das diesen Check motiviert hat: fünf in diesem Modul
+    definierte, getestete ``check_*``-Funktionen (``check_cost_model_floor``, ``check_cost_model_
+    resolution``, ``check_family_n_statistic_coverage``, ``check_family_scope_coherence``,
+    ``check_gate_collinearity_decision_required``) hatten NULL Aufrufstellen ausserhalb von
+    ``invariants.py``/``tests/`` — darunter beide Checks, die das Kostenmodell prüfen, während
+    ``COST_MODEL_RESOLVED``-Events laengst emittiert wurden.
+
+    Jede in ``defined_check_names`` gelistete Funktion muss entweder in ``wired_check_names``
+    (tatsächlich beobachtete Aufrufstellen, vom Aufrufer ermittelt) ODER in
+    ``deliberately_unwired`` (ein explizit gepflegter, dokumentierter Verzichtseintrag) stehen.
+
+    Reine Funktion: die eigentliche Introspektion (welche ``check_*``-Funktionen sind DEFINIERT,
+    welche Namen tauchen an einer Aufrufstelle auf) liegt beim Aufrufer — Datei-I/O/AST-Parsing
+    gehört nicht in dieses reine-Funktionen-Modul (siehe Moduldocstring)."""
+    defined = set(defined_check_names or [])
+    wired = set(wired_check_names or [])
+    excused = set(deliberately_unwired)
+    missing = sorted(defined - wired - excused)
+    passed = not missing
+    return InvariantResult(
+        name="check_invariant_registry_wired",
+        passed=passed,
+        expected="jede definierte check_*-Funktion hat eine Aufrufstelle oder steht in "
+                 "deliberately_unwired",
+        actual=missing if missing else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(missing)} check_*-Funktion(en) ohne Aufrufstelle und ohne deliberately_"
+                f"unwired-Eintrag: {missing} — eine Invariante ohne Aufrufstelle ist Dokumentation, "
+                "keine Prüfung (Pitfall #409)."),
+    )
+
+
 def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
                                      fail_fast_invariants: list[str] | None = None) -> InvariantResult:
     """Issue #907 Fix 3 — symmetrisch zum Gate-Kollinearitäts-Fix: eine in
@@ -4930,6 +5170,59 @@ def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
                 f"{len(missing)} in fail_fast_invariants gelistete Invariante(n) ohne jedes "
                 f"Ergebnis in diesem Lauf: {missing} — der Name existiert in der Config, aber kein "
                 "Code-Pfad wertet ihn tatsächlich aus (Issue #907)."),
+    )
+
+
+def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
+                                            fail_fast_invariants: list[str] | None = None,
+                                            ) -> InvariantResult:
+    """Issue #983/#1137 (Katalog #986, Pitfall #410 in AGENTS.md) — ``severity`` und
+    ``fail_fast_invariants`` waren zwei ENTKOPPELTE Taxonomien fuer dieselbe Frage ("darf dieser
+    Check einen Sweep abbrechen?"): ``check_effective_stop_distance`` stand seit langem in
+    ``optimizer.json['fail_fast_invariants']``, trug aber ``severity='high'`` — ein Check konnte
+    einen Lauf abbrechen, OHNE dass sein eigener Schweregrad das je ausgewiesen hatte.
+
+    EINE Quelle seither: ``severity='blocking'`` IMPLIZIERT fail-fast-Faehigkeit;
+    ``fail_fast_invariants`` DARF NUR Namen von Checks listen, deren beobachtete ``severity`` in
+    DIESEM Lauf ``'blocking'`` war. ``invariant_checks``: die vollen ``to_dict()``-Ergebnisse eines
+    Laufs (``report.py``s ``invariant_checks``, ``{"name", "severity", ...}``-Dicts) — bei
+    mehrdeutiger (mehrfach beobachteter, unterschiedlicher) Severity fuer denselben Namen zaehlt
+    das ERSTE Vorkommen (dieselbe "genau ein Grund"-Zusammenfassung wie Issue #983 fordert).
+
+    ``fail_fast_invariants`` leer/fehlend ⇒ nicht anwendbar (PASS). Ein konfigurierter Name ohne
+    jedes beobachtete Ergebnis in diesem Lauf wird NICHT als Verstoss gezaehlt (das ist
+    ``check_fail_fast_invariants_wired``s eigenstaendige Zustaendigkeit, keine doppelte Meldung
+    fuer denselben Root-Cause)."""
+    configured = sorted(set(fail_fast_invariants or []))
+    if not configured:
+        return InvariantResult(
+            name="check_fail_fast_invariants_are_blocking",
+            passed=True,
+            expected="jede in fail_fast_invariants gelistete Invariante hat severity='blocking'",
+            actual=None,
+            detail="fail_fast_invariants leer/fehlt — nicht anwendbar.",
+        )
+    severity_by_name: dict[str, str] = {}
+    for c in invariant_checks or []:
+        name = c.get("name")
+        if name is not None and name not in severity_by_name:
+            severity_by_name[name] = c.get("severity")
+    offenders = {
+        name: severity_by_name[name] for name in configured
+        if name in severity_by_name and severity_by_name[name] != "blocking"
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_fail_fast_invariants_are_blocking",
+        passed=passed,
+        expected="jede in fail_fast_invariants gelistete Invariante hat severity='blocking'",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} in fail_fast_invariants gelistete Invariante(n) OHNE severity="
+                f"'blocking': {offenders} — zwei entkoppelte Taxonomien fuer dieselbe Frage "
+                "(Issue #983, Pitfall #410 in AGENTS.md); entweder severity auf 'blocking' heben "
+                "oder aus fail_fast_invariants entfernen."),
     )
 
 

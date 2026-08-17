@@ -27,6 +27,9 @@ def _study(strategy, symbol, *, atr_bps, k, loss_bps_trailing_stop, n_ts_losses=
         "atr_median_bps": atr_bps,
         "atr_trailing_multiplier_median": k,
         "oos_gross_loss_mean_bps_trailing_stop_pooled": loss_bps_trailing_stop,
+        # Issue #972/#1126 — die Spearman-Eingangsgroesse ist seit diesem Fix die robuste Median-
+        # Variante (Pitfall #405 in AGENTS.md); fuer diese Fixtures identisch zum Mittel oben.
+        "gross_loss_median_bps_trailing_stop": loss_bps_trailing_stop,
         "oos_n_trailing_stop_losses": n_ts_losses,
         "exit_reason_histogram": histogram,
         "oos_total_trades_with_exit_telemetry": n_total_exits,
@@ -66,7 +69,12 @@ def test_reproduces_b11_reference_finding_fails_on_inverse_correlation():
     result = inv.check_trailing_stop_risk_calibration_acceptance(studies)
     assert result.passed is False
     assert result.severity == "high"
-    assert "widerlegt" in result.detail.lower() or "WIDERLEGT" in result.detail
+    # Issue #974/#1128 (Pitfall #403 in AGENTS.md) — der Meldungstext behauptet keine Ursache mehr;
+    # die Ursachenzuweisung steht separat in causal_hypothesis_state (heute UNRESOLVED, siehe
+    # _resolve_causal_hypothesis_state-Docstring: die Fill-Latenz-Telemetrie fehlt in diesen
+    # Fixtures).
+    assert "kalibrierung nicht erreicht" in result.detail.lower()
+    assert result.actual["causal_hypothesis_state"] == "UNRESOLVED"
     assert result.actual["trailing_stop_exit_share"] >= 0.35
 
 

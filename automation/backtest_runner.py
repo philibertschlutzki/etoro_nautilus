@@ -2159,22 +2159,51 @@ def generate_event_based_holdout_split(trades: list, min_oos_trades: int = 100, 
     return trades[:split_idx], trades[split_idx:]
 
 
-def _informative_annualization_factor(mtm_series, n_informative: int) -> float:
+# Issue #980/#1134 — derselbe Symbol-Cache-Mechanismus wie _get_annualization_factor_with_source,
+# ABER eigenstaendig (andere Formel: n_informative statt der vollen Perioden-Zahl) — dieser Wert
+# treibt ``sortino_annualized`` TATSAECHLICH (siehe Aufrufstelle unten), waehrend
+# _get_annualization_factor eine separate, nicht-informative Variante liefert.
+_informative_annualization_factor_by_symbol_cache: dict[str, tuple[float, str]] = {}
+
+
+def _informative_annualization_factor(mtm_series, n_informative: int, *,
+                                      symbol: str | None = None) -> float:
     """Issue #823 — annualisiert die INFORMATIVE Bar-Frequenz (``n_informative`` Bars mit
     tatsächlicher Rendite über dieselbe REALE Zeitspanne des vollen ``mtm_series``-Index), statt
     der vollen (ggf. 24/7-aufgefüllten) Kalender-Bar-Frequenz (``_get_annualization_factor``).
     Derselbe explizite Config-Override (``annualization_periods_per_year``) hat weiterhin höchste
     Präzedenz. Fällt auf ``_get_annualization_factor`` zurück, wenn kein verwertbarer Zeit-Index
-    vorliegt (Legacy-Direct-Unit-Calls) oder ``n_informative == 0``."""
+    vorliegt (Legacy-Direct-Unit-Calls) oder ``n_informative == 0``.
+
+    Issue #980/#1134 (Katalog #986) — DIESER Faktor treibt ``sortino_annualized`` (siehe
+    ``_calculate_stats``-Aufrufstelle) und ist damit die tatsächlich fuer die #1134-Kommensurabilität
+    massgebliche Groesse. Ist ``symbol`` angegeben, wird F beim ERSTEN Aufruf fuer dieses Symbol
+    bestimmt und fuer JEDE weitere Study desselben Symbols wiederverwendet (siehe
+    ``_get_annualization_factor_with_source``-Docstring fuer die vollstaendige Begruendung)."""
+    factor, _source = _informative_annualization_factor_with_source(
+        mtm_series, n_informative, symbol=symbol)
+    return factor
+
+
+def _informative_annualization_factor_with_source(
+    mtm_series, n_informative: int, *, symbol: str | None = None,
+) -> tuple[float, str]:
     config_factor = _read_annualization_periods()
     if config_factor is not None:
-        return float(config_factor)
+        return float(config_factor), "config_override"
+    if symbol is not None and symbol in _informative_annualization_factor_by_symbol_cache:
+        return _informative_annualization_factor_by_symbol_cache[symbol]
     if (mtm_series is not None and len(mtm_series) > 1
             and isinstance(mtm_series.index, pd.DatetimeIndex) and n_informative > 0):
         total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
         if total_span_seconds > 0:
-            return n_informative * 31_557_600.0 / total_span_seconds
-    return _get_annualization_factor(mtm_series)
+            result = (n_informative * 31_557_600.0 / total_span_seconds,
+                     "empirical_first_study_time_index")
+            if symbol is not None:
+                _informative_annualization_factor_by_symbol_cache[symbol] = result
+            return result
+    fallback_factor, fallback_source = _get_annualization_factor_with_source(mtm_series, symbol=symbol)
+    return fallback_factor, fallback_source
 
 
 def _read_psr_bootstrap_resamples() -> int:
@@ -2655,7 +2684,13 @@ def _read_annualization_periods() -> float | None:
     _annualization_periods_cached = True
     return val
 
-def _get_annualization_factor(mtm_series=None) -> float:
+# Issue #980/#1134 (Katalog #986, Pitfall #399-Klasse) — F je Symbol EINMAL bestimmen, nicht je
+# Study neu aus deren jeweils eigenem (unterschiedlich vielen Positions-Perioden umfassenden)
+# mtm_series-Fenster. Prozessweiter Cache, siehe _get_annualization_factor_with_source-Docstring.
+_annualization_factor_by_symbol_cache: dict[str, tuple[float, str]] = {}
+
+
+def _get_annualization_factor(mtm_series=None, *, symbol: str | None = None) -> float:
     """Single-Source-of-Truth Methode zur Bestimmung des annualization_factor (Issues #510/#532/#595).
     Trading-Time-Paradigma: Division durch Kalenderjahre ist restlos eliminiert.
 
@@ -2669,13 +2704,47 @@ def _get_annualization_factor(mtm_series=None) -> float:
     Issue #595 — Die empirische Frequenz wird nun aus der realen Zeitspanne abgeleitet:
     (n_periods · 31_557_600 / total_span_seconds).
     Das liefert für RTH-Instrumente (z. B. Equity) automatisch die Handelszeiten (TSLA ≈ 1638)
-    und für 24/7-Krypto (≈ 8766) korrekt skaliert."""
+    und für 24/7-Krypto (≈ 8766) korrekt skaliert.
+
+    Issue #980/#1134 — dünner Wrapper um ``_get_annualization_factor_with_source`` (Rückwärtskompat:
+    reiner Float-Rückgabewert für die zahlreichen bestehenden Aufrufer, die die Quelle nicht
+    brauchen)."""
+    factor, _source = _get_annualization_factor_with_source(mtm_series, symbol=symbol)
+    return factor
+
+
+def _get_annualization_factor_with_source(mtm_series=None, *, symbol: str | None = None,
+                                          ) -> tuple[float, str]:
+    """Issue #980/#1134 (Katalog #986) — Root-Cause: Studies DESSELBEN Symbols sehen dieselben
+    Marktdaten, aber (je nach Walk-Forward-/OOS-Fenster-Konfiguration der jeweiligen Strategie)
+    unterschiedlich viele *Positions*-Perioden im ``mtm_series``-Fenster — F wurde bislang JE STUDY
+    aus deren EIGENEM Fenster abgeleitet, wodurch √F zwischen Studies desselben Symbols um Faktor
+    2,2–5,7 streute und die annualisierten Sortinos NICHT kommensurabel waren (Report-Ranking,
+    Champion-Ranking, symbolweite Deflations-Familie vergleichen aber genau diese Grösse).
+
+    Ist ``symbol`` angegeben: F wird beim ERSTEN Aufruf fuer dieses Symbol in diesem Prozess
+    bestimmt (Config-Override ODER empirisch aus dessen mtm_series-Zeitindex) und fuer JEDEN
+    weiteren Aufruf desselben Symbols WIEDERVERWENDET, unabhaengig vom mtm_series-Fenster der
+    jeweils aufrufenden Study — √F-Spannweite je Symbol wird dadurch exakt 1.0 (Akzeptanzkriterium
+    #1134: <= 1.05). Fehlt ``symbol`` (Legacy-/Direkt-Unit-Aufrufer), bleibt das Verhalten wie vor
+    #1134 (je Aufruf empirisch aus dem uebergebenen ``mtm_series``).
+
+    Eine echte, handelskalenderbasierte Herleitung (RTH-Handelsstunden vs. 24/7, siehe Artefakt A-4
+    im #986-Katalog) bleibt ein offener Folgeschritt — dieser Fix macht F innerhalb eines Prozesses
+    STABIL je Symbol, ohne die Kalenderfrage selbst zu beantworten.
+
+    Rückgabe: ``(factor, source)`` mit ``source ∈ {'config_override', 'empirical_first_study_time_
+    index', 'neutral_fallback'}``."""
     # 1) Expliziter Config-Override: schlägt die Empirik nur, wenn ausdrücklich (non-null) gesetzt.
     config_factor = _read_annualization_periods()
     if config_factor is not None:
-        return float(config_factor)
+        return float(config_factor), "config_override"
 
-    # 2) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532/#595).
+    # 2) Bereits fuer dieses Symbol bestimmt (siehe Docstring) — WIEDERVERWENDEN statt neu leiten.
+    if symbol is not None and symbol in _annualization_factor_by_symbol_cache:
+        return _annualization_factor_by_symbol_cache[symbol]
+
+    # 3) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532/#595).
     #    Ein nicht-zeitlicher Index (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats)
     #    hat keine ableitbare Bar-Frequenz und fällt sauber auf den neutralen Pfad zurück.
     if (mtm_series is not None and len(mtm_series) > 1
@@ -2684,12 +2753,16 @@ def _get_annualization_factor(mtm_series=None) -> float:
         n_periods = len(mtm_series) - 1
         total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
         if total_span_seconds > 0:
-            return n_periods * 31_557_600.0 / total_span_seconds
+            result = (n_periods * 31_557_600.0 / total_span_seconds,
+                     "empirical_first_study_time_index")
+            if symbol is not None:
+                _annualization_factor_by_symbol_cache[symbol] = result
+            return result
 
-    # 3) Kein verwertbarer Zeit-Index: neutral (1.0).
-    return 1.0
+    # 4) Kein verwertbarer Zeit-Index: neutral (1.0).
+    return 1.0, "neutral_fallback"
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None, symbol: str | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -3042,7 +3115,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     total_return, period_rets, diagnostics=_inference_diagnostics)
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
-        annualization_factor = _get_annualization_factor(mtm_series)
+        # Issue #980/#1134 — ``symbol`` macht F stabil je Symbol (siehe _get_annualization_factor_
+        # with_source-Docstring). Diese Groesse selbst fliesst in KEIN Rueckgabe-Feld (Legacy,
+        # bereits vor #1134 unbenutzt) — annualization_factor_source (Rueckgabe-Dict) stammt aus
+        # dem tatsaechlich sortino_annualized-treibenden ``_informative_annualization_factor``.
+        annualization_factor = _get_annualization_factor(mtm_series, symbol=symbol)
         min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
         mar = _read_sortino_mar()
 
@@ -3065,6 +3142,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Varianz in confirm.py) ist ab hier die INFORMATIVE Zahl.
         informative_rets = _informative_period_returns(period_rets)
         n_periods = int(len(informative_rets))
+        # Issue #980/#1134 — von ``_compute_sortino()`` (unten) gesetzt, sobald der Erfolgspfad die
+        # annualisierte Sortino tatsaechlich berechnet; ein Closure-Mutable statt eines zehnten
+        # Rueckgabewerts, um die bestehende 9-Tupel-Rueckgabekontrakt von ``_compute_sortino`` (7
+        # Rueckgabestellen) nicht anzufassen. Default deckt jeden fruehen Return-Pfad ab (dort ist
+        # sortino_annualized ohnehin None — die Quelle ist dann irrelevant, aber IMMER definiert).
+        _annualization_factor_source_holder = {"value": "neutral_fallback"}
 
         def _compute_sortino():
             """Issue #823 — als lokale Funktion gekapselt (statt tief verschachtelter
@@ -3175,7 +3258,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             downside_floor = _read_sortino_downside_floor()
             dd_dev = max(dd_dev, downside_floor)
             mean_ret = informative_rets.mean(skipna=False)
-            effective_annualization_factor = _informative_annualization_factor(mtm_series, n_periods)
+            effective_annualization_factor, _annualization_factor_source_holder["value"] = (
+                _informative_annualization_factor_with_source(mtm_series, n_periods, symbol=symbol))
             # Issue #614 — der PER-PERIODEN-Sortino ist die statistisch tragende Grösse (fliesst
             # in die PSR); der annualisierte Wert ist reine Telemetrie (sortino_ratio/annualized).
             sortino_period_v = float((mean_ret - mar) / dd_dev)
@@ -3292,6 +3376,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
         (sortino, sortino_period, sortino_annualized, oos_psr, oos_psr_z,
          ret_skew, ret_kurtosis, oos_psr_se_boot, oos_downside_obs) = _compute_sortino()
+        # Issue #980/#1134 — die Quelle, die effective_annualization_factor TATSAECHLICH lieferte
+        # (siehe _annualization_factor_source_holder-Docstring oben).
+        annualization_factor_source = _annualization_factor_source_holder["value"]
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
@@ -3312,6 +3399,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
         # Call the unified helper to maintain structural symmetry (Issue #510 requirement)
         annualization_factor = _get_annualization_factor(None)
+        annualization_factor_source = "neutral_fallback"
 
     # Floor max_dd at DENOMINATOR_FLOOR to protect against division-by-zero when computing calmar.
     if max_dd <= 0.0:
@@ -3467,6 +3555,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "psr_inference_method": "stationary_bootstrap" if oos_psr_z is not None else None,
         "sortino_period":     float(sortino_period) if sortino_period is not None else None,
         "sortino_annualized": float(sortino_annualized) if sortino_annualized is not None else None,
+        # Issue #980/#1134 (Katalog #986) — woher effective_annualization_factor (der
+        # sortino_annualized treibende Faktor) tatsaechlich kam: 'config_override' |
+        # 'empirical_first_study_time_index' (je Symbol EINMAL bestimmt, siehe
+        # _get_annualization_factor_with_source-Docstring) | 'neutral_fallback'.
+        "annualization_factor_source": annualization_factor_source,
         "n_periods":          int(n_periods),
         # Issue #824 — expliziter Alias: der Stichprobenumfang, den die PSR-Bootstrap-SE (und der
         # #823-Punktschätzer) TATSÄCHLICH gesehen haben (die informative Teilmenge, #823). Separates
@@ -3609,6 +3702,27 @@ def _parse_exit_order_tags(tags) -> dict:
                 # Docstring); Referenzgroesse fuer invariants.check_stop_loss_vs_bar_range (Latenz-
                 # vs. Stop-getriebener Verlust).
                 meta["bar_range_median_bps"] = float(value)
+            elif key == "ATR_RAW_MEDIAN_BPS":
+                # Issue #975/#1129 — der ROHE (nicht via _effective_atr_value/_ratchet_floored_
+                # atr_value gefloorte) ATR-Median, parallel zu ATR_MEDIAN_BPS. Macht die #1129-
+                # Zirkularitaets-Pruefung moeglich: atr_median_bps misst den EFFEKTIVEN Wert, aus
+                # dem der Stop auch gesetzt wird — ein Vergleich gegen den rohen ATR fehlte bislang.
+                meta["atr_raw_median_bps"] = float(value)
+            elif key == "ORDER_SUBMIT_TS_NS":
+                # Issue #976/#1130 — Zeitstempel des Order-Absetzens (hourly_strategy_base.
+                # _execute_market_close, self.clock.timestamp_ns() unmittelbar vor order_factory.
+                # market(...)), NUR fuer TRAILING_STOP-Exits gesetzt. Zusammen mit dem Fill-
+                # Zeitstempel (rt_exit_ts, derselbe Round-Trip) ergibt sich stop_exit_fill_lag_ns —
+                # die Absetzen-zu-Fill-Latenz, die stop_exit_lag_bars (Signal-zu-Absetzen) strukturell
+                # NICHT erfasst (#407 in AGENTS.md: der Feldname beschreibt, was gemessen werden
+                # sollte, nur die Formel beschreibt, was gemessen wird).
+                meta["order_submit_ts_ns"] = int(value)
+            elif key == "TRAILING_STOP_PRICE":
+                # Issue #976/#1130 — der Stop-Level, gegen den der schliessende Markt-Order ausgeloest
+                # wurde (hourly_strategy_base._trailing_stop_price zum Zeitpunkt des Absetzens);
+                # Referenzpreis fuer stop_exit_slippage_bps = (fill_px - trailing_stop_price) /
+                # trailing_stop_price * 10000 (vorzeichenbehaftet).
+                meta["trailing_stop_price"] = float(value)
         except (TypeError, ValueError):
             continue
     return meta
@@ -3637,6 +3751,15 @@ def _build_order_exit_meta(engine: "BacktestEngine") -> dict[str, dict]:
     return meta
 
 
+def _pctl(sorted_vals: list[float], p: float) -> float:
+    """Issue #972/#1126 — dieselbe Nearest-Rank-Perzentil-Arithmetik wie die bestehenden p95-Stellen
+    in diesem Modul (z. B. ``p95_bars_held``), als kleiner wiederverwendbarer Baustein statt einer
+    weiteren Ad-hoc-Kopie. ``sorted_vals`` MUSS bereits sortiert und nicht leer sein."""
+    n = len(sorted_vals)
+    idx = max(0, min(n - 1, round(p * (n - 1))))
+    return sorted_vals[idx]
+
+
 def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     """Issue #899 — reine Aggregationsfunktion über eine Liste von Round-Trip-Exit-Telemetrie-
     Dicts (``{"exit_reason", "atr_median_bps", "atr_min_bps", "pnl_bps"}``, siehe
@@ -3649,6 +3772,16 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
       * ``atr_median_bps``/``atr_min_bps`` — Median ueber die per-Position ATR_median/ATR_min-
         Ablesungen (Rohmaterial fuer ``invariants.check_effective_stop_distance``, #897 Fix 3).
 
+    Issue #972/#1126 — ``gross_loss_mean_bps_trailing_stop`` ist ein UNGESCHUETZTES arithmetisches
+    Mittel (Pitfall #405 in AGENTS.md, fuenfte Instanz der #304-Klasse): ``gross_loss_median_bps_
+    trailing_stop`` (Median) und ``gross_loss_winsorized_mean_bps_trailing_stop`` (5/95-winsorisiert,
+    ``_winsorize``) werden ZUSAETZLICH gefuehrt, damit ein nachgelagerter Konsument Mittel und Median
+    gegeneinander pruefen kann, statt sich blind auf das Mittel zu verlassen. ``rt_notional_p05/p50/
+    p95`` machen den bps-Nenner (der ueber ``_finalize_round_trip``s Notional-Untergrenze 1e-12 hinaus
+    KEINEN Dust-Boden hat) auditierbar — der eigentliche Dust-Boden (5 % des Median-Notionals) sitzt
+    bereits AN DER QUELLE (``_filter_dust_round_trips``, VOR dieser Funktion), diese Perzentile
+    zeigen, ob er fuer eine gegebene Study ausreicht.
+
     Reine Funktion über plain Dicts (kein Optuna-/Engine-Objekt) — unabhängig unit-testbar,
     analog zum Rest dieses Moduls."""
     histogram: dict[str, int] = {}
@@ -3656,6 +3789,18 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     wins_bps: list[float] = []
     atr_medians: list[float] = []
     atr_mins: list[float] = []
+    # Issue #975/#1129 — die ROHE (ungefloorte) ATR-Ablesung, parallel zu atr_medians (die den
+    # EFFEKTIVEN, ratschen-gefloorten Wert traegt). Ein Vergleich der beiden entscheidet, ob
+    # ``atr_median_bps`` (die Eingangsgroesse von check_effective_stop_distance/#1129s Spearman-
+    # Test) zirkulaer gegen den Stop selbst misst.
+    atr_raw_medians: list[float] = []
+    # Issue #972/#1126 — das Round-Trip-Notional selbst, UNBEDINGT (nicht auf TRAILING_STOP
+    # beschraenkt) — macht den bps-Nenner jeder Study auditierbar.
+    rt_notionals: list[float] = []
+    # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (ns) und Slippage (bps) NUR bei nachweislichen
+    # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe _finalize_round_trip).
+    stop_exit_fill_lag_ns_values: list[float] = []
+    stop_exit_slippage_bps_values: list[float] = []
     # Issue #1035 (Katalog #866) — Root-Cause: der Zaehler unten (``losses_bps``) mittelt ueber
     # ALLE Verlust-Trades, waehrend ``invariants.check_effective_stop_distance`` unterstellt, dass
     # jeder Verlust ein Stop-Exit war. Bei ueberwiegend UNKNOWN-/TIME_BOX-Exits (vor #1034 haeufig
@@ -3691,10 +3836,19 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             atr_medians.append(float(m["atr_median_bps"]))
         if m.get("atr_min_bps") is not None:
             atr_mins.append(float(m["atr_min_bps"]))
+        if m.get("atr_raw_median_bps") is not None:
+            atr_raw_medians.append(float(m["atr_raw_median_bps"]))
+        if m.get("rt_notional") is not None:
+            rt_notionals.append(float(m["rt_notional"]))
         if reason == "TRAILING_STOP" and m.get("stop_exit_lag_bars") is not None:
             stop_exit_lag_bars.append(int(m["stop_exit_lag_bars"]))
+        if reason == "TRAILING_STOP" and m.get("stop_exit_fill_lag_ns") is not None:
+            stop_exit_fill_lag_ns_values.append(float(m["stop_exit_fill_lag_ns"]))
+        if reason == "TRAILING_STOP" and m.get("stop_exit_slippage_bps") is not None:
+            stop_exit_slippage_bps_values.append(float(m["stop_exit_slippage_bps"]))
         if m.get("bar_range_median_bps") is not None:
             bar_range_medians.append(float(m["bar_range_median_bps"]))
+    _rt_notionals_sorted = sorted(rt_notionals)
     return {
         "exit_reason_histogram": histogram,
         "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
@@ -3707,7 +3861,33 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # Mindestzahl fuer INCONCLUSIVE statt FAIL).
         "gross_loss_mean_bps_trailing_stop": (
             statistics.mean(losses_bps_trailing_stop) if losses_bps_trailing_stop else None),
+        # Issue #972/#1126 — robuste Gegenstuecke zum ungeschuetzten Mittel oben: Median und
+        # 5/95-winsorisiertes Mittel derselben Grundgesamtheit (siehe Docstring, Pitfall #405).
+        "gross_loss_median_bps_trailing_stop": (
+            statistics.median(losses_bps_trailing_stop) if losses_bps_trailing_stop else None),
+        "gross_loss_winsorized_mean_bps_trailing_stop": (
+            statistics.mean(_winsorize(losses_bps_trailing_stop, 0.05, 0.95))
+            if losses_bps_trailing_stop else None),
         "n_trailing_stop_losses": len(losses_bps_trailing_stop),
+        # Issue #975/#1129 — Median der ROHEN (ungefloorten) ATR-Ablesungen, Gegenstueck zu
+        # atr_median_bps (dem EFFEKTIVEN, ratschen-gefloorten Wert).
+        "atr_raw_median_bps": (
+            statistics.median(atr_raw_medians) if atr_raw_medians else None),
+        # Issue #972/#1126 — p05/p50/p95 des Round-Trip-Notionals dieser Ebene; macht den bps-Nenner
+        # (siehe Docstring) auditierbar.
+        "rt_notional_p05": _pctl(_rt_notionals_sorted, 0.05) if _rt_notionals_sorted else None,
+        "rt_notional_p50": _pctl(_rt_notionals_sorted, 0.50) if _rt_notionals_sorted else None,
+        "rt_notional_p95": _pctl(_rt_notionals_sorted, 0.95) if _rt_notionals_sorted else None,
+        # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (in Bars, dieselbe Konvention wie
+        # stop_exit_lag_bars_median) und Slippage, NUR ueber nachweisliche TRAILING_STOP-Exits mit
+        # vollstaendiger Order-/Fill-Telemetrie.
+        "stop_exit_fill_lag_bars_median": (
+            statistics.median(stop_exit_fill_lag_ns_values) / 1e9 / _BAR_SECONDS_METRICS
+            if stop_exit_fill_lag_ns_values else None),
+        "stop_exit_slippage_bps_median": (
+            statistics.median(stop_exit_slippage_bps_values)
+            if stop_exit_slippage_bps_values else None),
+        "n_trailing_stop_exits_with_fill_lag_telemetry": len(stop_exit_fill_lag_ns_values),
         # Issue #1097 (Katalog #930) — die Stichprobengroesse HINTER gross_loss_mean_bps (ALLE
         # Verlust-Trades, nicht nur Stop-Exits): ohne diesen Zaehler kann report.py keinen
         # trade-gewichteten (statt medianbasierten) Study-Mittelwert bilden, siehe
@@ -3890,7 +4070,7 @@ def _filter_dust_round_trips(
     rt_exit_meta: list[dict],
     *, dust_notional_floor_frac: float = 0.05,
 ) -> tuple[list[RoundTripRecord], list[NotionalRecord], list[float], list[dict],
-          list[NotionalRecord]]:
+          list[NotionalRecord], list[dict]]:
     """Issue #946/#1112 (Katalog #960) — verwirft Round-Trips mit einem Notional unterhalb
     ``dust_notional_floor_frac · median(notional)`` AN DER QUELLE (dem vollstaendigen Round-Trip-
     Strom, ``extract_metrics``s ``rt_*_with_ts``-Listen, unmittelbar nach dem FIFO-Matching und VOR
@@ -3914,21 +4094,28 @@ def _filter_dust_round_trips(
     ``(notional, exit_ts)``-Paare (damit der Aufrufer sie — wie jeden anderen Round-Trip — nach
     IS/OOS klassifizieren kann, statt nur eine undifferenzierte Gesamtzahl zu erhalten). Weniger
     als zwei positive Notionale ⇒ kein belastbarer Median, alle vier Listen unveraendert
-    zurueckgegeben (nichts verworfen)."""
+    zurueckgegeben (nichts verworfen).
+
+    Issue #972/#1126 Fix Punkt 2 — zusaetzlich die VERWORFENE Exit-Telemetrie (``discarded_meta``,
+    index-parallel zu ``discarded``): macht ``n_trailing_stop_losses_dust_filtered`` moeglich (wie
+    viele der verworfenen Round-Trips NACHWEISLICHE TRAILING_STOP-Verlust-Exits waren), ohne die
+    bereits gefilterte ``kept_meta``-Liste ein zweites Mal durchsuchen zu muessen."""
     positive_notionals = [nz for nz, _ts in rt_notionals_with_ts if nz and nz > 0.0]
     if len(positive_notionals) < 2:
-        return rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta, []
+        return rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta, [], []
     floor = dust_notional_floor_frac * statistics.median(positive_notionals)
     if floor <= 0.0:
-        return rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta, []
+        return rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta, [], []
     kept_pnls: list[RoundTripRecord] = []
     kept_notionals: list[NotionalRecord] = []
     kept_peaks: list[float] = []
     kept_meta: list[dict] = []
     discarded: list[NotionalRecord] = []
+    discarded_meta: list[dict] = []
     for i, (nz, ts) in enumerate(rt_notionals_with_ts):
         if nz is not None and nz > 0.0 and nz < floor:
             discarded.append((nz, ts))
+            discarded_meta.append(rt_exit_meta[i] if i < len(rt_exit_meta) else {})
             continue
         kept_pnls.append(rt_pnls_with_ts[i])
         kept_notionals.append(rt_notionals_with_ts[i])
@@ -3936,7 +4123,7 @@ def _filter_dust_round_trips(
             kept_peaks.append(rt_notional_peaks[i])
         if i < len(rt_exit_meta):
             kept_meta.append(rt_exit_meta[i])
-    return kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded
+    return kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded, discarded_meta
 
 
 class MetricsLevel(TypedDict):
@@ -3956,7 +4143,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -4036,7 +4223,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         rt_notional_peaks: list[float] = []
 
         def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None,
-                                 *, is_data_end_fallback: bool = False) -> None:
+                                 *, is_data_end_fallback: bool = False,
+                                 closing_price: float | None = None) -> None:
             """Aggregiert die FIFO-Matches EINER zusammenhängenden Position (Position-Open
             → Flat) zu genau einem Round-Trip (Issue #508). Die Round-Trip-PnL ist die Summe
             der Teil-Fill-PnLs (inkl. bereits allokierter Kosten); der Exit-Timestamp ist der
@@ -4056,7 +4244,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             akkumuliert Matches bis zum Datenende und wird HIER zu einem Round-Trip mit der vollen
             Zeitspanne finalisiert (#1037-Symptom: ``median_bars_held`` klein, ``max_holding``
             riesig — bimodale Haltedauerverteilung mit einem zweiten Modus zwei Groessenordnungen
-            ueber der Zeitbox, siehe backtest_runner-Docstring)."""
+            ueber der Zeitbox, siehe backtest_runner-Docstring).
+
+            Issue #976/#1130 — ``closing_price`` (der Fill-Preis des schliessenden Legs, vom
+            Aufrufer aus derselben Iteration übergeben, in der die Position flat wurde) plus der
+            ``ORDER_SUBMIT_TS_NS``/``TRAILING_STOP_PRICE``-Tag der schliessenden Order (nur bei
+            TRAILING_STOP gesetzt, siehe ``hourly_strategy_base._execute_market_close``) ergeben
+            ``stop_exit_fill_lag_ns`` (Absetzen → Fill, die von ``stop_exit_lag_bars`` — Signal →
+            Absetzen — strukturell NICHT erfasste Latenz) und ``stop_exit_slippage_bps``
+            (vorzeichenbehaftet: ``(fill_px − trailing_stop_price) / trailing_stop_price × 10000``)."""
             if not matches:
                 return
             rt_pnl = sum(m[0] for m in matches)
@@ -4077,15 +4273,32 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             closing_order_id = order_ids[-1] if order_ids else None
             meta = order_exit_meta.get(closing_order_id, {}) if closing_order_id else {}
             pnl_bps = (rt_pnl / rt_notional * 10_000.0) if rt_notional > 1e-12 else None
+            # Issue #976/#1130 — nur bei einer echten (nicht is_data_end_fallback) TRAILING_STOP-
+            # Order gueltig: order_submit_ts_ns/trailing_stop_price werden AUSSCHLIESSLICH fuer
+            # TRAILING_STOP-Exits getaggt (siehe _parse_exit_order_tags).
+            _submit_ts_ns = None if is_data_end_fallback else meta.get("order_submit_ts_ns")
+            stop_exit_fill_lag_ns = (
+                (rt_exit_ts - _submit_ts_ns) if _submit_ts_ns is not None else None)
+            _stop_px = None if is_data_end_fallback else meta.get("trailing_stop_price")
+            stop_exit_slippage_bps = (
+                (closing_price - _stop_px) / _stop_px * 10_000.0
+                if (closing_price is not None and _stop_px) else None)
             rt_exit_meta.append({
                 "exit_reason": "DATA_END" if is_data_end_fallback else meta.get("exit_reason"),
                 "atr_median_bps": meta.get("atr_median_bps"),
                 "atr_min_bps": meta.get("atr_min_bps"),
+                # Issue #975/#1129 — der ROHE (ungefloorte) ATR-Median, siehe _parse_exit_order_tags.
+                "atr_raw_median_bps": meta.get("atr_raw_median_bps"),
                 "pnl_bps": pnl_bps,
+                # Issue #972/#1126 — das Round-Trip-Notional selbst als Telemetrie (Rohmaterial fuer
+                # rt_notional_p05/p50/p95, macht den bps-Nenner auditierbar).
+                "rt_notional": rt_notional,
                 # Issue #1095 (Katalog #928) — nur bei einer echten schliessenden Order gueltig
                 # (nicht is_data_end_fallback, die keine STOP_EXIT_LAG_BARS-Order-Tags traegt).
                 "stop_exit_lag_bars": (
                     None if is_data_end_fallback else meta.get("stop_exit_lag_bars")),
+                "stop_exit_fill_lag_ns": stop_exit_fill_lag_ns,
+                "stop_exit_slippage_bps": stop_exit_slippage_bps,
             })
 
         # Chronologisches FIFO-Matching pro Instrument
@@ -4145,7 +4358,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             sell_queue.popleft()
                     # Short vollständig gedeckt (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not sell_queue and current_rt:
-                        _finalize_round_trip(current_rt, current_rt_order_ids)
+                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price)
                         current_rt = []
                         current_rt_order_ids = []
                     if qty > 0:
@@ -4176,7 +4389,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             buy_queue.popleft()
                     # Long vollständig verkauft (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not buy_queue and current_rt:
-                        _finalize_round_trip(current_rt, current_rt_order_ids)
+                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price)
                         current_rt = []
                         current_rt_order_ids = []
                     if qty > 0:
@@ -4212,7 +4425,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # (kein Index/Referenz von VOR dieser Zeile bleibt in Gebrauch), die Filterung propagiert
         # deshalb korrekt in JEDEN nachgelagerten Wert.
         (rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta,
-         _dust_round_trips_discarded) = _filter_dust_round_trips(
+         _dust_round_trips_discarded, _dust_round_trips_discarded_meta) = _filter_dust_round_trips(
             rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta)
         if _dust_round_trips_discarded and log_fn:
             log_fn(f"[Metriken] #946: {len(_dust_round_trips_discarded)} Dust-Round-Trip(s) "
@@ -4430,9 +4643,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
             # Issue #546 — die parallelen Per-Trade-Notionals durchreichen ⇒ sizing-invariante
             # (notional-relative) Expectancy statt Normierung auf das fixe starting_capital.
-            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals, family_median_n_periods=family_median_n_periods)
+            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol)
             if split_oos_pnls:
-                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals, family_median_n_periods=family_median_n_periods)
+                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol)
             else:
                 level_oos = _empty_level_metrics()
             # Issue #613 — Aggregationsebene des Sortino EXPLIZIT stempeln. IS UND OOS werden aus ihrer
@@ -4483,18 +4696,31 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # ``invariants.check_dust_round_trip_share``) auf DERSELBEN Grundgesamtheit steht wie sein
         # Nenner ``oos_total_trades_with_exit_telemetry``.
         _is_dust_count, _oos_dust_count = 0, 0
-        for _nz, _ts in _dust_round_trips_discarded:
+        # Issue #972/#1126 Fix Punkt 2 — dieselbe IS/OOS-Klassifikation, aber beschraenkt auf Dust-
+        # Round-Trips, die ein NACHWEISLICHER TRAILING_STOP-Verlust-Exit waren (dieselbe Teilmenge
+        # wie losses_bps_trailing_stop in _aggregate_exit_telemetry) — Zaehler fuer
+        # n_trailing_stop_losses_dust_filtered / n_trailing_stop_losses.
+        _is_ts_dust_count, _oos_ts_dust_count = 0, 0
+        for (_nz, _ts), _meta in zip(_dust_round_trips_discarded, _dust_round_trips_discarded_meta):
             if _wf:
                 _is_oos = any(s <= _ts < e for _, s, e in fold_boundaries)
                 _is_in_sample = _is_start_ns <= _ts < is_end_ns
             else:
                 _is_oos, _is_in_sample = False, True
+            _is_ts_loss = (_meta.get("exit_reason") == "TRAILING_STOP"
+                          and _meta.get("pnl_bps") is not None and _meta["pnl_bps"] < 0)
             if _is_oos:
                 _oos_dust_count += 1
+                if _is_ts_loss:
+                    _oos_ts_dust_count += 1
             elif _is_in_sample:
                 _is_dust_count += 1
+                if _is_ts_loss:
+                    _is_ts_dust_count += 1
         is_metrics["dust_round_trips_filtered_count"] = _is_dust_count
         oos_metrics["dust_round_trips_filtered_count"] = _oos_dust_count
+        is_metrics["n_trailing_stop_losses_dust_filtered"] = _is_ts_dust_count
+        oos_metrics["n_trailing_stop_losses_dust_filtered"] = _oos_ts_dust_count
 
         # Issue #1032 (Katalog #866) — Spitzenbestand-Telemetrie je Ebene, dieselbe IS/OOS-
         # Fold-Aufteilung wie ``_split_and_stats`` (hier separat, da ``rt_notional_peaks`` kein
@@ -4601,7 +4827,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     fold_mtm = mtm_series.loc[split_oos_start_dt:split_oos_end_excl]
                 if fold_pnls:
                     # Issue #546 — Per-Fold-Expectancy ebenfalls notional-relativ (Fold-Aggregation #550).
-                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, mtm_series=fold_mtm, notional_list=fold_notionals, family_median_n_periods=family_median_n_periods)
+                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, mtm_series=fold_mtm, notional_list=fold_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol)
                 else:
                     fold_metrics = None
                 per_fold_oos_list.append(fold_metrics)
@@ -5735,7 +5961,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {

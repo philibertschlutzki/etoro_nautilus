@@ -96,13 +96,16 @@ def _study(symbol, sortino_period, sortino_annualized, strategy="A"):
     }
 
 
-def test_check_annualization_commensurability_severity_is_low():
-    """Fix Punkt 3 — von 'high' auf 'low' herabgestuft (Diagnose statt Blocker)."""
+def test_check_annualization_commensurability_severity_is_high():
+    """Fix Punkt 3 — von 'high' auf 'low' herabgestuft (Diagnose statt Blocker); Issue #980/#1134
+    (Katalog #986) stuft wieder auf 'high' hoch, da backtest_runner._get_annualization_factor_
+    with_source F seither je Symbol EINMAL bestimmt — eine verbleibende Abweichung ist damit kein
+    strukturelles Artefakt mehr."""
     result = inv.check_annualization_commensurability([
         _study("NVDA.ETORO", 1.0, 35.0),
         _study("NVDA.ETORO", 0.5, 35.0, strategy="B"),  # sqrt(F)=70.0, Faktor 2.0
     ])
-    assert result.severity == "low"
+    assert result.severity == "high"
     assert result.passed is False
 
 

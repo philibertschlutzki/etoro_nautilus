@@ -26,6 +26,9 @@ class _T:
             "oos_evaluated": True, "oos_eligible": True,
             "oos_atr_median_bps": 2.0,
             "oos_gross_loss_mean_bps_trailing_stop": 124.22,
+            # Issue #972/#1126 — realized_stop_loss_ratio ist seit diesem Fix die Median-Variante
+            # (Pitfall #405 in AGENTS.md); fuer diesen Einzel-Trial-Fixture identisch zum Mittel oben.
+            "oos_gross_loss_median_bps_trailing_stop": 124.22,
             "oos_n_trailing_stop_losses": 50,
             "sampled_params": {"atr_trailing_multiplier": 1.694},
         }

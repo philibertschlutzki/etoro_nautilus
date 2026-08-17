@@ -125,6 +125,10 @@ class TournamentMetrics:
     oos_psr_z: float | None = None
     oos_sortino_period: float | None = None
     oos_sortino_annualized: float | None = None
+    # Issue #980/#1134 (Katalog #986) — woher der F-Faktor hinter oos_sortino_annualized kam (siehe
+    # backtest_runner._get_annualization_factor_with_source-Docstring). None ⇒ Legacy-JSON/kein
+    # Equity-Kurven-Pfad (rueckwaertskompatibel).
+    oos_annualization_factor_source: str | None = None
     oos_n_periods: int = 0
     # Issue #845 — der Downside-Beobachtungs-Nenner (backtest_runner._calculate_stats
     # "downside_obs", #823 SORTINO_INSUFFICIENT_DOWNSIDE-Schwelle), durchgereicht als eigenes Feld
@@ -196,10 +200,32 @@ class TournamentMetrics:
     # Issue #1035 (Katalog #866) — dieselbe Groesse, aber NUR ueber nachweisliche TRAILING_STOP-
     # Exits (siehe backtest_runner._aggregate_exit_telemetry-Docstring).
     oos_gross_loss_mean_bps_trailing_stop: float | None = None
+    # Issue #972/#1126 (Katalog #986) — robuste Gegenstuecke zum ungeschuetzten Mittel oben (Median
+    # und 5/95-winsorisiertes Mittel derselben Grundgesamtheit, siehe backtest_runner._aggregate_
+    # exit_telemetry-Docstring, Pitfall #405 in AGENTS.md).
+    oos_gross_loss_median_bps_trailing_stop: float | None = None
+    oos_gross_loss_winsorized_mean_bps_trailing_stop: float | None = None
     oos_n_trailing_stop_losses: int = 0
+    # Issue #972/#1126 — wie viele der in _filter_dust_round_trips verworfenen Round-Trips ein
+    # nachweislicher TRAILING_STOP-Verlust-Exit waren (Teilnenner von oos_n_trailing_stop_losses).
+    oos_n_trailing_stop_losses_dust_filtered: int = 0
+    # Issue #972/#1126 — p05/p50/p95 des Round-Trip-Notionals dieses Trials (macht den bps-Nenner
+    # von gross_loss_*_bps_trailing_stop auditierbar).
+    oos_rt_notional_p05: float | None = None
+    oos_rt_notional_p50: float | None = None
+    oos_rt_notional_p95: float | None = None
     oos_gross_win_mean_bps: float | None = None
     oos_atr_median_bps: float | None = None
     oos_atr_min_bps: float | None = None
+    # Issue #975/#1129 — der ROHE (ungefloorte) ATR-Median, Gegenstueck zu oos_atr_median_bps (dem
+    # EFFEKTIVEN, ratschen-gefloorten Wert).
+    oos_atr_raw_median_bps: float | None = None
+    # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (Bars) und Slippage (bps), NUR ueber nachweisliche
+    # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe backtest_runner.
+    # _aggregate_exit_telemetry-Docstring).
+    oos_stop_exit_fill_lag_bars_median: float | None = None
+    oos_stop_exit_slippage_bps_median: float | None = None
+    oos_n_trailing_stop_exits_with_fill_lag_telemetry: int = 0
     # Issue #1095 (Katalog #928) — Median der Bars zwischen Trailing-Stop-Signal und tatsaechlichem
     # Markt-Close-Fill (siehe backtest_runner._aggregate_exit_telemetry-Docstring); None ohne einen
     # einzigen getaggten Stop-Exit dieses Trials.
@@ -294,6 +320,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_psr_z = oos_metrics.get("psr_z")
     oos_sortino_period = oos_metrics.get("sortino_period")
     oos_sortino_annualized = oos_metrics.get("sortino_annualized")
+    # Issue #980/#1134 — siehe TournamentMetrics-Docstring.
+    oos_annualization_factor_source = oos_metrics.get("annualization_factor_source")
     oos_n_periods = oos_metrics.get("n_periods")
     # Issue #845 — Downside-Beobachtungs-Nenner (None-safe ⇒ rückwärtskompatibel zu Pre-#845-JSONs).
     oos_downside_obs = oos_metrics.get("downside_obs")
@@ -331,10 +359,25 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_gross_loss_mean_bps = oos_metrics.get("gross_loss_mean_bps")
     # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
     oos_gross_loss_mean_bps_trailing_stop = oos_metrics.get("gross_loss_mean_bps_trailing_stop")
+    # Issue #972/#1126 — siehe TournamentMetrics-Docstring.
+    oos_gross_loss_median_bps_trailing_stop = oos_metrics.get("gross_loss_median_bps_trailing_stop")
+    oos_gross_loss_winsorized_mean_bps_trailing_stop = oos_metrics.get(
+        "gross_loss_winsorized_mean_bps_trailing_stop")
     oos_n_trailing_stop_losses = oos_metrics.get("n_trailing_stop_losses")
+    oos_n_trailing_stop_losses_dust_filtered = oos_metrics.get("n_trailing_stop_losses_dust_filtered")
+    oos_rt_notional_p05 = oos_metrics.get("rt_notional_p05")
+    oos_rt_notional_p50 = oos_metrics.get("rt_notional_p50")
+    oos_rt_notional_p95 = oos_metrics.get("rt_notional_p95")
     oos_gross_win_mean_bps = oos_metrics.get("gross_win_mean_bps")
     oos_atr_median_bps = oos_metrics.get("atr_median_bps")
     oos_atr_min_bps = oos_metrics.get("atr_min_bps")
+    # Issue #975/#1129 — siehe TournamentMetrics-Docstring.
+    oos_atr_raw_median_bps = oos_metrics.get("atr_raw_median_bps")
+    # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
+    oos_stop_exit_fill_lag_bars_median = oos_metrics.get("stop_exit_fill_lag_bars_median")
+    oos_stop_exit_slippage_bps_median = oos_metrics.get("stop_exit_slippage_bps_median")
+    oos_n_trailing_stop_exits_with_fill_lag_telemetry = oos_metrics.get(
+        "n_trailing_stop_exits_with_fill_lag_telemetry")
     # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
     oos_stop_exit_lag_bars_median = oos_metrics.get("stop_exit_lag_bars_median")
     # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
@@ -502,6 +545,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_psr_z=float(oos_psr_z) if oos_psr_z is not None else None,
         oos_sortino_period=float(oos_sortino_period) if oos_sortino_period is not None else None,
         oos_sortino_annualized=float(oos_sortino_annualized) if oos_sortino_annualized is not None else None,
+        # Issue #980/#1134 — siehe TournamentMetrics-Docstring.
+        oos_annualization_factor_source=(
+            str(oos_annualization_factor_source)
+            if oos_annualization_factor_source is not None else None),
         oos_n_periods=int(oos_n_periods) if oos_n_periods is not None else 0,
         oos_downside_obs=int(oos_downside_obs) if oos_downside_obs is not None else None,
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
@@ -532,9 +579,35 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             if oos_gross_loss_mean_bps_trailing_stop is not None else None),
         oos_n_trailing_stop_losses=(
             int(oos_n_trailing_stop_losses) if oos_n_trailing_stop_losses is not None else 0),
+        # Issue #972/#1126 — siehe TournamentMetrics-Docstring.
+        oos_gross_loss_median_bps_trailing_stop=(
+            float(oos_gross_loss_median_bps_trailing_stop)
+            if oos_gross_loss_median_bps_trailing_stop is not None else None),
+        oos_gross_loss_winsorized_mean_bps_trailing_stop=(
+            float(oos_gross_loss_winsorized_mean_bps_trailing_stop)
+            if oos_gross_loss_winsorized_mean_bps_trailing_stop is not None else None),
+        oos_n_trailing_stop_losses_dust_filtered=(
+            int(oos_n_trailing_stop_losses_dust_filtered)
+            if oos_n_trailing_stop_losses_dust_filtered is not None else 0),
+        oos_rt_notional_p05=float(oos_rt_notional_p05) if oos_rt_notional_p05 is not None else None,
+        oos_rt_notional_p50=float(oos_rt_notional_p50) if oos_rt_notional_p50 is not None else None,
+        oos_rt_notional_p95=float(oos_rt_notional_p95) if oos_rt_notional_p95 is not None else None,
         oos_gross_win_mean_bps=float(oos_gross_win_mean_bps) if oos_gross_win_mean_bps is not None else None,
         oos_atr_median_bps=float(oos_atr_median_bps) if oos_atr_median_bps is not None else None,
         oos_atr_min_bps=float(oos_atr_min_bps) if oos_atr_min_bps is not None else None,
+        # Issue #975/#1129 — siehe TournamentMetrics-Docstring.
+        oos_atr_raw_median_bps=(
+            float(oos_atr_raw_median_bps) if oos_atr_raw_median_bps is not None else None),
+        # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
+        oos_stop_exit_fill_lag_bars_median=(
+            float(oos_stop_exit_fill_lag_bars_median)
+            if oos_stop_exit_fill_lag_bars_median is not None else None),
+        oos_stop_exit_slippage_bps_median=(
+            float(oos_stop_exit_slippage_bps_median)
+            if oos_stop_exit_slippage_bps_median is not None else None),
+        oos_n_trailing_stop_exits_with_fill_lag_telemetry=(
+            int(oos_n_trailing_stop_exits_with_fill_lag_telemetry)
+            if oos_n_trailing_stop_exits_with_fill_lag_telemetry is not None else 0),
         # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
         oos_stop_exit_lag_bars_median=(
             float(oos_stop_exit_lag_bars_median)

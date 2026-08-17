@@ -12,6 +12,9 @@ def _record(n_ts_exits: int, n_ts_losses: int, mean_loss_ts: float | None = None
         "exit_reason_histogram": {"TRAILING_STOP": n_ts_exits, "TIME_BOX": 5},
         "oos_n_trailing_stop_losses": n_ts_losses,
         "oos_gross_loss_mean_bps_trailing_stop": mean_loss_ts,
+        # Issue #972/#1126 — Bedingung 2 konsumiert seit diesem Fix die robuste Median-Variante
+        # (Pitfall #405 in AGENTS.md); fuer diese Fixtures identisch zum Mittel oben.
+        "gross_loss_median_bps_trailing_stop": mean_loss_ts,
         "oos_gross_loss_mean_bps": mean_loss_all,
     }
 
