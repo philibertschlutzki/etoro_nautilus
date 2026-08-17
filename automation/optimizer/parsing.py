@@ -159,6 +159,19 @@ class TournamentMetrics:
     # vermiedener Kursverlust, keine Handelsleistung — siehe summary_de.py Abschnitt 2.3). None,
     # wenn keine Fenster-Spanne auswertbar war (rückwärtskompatibel zu Pre-#850-JSONs).
     oos_exposure_fraction: float | None = None
+    # Issue #986/#1140 (Katalog #986, Pitfall #412 in AGENTS.md) — ``oos_excess_return`` allein
+    # bestätigte im fallenden Markt jede Strategie mit ``exposure_fraction`` < 100 % unabhängig von
+    # jedem Edge (0/39 auf steigenden, 62/65 auf fallenden Symbolen). ``oos_alpha``/``oos_beta``
+    # sind die OLS-Regressionskoeffizienten der Strategie-Perioden-(Log-)Returns gegen die
+    # Benchmark-Perioden-(Log-)Returns (aus ``backtest_runner.extract_metrics``, identisch
+    # gefensterte/alignte Serien wie ``oos_buyhold_return`` — Issue #772 Index-Gleichheit), NICHT
+    # annualisiert (dieselbe Periodengranularität wie ``oos_period_returns``). ``oos_alpha_tstat``
+    # ist der t-Wert von α (Standard-OLS-Formel); ein Kandidat mit β ≈ 0,2 und α ≈ 0 ist ein
+    # Teilzeit-Long, kein Edge. None, wenn keine Benchmark-Serie/zu wenige Perioden vorlagen
+    # (rückwärtskompatibel).
+    oos_alpha: float | None = None
+    oos_beta: float | None = None
+    oos_alpha_tstat: float | None = None
     # Issue #710 — Haltedauer-Metrik (Bars, NICHT Sekunden — alle Strategien laufen auf 1h-Bars).
     # Median (robuste Zentraltendenz gegen schiefe per-Fold-Verteilungen) + p95 (Deadline-Nähe).
     # Optional[float]=None ⇒ migrationssicher (Legacy-JSONs/Fixtures ohne das Feld laufen unveraendert
@@ -334,6 +347,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe; fehlt ohne Benchmark-Serie).
     oos_buyhold_return = oos_metrics.get("oos_buyhold_return")
     oos_excess_return = oos_metrics.get("oos_excess_return")
+    # Issue #986/#1140 — α/β-Regressionskoeffizienten + t(α) (None-safe; fehlen ohne Benchmark-
+    # Serie/zu wenige Perioden, siehe TournamentMetrics-Docstring).
+    oos_alpha = oos_metrics.get("oos_alpha")
+    oos_beta = oos_metrics.get("oos_beta")
+    oos_alpha_tstat = oos_metrics.get("oos_alpha_tstat")
     # Issue #850 — Exposure-Telemetrie (None-safe ⇒ rückwärtskompatibel zu Pre-#850-JSONs).
     oos_exposure_fraction = oos_metrics.get("exposure_fraction")
     # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
@@ -558,6 +576,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe).
         oos_buyhold_return=float(oos_buyhold_return) if oos_buyhold_return is not None else None,
         oos_excess_return=float(oos_excess_return) if oos_excess_return is not None else None,
+        # Issue #986/#1140 — α/β-Regressionskoeffizienten + t(α) (None-safe).
+        oos_alpha=float(oos_alpha) if oos_alpha is not None else None,
+        oos_beta=float(oos_beta) if oos_beta is not None else None,
+        oos_alpha_tstat=float(oos_alpha_tstat) if oos_alpha_tstat is not None else None,
         oos_exposure_fraction=float(oos_exposure_fraction) if oos_exposure_fraction is not None else None,
         # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
         oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,

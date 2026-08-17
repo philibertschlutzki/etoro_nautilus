@@ -445,17 +445,39 @@ def _section_2_monetary_result(report: dict) -> str:
                 not_evaluable_rows.append(r)
             else:
                 normal_rows.append(r)
+        # Issue #986/#1140 (Katalog #986, Pitfall #412 in AGENTS.md) — Root-Cause: `holdout_excess_
+        # return = strategy − benchmark` ist im fallenden Markt für JEDE Strategie mit Exposure
+        # < 100 % positiv, unabhängig von jedem Edge (0/39 auf steigenden, 62/65 auf fallenden
+        # Symbolen). Fix: (1) primäre Rangfolgengröße ist jetzt `excess_per_unit_exposure` (vorher
+        # nur Anzeige-Spalte, Sortierung lief nach `holdout_total_return`) — `report._study_record`
+        # liefert das Feld bereits vorberechnet; hier zusaetzlich ein Inline-Fallback (identische
+        # Formel) fuer Aufrufer, die ``studies``-Dicts direkt ohne den vollen Report-Pfad bauen
+        # (Legacy-JSONs, Tests). (2) Zusätzliche α/β/t(α)-Spalten (OLS-Regression Strategie- vs.
+        # Benchmark-Perioden-Returns, backtest_runner._alpha_beta_regression) — ein Kandidat mit
+        # β ≈ 0,2 und α ≈ 0 ist kein Edge, sondern ein Teilzeit-Long. |t(α)| < 1 ⇒ NO_ALPHA_DETECTED.
+        def _excess_per_exposure(r: dict) -> float | None:
+            v = r.get("holdout_excess_per_unit_exposure")
+            if v is not None:
+                return v
+            excess_ = r.get("holdout_excess_return")
+            exposure_ = r.get("holdout_exposure_fraction")
+            # normal_rows garantiert bereits exposure_ >= _min_exposure_for_normalization.
+            return excess_ / exposure_ if excess_ is not None and exposure_ else None
+
         lines.append(
             "| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | "
-            "Excess/Exposure | Vorzeichen |"
+            "Excess/Exposure | α | β | t(α) | Vorzeichen |"
         )
-        lines.append("|---|---|---:|---:|---:|---:|---:|---|")
-        for r in sorted(normal_rows, key=lambda r: r.get("holdout_total_return") or 0.0, reverse=True):
+        lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|")
+        for r in sorted(normal_rows, key=lambda r: _excess_per_exposure(r) or 0.0, reverse=True):
             excess = r["holdout_excess_return"]
             buyhold = r.get("holdout_buyhold_return")
             exposure = r.get("holdout_exposure_fraction")
-            excess_per_exposure = excess / exposure
-            if buyhold is not None and buyhold < 0:
+            excess_per_exposure = _excess_per_exposure(r)
+            alpha_tstat = r.get("holdout_alpha_tstat")
+            if r.get("holdout_no_alpha_detected"):
+                sign = "NO_ALPHA_DETECTED (|t(α)| < 1)"
+            elif buyhold is not None and buyhold < 0:
                 sign = "B&H negativ — Excess trivial positiv"
             elif excess > 0:
                 sign = "positiv (schlägt Buy & Hold)"
@@ -466,7 +488,9 @@ def _section_2_monetary_result(report: dict) -> str:
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
                 f"{_fmt_pct(buyhold)} | {_fmt_pct(excess)} | {_fmt_pct(exposure)} | "
-                f"{_fmt_pct(excess_per_exposure)} | {sign} |"
+                f"{_fmt_pct(excess_per_exposure) if excess_per_exposure is not None else 'k. A.'} | "
+                f"{_fmt_num(r.get('holdout_alpha'), digits=5)} | {_fmt_num(r.get('holdout_beta'), digits=3)} | "
+                f"{_fmt_num(alpha_tstat, digits=2)} | {sign} |"
             )
         lines.append("")
         if not_evaluable_rows:

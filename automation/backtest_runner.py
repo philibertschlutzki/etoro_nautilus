@@ -3760,6 +3760,48 @@ def _pctl(sorted_vals: list[float], p: float) -> float:
     return sorted_vals[idx]
 
 
+def _alpha_beta_regression(
+    strategy_log_returns: "np.ndarray", benchmark_log_returns: "np.ndarray",
+) -> tuple[float, float, float] | None:
+    """Issue #986/#1140 (Katalog #986, Pitfall #412 in AGENTS.md) — OLS-Regression der Strategie-
+    Perioden-Log-Returns gegen die Benchmark-Perioden-Log-Returns (``y = alpha + beta * x``), damit
+    ``holdout_excess_return = strategy - benchmark`` nicht mehr die einzige Alpha-Auskunft ist: im
+    fallenden Markt ist Excess fuer JEDE Strategie mit ``exposure_fraction`` < 100 % positiv, egal
+    ob ein Edge existiert (0/39 auf steigenden, 62/65 auf fallenden Symbolen, siehe Issue-Symptom).
+    Ein Kandidat mit beta ~ 0,2 und alpha ~ 0 ist ein Teilzeit-Long, kein Edge.
+
+    Geschlossene OLS-Form (kein scipy/statsmodels-Dependency fuer diese eine Anwendung):
+    beta = Cov(x, y) / Var(x); alpha = mean(y) - beta * mean(x); t(alpha) = alpha / SE(alpha),
+    SE(alpha)^2 = (RSS / (n - 2)) * (1/n + mean(x)^2 / Sxx). ``None`` bei < 3 Perioden (kein
+    Freiheitsgrad fuer die t-Statistik) oder Var(x) == 0 (Benchmark ohne Streuung — Beta nicht
+    identifizierbar) — additive Telemetrie, kein Fail-Fast.
+
+    Rueckgabe unannualisiert (dieselbe Periodengranularitaet wie ``oos_period_returns``): ``(alpha,
+    beta, alpha_tstat)``."""
+    import numpy as np
+    x = np.asarray(benchmark_log_returns, dtype=float)
+    y = np.asarray(strategy_log_returns, dtype=float)
+    n = len(x)
+    if n < 3 or len(y) != n:
+        return None
+    x_mean = x.mean()
+    y_mean = y.mean()
+    sxx = float(((x - x_mean) ** 2).sum())
+    if sxx <= 0.0:
+        return None
+    sxy = float(((x - x_mean) * (y - y_mean)).sum())
+    beta = sxy / sxx
+    alpha = float(y_mean - beta * x_mean)
+    residuals = y - (alpha + beta * x)
+    rss = float((residuals ** 2).sum())
+    sigma_sq = rss / (n - 2)
+    se_alpha_sq = sigma_sq * (1.0 / n + (x_mean ** 2) / sxx)
+    if se_alpha_sq <= 0.0:
+        return alpha, float(beta), 0.0
+    alpha_tstat = alpha / math.sqrt(se_alpha_sq)
+    return alpha, float(beta), float(alpha_tstat)
+
+
 def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     """Issue #899 — reine Aggregationsfunktion über eine Liste von Round-Trip-Exit-Telemetrie-
     Dicts (``{"exit_reason", "atr_median_bps", "atr_min_bps", "pnl_bps"}``, siehe
@@ -4518,6 +4560,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         oos_mtm = None
         oos_frames = None
         oos_buyhold_return = None  # Issue #552 — Buy&Hold-Benchmark-Return über das OOS-Fenster.
+        # Issue #986/#1140 — α/β-Regression der Perioden-Returns gegen die Benchmark-Perioden-
+        # Returns (None, solange keine indexgleiche Benchmark-Serie vorlag).
+        oos_alpha = oos_beta = oos_alpha_tstat = None
         if mtm_series is not None and not mtm_series.empty and _wf:
             # Issue #551 — Equity-Slices HALB-OFFEN [s, e), konsistent zur Trade-Klassifikation
             # (``any(s <= ts < e ...)``). ``pandas.loc[a:b]`` ist auf BEIDEN Seiten geschlossen; da
@@ -4592,6 +4637,19 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             "bitgleiche Bar-Menge mehr.",
                             len(oos_mtm), len(bench_oos_concat),
                         )
+                    elif oos_mtm is not None and len(oos_mtm) >= 2:
+                        # Issue #986/#1140 — dieselbe indexgleiche Bar-Menge wie oben (BENCHMARK_
+                        # SPAN_MISMATCH-Zweig NICHT betreten), α/β brauchen dieselbe Garantie wie
+                        # excess_return. ``_alpha_beta_regression`` liefert selbst None bei < 3
+                        # Perioden/varianzfreier Benchmark.
+                        import numpy as _np_alpha_beta
+                        _strat_log_rets = _np_alpha_beta.diff(
+                            _np_alpha_beta.log(oos_mtm.to_numpy(dtype=float)))
+                        _bench_log_rets = _np_alpha_beta.diff(
+                            _np_alpha_beta.log(bench_oos_concat.to_numpy(dtype=float)))
+                        _alpha_beta_result = _alpha_beta_regression(_strat_log_rets, _bench_log_rets)
+                        if _alpha_beta_result is not None:
+                            oos_alpha, oos_beta, oos_alpha_tstat = _alpha_beta_result
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 
@@ -4852,6 +4910,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 oos_metrics["oos_buyhold_return"] = oos_buyhold_return
                 oos_metrics["oos_excess_return"] = (
                     (oos_metrics.get("total_return") or 0.0) - oos_buyhold_return)
+            # Issue #986/#1140 — α/β + t(α) additiv, unabhängig von oos_buyhold_return (auch dann
+            # gesetzt, falls oos_buyhold_return am ersten-Wert-null-Guard oben scheiterte, die
+            # Regression selbst aber lief).
+            if oos_alpha is not None:
+                oos_metrics["oos_alpha"] = oos_alpha
+                oos_metrics["oos_beta"] = oos_beta
+                oos_metrics["oos_alpha_tstat"] = oos_alpha_tstat
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt

@@ -553,6 +553,10 @@ def _metrics_dict(m) -> dict:
         "oos_profit_factor_raw": getattr(m, "oos_profit_factor_raw", None),
         "oos_buyhold_return": getattr(m, "oos_buyhold_return", None),
         "oos_excess_return": getattr(m, "oos_excess_return", None),
+        # Issue #986/#1140 — α/β-Regressionskoeffizienten + t(α), siehe TournamentMetrics-Docstring.
+        "oos_alpha": getattr(m, "oos_alpha", None),
+        "oos_beta": getattr(m, "oos_beta", None),
+        "oos_alpha_tstat": getattr(m, "oos_alpha_tstat", None),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
         # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
         # unterscheiden kann.

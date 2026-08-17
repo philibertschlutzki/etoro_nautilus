@@ -1327,6 +1327,31 @@ def _study_record(proposal: dict, study,
         # backtest_runner._calculate_stats "exposure_fraction"), Rohmaterial für summary_de.py
         # Abschnitt 2.3 (Excess-Return vs. echtes Alpha) und cross_study.excess_variance_decomposition.
         "holdout_exposure_fraction": holdout_metrics.get("oos_exposure_fraction"),
+        # Issue #986/#1140 (Katalog #986, Pitfall #412 in AGENTS.md) — ``holdout_excess_return``
+        # allein ist im fallenden Markt fuer JEDE Strategie mit Exposure < 100 % trivial positiv
+        # (0/39 auf steigenden, 62/65 auf fallenden Symbolen). ``holdout_excess_per_unit_exposure``
+        # normiert den Excess auf die tatsaechlich eingegangene Marktzeit — dieselbe
+        # ``_min_exposure_for_normalization=0.05``-Guard wie summary_de.py Abschnitt 2.3 (near-
+        # Null-Exposure macht die Division numerisch bedeutungslos, nicht nur unbewertbar).
+        # ``holdout_alpha``/``holdout_beta``/``holdout_alpha_tstat`` sind die OLS-Regressions-
+        # koeffizienten der Strategie- gegen die Benchmark-Perioden-Returns (siehe
+        # backtest_runner._alpha_beta_regression); ``holdout_no_alpha_detected=True`` markiert
+        # |t(alpha)| < 1 — alpha ist dann statistisch nicht von Null unterscheidbar (ein
+        # BETRAGSMAESSIG grosses NEGATIVES t(alpha) ist ein erkannter negativer Effekt, kein
+        # "kein Alpha" — deshalb der Betrag, nicht der Rohwert aus der Issue-Formulierung).
+        "holdout_excess_per_unit_exposure": (
+            (holdout_metrics.get("oos_excess_return") / holdout_metrics.get("oos_exposure_fraction"))
+            if (holdout_metrics.get("oos_excess_return") is not None
+                and (holdout_metrics.get("oos_exposure_fraction") or 0.0) >= 0.05)
+            else None
+        ),
+        "holdout_alpha": holdout_metrics.get("oos_alpha"),
+        "holdout_beta": holdout_metrics.get("oos_beta"),
+        "holdout_alpha_tstat": holdout_metrics.get("oos_alpha_tstat"),
+        "holdout_no_alpha_detected": (
+            abs(holdout_metrics["oos_alpha_tstat"]) < 1.0
+            if holdout_metrics.get("oos_alpha_tstat") is not None else None
+        ),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
         # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — WELCHER Parameter (und in welche
         # Richtung) die Randlösung dominiert, siehe confirm.confirm_per_symbol_promotion. ``None``
