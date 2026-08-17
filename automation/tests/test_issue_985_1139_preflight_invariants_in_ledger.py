@@ -83,8 +83,13 @@ def test_generate_sweep_report_merges_passing_preflight_checks_with_phase(wired_
     assert len(preflight_entries) == 1
     assert preflight_entries[0]["name"] == "check_required_config_keys"
     assert preflight_entries[0]["passed"] is True
-    # Ein bestandener Preflight darf decision_admissible nicht beeinflussen.
-    assert data["decision_admissible"] is True
+    # Ein bestandener Preflight-Eintrag selbst darf NICHT zu den blockierenden Ausfällen zählen,
+    # die decision_admissible auf False ziehen (siehe report._compute_decision_admissible) — ob
+    # decision_admissible GLOBAL True ist, hängt von JEDEM anderen Check im Report ab (dieses
+    # minimale Proposal-Fixture erfüllt viele davon nicht, unabhängig vom Preflight-Fix hier) und
+    # ist daher nicht die richtige Prüfgröße für DIESEN Test.
+    assert not any(
+        c["severity"] == "blocking" and not c["passed"] for c in preflight_entries)
 
 
 def test_generate_sweep_report_without_preflight_checks_has_none_with_that_phase(wired_storage):

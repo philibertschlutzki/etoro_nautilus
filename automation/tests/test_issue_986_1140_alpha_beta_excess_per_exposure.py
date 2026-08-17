@@ -27,7 +27,7 @@ from automation.optimizer import summary_de
 # wie bei jedem anderen Test dieses Moduls (siehe AGENTS.md).
 def test_alpha_beta_regression_matches_ols_closed_form():
     from automation.backtest_runner import _alpha_beta_regression
-    # y = 0.0003 + 0.2*x + Rauschen, konstruiert damit beta/alpha exakt nachrechenbar sind.
+    # y = 0.0003 + 0.2*x, KEIN Rauschen, konstruiert damit beta/alpha exakt nachrechenbar sind.
     x = [0.01, -0.02, 0.015, -0.005, 0.03, -0.01, 0.02, -0.015, 0.005, 0.0]
     y = [0.2 * xi + 0.0003 for xi in x]
     result = _alpha_beta_regression(y, x)
@@ -35,8 +35,21 @@ def test_alpha_beta_regression_matches_ols_closed_form():
     alpha, beta, tstat = result
     assert alpha == pytest.approx(0.0003, abs=1e-9)
     assert beta == pytest.approx(0.2, abs=1e-9)
-    # Rauschfrei konstruiert ⇒ perfekter Fit, Residuen 0 ⇒ SE(alpha) 0 ⇒ Implementierung liefert 0.0.
-    assert tstat == 0.0
+    # Issue #986/#1140 Regressionsfix — rauschfrei konstruiert ⇒ perfekter Fit ⇒ SE(alpha) -> 0 bei
+    # alpha != 0 bedeutet MATHEMATISCH t -> unendlich (maximale statistische Signifikanz), NICHT 0
+    # (die urspruengliche Annahme dieses Tests war falsch — mit ihr lieferte die Implementierung ein
+    # unmotiviertes Gleitkomma-Artefakt statt eines sauberen Sentinels, siehe Funktions-Docstring).
+    assert tstat == pytest.approx(1.0e6)
+
+
+def test_alpha_beta_regression_perfect_fit_sign_matches_alpha_sign():
+    from automation.backtest_runner import _alpha_beta_regression
+    x = [0.01, -0.02, 0.015, -0.005, 0.03, -0.01, 0.02, -0.015, 0.005, 0.0]
+    y_negative_alpha = [0.2 * xi - 0.0005 for xi in x]
+    result = _alpha_beta_regression(y_negative_alpha, x)
+    assert result is not None
+    _, _, tstat = result
+    assert tstat == pytest.approx(-1.0e6)
 
 
 def test_alpha_beta_regression_none_below_three_periods():

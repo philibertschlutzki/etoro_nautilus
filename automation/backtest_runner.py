@@ -3798,6 +3798,13 @@ def _pctl(sorted_vals: list[float], p: float) -> float:
     return sorted_vals[idx]
 
 
+# Issue #986/#1140 (Katalog #986) — sauberes, endliches Sentinel fuer eine (nahezu) rauschfreie
+# OLS-Anpassung in _alpha_beta_regression (SE(alpha) -> 0 bei alpha != 0 ⇒ t -> unendlich); weit
+# ausserhalb jedes realistischen t-Werts einer echten Marktreihe, aber JSON-/Report-sicher (kein
+# math.inf/nan).
+_ALPHA_TSTAT_DEGENERATE_MAGNITUDE = 1.0e6
+
+
 def _alpha_beta_regression(
     strategy_log_returns: "np.ndarray", benchmark_log_returns: "np.ndarray",
 ) -> tuple[float, float, float] | None:
@@ -3813,6 +3820,18 @@ def _alpha_beta_regression(
     SE(alpha)^2 = (RSS / (n - 2)) * (1/n + mean(x)^2 / Sxx). ``None`` bei < 3 Perioden (kein
     Freiheitsgrad fuer die t-Statistik) oder Var(x) == 0 (Benchmark ohne Streuung — Beta nicht
     identifizierbar) — additive Telemetrie, kein Fail-Fast.
+
+    Issue #986/#1140 (Katalog #986) Regressionsfix — bei einer (nahezu) rauschfreien Punktwolke
+    ist ``rss`` durch Gleitkomma-Rundung fast nie EXAKT 0, sondern eine winzige positive Zahl in
+    der Groessenordnung der Maschinen-Epsilon (``n * numpy.finfo(float).eps * Σy²``). Eine
+    Division durch dieses Rausch-Epsilon lieferte zuvor einen willkuerlichen, riesigen Wert
+    (2,17e16 statt einer sauberen Zahl) statt der mathematisch korrekten Interpretation: SE(alpha)
+    -> 0 bei alpha != 0 bedeutet EXTREM hohe statistische Signifikanz (t -> unendlich), nicht "kein
+    Alpha". ``rss`` wird daher relativ zur Skala von ``y`` auf Rausch-Naehe geprueft; in diesem Fall
+    liefert die Funktion ein sauberes, grosses, korrekt vorzeichenbehaftetes Sentinel
+    (``_ALPHA_TSTAT_DEGENERATE_MAGNITUDE``) statt des Gleitkomma-Artefakts — JSON-sicher (endlich,
+    kein ``inf``/``nan``) und in jedem nachgelagerten ``abs(t) < 1``-Vergleich (NO_ALPHA_DETECTED)
+    UND in jeder Report-Anzeige (``_fmt_num``) unmissverstaendlich.
 
     Rueckgabe unannualisiert (dieselbe Periodengranularitaet wie ``oos_period_returns``): ``(alpha,
     beta, alpha_tstat)``."""
@@ -3832,10 +3851,14 @@ def _alpha_beta_regression(
     alpha = float(y_mean - beta * x_mean)
     residuals = y - (alpha + beta * x)
     rss = float((residuals ** 2).sum())
+    y_scale = float((y ** 2).sum())
+    noise_floor = n * np.finfo(float).eps * max(y_scale, 1e-300)
+    if rss <= noise_floor:
+        degenerate_tstat = (
+            math.copysign(_ALPHA_TSTAT_DEGENERATE_MAGNITUDE, alpha) if alpha != 0.0 else 0.0)
+        return alpha, float(beta), degenerate_tstat
     sigma_sq = rss / (n - 2)
     se_alpha_sq = sigma_sq * (1.0 / n + (x_mean ** 2) / sxx)
-    if se_alpha_sq <= 0.0:
-        return alpha, float(beta), 0.0
     alpha_tstat = alpha / math.sqrt(se_alpha_sq)
     return alpha, float(beta), float(alpha_tstat)
 
