@@ -122,7 +122,16 @@ def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, flo
     out: dict[str, float] = {}
     defaults = _load_json(cfg_dir / "strategy_defaults.json") or {}
     for strat, params in defaults.items():
-        if isinstance(params, dict) and params.get("trade_amount_pct") is not None:
+        # Issue #1014/#1166 (Katalog #1170) Regressionsfix — ``_schema`` ist seit diesem Fix
+        # selbst ein Dict mit einem ``"trade_amount_pct"``-Schlüssel (Dokumentationstext, kein
+        # Zahlenwert, siehe strategy_defaults.json). Ohne diesen Ausschluss (Konvention: ``_schema``
+        # ist nie eine echte Strategie, siehe test_issue_623_config_call_sites.py) landete der
+        # Prosa-String als "Strategie" ``_schema`` in dieser Map und liess
+        # ``check_sizing_parity_backtest_vs_allocator``/``check_sizing_identity_coherence`` mit
+        # ``ValueError: could not convert string to float`` crashen.
+        if strat == "_schema":
+            continue
+        if isinstance(params, dict) and isinstance(params.get("trade_amount_pct"), (int, float)):
             out[strat] = params["trade_amount_pct"]
     strategies_cfg = _load_json(cfg_dir / "strategies.json") or {}
     for entry in strategies_cfg.get("strategies") or []:
@@ -626,10 +635,34 @@ def _read_jsonl_events(path: Path | None, event_type: str) -> list[dict]:
 # Sidecar des ``"optimizer"``-Loggers im Hauptprozess — zwei disjunkte Transportwege, die Checks
 # sehen STRUKTURELL IMMER 0 Events. Siehe die ausfuehrliche Begruendung an der (entfernten)
 # ehemaligen Aufrufstelle in ``_build_report`` (Kommentar bei der frueheren #984/#1138-Verdrahtung).
+#
+# ``check_data_span`` (``backtest_runner.py``, Issue #1015/#1167, Katalog #1170) — emittiert seit
+# diesem Fix symmetrisch ein ``INVARIANT_STREAM_RESULT``-Event (PASS UND FAIL, ``source="worker"``), aber
+# unter demselben ``"backtest_worker"``-Logger wie ``COST_MODEL_RESOLVED`` oben — DERSELBE
+# strukturell disjunkte Transportweg, keine neue Ausnahme.
+#
+# ``check_deployment_gate_completeness`` (``daily_orchestrator.py`` Phase 5, Issue #1015/#1167,
+# Katalog #1170) — emittiert seit diesem Fix symmetrisch ein ``INVARIANT_STREAM_RESULT``-Event (``source=
+# "orchestrator"``), aber bewertet die Whitelist EINES Phase-5-Laufs (``whitelist_tournament.
+# json``, potenziell mehrere Sweep-``run_id``s ueberspannend), nicht die Study-Population eines
+# EINZELNEN Sweep-Reports — es gibt kein bestimmtes ``run.json``, in dessen ``invariant_checks``
+# dieses Ergebnis eindeutig einsortiert werden koennte, ohne eine Kohorten-Fiktion zu erfinden
+# (dieselbe Kohorten-Disziplin wie #941/#1107, siehe ``cohort``-Feld-Docstring in ``invariants.py``).
+#
+# ``check_invariant_coverage`` selbst (Issue #1015/#1167) — anders als ``check_invariant_registry_
+# wired`` (oben, Zeile ~612: dessen STATISCHER Text-Scan trifft die eigene Aufrufstelle automatisch
+# mit) arbeitet dieser Check gegen einen zum Auswertungszeitpunkt bereits FERTIGEN Schnappschuss
+# von ``invariant_checks`` — sein EIGENES Ergebnis existiert per Konstruktion noch nicht, wenn er
+# ausgewertet wird (es WIRD der naechste Eintrag). Ohne diesen Eintrag würde er sich selbst
+# permanent als "fehlend" melden — ein Placebo-Fund ueber die eigene Nichtexistenz-zum-
+# Messzeitpunkt, keine echte Beobachtung.
 _DELIBERATELY_UNWIRED_INVARIANT_CHECKS: tuple[str, ...] = (
     "check_live_exposure_budget",
     "check_cost_model_resolution",
     "check_cost_model_floor",
+    "check_data_span",
+    "check_deployment_gate_completeness",
+    "check_invariant_coverage",
 )
 
 
@@ -666,6 +699,61 @@ def _invariant_registry_wiring_check() -> "_inv.InvariantResult":
     ]
     return _inv.check_invariant_registry_wired(
         defined, wired, deliberately_unwired=_DELIBERATELY_UNWIRED_INVARIANT_CHECKS)
+
+
+def _all_defined_check_names() -> list[str]:
+    """Issue #1015/#1167 (Katalog #1170) — ALLE ``check_*``-Funktionsdefinitionen über das
+    GESAMTE ``automation``-Paket (nicht nur ``invariants.py``, siehe ``_invariant_registry_
+    wiring_check``-Docstring oben): neun der bei Issue-Erstellung definierten Checks leben in
+    ``reward.py``/``run_optimization.py``/``wallclock_guard.py``/``disk_guard.py``/
+    ``sweep_diagnostics.py``/``backtest_runner.py``, nicht in ``invariants.py``. Text-Scan (KEIN
+    Import!) — ``backtest_runner.py`` hängt zur Laufzeit an ``nautilus_trader`` (in manchen
+    Testumgebungen nicht installiert); ein Import würde diese reine Introspektion an eine
+    Abhängigkeit koppeln, die mit der Frage "welche Funktionen sind DEFINIERT" nichts zu tun hat
+    (dasselbe Prinzip wie ``_invariant_registry_wiring_check``s eigener Text-Scan für "wired").
+    Rückgabe: sortierte, deduplizierte Namen."""
+    import re
+    optimizer_dir = Path(__file__).resolve().parent
+    automation_dir = optimizer_dir.parent
+    candidate_paths = [
+        optimizer_dir / f for f in
+        ("invariants.py", "reward.py", "run_optimization.py", "wallclock_guard.py",
+         "disk_guard.py", "sweep_diagnostics.py")
+    ] + [automation_dir / "backtest_runner.py"]
+    names: set[str] = set()
+    for path in candidate_paths:
+        try:
+            source = path.read_text("utf-8")
+        except OSError:
+            continue
+        names.update(re.findall(r"(?m)^def (check_[A-Za-z0-9_]+)\(", source))
+    return sorted(names)
+
+
+def _read_external_invariant_results() -> list[dict]:
+    """Issue #1015/#1167 (Katalog #1170) — liest ``INVARIANT_STREAM_RESULT``-Events aus dem "optimizer"-
+    Sidecar (derselbe, den ``BAR_QUALITY_PROFILE``/``CHAMPION_WRITEBACK`` bereits nutzen): sechs
+    der neun in #1167 benannten Checks laufen ausserhalb von ``_build_report`` (Sweep-
+    Hauptschleife, ``run_optimization.py`` — beide im SELBEN Prozess wie ``report.py``, siehe
+    dortige ``logging.getLogger("optimizer")``-Aufrufe), melden ihr Urteil seit diesem Fix aber
+    als eigenes Event statt als in-process ``InvariantResult``-Objekt. Die verbleibenden drei
+    (``check_live_exposure_budget``/``check_cost_model_resolution``/``check_cost_model_floor``/
+    ``check_data_span``/``check_deployment_gate_completeness`` — fünf, siehe
+    ``_DELIBERATELY_UNWIRED_INVARIANT_CHECKS``) landen in strukturell disjunkten Sidecars und
+    erscheinen hier folgerichtig NICHT. ``None``-Sidecar (kein echter Sweep-Lauf, z. B. in Tests)
+    ⇒ leere Liste, exakt wie ``_read_jsonl_events`` selbst."""
+    events = _read_jsonl_events(jsonl_sidecar_path(_log.name), "INVARIANT_STREAM_RESULT")
+    results = []
+    for event in events:
+        d = {k: v for k, v in event.items()
+             if k not in ("event_type", "timestamp_utc", "run_id", "strategy", "symbol",
+                          "study_name")}
+        d.setdefault("name", d.get("check"))
+        d.setdefault("check", d.get("name"))
+        d.setdefault("severity", "medium")
+        d.setdefault("scope", "sweep")
+        results.append(d)
+    return results
 
 
 def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
@@ -3258,6 +3346,9 @@ def _build_report(
     for label, result in all_checks:
         d = result.to_dict()
         d["scope"] = label
+        # Issue #1015/#1167 (Katalog #1170) — jeder Eintrag traegt seine Herkunft: diese Checks
+        # laufen alle IN ``_build_report`` selbst (Report-Prozess).
+        d["source"] = "report"
         invariant_checks.append(d)
         if not result.passed:
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
@@ -3277,6 +3368,9 @@ def _build_report(
     for d in (preflight_invariant_checks or []):
         d = dict(d)
         d.setdefault("scope", "preflight")
+        # Issue #1015/#1167 (Katalog #1170) — Preflight-Checks (sweep.assert_required_config_keys_
+        # valid/assert_instrument_metadata_coherence) laufen im SWEEP-Prozess, VOR jedem Worker.
+        d.setdefault("source", "sweep")
         invariant_checks.append(d)
         if not d.get("passed", True):
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
@@ -3284,6 +3378,42 @@ def _build_report(
                 "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
                 "report_source": report_source,
             }, level=logging.ERROR)
+
+    # Issue #1015/#1167 (Katalog #1170) — Ergebnisse der AUSSERHALB von ``_build_report`` laufenden
+    # Checks (Sweep-Hauptschleife/``run_optimization.py``, siehe ``_read_external_invariant_
+    # results``-Docstring), als ``INVARIANT_STREAM_RESULT``-Events aus demselben "optimizer"-Sidecar
+    # gelesen, den ``_champions_summary``/``check_event_stream_completeness`` bereits nutzen.
+    # Gleiche Behandlung wie der Preflight-Block oben (kein ``cohort``-Stempel — diese Checks
+    # pruefen keine Study-Population dieses Reports, sondern Sweep-/Study-weite Bedingungen).
+    for d in _read_external_invariant_results():
+        invariant_checks.append(d)
+        if not d.get("passed", True):
+            emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
+                "scope": d.get("scope"), "check": d.get("name"),
+                "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
+                "report_source": report_source,
+            }, level=logging.ERROR)
+
+    # Issue #1015/#1167 (Katalog #1170) — die neue Meta-Invariante selbst: erschien jede definierte
+    # check_*-Funktion im soeben zusammengefuehrten Strom oder auf der Allowlist? Muss NACH JEDEM
+    # Merge oben stehen (braucht den finalen ``invariant_checks``-Stand), daher direkt angehaengt
+    # statt ueber ``all_checks`` (dessen invariant_checks-Aufbau bereits abgeschlossen ist).
+    _stream_check_names = sorted({
+        d.get("check") or d.get("name") for d in invariant_checks if d.get("check") or d.get("name")
+    })
+    invariant_coverage_check = _inv.check_invariant_coverage(
+        _all_defined_check_names(), _stream_check_names,
+        allowlisted_check_names=list(_DELIBERATELY_UNWIRED_INVARIANT_CHECKS))
+    _coverage_dict = invariant_coverage_check.to_dict()
+    _coverage_dict["scope"] = "global"
+    _coverage_dict["source"] = "report"
+    invariant_checks.append(_coverage_dict)
+    if not invariant_coverage_check.passed:
+        emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
+            "scope": "global", "check": invariant_coverage_check.name,
+            "expected": invariant_coverage_check.expected, "actual": invariant_coverage_check.actual,
+            "detail": invariant_coverage_check.detail, "report_source": report_source,
+        }, level=logging.ERROR)
 
     # Issue #942/#1108 (Katalog #960) — die drei orthogonalen Achsen, EINMAL hier aus der bereits
     # vorliegenden Wahrheit abgeleitet (dieselbe Quelle fuer JEDEN Aufrufer/Pfad, siehe Docstring

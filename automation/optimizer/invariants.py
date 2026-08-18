@@ -5847,6 +5847,49 @@ def check_invariant_registry_wired(
     )
 
 
+def check_invariant_coverage(
+    defined_check_names: list[str], stream_check_names: list[str], *,
+    allowlisted_check_names: list[str] = (),
+) -> InvariantResult:
+    """Issue #1015/#1167 (Katalog #1170, Pitfall #413 in AGENTS.md) — eine ANDERE Frage als
+    ``check_invariant_registry_wired`` (#984/#1138, oben): dieser fragt "hat die Funktion eine
+    Aufrufstelle im Quelltext" (statisch) — 91 von 91 ``check_*``-Funktionen bestanden DIESEN
+    Check, obwohl neun ihrer Ergebnisse nie in ``run.json['invariant_checks']`` ankamen. Acht
+    davon LIEFEN (Worker-, Sweep-Schleifen-, Phase-5-Prozess), meldeten ihr Urteil aber nur bei
+    FAIL (oder nie) als Ereignis — ein Leser des Reports konnte "bestanden" nicht von "nie
+    geprüft" unterscheiden. Diese Funktion prüft die LAUFZEIT-Beobachtbarkeit: erschien der Name
+    tatsächlich in DIESEM Report (``stream_check_names``, vom Aufrufer aus dem fertig
+    zusammengeführten ``invariant_checks`` extrahiert) — oder steht er auf der Allowlist
+    (``allowlisted_check_names``, mit Begründung, z. B. weil sein Ereignis strukturell in einem
+    disjunkten Prozess-Sidecar landet, siehe ``report._DELIBERATELY_UNWIRED_INVARIANT_CHECKS``)?
+
+    Akzeptanzkriterium #1167: ``n_defined - n_in_stream - n_allowlisted == 0`` — hier über die
+    Menge ``defined - stream - allowlisted`` ausgewertet (robust gegen Namen, die in BEIDEN
+    Mengen zugleich stehen, was die reine Subtraktion sonst verdecken würde).
+
+    Reine Funktion (wie ``check_invariant_registry_wired``): welche ``check_*``-Funktionen
+    DEFINIERT sind und welche Namen im Report-Strom AUFTAUCHTEN, ermittelt der Aufrufer."""
+    defined = set(defined_check_names or [])
+    stream = set(stream_check_names or [])
+    allowlisted = set(allowlisted_check_names or [])
+    missing = sorted(defined - stream - allowlisted)
+    passed = not missing
+    return InvariantResult(
+        name="check_invariant_coverage",
+        passed=passed,
+        expected="jede definierte check_*-Funktion erscheint entweder im invariant_checks-Strom "
+                 "dieses Reports oder in _DELIBERATELY_UNWIRED_INVARIANT_CHECKS mit Begründung "
+                 "(n_defined - n_in_stream - n_allowlisted == 0).",
+        actual={"n_defined": len(defined), "n_in_stream": len(stream & defined),
+               "n_allowlisted": len(allowlisted & defined), "missing": missing} if not passed else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(missing)} definierte check_*-Funktion(en) erscheinen weder im Invarianten-"
+                f"Strom dieses Reports noch auf der Allowlist: {', '.join(missing)} — ihr Ergebnis "
+                "(PASS oder FAIL) ist aus dem Artefakt nicht ablesbar (#1167)."),
+    )
+
+
 def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
                                      fail_fast_invariants: list[str] | None = None) -> InvariantResult:
     """Issue #907 Fix 3 — symmetrisch zum Gate-Kollinearitäts-Fix: eine in

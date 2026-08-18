@@ -2023,6 +2023,28 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "window_end": _sample.get("window_end"),
                 "passed": _quality["passed"],
             })
+            # Issue #1015/#1167 (Katalog #1170) — ``check_bar_quality``s Ergebnis lief bisher NUR
+            # als ``BAR_QUALITY_PROFILE`` (freie Zahlen, kein Invarianten-Urteil) in den Strom;
+            # ``report.py`` liest denselben "optimizer"-Sidecar (siehe ``jsonl_sidecar_path``) und
+            # kann dieses ``INVARIANT_STREAM_RESULT``-Event daher — anders als worker-seitige Checks —
+            # tatsaechlich in ``invariant_checks`` mitfuehren. Symmetrisch (PASS UND FAIL), sonst
+            # ist ein bestandener Preflight ohne Ereignis nicht von "nie geprueft" unterscheidbar.
+            emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
+                "name": "check_bar_quality", "check": "check_bar_quality",
+                "passed": _quality["passed"], "source": "sweep", "scope": _sym,
+                "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
+                           "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
+                           "Schwellen (#807).",
+                "actual": {
+                    "frac_zero_true_range": _quality.get("frac_zero_true_range"),
+                    "atr_median_bps": _quality.get("atr_median_bps"),
+                    "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
+                    "median_delta_t_s": _quality.get("median_delta_t_s"),
+                } if not _quality["passed"] else None,
+                "detail": _quality.get("reason") if not _quality["passed"] else
+                          "Bar-Qualitaets-Preflight bestanden.",
+                "severity": "high",
+            }, level=logging.INFO if _quality["passed"] else logging.WARNING)
             if _quality["passed"]:
                 continue
             _degenerate_syms.append(_sym)
@@ -2665,9 +2687,28 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #828 Fix Punkt 5 — dasselbe Muster für das Laufzeit-Budget: kein hartes
         # ENOSPC-Äquivalent, aber ein 62-h-Lauf ohne Obergrenze ist operativ nicht steuerbar.
         # Laufende Studies werden NICHT abgebrochen, nur keine neuen mehr gestartet.
-        if wallclock_guard.check_wallclock_budget(
-            time.perf_counter() - sweep_t0, max_hours=_sweep_max_wallclock_h,
-        ):
+        _wallclock_elapsed_s = time.perf_counter() - sweep_t0
+        _wallclock_exceeded = wallclock_guard.check_wallclock_budget(
+            _wallclock_elapsed_s, max_hours=_sweep_max_wallclock_h,
+        )
+        # Issue #1015/#1167 (Katalog #1170) — vorher nur bei Ueberschreitung ein WARNING-Log, sonst
+        # spurlos: ein Lauf, der das Budget NIE erreichte, und ein Lauf, in dem diese Pruefung nie
+        # ausgefuehrt wurde, waren im Report ununterscheidbar. Symmetrisch (PASS UND FAIL), source=
+        # "sweep" (dieselbe "optimizer"-Sidecar-Datei, die report.py bereits liest).
+        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+            "name": "check_wallclock_budget", "check": "check_wallclock_budget",
+            "passed": not _wallclock_exceeded, "source": "sweep", "scope": "global",
+            "expected": (f"elapsed_s <= max_hours*3600 (max_hours={_sweep_max_wallclock_h})"
+                        if _sweep_max_wallclock_h is not None else
+                        "kein sweep_max_wallclock_h konfiguriert (Check inaktiv, Default-PASS)."),
+            "actual": {"elapsed_s": round(_wallclock_elapsed_s, 1),
+                      "max_hours": _sweep_max_wallclock_h} if _wallclock_exceeded else None,
+            "detail": (f"Laufzeit-Budget überschritten nach {_wallclock_elapsed_s:.0f}s "
+                      f"(max_hours={_sweep_max_wallclock_h})." if _wallclock_exceeded else
+                      "Laufzeit-Budget nicht überschritten."),
+            "severity": "high",
+        }, level=logging.INFO if not _wallclock_exceeded else logging.WARNING)
+        if _wallclock_exceeded:
             wallclock_guard.sweep_wallclock_exceeded.set()
             logging.getLogger("optimizer").warning(
                 "[#828] Laufzeit-Budget überschritten (sweep_max_wallclock_h=%s) — verbleibende "

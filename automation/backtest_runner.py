@@ -6140,10 +6140,28 @@ def run_single_backtest_worker(
             required_days = wfd.get("is_window_days", 90) + (wfd.get("splits", 2) * wfd.get("oos_window_days", 30))
         if required_days:
             is_sufficient, span_days, _ = check_data_span(ticks, required_days, span_tolerance_days)
+            from automation.log_manager import emit_execution_event as emit_json_event
+            import logging
+            log = logging.getLogger("backtest_worker")
+            # Issue #1015/#1167 (Katalog #1170) — symmetrisches INVARIANT_STREAM_RESULT (PASS UND FAIL),
+            # source="worker": vorher nur bei is_sufficient=False ein WALK_FORWARD_INSUFFICIENT_
+            # DATA-Event, ein bestandener Check spurlos. Landet — wie COST_MODEL_RESOLVED (#999/
+            # #1151) — im "backtest_worker"-Sidecar des isolierten Worker-Prozesses; report._
+            # DELIBERATELY_UNWIRED_INVARIANT_CHECKS dokumentiert denselben strukturellen Transport-
+            # Bruch (report.py liest nur den "optimizer"-Sidecar des Hauptprozesses).
+            emit_json_event(log, "INVARIANT_STREAM_RESULT", {
+                "name": "check_data_span", "check": "check_data_span",
+                "passed": is_sufficient, "source": "worker", "scope": inst_id_str,
+                "expected": f"Datenspanne >= required_days({required_days}) - "
+                           f"span_tolerance_days({span_tolerance_days}).",
+                "actual": {"span_days": round(span_days, 1), "required_days": required_days}
+                         if not is_sufficient else None,
+                "detail": (f"Datenspanne {span_days:.1f} Tage < benoetigt ~{required_days} Tage "
+                          f"(Toleranz {span_tolerance_days} Tage)." if not is_sufficient else
+                          f"Datenspanne {span_days:.1f} Tage ausreichend."),
+                "severity": "high",
+            }, level=logging.INFO if is_sufficient else logging.WARNING)
             if not is_sufficient:
-                from automation.log_manager import emit_execution_event as emit_json_event
-                import logging
-                log = logging.getLogger("backtest_worker")
                 emit_json_event(log, "WALK_FORWARD_INSUFFICIENT_DATA", {
                     "symbol": inst_id_str,
                     "required_days": required_days,

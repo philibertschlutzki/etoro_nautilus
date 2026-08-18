@@ -108,10 +108,16 @@ def test_report_schema_and_atomic_write(wired_storage):
     assert stages == ["deflation"]
     assert rec["rejection_chain"][0]["detail"] == "REJECT_HOLDOUT_DSR_DROP"
 
+    # Issue #1001/#1153 (Katalog #1170) Regressionsfix — dieses Alt-Proposal traegt kein
+    # ``stage_results`` (Legacy-Fallback in ``_decision_chain``) und ``promote`` ist False
+    # (``status='REJECTED_ON_HOLDOUT'``): Stufen VOR der tatsaechlich blockierenden ('deflation')
+    # sind seit #1153 NICHT mehr stillschweigend ``True`` ("nachweislich nie ausgewertet" statt
+    # einer Ableitungs-Annahme, siehe ``_decision_chain``-Docstring) — nur 'deflation' selbst ist
+    # ``False`` (die terminale, tatsaechlich gemessene Ablehnung).
     decision_stages = {c["stage"]: c["passed"] for c in rec["decision_chain"]}
     assert decision_stages["is_gate"] is True
-    assert decision_stages["confirm_or_selection"] is True
-    assert decision_stages["holdout"] is True
+    assert decision_stages["confirm_or_selection"] is None
+    assert decision_stages["holdout"] is None
     assert decision_stages["deflation"] is False
 
     assert "cross_study" in data and "n_family" in data["cross_study"]
@@ -142,7 +148,18 @@ def test_second_process_reconstructs_same_report_from_sqlite_and_proposals(wired
 
     assert standalone_data["studies"] == live_data["studies"]
     assert standalone_data["cross_study"] == live_data["cross_study"]
-    assert standalone_data["invariant_checks"] == live_data["invariant_checks"]
+    # Issue #940/#1106 + #941/#1107 (Katalog #960) Regressionsfix — mehrere Checks (u.a.
+    # ``check_report_cohort_coherence``s eigenes ``actual``/``detail``, JEDES ``cohort``-Objekt seit
+    # #1107) tragen den ``run_id``-Wert selbst als Inhalt, nicht nur als Lauf-Metadatum — das ist
+    # bereits im Kommentar unten als legitim divergierend dokumentiert ("Nur der Lauf-Kontext ...
+    # darf legitim divergieren"), wurde hier vor #1106/#1107 aber nicht sichtbar (dieser Vergleich
+    # wurde durch einen VORGELAGERTEN Crash nie erreicht). Ersetzt beide run_id-Werte durch denselben
+    # Platzhalter VOR dem Vergleich — bit-identisch bis auf den bereits dokumentierten Lauf-Kontext.
+    def _without_run_id(checks, run_id):
+        text = json.dumps(checks, sort_keys=True).replace(run_id, "<RUN_ID>")
+        return json.loads(text)
+    assert (_without_run_id(standalone_data["invariant_checks"], standalone_data["run_id"])
+           == _without_run_id(live_data["invariant_checks"], live_data["run_id"]))
     # Nur der Lauf-Kontext (run_id/wallclock/cli_args) darf legitim divergieren.
     assert standalone_data["run_id"] != live_data["run_id"]
 
