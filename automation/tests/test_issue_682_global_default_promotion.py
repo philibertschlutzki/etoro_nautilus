@@ -111,7 +111,8 @@ def test_global_default_not_promoted_when_budget_execution_insufficient(tmp_path
     res = cmod.confirm_per_symbol_promotion(study, "VolatilityBreakoutPumpStrategy", "TSLA.ETORO", {})
 
     assert res["promote"] is False
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — "kein eligibler Trial" erreicht die Holdout-Stufe nie.
+    assert res["status"] == "REJECTED_BEFORE_HOLDOUT"
     assert res["is_rejection_detail_override"] == "HOLDOUT_NO_ELIGIBLE_TRIALS"
     assert not any(name == "PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL" for name, _ in events)
 
@@ -133,7 +134,8 @@ def test_global_default_not_promoted_when_holdout_gate_fails(tmp_path, monkeypat
     res = cmod.confirm_per_symbol_promotion(study, "VolatilityBreakoutPumpStrategy", "TSLA.ETORO", {})
 
     assert res["promote"] is False
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — "kein eligibler Trial" erreicht die Holdout-Stufe nie.
+    assert res["status"] == "REJECTED_BEFORE_HOLDOUT"
     assert res["is_rejection_detail_override"] == "HOLDOUT_NO_ELIGIBLE_TRIALS"
     assert "promotion_route" not in res or res.get("promotion_route") is None
     assert any(name == "HOLDOUT_NO_ELIGIBLE_TRIALS" for name, _ in events)

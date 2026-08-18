@@ -342,6 +342,45 @@ def assert_instrument_metadata_coherence() -> "_inv.InvariantResult | None":
     return result
 
 
+def warn_if_cost_model_zero_realism() -> bool:
+    """Issue #1010/#1162 (Katalog #1170, P0) — Startup-Warnung: sind ``backtest.json``'s
+    ``overnight_financing_bps_per_day_by_asset_class`` UND ``slippage_bps_by_asset_class`` fuer
+    ALLE Asset-Klassen 0.0 (der aktuelle, dokumentiert unkalibrierte Platzhalter-Zustand, siehe
+    #987/#1141, Pitfall #412 in AGENTS.md), ist die ``'full_realism'``-Kostenstress-Stufe
+    (``backtest_runner._full_realism_expectancy``) ein reines NO-OP — jede Ertragsaussage dieses
+    Laufs ist damit finanzierungs- UND slippagefrei, unabhaengig davon, was der Bericht unter
+    ``holdout_expectancy_cost_stress_full_realism`` ausweist (siehe ``invariants.check_cost_stress_
+    distinctness`` fuer den Post-Hoc-Nachweis am fertigen Report).
+
+    NICHT fail-loud (kein ``sys.exit`` wie ``assert_instrument_metadata_coherence`` — eine
+    Kalibrierungsluecke ist kein Konfigurationsfehler, sondern ein bewusst dokumentierter,
+    fehlender Datenpunkt, siehe Fix Punkt 3 der Issue: eine Zahl > 0 braucht eine reale Quelle
+    (Kontoauszug/Gebuehrenuebersicht) und wird hier NICHT geraten). Rueckgabe: ``True``, wenn die
+    Warnung ausgeloest wurde (fuer Tests/Aufrufer, die das Ergebnis pruefen wollen)."""
+    backtest_path = config_dir() / "backtest.json"
+    try:
+        cfg = json.loads(backtest_path.read_text("utf-8")) if backtest_path.exists() else {}
+    except (OSError, ValueError):
+        cfg = {}
+    financing = cfg.get("overnight_financing_bps_per_day_by_asset_class") or {}
+    slippage = cfg.get("slippage_bps_by_asset_class") or {}
+    _all_values = [v for v in financing.values() if isinstance(v, (int, float))] + \
+                  [v for v in slippage.values() if isinstance(v, (int, float))]
+    if not _all_values or any(v != 0.0 for v in _all_values):
+        return False
+    emit_execution_event(
+        logging.getLogger("optimizer"), "COST_MODEL_ZERO_REALISM",
+        {"overnight_financing_bps_per_day_by_asset_class": financing,
+         "slippage_bps_by_asset_class": slippage,
+         "detail": "backtest.json: alle Finanzierungs- UND Slippage-Saetze sind 0.0 fuer jede "
+                   "Asset-Klasse -- die 'full_realism'-Kostenstress-Stufe ist ein No-Op, jede "
+                   "Ertragsaussage dieses Laufs ist ohne Overnight-Finanzierung, ohne Slippage, "
+                   "ohne Market Impact (#1010/#1162)."},
+        level=logging.WARNING,
+    )
+    return True
+
+
 def _assert_gate_reward_parity() -> None:
     """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
     ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität).
@@ -1292,6 +1331,20 @@ def _study_oos_n_periods_median(study) -> float | None:
     return statistics.median(values)
 
 
+def _family_members(family_membership: str | None) -> bool:
+    """Issue #1006/#1158 (Katalog #1170) — EINE Filterfunktion, ob eine Study/ein Study-Record zur
+    familienweiten Multiplizität zählt, aufgerufen von BEIDEN Summen: der eingefrorenen (dieses
+    Modul, Symbol-Dispatch-Zeitpunkt) UND der zur Berichtszeit beobachteten (``report._family_n_
+    stages``). Root-Cause #1158: NUR der eingefrorene Pfad wandte den #981/#1135-Ausschluss
+    (``family_membership == 'excluded_degenerate'``) tatsächlich an — der beobachtete Pfad kannte
+    das Flag nicht und fiel für eine solche Study auf ihre rohe ``n_selection_statistic_available``-
+    Zahl zurück, statt sie wie den eingefrorenen Pfad auf 0 zu setzen (Differenz exakt 1: NVDA/
+    SqueezeBreakout, frozen=0 vs. observed=1). Jedes weitere ``family_membership``-Ausschlusslabel,
+    das künftig eingeführt wird, muss HIER (und nur hier) ergänzt werden, damit beide Summen
+    tautologisch synchron bleiben."""
+    return family_membership != "excluded_degenerate"
+
+
 def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
                                   ) -> dict[tuple[str, str], int]:
     """Issue #826 Fix Punkt 1/2 — N1: die Multiple-Testing-Multiplizität EINER EINZELNEN Study
@@ -1850,6 +1903,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         if _preflight_instrument_metadata_result is not None:
             preflight_invariant_checks.append(
                 dataclasses.replace(_preflight_instrument_metadata_result, phase="preflight").to_dict())
+        # Issue #1010/#1162 (Katalog #1170) — nicht fail-loud (siehe dortiger Docstring), daher
+        # kein Eintrag in preflight_invariant_checks (die Liste erwartet InvariantResult-Dicts,
+        # nicht reine Log-Warnungen) — die WARNING-Zeile im Log ist der einzige Traeger.
+        warn_if_cost_model_zero_realism()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
@@ -2726,11 +2783,20 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                         continue
                     _strategy_deg, _symbol_deg, _reason_deg = _pair
                     _median_periods = _study_oos_n_periods_median(_study)
-                    if (_median_periods is not None
-                            and _median_periods < _min_oos_periods_for_family):
+                    _membership_deg = (
+                        "excluded_degenerate"
+                        if (_median_periods is not None
+                            and _median_periods < _min_oos_periods_for_family)
+                        else None
+                    )
+                    # Issue #1006/#1158 — derselbe Filter, den ``report._family_n_stages`` fuer die
+                    # BEOBACHTETE Summe anwendet (``_family_members``), damit ``excluded_degenerate``
+                    # in KEINER der beiden Summen zaehlt, statt nur in dieser.
+                    if not _family_members(_membership_deg):
                         symbol_n_family_stage1[(_strategy_deg, _symbol_deg)] = 0
+                    if _membership_deg is not None:
                         try:
-                            _study.set_user_attr("family_membership", "excluded_degenerate")
+                            _study.set_user_attr("family_membership", _membership_deg)
                         except Exception:
                             logging.getLogger("optimizer").debug(
                                 "[#1135] %s/%s: family_membership-Stempel fehlgeschlagen "
@@ -3109,6 +3175,14 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         "strategies_enumerated": len(enumerated),
         "strategies_skipped": strategies_skipped,
         # Issue #625 — familienweise N_eff je Symbol (Σ eligibler Trials über die Strategien-Studies).
+        # Issue #1005/#1157 (Katalog #1170) — umbenannt von ``deflation_n_family``: derselbe
+        # Feldname trug im selben Lauf DREI numerisch verschiedene Groessen (dieses Sweep-Ereignis,
+        # ``cross_study.n_family.frozen`` und ``.observed_at_report_time``, siehe report.py). Dieses
+        # Feld ist die im ATTEMPTED-Sinn gezaehlte Multiplizitaet (``_family_n_from_proposals``,
+        # #1102-Grundgesamtheit ``deflation_n_eligible`` — enger als die Stage1-Summe unten).
+        "n_family_attempted": family_n,
+        # Konvention #1081 — Uebergangs-Alias eine Sitzung lang: alte Konsumenten lesen denselben,
+        # unveraenderten Wert unter dem alten Namen weiter.
         "deflation_n_family": family_n,
     })
     if strategies_skipped:
@@ -3504,18 +3578,26 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     # Issue #933 (Pitfall #306) — die LETZTE Zeile jedes Laufs, egal ob er sauber durchlief oder
     # per SIGINT/SIGTERM/Exception abbrach: vorher war ein Snapshot eines laufenden Sweeps von
-    # einem abgestürzten nur über die Trial-Kadenz im Log unterscheidbar (#933-Symptom). status
-    # 'completed' NUR bei run_status=='complete' — jeder andere run_status (aborted_*, partial,
-    # ...) ist SWEEP_ABORTED, unabhängig vom genauen Grund (der steht in run_status selbst).
+    # einem abgestürzten nur über die Trial-Kadenz im Log unterscheidbar (#933-Symptom). Issue
+    # #1009/#1161 (Katalog #1170) — siehe ``_sweep_completion_event`` fuer die Root-Cause/den Fix.
+    _sweep_event_type, _sweep_event_level = _sweep_completion_event(run_status)
+    _sweep_event_payload = {
+        "run_id": run_id, "run_status": run_status,
+        "symbols_completed": symbols_completed, "symbols_planned": symbols_planned,
+        # Issue #939 — auditierbar, WELCHE Symbole isoliert scheiterten (statt nur, dass
+        # run_status von 'complete' abweicht).
+        "failed_symbols": sorted(sweep_failed_symbols),
+    }
+    if _sweep_event_type == "SWEEP_FINISHED":
+        # Konvention #1081 — Uebergangs-Alias eine Sitzung lang: ein Log-Parser, der noch nach dem
+        # STRING "SWEEP_ABORTED" irgendwo in der JSON-Zeile sucht (statt exakt gegen das
+        # ``event_type``-Feld zu matchen), findet ihn hier weiterhin — der AUTORITATIVE
+        # ``event_type`` selbst ist bewusst NIE "SWEEP_ABORTED" fuer einen Nicht-Abbruch (das ist
+        # exakt der #1161-Fix), ein exaktes Feld-Match auf "event_type" bleibt daher korrekt.
+        _sweep_event_payload["event_type_alias"] = "SWEEP_ABORTED"
     emit_execution_event(
-        logging.getLogger("optimizer"),
-        "SWEEP_COMPLETED" if run_status == "complete" else "SWEEP_ABORTED",
-        {"run_id": run_id, "run_status": run_status,
-         "symbols_completed": symbols_completed, "symbols_planned": symbols_planned,
-         # Issue #939 — auditierbar, WELCHE Symbole isoliert scheiterten (statt nur, dass
-         # run_status von 'complete' abweicht).
-         "failed_symbols": sorted(sweep_failed_symbols)},
-        level=logging.INFO if run_status == "complete" else logging.WARNING,
+        logging.getLogger("optimizer"), _sweep_event_type, _sweep_event_payload,
+        level=_sweep_event_level,
     )
 
     # Issue #833 — der urspruengliche Abbruch (SIGINT/SIGTERM/unerwartete Exception) wird nach dem
@@ -3548,9 +3630,21 @@ def _first_failing_fail_fast_invariant(invariant_checks: list[dict], fail_fast_i
     """Issue #839 — reine Entscheidungsfunktion: welcher (falls einer) der in
     ``optimizer.json['fail_fast_invariants']`` gelisteten Check-Namen in ``invariant_checks``
     (z. B. aus ``report._build_report(...)['invariant_checks']``) FAILt. ``None`` ⇒ keiner der
-    gelisteten Checks ist verletzt (der Sweep läuft weiter)."""
+    gelisteten Checks ist verletzt (der Sweep läuft weiter).
+
+    Issue #995/#1147 (Pitfall #413 in AGENTS.md) — verlangt BEWUSST ``chk.get("passed") is False``
+    (ein definitives FAIL), NICHT das laxere ``not chk.get("passed", True)``: seit #995/#1147 kann
+    ``passed`` auch ``None`` sein (``evaluable=False`` — "Grundgesamtheit nicht herstellbar", siehe
+    ``invariants.InvariantResult``). Ein Abbruch MITTEN im Sweep, ausschliesslich weil ein Check
+    (noch) keine Evidenz hatte, waere der in Pitfall #404 bereits einmal zurueckgewiesene Fehler
+    ("ein Abbruch AUF FEHLENDER EVIDENZ waere ein zweiter, eigener Fehler, kein Fix") — dieser
+    LIVE-Abbruchpfad bleibt deshalb strikt auf ein NACHGEWIESENES FAIL beschraenkt. Die POST-HOC-
+    Zulaessigkeitsbewertung (``report._compute_decision_admissible``, ``confirm.py``s
+    ``REJECT_STUDY_INVARIANT_BLOCKING``) behandelt ``evaluable=False`` dagegen SEHR WOHL als
+    Befund — das ist der bewusste, im Katalog #1170 dokumentierte Unterschied zwischen "Sweep
+    abbrechen" und "keine Zulassungsentscheidung treffen"."""
     for chk in invariant_checks or []:
-        if chk.get("name") in fail_fast_invariants and not chk.get("passed", True):
+        if chk.get("name") in fail_fast_invariants and chk.get("passed") is False:
             return chk.get("name")
     return None
 
@@ -3642,6 +3736,35 @@ def _fail_fast_systemic_verdict(
         )
         return systemic, ("abort" if systemic else policy)
     return len(offending_symbols) >= min_offending_symbols, policy
+
+
+def _sweep_completion_event(run_status: str) -> tuple[str, int]:
+    """Issue #1009/#1161 (Katalog #1170) — ``SWEEP_ABORTED`` bei einem erfolgreichen Lauf.
+
+    Root-Cause: "jeder ``run_status`` ausser ``'complete'`` ist ``SWEEP_ABORTED``" (der Vorzustand)
+    behandelte ``run_status == 'complete'`` als den EINZIGEN nicht-abgebrochenen Ausgang — aber
+    ``_downgrade_run_status_for_blocking_invariants`` UND die ``completed_with_quarantine``/
+    ``completed_with_failures``/``resumed_complete``/``completed_invalid``-Zweige (``main()``, im
+    Symbol-Loop) setzen ``run_status`` auf einen Wert, der WEDER ``'complete'`` NOCH ein echter
+    Abbruch ist — ein Lauf, der ALLE geplanten Symbole abgeschlossen hat (``symbols_completed ==
+    symbols_planned``, ``failed_symbols == []``), emittierte trotzdem ``SWEEP_ABORTED`` mit
+    ``level=WARNING``, weil sein ``run_status`` lediglich nicht exakt der String ``'complete'`` war.
+
+    Fix: die Menge der ECHTEN Abbrueche wird EXPLIZIT als jeder ``run_status``, der mit
+    ``'aborted_'`` beginnt, definiert (nicht nur die im Issue genannten ``aborted_invariant``/
+    ``aborted_error`` — ``aborted_wallclock``/``aborted_disk``/``aborted_signal`` sind ebenso
+    echte Abbrueche; sie aus ``SWEEP_ABORTED`` auszunehmen wuerde bestehende Alarme auf
+    Ressourcen-Guards stillschweigend abschalten, das Gegenteil der in #1161 geforderten
+    Aussagekraft). Ein Lauf, der weder ``'complete'`` noch ein echter Abbruch ist, emittiert das
+    NEUE ``SWEEP_FINISHED`` (``run_status`` traegt im Payload den genauen Ausgang) statt des
+    irrefuehrenden ``SWEEP_ABORTED``.
+
+    Rueckgabe: ``(event_type, log_level)``."""
+    if run_status == "complete":
+        return "SWEEP_COMPLETED", logging.INFO
+    if run_status.startswith("aborted_"):
+        return "SWEEP_ABORTED", logging.WARNING
+    return "SWEEP_FINISHED", logging.INFO
 
 
 def _downgrade_run_status_for_blocking_invariants(report_path) -> str:

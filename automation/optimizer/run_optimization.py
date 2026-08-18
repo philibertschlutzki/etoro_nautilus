@@ -49,6 +49,64 @@ STORAGE = f"sqlite:///{WORK / 'studies.db'}"
 # Verlust, aber die `create_all`-Kollision ist ausgeschlossen.
 _study_lock = threading.Lock()
 
+# Issue #994/#1146 (Katalog #1170) — Regressionswaechter gegen eine Wiederkehr des #1126/#1130-
+# Stempel-Luecken-Fehlers: 14 in ``parsing.TournamentMetrics`` geparste ``oos_*``-Felder erreichten
+# NIE ``trial.user_attrs`` (der Merge, der das #1126/#1130-Feldblock einfuehrte, zog die Stempelung
+# unvollstaendig nach) — ``report._median_of_trial_field`` liest AUSSCHLIESSLICH ``trial.
+# user_attrs``, also blieben die abgeleiteten Report-Felder in 28/28 Studies ``None``, obwohl der
+# Backtest-Runner die Rohwerte berechnete UND ``parsing.py`` sie korrekt parste. Der Kontrakt-Test
+# (``test_issue_994_1146_metric_stamping_contract.py``) iteriert ALLE ``oos_*``-Felder von
+# ``TournamentMetrics`` und verlangt fuer jedes entweder eine Aufrufstelle
+# ``trial.set_user_attr("<feld>", ...)`` in diesem Modul ODER einen Eintrag hier — mit Begruendung,
+# WARUM das Feld legitim NICHT trial-gestempelt wird (kein stiller Drift mehr moeglich).
+_INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
+    # Holdout-only: diese Felder werden NIE im Rahmen des IS/OOS-Sweep-Trial-Objectives gefuellt,
+    # sondern ausschliesslich von confirm.py's promotiertem Holdout-Re-Evaluation-Pfad
+    # (``_metrics_dict(promoted_m_symbol)`` -> ``report.py``s ``holdout_metrics.get("oos_...")``,
+    # siehe dortige ``holdout_*``-Feldzuordnung). Ein Trial-User-Attr wuerde nie gesetzt, weil die
+    # Groesse strukturell erst NACH dem Sweep, am promotierten Kandidaten, existiert.
+    "oos_profit_factor_censored": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_censored)",
+    "oos_profit_factor_raw": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_raw)",
+    "oos_expectancy_capital_weighted": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted)",
+    "oos_expectancy_winsorized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_winsorized)",
+    "oos_expectancy_outlier_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_outlier_count)",
+    "oos_expectancy_cost_stress_1_5x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_1_5x)",
+    "oos_expectancy_cost_stress_2x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_2x)",
+    "oos_expectancy_cost_stress_full_realism": "holdout-only (confirm.py-Re-Evaluation, siehe #1162/Issue 1010)",
+    "oos_cvar_95": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_cvar_95)",
+    "oos_es_99": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_es_99)",
+    "oos_sortino_annualized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_sortino_annualized)",
+    "oos_annualization_factor_source": "holdout-only (confirm.py-Re-Evaluation, siehe report.py annualization_factor_source)",
+    "oos_excess_return": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_excess_return, #986/#1140)",
+    "oos_exposure_fraction": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_exposure_fraction, #986/#1140)",
+    "oos_alpha": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_beta": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_f_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_median, #989/#1143)",
+    "oos_n_trailing_stop_exits_with_fill_lag_telemetry": "holdout-only (confirm.py-Re-Evaluation, siehe report.py causal_hypothesis_state, #976/#1130)",
+    # In-Prozess konsumiert, ohne Persistenzbedarf: der Wert wird SYNCHRON innerhalb derselben
+    # Trial-Objective-Auswertung verbraucht (Reward-/Constraint-Berechnung, Rejection-Detail,
+    # ``optimizer_trial_completed``-Log-Event) — es existiert kein nachgelagerter Report-Konsument,
+    # der ihn aus ``trial.user_attrs`` zurueckliest.
+    "oos_max_drawdown": "synchron in Reward-/DD-Constraint-Berechnung verbraucht (run_optimization.py), kein trial_attrs-Ruecklesepfad",
+    "oos_window_start_ns": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_covered": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_coverage_gap_days": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_anchor_divergence": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_rejection_reasons": "synchron zu rejection_reason/is_rejection_detail verdichtet, kein eigener trial_attrs-Konsument",
+    "oos_ret_skew": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
+    "oos_ret_kurtosis": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
+    "oos_psr_z": "synchron via getattr(metrics,...) in reward.compute_reward konsumiert, kein trial_attrs-Ruecklesepfad",
+    # Kein identifizierter Konsument (Stand #1146) — weder trial_attrs noch ein direkter
+    # In-Prozess-Verbrauch. Kandidat fuer eine kuenftige Verdrahtung ODER Entfernung aus
+    # ``parsing.TournamentMetrics``, aber KEIN Symptom dieses Fixes (kein Report-Feld erwartet sie).
+    "oos_fold_returns": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+    "oos_folds_total": "kein identifizierter Konsument in Report/Confirm (Stand #1146) — nur backtest_runner-intern beim Parsen selbst",
+    "oos_sortino_aggregation_basis": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+    "oos_p95_bars_held": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+    "oos_equity_ruined": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+}
+
 
 def _create_study_with_retry(*, study_name: str, storage: str, sampler=None,
                              direction: str | None = "maximize", directions: list[str] | None = None):
@@ -3094,6 +3152,37 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr(
                 "oos_dust_round_trips_filtered_count",
                 metrics.oos_dust_round_trips_filtered_count)
+        # Issue #994/#1146 (Katalog #1170) — der #1126/#1130-Feldblock war in ``TournamentMetrics``
+        # geparst, aber NIE gestempelt: ``report._median_of_trial_field`` liest ausschliesslich
+        # ``trial.user_attrs``, nicht ``TournamentMetrics`` direkt, also blieben 14 Report-Felder in
+        # 28/28 Studies ``None``, obwohl der Backtest-Runner sie berechnete. Derselbe
+        # ``if … is not None``-Stempel-Stil wie die benachbarten Felder oben (#1035/#1097).
+        if metrics.oos_gross_loss_median_bps_trailing_stop is not None:
+            trial.set_user_attr(
+                "oos_gross_loss_median_bps_trailing_stop",
+                metrics.oos_gross_loss_median_bps_trailing_stop)
+        if metrics.oos_gross_loss_winsorized_mean_bps_trailing_stop is not None:
+            trial.set_user_attr(
+                "oos_gross_loss_winsorized_mean_bps_trailing_stop",
+                metrics.oos_gross_loss_winsorized_mean_bps_trailing_stop)
+        if metrics.oos_n_trailing_stop_losses_dust_filtered:
+            trial.set_user_attr(
+                "oos_n_trailing_stop_losses_dust_filtered",
+                metrics.oos_n_trailing_stop_losses_dust_filtered)
+        if metrics.oos_rt_notional_p05 is not None:
+            trial.set_user_attr("oos_rt_notional_p05", metrics.oos_rt_notional_p05)
+        if metrics.oos_rt_notional_p50 is not None:
+            trial.set_user_attr("oos_rt_notional_p50", metrics.oos_rt_notional_p50)
+        if metrics.oos_rt_notional_p95 is not None:
+            trial.set_user_attr("oos_rt_notional_p95", metrics.oos_rt_notional_p95)
+        if metrics.oos_atr_raw_median_bps is not None:
+            trial.set_user_attr("oos_atr_raw_median_bps", metrics.oos_atr_raw_median_bps)
+        if metrics.oos_stop_exit_fill_lag_bars_median is not None:
+            trial.set_user_attr(
+                "oos_stop_exit_fill_lag_bars_median", metrics.oos_stop_exit_fill_lag_bars_median)
+        if metrics.oos_stop_exit_slippage_bps_median is not None:
+            trial.set_user_attr(
+                "oos_stop_exit_slippage_bps_median", metrics.oos_stop_exit_slippage_bps_median)
 
         _timebox_violated_this_trial = False
         if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:
@@ -3194,6 +3283,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
         trial.set_user_attr("oos_n_periods", metrics.oos_n_periods)
+        # Issue #1011/#1163 (Katalog #1170) — Bar-Achsen-Dichte je Trial persistiert (None-safe,
+        # siehe parsing.TournamentMetrics.oos_bars_per_calendar_day-Feldkommentar), damit
+        # report.py/invariants.check_session_calendar_coherence den Study-Median bilden kann.
+        if metrics.oos_bars_per_calendar_day is not None:
+            trial.set_user_attr("oos_bars_per_calendar_day", metrics.oos_bars_per_calendar_day)
+        if metrics.oos_session_coverage_fraction is not None:
+            trial.set_user_attr(
+                "oos_session_coverage_fraction", metrics.oos_session_coverage_fraction)
         # Issue #845 — Downside-Beobachtungs-Nenner je Trial persistiert (None-safe, siehe
         # parsing.TournamentMetrics.oos_downside_obs-Feldkommentar), damit confirm.py/invariants.py
         # n_periods-Heterogenität einer Familie gegen die tatsaechlich downside-tragende

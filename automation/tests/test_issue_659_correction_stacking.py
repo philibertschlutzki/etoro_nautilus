@@ -146,7 +146,8 @@ def test_conjunction_mode_dsr_drop_still_blocks_promotion(tmp_path, monkeypatch,
     )
     assert res["metrics_symbol"]["deflated_dsr"] < 0.95
     assert res["holdout_passed"] is False
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — DSR-Drop ist eine Deflations-Ablehnung.
+    assert res["status"] == "REJECTED_ON_DEFLATION"
     assert res["is_rejection_detail_override"] == "REJECT_HOLDOUT_DSR_DROP"
 
 

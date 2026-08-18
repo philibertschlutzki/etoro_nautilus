@@ -52,15 +52,21 @@ def test_acceptance_criterion_n_rejections_equals_detail_count_for_every_gate():
 
 
 def test_gate_without_a_prefix_normalizes_correctly():
+    # Issue #1003/#1155 — 7 lokal ebenfalls verletzende Trials (statt 1), damit die neue
+    # Ordnungs-Invariante (n_rejections <= n_evaluated) bei der injizierten Zahl 7 nicht
+    # verletzt wird; der eigentliche Test-Gegenstand (Praefix-Normalisierung) bleibt unveraendert.
     table = inv.gate_inventory_table(
-        [_trial({"min_trades": 0.1})], ["min_trades"],
+        [_trial({"min_trades": 0.1}) for _ in range(7)], ["min_trades"],
         is_rejection_detail_counts={"REJECT_OOS_MIN_TRADES": 7})
     assert table[0]["n_rejections"] == 7
 
 
 def test_missing_detail_bucket_yields_zero_not_a_crash():
+    # Issue #1003/#1155 — der Trial verletzt ``oos_min_psr`` lokal NICHT (negatives Delta), damit
+    # der delta-basierte n_solo-Rueckfall (kein oos_rejection_reasons-Feld in dieser Fixture) mit
+    # dem injizierten n_rejections=0 konsistent bleibt (0 <= 0 <= 0 <= 1).
     table = inv.gate_inventory_table(
-        [_trial({"oos_min_psr": 0.1})], ["oos_min_psr"],
+        [_trial({"oos_min_psr": -0.1})], ["oos_min_psr"],
         is_rejection_detail_counts={})
     assert table[0]["n_rejections"] == 0
 
@@ -74,15 +80,19 @@ def test_solo_rejections_and_marginal_delta_remain_multi_label_regardless_of_the
         _trial({"oos_min_psr": -0.1, "oos_max_drawdown": -0.1, "oos_min_trades": -5}),
     ]
     without = inv.gate_inventory_table(trials, list(_GATES))
+    # Issue #1003/#1155 — die injizierte Zahl muss <= n_evaluated (2) bleiben (neue Ordnungs-
+    # Invariante), reicht aber weiterhin, um von der lokal delta-basierten Zaehlung (1) zu
+    # divergieren — der eigentliche Test-Gegenstand (Divergenz moeglich, solo/marginal bleiben
+    # lokal) ist unveraendert.
     with_detail = inv.gate_inventory_table(
-        trials, list(_GATES), is_rejection_detail_counts={"REJECT_OOS_MIN_PSR": 999})
+        trials, list(_GATES), is_rejection_detail_counts={"REJECT_OOS_MIN_PSR": 2})
     psr_without = next(r for r in without if r["gate"] == "oos_min_psr")
     psr_with = next(r for r in with_detail if r["gate"] == "oos_min_psr")
     assert psr_without["n_solo_rejections"] == psr_with["n_solo_rejections"]
     assert psr_without["marginal_delta"] == psr_with["marginal_delta"]
     # n_rejections selbst ist die einzige Groesse, die divergiert.
-    assert psr_with["n_rejections"] == 999
-    assert psr_without["n_rejections"] != 999
+    assert psr_with["n_rejections"] == 2
+    assert psr_without["n_rejections"] != 2
 
 
 def test_legacy_callers_without_the_new_argument_keep_the_old_behaviour():

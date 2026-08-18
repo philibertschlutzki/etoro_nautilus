@@ -100,6 +100,21 @@ def _fmt_hms_from_s(seconds: float | None) -> str:
     return f"{h:.2f} h ({seconds:.0f} s)"
 
 
+def _fmt_holding_duration_with_bar_note(seconds: float | None) -> str:
+    """Issue #1011/#1163 (Katalog #1170, Fix Punkt 3) — dieselbe Basis-Formatierung wie
+    ``_fmt_hms_from_s``, ergänzt um die Bar-/Kalendertag-Äquivalenz (1h-Bar-Konvention, siehe
+    ``backtest_runner._BAR_SECONDS_METRICS``), damit z. B. "24,00 h" NICHT als "~1 Handelstag"
+    (RTH-Lesart) fehlgedeutet wird — auf der aktuellen, über einen 24/7-Kalender aufgefüllten
+    synthetischen 1h-Bar-Achse (siehe ``invariants.check_session_calendar_coherence``) sind 24 h
+    buchstäblich 24 Bars UND 1 vollen KALENDERtag, keine Handelstags-Näherung."""
+    base = _fmt_hms_from_s(seconds)
+    if seconds is None:
+        return base
+    n_bars = seconds / 3600.0
+    n_calendar_days = seconds / 86400.0
+    return f"{base} = {n_bars:.0f} synthetische Bars = {n_calendar_days:.2f} Kalendertag(e)"
+
+
 def _studies(report: dict) -> list[dict[str, Any]]:
     return list(report.get("studies") or [])
 
@@ -405,12 +420,18 @@ def _section_2_monetary_result(report: dict) -> str:
             "Simulationszahl, kein handelbares Ergebnis."
         )
         lines.append("")
-        lines.append("| Strategie | Symbol | Holdout-Return (simuliert) | Ablehnungsgrund |")
-        lines.append("|---|---|---:|---|")
+        # Issue #1002/#1154 (Katalog #1170) — ``blocking_stage`` als EIGENE Spalte: vorher liess
+        # sich fuer eine ``REJECTED_ON_HOLDOUT``-Zeile nicht ohne Blick in run.json unterscheiden,
+        # ob die Holdout-Stufe nie erreicht wurde (``confirm_or_selection``), das Holdout-Gate
+        # selbst scheiterte (``holdout``) oder die nachgelagerte Deflation ablehnte (``deflation``).
+        lines.append("| Strategie | Symbol | Holdout-Return (simuliert) | Ablehnungsgrund | Stufe |")
+        lines.append("|---|---|---:|---|---|")
         for strat, r in sorted(rejected_by_strategy.items()):
             reason = r.get("promotion_outcome") or "k. A."
+            stage = r.get("blocking_stage") or "k. A."
             lines.append(
-                f"| {strat} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | {reason} |"
+                f"| {strat} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
+                f"{reason} | {stage} |"
             )
     lines.append("")
 
@@ -424,6 +445,15 @@ def _section_2_monetary_result(report: dict) -> str:
     lines.append("### 2.3 Vergleich gegen Buy & Hold je Symbol")
     lines.append("")
     with_benchmark = [r for r in studies if r.get("holdout_excess_return") is not None]
+    # Issue #1013/#1165 (Katalog #1170, Fix Punkt 2) — Root-Cause: eine Study ohne auswertbaren
+    # Holdout (``holdout_excess_return is None`` — z. B. weil ``mtm_series``/Benchmark-Serie nie
+    # berechnet wurden, siehe report._study_record's holdout_total_return-Kommentar) fiel bislang
+    # STILLSCHWEIGEND aus der ``with_benchmark``-Menge, ohne in einer der beiden Buckets darunter
+    # aufzutauchen — 13 von 14 Studies gelistet, keine Fehlanzeige für die 14. Diese dritte Tabelle
+    # macht die fehlende Auswertung SELBST zu einem sichtbaren Befund, damit die Zeilensumme über
+    # alle drei Tabellen IMMER ``n_studies`` ergibt (Akzeptanzkriterium 1, ``invariants.check_
+    # summary_row_completeness`` bewacht das strukturell).
+    without_benchmark = [r for r in studies if r.get("holdout_excess_return") is None]
     if not with_benchmark:
         lines.append("Keine Benchmark-Vergleichsdaten in diesem Lauf verfügbar.")
     else:
@@ -524,6 +554,27 @@ def _section_2_monetary_result(report: dict) -> str:
             )
     lines.append("")
 
+    # Issue #1013/#1165 (Katalog #1170, Fix Punkt 2) — dritte Tabelle: Studies OHNE
+    # Benchmark-Vergleich, damit sie nicht spurlos aus Abschnitt 2.3 verschwinden.
+    if without_benchmark:
+        lines.append(
+            "**Ohne Benchmark-Vergleich (keine Holdout-Auswertung):** diese Studies haben "
+            "keinen auswertbaren Benchmark-Vergleich — entweder wurde der Holdout selbst nie "
+            "ausgewertet (Strategie-Return zeigt dann \"k. A.\", NICHT \"0,0 %\", siehe "
+            "`report._study_record`), oder es lag keine Benchmark-Preisserie für das Symbol vor."
+        )
+        lines.append("")
+        lines.append("| Strategie | Symbol | Strategie-Return | Trades | Ablehnungsgrund |")
+        lines.append("|---|---|---:|---:|---|")
+        for r in sorted(without_benchmark, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_pct(r.get('holdout_total_return'))} | "
+                f"{r.get('holdout_total_trades', 'k. A.')} | "
+                f"{r.get('promotion_outcome') or 'k. A.'} |"
+            )
+        lines.append("")
+
     # 2.4 Kostenbasis
     lines.append("### 2.4 Kostenbasis")
     lines.append("")
@@ -532,6 +583,24 @@ def _section_2_monetary_result(report: dict) -> str:
         "Fenster (45 Tage) unter dem im Lauf konfigurierten Kostenmodell (Spread + Kommission je "
         "Asset-Klasse, #774/#775) — kein garantiertes zukünftiges Ergebnis."
     )
+    # Issue #1010/#1162 (Katalog #1170, P0) — Akzeptanzkriterium 2: Abschnitt 2.4 nennt explizit
+    # den methodischen Umfang, wenn financing_bps/slippage_bps ueberall 0.0 sind (backtest.json,
+    # #987/#1141) — die 'full_realism'-Kostenstress-Stufe ist dann ein No-Op, jede Ertragsaussage
+    # oben ist ohne Overnight-Finanzierung, ohne Slippage, ohne Market Impact. Quelle:
+    # ``cross_study.cost_model_zero_realism`` (report._cost_model_has_zero_realism) — dieselbe,
+    # einzige erlaubte Datenquelle (das bereits geschriebene Report-JSON) wie jede andere Zeile in
+    # diesem Modul.
+    if (report.get("cross_study") or {}).get("cost_model_zero_realism"):
+        lines.append("")
+        lines.append(
+            "⚠️ **Kalibrierungslücke:** Overnight-Finanzierung und Slippage sind in diesem Lauf "
+            "für alle Asset-Klassen mit 0,0 bps konfiguriert (`backtest.json`, unkalibrierte "
+            "Platzhalter, #987/#1141) — die Kostenstress-Stufe `full_realism` ist damit ein "
+            "No-Op. Jede oben genannte Ertragsaussage gilt **ohne Overnight-Finanzierung, ohne "
+            "Slippage, ohne Market Impact** (siehe `invariants.check_cost_stress_distinctness`, "
+            "#1010/#1162). Eine Kalibrierung mit realen Broker-Sätzen (Kontoauszug/"
+            "Gebührenübersicht) ist ausdrücklich NICHT Teil dieses Fixes."
+        )
     return "\n".join(lines)
 
 
@@ -647,6 +716,19 @@ def _section_4_longest_trades(report: dict) -> str:
         "Entscheidung (Katalog #832 Fix Punkt 1)."
     )
     lines.append("")
+    # Issue #1011/#1163 (Katalog #1170, Fix Punkt 3, Akzeptanzkriterium 2) — die synthetische 1h-
+    # Bar-Achse ist ueber einen 24/7-Kalender aufgefuellt (siehe invariants.check_session_calendar_
+    # coherence): "24,00 h" ist deshalb NICHT "~1 Handelstag" (RTH-Naeherung), sondern buchstaeblich
+    # 1 KALENDERtag. Die Entscheidung, die Bar-Erzeugung auf RTH umzustellen, ist ein eigener
+    # Folge-Issue -- diese Sektion stellt nur die Messung/Lesart klar.
+    lines.append(
+        "**Lesart-Hinweis:** die Haltedauer beruht auf der synthetischen 1h-Bar-Achse, die "
+        "aktuell über einen 24/7-Kalender aufgefüllt wird (siehe `invariants.check_session_"
+        "calendar_coherence`) — \"24,00 h\" bedeutet **24 synthetische Bars = 1 Kalendertag**, "
+        "NICHT \"~1 Handelstag\". Eine Umstellung der Bar-Erzeugung auf reale Handelszeiten (RTH) "
+        "ist ein eigener Folge-Issue (#1011/#1163)."
+    )
+    lines.append("")
     longest = (report.get("cross_study") or {}).get("longest_holding_studies") or []
     if not longest:
         lines.append("Keine Haltedauer-Telemetrie in diesem Report (Pre-#832-Lauf oder leere Kohorte).")
@@ -656,8 +738,8 @@ def _section_4_longest_trades(report: dict) -> str:
     for entry in longest:
         lines.append(
             f"| {entry.get('strategy')} | {entry.get('symbol')} | "
-            f"{_fmt_hms_from_s(entry.get('max_holding_time_s'))} | "
-            f"{_fmt_hms_from_s(entry.get('p95_holding_time_s'))} |"
+            f"{_fmt_holding_duration_with_bar_note(entry.get('max_holding_time_s'))} | "
+            f"{_fmt_holding_duration_with_bar_note(entry.get('p95_holding_time_s'))} |"
         )
     return "\n".join(lines)
 
@@ -666,7 +748,17 @@ def _section_5_anomalies(report: dict) -> str:
     studies = _studies(report)
     lines = ["## 5. Auffälligkeiten", ""]
 
-    failing_checks = [c for c in (report.get("invariant_checks") or []) if not c.get("passed", True)]
+    all_checks = report.get("invariant_checks") or []
+    # Issue #995/#1147 (Pitfall #413 in AGENTS.md) — "nicht auswertbar" (``passed is None`` bzw.
+    # ``evaluable is False``, siehe ``invariants.InvariantResult``) ist KEIN PASS, gehoert aber auch
+    # NICHT in dieselbe Tabelle wie ein echtes, NACHGEWIESENES FAIL (``passed is False``) — sonst
+    # waere ein Check, der seine Grundgesamtheit nicht herstellen konnte, von einem tatsaechlich
+    # defekten Mechanismus nicht mehr unterscheidbar. Beide Zustaende werden deshalb getrennt
+    # gezaehlt und in getrennten Tabellen gefuehrt.
+    failing_checks = [c for c in all_checks if c.get("passed") is False]
+    inconclusive_checks = [
+        c for c in all_checks
+        if c.get("passed") is None or c.get("evaluable") is False]
 
     # Issue #849 — Root-Cause der 519-Zeilen-Sektion: JEDER einzelne FAIL war eine gleichrangige
     # Zeile (304× check_reward_term_variance neben 1× check_holding_time_cap, dem eigentlich
@@ -698,6 +790,37 @@ def _section_5_anomalies(report: dict) -> str:
         lines.append("|---|---:|---:|---|")
         for name in ordered_names:
             entries = by_check[name]
+            n_studies_affected = len({c.get("scope") for c in entries})
+            severity = entries[0].get("severity", "medium")
+            lines.append(f"| {name} | {len(entries)} | {n_studies_affected} | {severity} |")
+    lines.append("")
+
+    # Issue #995/#1147 Fix Punkt 2 — eigene Zeile/Tabelle "nicht auswertbar", NICHT unter den
+    # bestandenen (und NICHT unter den FAILs) gefuehrt.
+    by_check_inconclusive: dict[str, list[dict]] = {}
+    for c in inconclusive_checks:
+        by_check_inconclusive.setdefault(_check_name(c), []).append(c)
+    inconclusive_names = sorted(
+        by_check_inconclusive.keys(),
+        key=lambda name: (
+            _SEVERITY_ORDER.get(by_check_inconclusive[name][0].get("severity", "medium"), 2),
+            -len(by_check_inconclusive[name]),
+            name,
+        ),
+    )
+    lines.append(f"### 5.1b Nicht auswertbar ({len(inconclusive_checks)} Checks)")
+    lines.append("")
+    if not inconclusive_names:
+        lines.append("Keine.")
+    else:
+        lines.append(
+            "Grundgesamtheit konnte nicht hergestellt werden — kein PASS im Sinne einer "
+            "geprüften Population, aber auch kein nachgewiesenes FAIL (siehe Pitfall #413).")
+        lines.append("")
+        lines.append("| Check | Vorkommen | betroffene Studies | Schweregrad |")
+        lines.append("|---|---:|---:|---|")
+        for name in inconclusive_names:
+            entries = by_check_inconclusive[name]
             n_studies_affected = len({c.get("scope") for c in entries})
             severity = entries[0].get("severity", "medium")
             lines.append(f"| {name} | {len(entries)} | {n_studies_affected} | {severity} |")

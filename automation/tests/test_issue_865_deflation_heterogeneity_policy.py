@@ -288,7 +288,9 @@ def test_reject_policy_forces_unconditional_veto_not_bypassable_via_robust_pair(
                                       global_result=global_result),
     )
     assert res["promote"] is False
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — die Heterogenitaets-Ablehnung ist eine Deflations-,
+    # keine Holdout-Gate-Ablehnung.
+    assert res["status"] == "REJECTED_ON_DEFLATION"
     assert res["is_rejection_detail_override"] == "REJECT_DEFLATION_HETEROGENEOUS"
     _assert_coherent(res)
 

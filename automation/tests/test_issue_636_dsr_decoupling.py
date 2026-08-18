@@ -195,5 +195,8 @@ def test_trial_passing_all_gates_is_rejected_on_dsr_alone(tmp_path, monkeypatch,
     assert res["metrics_symbol"]["deflated_dsr"] is not None
     assert res["metrics_symbol"]["deflated_dsr"] < 0.95
     assert res["holdout_passed"] is False
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — der DSR-Drop ist eine Deflations-, keine Holdout-Gate-
+    # Ablehnung: die Holdout-Stufe selbst war bestanden (siehe R_symbol/R_global-Assertion oben).
+    assert res["status"] == "REJECTED_ON_DEFLATION"
+    assert res["blocking_stage"] == "deflation"
     assert any("[DSR-Drop #618]" in r.message for r in caplog.records)

@@ -2808,6 +2808,55 @@ def _get_annualization_factor_with_source(mtm_series=None, *, symbol: str | None
     # 4) Kein verwertbarer Zeit-Index: neutral (1.0).
     return 1.0, "neutral_fallback"
 
+# Issue #1011/#1163 (Katalog #1170, P1) — Referenz-Session-Fenster fuer ``session_coverage_
+# fraction``: ``backtest.json``'s ``opening_range_session_open_hour_by_asset_class`` traegt
+# EQUITY/COMMODITY/DEFAULT durchgehend 13 (UTC, NYSE-Open-Naeherung, #922) — dieser Wert wird HIER
+# als fixer, dokumentierter Kompromiss verwendet, statt die Asset-Klasse (nicht Teil von
+# ``_calculate_stats``'s Signatur, keine Aenderung an einer derart zentral verwendeten Funktion
+# fuer eine reine Zusatz-Telemetrie) durch die volle Aufrufkette zu fädeln. Ein konventionelles
+# 8-Stunden-Fenster (grosszuegiger als die reale NYSE-Session ≈ 6,5h) haelt die Metrik als GROBE
+# Naeherung nuetzlich, ohne Bar-Zeitstempel knapp ausserhalb der echten Session faelschlich als
+# "ausserhalb" zu zaehlen. Fuer FOREX/CRYPTO (24/7-Maerkte, Session-Open-Stunde=0 in der
+# ausgelieferten Config) ist diese Fraktion strukturell nicht aussagekraeftig — ``bars_per_
+# calendar_day`` (asset-class-GATED in ``invariants.check_session_calendar_coherence``) ist die
+# fuer diesen Fix massgebliche, harte Kennzahl.
+_SESSION_COVERAGE_REFERENCE_OPEN_HOUR_UTC = 13
+_SESSION_COVERAGE_REFERENCE_WINDOW_HOURS = 8
+
+
+def _bar_calendar_telemetry(mtm_series: "pd.Series | None") -> dict:
+    """Issue #1011/#1163 (Katalog #1170, P1) — macht die synthetische Bar-Achsen-Dichte MESSBAR,
+    ohne die Simulation selbst zu veraendern (Fix Punkt 1). ``bars_per_calendar_day``: Anzahl Bars
+    je REALEM Kalendertag der ``mtm_series``-Zeitspanne (dieselbe Zeit-Index-Technik wie
+    ``_get_annualization_factor_with_source``) — fuer eine ueber 24/7 aufgefuellte 1h-Bar-Achse
+    (der aktuelle, dokumentierte Zustand, siehe Pitfall zu ``GapContinuationStrategy``: "24/7-Bars
+    = KEIN Overnight-Gap") ist dieser Wert exakt 24.0, unabhaengig von der Asset-Klasse.
+    ``session_coverage_fraction``: Anteil der Bar-Zeitstempel innerhalb eines 8-Stunden-Fensters ab
+    13 UTC AN EINEM WOCHENTAG (siehe ``_SESSION_COVERAGE_REFERENCE_OPEN_HOUR_UTC``-Kommentar oben
+    fuer die Begruendung dieser festen Referenz) — reine Zusatz-Telemetrie, NICHT Teil der
+    ``check_session_calendar_coherence``-Gate-Bedingung.
+
+    ``None``/``None`` ohne verwertbaren Zeit-Index (z. B. Direkt-Unit-Calls mit RangeIndex,
+    dieselbe Rueckfallbedingung wie ``_get_annualization_factor_with_source``)."""
+    if mtm_series is None or len(mtm_series) < 2 or not isinstance(mtm_series.index, pd.DatetimeIndex):
+        return {"bars_per_calendar_day": None, "session_coverage_fraction": None}
+    n_bars = len(mtm_series) - 1
+    total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
+    if total_span_seconds <= 0:
+        return {"bars_per_calendar_day": None, "session_coverage_fraction": None}
+    bars_per_calendar_day = n_bars * 86400.0 / total_span_seconds
+    idx = mtm_series.index
+    hour = idx.hour
+    is_weekday = idx.weekday < 5
+    is_in_window = (hour >= _SESSION_COVERAGE_REFERENCE_OPEN_HOUR_UTC) & (
+        hour < _SESSION_COVERAGE_REFERENCE_OPEN_HOUR_UTC + _SESSION_COVERAGE_REFERENCE_WINDOW_HOURS)
+    session_coverage_fraction = float((is_weekday & is_in_window).sum() / len(idx))
+    return {
+        "bars_per_calendar_day": round(bars_per_calendar_day, 4),
+        "session_coverage_fraction": round(session_coverage_fraction, 4),
+    }
+
+
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None, symbol: str | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
@@ -3606,6 +3655,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # 'empirical_first_study_time_index' (je Symbol EINMAL bestimmt, siehe
         # _get_annualization_factor_with_source-Docstring) | 'neutral_fallback'.
         "annualization_factor_source": annualization_factor_source,
+        # Issue #1011/#1163 (Katalog #1170) — siehe ``_bar_calendar_telemetry``-Docstring; aus der
+        # VOLLEN (ggf. 24/7-aufgefuellten) mtm_series-Bar-Achse, nicht der #823-informativen
+        # Teilmenge unten (die Root-Cause betrifft die BAR-ERZEUGUNG selbst, nicht die
+        # Regressions-Filterung).
+        **_bar_calendar_telemetry(mtm_series),
         "n_periods":          int(n_periods),
         # Issue #824 — expliziter Alias: der Stichprobenumfang, den die PSR-Bootstrap-SE (und der
         # #823-Punktschätzer) TATSÄCHLICH gesehen haben (die informative Teilmenge, #823). Separates

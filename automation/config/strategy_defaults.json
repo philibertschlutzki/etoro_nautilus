@@ -1,10 +1,13 @@
 {
   "_schema": {
-    "description": "Default-Parameter pro Strategie f\u00fcr 1h-Candle-Daten (~15 Monate / \u2265450 Tage History; Single Source of Truth = backtest.json.walk_forward.data_history_days). Issue #445: Die Walk-Forward-Geometrie (is_window 180 + splits 4 \u00d7 oos 45 + holdout 45 = 405 Tage, plus Gate-1-Puffer 30 = 435) verlangt mehr als die fr\u00fcher dokumentierten 12 Monate; catalog_service akkumuliert Ticks 24/7 \u00fcber den initialen historical_fetcher-Backfill hinaus. Perioden auf st\u00fcndliche Aufl\u00f6sung optimiert. Werte in strategies.json haben Vorrang."
+    "description": "Default-Parameter pro Strategie f\u00fcr 1h-Candle-Daten (~15 Monate / \u2265450 Tage History; Single Source of Truth = backtest.json.walk_forward.data_history_days). Issue #445: Die Walk-Forward-Geometrie (is_window 180 + splits 4 \u00d7 oos 45 + holdout 45 = 405 Tage, plus Gate-1-Puffer 30 = 435) verlangt mehr als die fr\u00fcher dokumentierten 12 Monate; catalog_service akkumuliert Ticks 24/7 \u00fcber den initialen historical_fetcher-Backfill hinaus. Perioden auf st\u00fcndliche Aufl\u00f6sung optimiert. Werte in strategies.json haben Vorrang.",
+    "trade_amount_pct": "Issue #1014/#1166 (Katalog #1170) \u2014 dieses Feld (15.0 f\u00fcr alle Strategien) ist NICHT unabh\u00e4ngig von backtest.json['live_risk']['max_symbol_exposure_fraction'] (0.10) zu lesen: die Beziehung zwischen beiden ist jetzt EXPLIZIT \u00fcber backtest.json['live_risk']['trade_amount_pct_parity_factor'] (aktuell 1.5 \u2014 15.0 = 0.10 \u00b7 100 \u00b7 1.5) dokumentiert, siehe dortiger Schema-Kommentar UND invariants.check_sizing_parity_backtest_vs_allocator. Root-Cause #1166: beide Gr\u00f6\u00dfen wurden vorher unabh\u00e4ngig gepflegt und der Faktor war NIRGENDS benannt \u2014 dieser Fix \u00e4ndert NICHT, welcher Zahlenwert 'richtig' ist (Betreiberentscheidung), sondern macht die Beziehung zwischen beiden Gr\u00f6\u00dfen zu einer einzigen, benannten Zahl."
   },
   "SmaCrossoverStrategy": {
     "sma_period": 5,
-    "trade_amount_pct": 15.0
+    "trade_amount_pct": 15.0,
+    "atr_trailing_multiplier": 1.5,
+    "max_bars_in_trade": 24
   },
   "MeanReversionStrategy": {
     "keltner_period": 20,

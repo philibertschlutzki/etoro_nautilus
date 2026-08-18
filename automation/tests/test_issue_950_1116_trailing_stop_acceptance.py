@@ -41,8 +41,11 @@ def test_inconclusive_with_fewer_than_three_measurable_studies():
         _study("A", "X.ETORO", atr_bps=10.0, k=2.0, loss_bps_trailing_stop=15.0),
         _study("B", "Y.ETORO", atr_bps=8.0, k=1.5, loss_bps_trailing_stop=10.0),
     ])
-    assert result.passed is True
+    # Issue #995/#1147 (Pitfall #413 in AGENTS.md) — INCONCLUSIVE ist seither passed=None (nicht
+    # True), unabhaengig vom severity-Wert: fehlende Evidenz ist auf keinem Check ein PASS.
+    assert result.passed is None
     assert result.inconclusive is True
+    assert result.evaluable is False
     assert result.severity == "high"
 
 

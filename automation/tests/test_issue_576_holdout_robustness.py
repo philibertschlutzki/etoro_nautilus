@@ -65,7 +65,9 @@ def test_deflated_holdout_gate_rejection(tmp_path):
                 )
 
             assert res is not None
-            assert res["status"] == "REJECTED_ON_HOLDOUT"
+            # Issue #1002/#1154 (Katalog #1170) — die deflatierte Selektion (DSR-Drop) ist eine
+            # Deflations-, keine Holdout-Gate-Ablehnung.
+            assert res["status"] == "REJECTED_ON_DEFLATION"
             assert res["holdout_passed"] == False
             # Issue #618 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle.
             assert "deflated_dsr" in res["metrics_symbol"]

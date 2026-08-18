@@ -179,7 +179,8 @@ def test_no_eligible_trials_fail_loud_no_floor(tmp_path, monkeypatch):
     study = _study(0, ineligible_rewards=(5.0, 4.0, 3.0))
     res = cmod.confirm_per_symbol_promotion(study, "S", "SYM", {})
 
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — "kein eligibler Trial" erreicht die Holdout-Stufe nie.
+    assert res["status"] == "REJECTED_BEFORE_HOLDOUT"
     assert res["is_rejection_detail_override"] == "HOLDOUT_NO_ELIGIBLE_TRIALS"
     assert res["symbol_params"] == {}
     assert res["trial_dir"] is None

@@ -70,9 +70,22 @@ def test_frozen_family_n_skips_missing_studies():
 from automation.optimizer import invariants as inv
 
 
-def test_family_n_stability_passes_within_tolerance():
-    result = inv.check_family_n_stability({"NVDA.ETORO": 434}, {"NVDA.ETORO": 420})
-    assert result.passed is True
+def test_family_n_stability_requires_exact_equality_since_1158():
+    """Issue #1006/#1158 (Katalog #1170) — die vormalige 5%-Toleranz verdeckte genau das reale
+    #1158-Symptom (frozen=0/observed=1, eine einzelne excluded_degenerate-Study); seit ``sweep.
+    _family_members``/``report._family_n_stages`` dieselbe Ausschluss-Semantik teilen, ist
+    ``frozen == observed`` tautologisch garantiert -- JEDE Differenz ist ein echter Befund, keine
+    Toleranzschwelle mehr."""
+    assert inv.check_family_n_stability({"NVDA.ETORO": 434}, {"NVDA.ETORO": 420}).passed is False
+    assert inv.check_family_n_stability({"NVDA.ETORO": 434}, {"NVDA.ETORO": 434}).passed is True
+
+
+def test_family_n_stability_fails_on_the_1158_reference_symptom():
+    """frozen=0, observed=1 -- das exakte NVDA/SqueezeBreakout-Symptom aus #1158. Vor dem Fix wurde
+    dieser Fall durch den ``frozen <= 0: continue``-Skip NIE ausgewertet."""
+    result = inv.check_family_n_stability({"NVDA.ETORO": 0}, {"NVDA.ETORO": 1})
+    assert result.passed is False
+    assert result.actual["NVDA.ETORO"]["difference"] == 1
 
 
 def test_family_n_stability_fails_on_large_gap_matching_1091_symptom():
