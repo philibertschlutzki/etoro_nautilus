@@ -39,6 +39,18 @@ from automation.optimizer import disk_guard, invariants as inv, report as rpt
 from automation.optimizer import run_optimization as ro
 
 
+@pytest.fixture(autouse=True)
+def _reset_disk_guard():
+    """Issue #1167 Regressionswaechter — ``test_disk_budget_callback_emits_failed_invariant_
+    result_on_status_exceeded`` (unten) treibt ``disk_guard.sweep_abort_requested`` (Modul-
+    globaler ``Event``) absichtlich auf ``set()``, um das FAIL-Event zu reproduzieren. Ohne
+    Reset bleibt das Flag fuer JEDEN spaeter in DERSELBEN pytest-Session laufenden Test gesetzt
+    (kontaminierte ``test_issue_807_symbol_degeneracy.py``-Laeufe, die dasselbe Flag lesen)."""
+    disk_guard.reset_for_tests()
+    yield
+    disk_guard.reset_for_tests()
+
+
 # ── invariants.check_invariant_coverage — reine Funktion ─────────────────────────────────────────
 
 def test_passes_when_every_defined_name_is_in_stream():

@@ -5519,6 +5519,48 @@ def check_exit_telemetry_completeness(
     )
 
 
+def check_symbol_bar_quality_cache_availability(
+    study_records: list[dict], *, cache_path: str | None = None, cache_found: bool = False,
+) -> InvariantResult:
+    """Issue #1016/#1168 (Katalog #1170, Pitfall #406-Fehlerklasse in AGENTS.md) — dieselbe
+    "konstantes null ist ein Befund, kein Messwert"-Logik wie ``check_exit_telemetry_completeness``
+    (oben), hier fuer ``symbol_bar_quality`` (Root-Cause #1168: ``None`` in 28/28 Studies zweier
+    Läufe). Zusaetzlich zur reinen Null-Rate benennt dieser Check die KONKRETE Ursachenklasse — der
+    erwartete ``symbol_bar_quality.json``-Pfad UND ob die Datei ueberhaupt existierte
+    (``sweep.symbol_bar_quality_cache_status``) —, statt nur die Symptomrate zu melden: "Cache-
+    Datei fehlt komplett" (Schreibpfad lief nie / falsches ``WORK``) ist eine ANDERE Diagnose als
+    "Cache existiert, aber dieses Symbol steht nicht darin" (z. B. ein injizierter Test ohne
+    Gate-1-Preflight).
+
+    FAIL (severity ``medium`` — Beobachtbarkeits-, keine Korrektheitsverletzung), wenn mindestens
+    eine Study mit ``symbol_bar_quality is None`` existiert. Leere ``study_records`` ⇒ PASS
+    (nichts zu pruefen, analog ``check_exit_telemetry_completeness``s Inconclusive-Pfad, hier aber
+    ohne Studies trivial erfuellt statt inconclusive — es gibt keine Study, deren Cache fehlen
+    koennte)."""
+    affected = sorted({
+        r.get("symbol") for r in (study_records or [])
+        if r.get("symbol_bar_quality") is None and r.get("symbol")
+    })
+    passed = not affected
+    return InvariantResult(
+        name="check_symbol_bar_quality_cache_availability",
+        passed=passed,
+        expected="symbol_bar_quality ist fuer jedes Symbol mit >= 1 Study gesetzt, oder der "
+                 "erwartete Cache-Pfad und sein Fehlen sind benannt",
+        actual={"symbols_without_symbol_bar_quality": affected, "cache_path": cache_path,
+               "cache_found": cache_found} if not passed else None,
+        severity="medium",
+        detail=("OK" if passed else
+                f"{len(affected)} Symbol(e) ohne symbol_bar_quality: {affected}. Erwarteter "
+                f"Cache-Pfad: {cache_path} — " +
+                ("Datei gefunden, aber Symbol(e) fehlen darin (kein Gate-1-Preflight fuer dieses "
+                 "Symbol in diesem Lauf, oder ein veralteter Cache-Stand)."
+                 if cache_found else
+                 "Datei NICHT gefunden (Schreibpfad lief nie, oder Report liest aus einem "
+                 "anderen WORK als der Sweep schrieb, #1168).")),
+    )
+
+
 def check_n_periods_homogeneity(study_records: list[dict], *,
                                 max_ratio: float = 6.0,
                                 promotion_family_scope: str | None = None) -> InvariantResult:

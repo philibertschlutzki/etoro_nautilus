@@ -47,6 +47,7 @@ from automation.optimizer.run_optimization import (
 )
 from automation.optimizer.sweep import (
     load_symbol_universe, read_symbol_bar_quality_cache, _family_members,
+    symbol_bar_quality_cache_status,
 )
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
@@ -2526,6 +2527,10 @@ def _build_report(
     # Issue #923 — einmal je Report-Lauf gelesen (nicht je Study — dieselbe Datei, kein
     # Symbol-Scope beim Lesen selbst nötig).
     _symbol_bar_quality_cache = read_symbol_bar_quality_cache(WORK)
+    # Issue #1016/#1168 (Katalog #1170) — {cache_path, cache_found}, damit ein leeres/fehlendes
+    # symbol_bar_quality NICHT stillschweigend als "None" im Report verschwindet (siehe
+    # check_symbol_bar_quality_cache_availability-Docstring).
+    _symbol_bar_quality_cache_status = symbol_bar_quality_cache_status(WORK)
     # Issue #1028 (Katalog #866) — einmal je Report-Lauf gelesen; Rohmaterial für
     # invariants.check_sizing_identity_coherence.
     _trade_amount_pct_map = _trade_amount_pct_by_strategy()
@@ -3095,6 +3100,12 @@ def _build_report(
     # INCONCLUSIVE-Check (check_stop_loss_vs_bar_range) auffaellt.
     all_checks.append(("global", _inv.check_exit_telemetry_completeness(studies_out)))
 
+    # Issue #1016/#1168 (Katalog #1170) — dieselbe Beobachtbarkeits-Logik wie #973/#1127 direkt
+    # oben, hier fuer symbol_bar_quality (Root-Cause #1168: None in 28/28 Studies zweier Läufe).
+    all_checks.append(("global", _inv.check_symbol_bar_quality_cache_availability(
+        studies_out, cache_path=_symbol_bar_quality_cache_status.get("cache_path"),
+        cache_found=_symbol_bar_quality_cache_status.get("cache_found", False))))
+
     # Issue #1097 (Katalog #930) — Teilmengen-Schranke zwischen gepoolten Verlust-Aggregaten;
     # siehe check_loss_metric_commensurability-Docstring.
     all_checks.append(("global", _inv.check_loss_metric_commensurability(studies_out)))
@@ -3499,6 +3510,11 @@ def _build_report(
             # Verdikt selbst (die Methodik-Einschraenkung gilt, sobald konfiguriert, unabhaengig
             # davon, ob genug Studies mit Trades vorlagen, um den Check auszuloesen).
             "cost_model_zero_realism": _cost_model_has_zero_realism(),
+            # Issue #1016/#1168 (Katalog #1170) — {cache_path, cache_found}: macht "Cache-Datei
+            # fehlt komplett" von "Cache existiert, Feld trotzdem None" unterscheidbar (Root-Cause
+            # #1168: symbol_bar_quality war in 28/28 Studies zweier Läufe still None). Traeger fuer
+            # check_symbol_bar_quality_cache_availability, siehe dortiger Docstring.
+            "symbol_bar_quality_cache": _symbol_bar_quality_cache_status,
             # Issue #1091 (Katalog #924) — {frozen, observed_at_report_time} statt eines nackten
             # int je Symbol: "frozen" (budget-basiert, siehe sweep._family_n_frozen_from_studies)
             # ist ueber mehrere Reports DESSELBEN Laufs bit-identisch; "observed_at_report_time"

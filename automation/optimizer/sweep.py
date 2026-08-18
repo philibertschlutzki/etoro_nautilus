@@ -560,6 +560,18 @@ def read_symbol_bar_quality_cache(work_dir: Path) -> dict[str, dict]:
         return {}
 
 
+def symbol_bar_quality_cache_status(work_dir: Path) -> dict[str, str | bool]:
+    """Issue #1016/#1168 (Katalog #1170) — oeffentlicher Read-Zugriff auf {cache_path, cache_found}
+    fuer ``report.py``: ``read_symbol_bar_quality_cache`` selbst gibt bei einer fehlenden Datei ein
+    leeres Dict zurueck (rueckwaertskompatibler Fail-Open-Vertrag, siehe dortiger Docstring) —
+    NICHT von "Datei existiert, aber kein Symbol dieses Laufs steht darin" unterscheidbar. Root-
+    Cause #1168: ``symbol_bar_quality`` war in 28/28 Studies zweier Laeufe ``None``, ohne dass der
+    Report zwischen "Cache fehlt" und "Cache leer/veraltet" trennen konnte. Reine Pfad-/Existenz-
+    Auskunft, kein Lesefehler-Pfad (siehe ``read_symbol_bar_quality_cache`` fuer den Inhalt selbst)."""
+    path = _symbol_bar_quality_cache_path(work_dir)
+    return {"cache_path": str(path), "cache_found": path.exists()}
+
+
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
     """Issue #455 — jüngster ``ts_event`` (Epoch-ns) je Symbol aus den Parquet-Row-Group-Statistiken.
 
