@@ -13,5 +13,6 @@ source venv/bin/activate
 #python -m automation.optimizer.sweep --strategies all --tier all --symbols KRYS.ETORO
 #python -m automation.optimizer.sweep --strategies all --tier all --symbols LULU.ETORO
 #python -m automation.optimizer.sweep --strategies all --tier all --symbols GOOGL.ETORO
+python -m automation.optimizer.sweep --strategies all --tier all --symbols TSLA.ETORO
 python -m automation.optimizer.sweep --strategies all --tier all --symbols TSLA.ETORO 
 #python -m automation.optimizer.sweep --strategies all --tier all --symbols NATGAS.ETORO
