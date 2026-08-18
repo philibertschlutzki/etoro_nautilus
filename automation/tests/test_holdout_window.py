@@ -168,7 +168,10 @@ def test_confirm_per_symbol_promotion_property_sweep(monkeypatch, tmp_path):
             catalog_newest_ns=test_ns
         )
 
-        is_rejected = res.get("status") == "REJECTED_ON_HOLDOUT" and res.get("is_rejection_detail_override") == "REJECT_HOLDOUT_UNREACHABLE"
+        # Issue #1002/#1154 (Katalog #1170) — REJECT_HOLDOUT_UNREACHABLE erreicht die Holdout-
+        # Stufe nie (Datenstand deckt das Fenster noch nicht ab) und traegt seither
+        # REJECTED_BEFORE_HOLDOUT statt des geteilten REJECTED_ON_HOLDOUT.
+        is_rejected = res.get("status") == "REJECTED_BEFORE_HOLDOUT" and res.get("is_rejection_detail_override") == "REJECT_HOLDOUT_UNREACHABLE"
 
         # Assertion: Preflight evaluiert zu False (is_rejected ist True) exakt dann, wenn geometrische Abdeckung nicht gegeben ist (test_ns < oos_lo_ns)
         assert is_rejected == (test_ns < oos_lo_ns)

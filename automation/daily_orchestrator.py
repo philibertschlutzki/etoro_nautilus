@@ -1033,6 +1033,20 @@ def phase5_live_deployment(
         # Issue #993 Fix Punkt 4 — blockierende Vollstaendigkeits-Invariante VOR dem Bot-Start: jeder
         # Whitelist-Eintrag muss ein vollstaendiges, achtklausiges clause_results-Dict tragen.
         completeness_check = check_deployment_gate_completeness(whitelisted_winners)
+        # Issue #1015/#1167 (Katalog #1170) — symmetrisches INVARIANT_STREAM_RESULT (PASS UND FAIL),
+        # source="orchestrator": vorher nur bei FAIL ein INVARIANT_CHECK_FAILED-Event (unten), ein
+        # bestandener Check spurlos. Bewertet die Whitelist EINES Phase-5-Laufs (whitelist_
+        # tournament.json), nicht die Study-Population eines einzelnen Sweep-run_id — report.
+        # _DELIBERATELY_UNWIRED_INVARIANT_CHECKS dokumentiert, warum dieses Ereignis strukturell
+        # NICHT in ein bestimmtes run.json['invariant_checks'] einsortiert werden kann.
+        emit_json_event(log, "INVARIANT_STREAM_RESULT", {
+            "name": completeness_check.name, "check": completeness_check.name,
+            "passed": completeness_check.passed, "source": "orchestrator",
+            "scope": "phase5_deployment_gate",
+            "expected": completeness_check.expected,
+            "actual": completeness_check.actual if not completeness_check.passed else None,
+            "detail": completeness_check.detail, "severity": completeness_check.severity,
+        })
         if not completeness_check.passed:
             log.error(f"[Phase 5] check_deployment_gate_completeness FEHLGESCHLAGEN: {completeness_check.detail}")
             emit_json_event(log, "INVARIANT_CHECK_FAILED", {

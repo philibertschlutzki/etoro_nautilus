@@ -122,7 +122,10 @@ def test_dsr_drop_sets_correct_override(tmp_path, monkeypatch, caplog):
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
     )
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — der DSR-Drop ist eine Deflations-Ablehnung (das Holdout-
+    # Gate selbst war bestanden), traegt seither REJECTED_ON_DEFLATION statt des geteilten
+    # REJECTED_ON_HOLDOUT.
+    assert res["status"] == "REJECTED_ON_DEFLATION"
     assert res["is_rejection_detail_override"] == "REJECT_HOLDOUT_DSR_DROP"
 
     proposal_path = confirm.export_symbol_proposal(study, "DynamicBreakoutStrategy", "TSLA.ETORO", res)

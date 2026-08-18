@@ -154,7 +154,11 @@ def test_blocking_failing_invariant_rejects_promotion(tmp_path, monkeypatch):
     ]
     res = _confirm(tmp_path, monkeypatch, study_invariant_results=study_invariant_results)
     assert res["holdout_passed"] is False
-    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — REJECT_STUDY_INVARIANT_BLOCKING erreicht die Holdout-
+    # Stufe nie (die Study ist strukturell ungueltig, VOR jeder Holdout-Auswertung) und traegt
+    # seither den eigenen Status REJECTED_BEFORE_HOLDOUT statt des geteilten REJECTED_ON_HOLDOUT.
+    assert res["status"] == "REJECTED_BEFORE_HOLDOUT"
+    assert res["blocking_stage"] == "confirm_or_selection"
     assert res["is_rejection_detail_override"] == "REJECT_STUDY_INVARIANT_BLOCKING"
     assert res["metrics_symbol"]["blocking_invariant_names"] == [
         "check_selection_statistic_availability"]

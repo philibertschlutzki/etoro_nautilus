@@ -52,8 +52,11 @@ def test_inconclusive_below_minimum_stop_exit_sample_size():
         gross_loss_median_bps_trailing_stop=3.6,
     )]
     result = inv.check_effective_stop_distance(records)
-    assert result.passed is True
+    # Issue #995/#1147 (Pitfall #413 in AGENTS.md) — INCONCLUSIVE auf einem 'blocking'-Check ist
+    # seither passed=None (nicht True): fehlende Evidenz ist kein PASS.
+    assert result.passed is None
     assert result.inconclusive is True
+    assert result.evaluable is False
 
 
 def test_inconclusive_when_no_trailing_stop_telemetry_at_all():
@@ -64,12 +67,18 @@ def test_inconclusive_when_no_trailing_stop_telemetry_at_all():
         oos_gross_loss_mean_bps=3.6, oos_gross_loss_mean_bps_pooled=3.6,
     )]
     result = inv.check_effective_stop_distance(records)
-    assert result.passed is True
+    assert result.passed is None
     assert result.inconclusive is True
+    assert result.evaluable is False
 
 
 def test_not_applicable_without_any_exit_telemetry():
     result = inv.check_effective_stop_distance([_record()])
-    assert result.passed is True
+    # Issue #995/#1147 — dieser Zweig ('nicht auswertbar', 0 Kandidaten) traegt seither KONSISTENT
+    # zum Nachbar-Zweig (weniger als 30 Stop-Exits) passed=None/inconclusive=True/evaluable=False —
+    # vorher liess die Abwesenheit von inconclusive=True hier "nicht auswertbar" von einem echten
+    # PASS nicht unterscheiden (dieselbe Luecke wie Pitfall #413).
+    assert result.passed is None
     assert result.actual is None
-    assert result.inconclusive is False
+    assert result.inconclusive is True
+    assert result.evaluable is False

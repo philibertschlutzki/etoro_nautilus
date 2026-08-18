@@ -168,16 +168,30 @@ def test_incremental_report_is_written_after_each_symbol(monkeypatch, tmp_path):
 
 
 def test_main_emits_sweep_completed_or_aborted_as_the_last_structured_event():
-    """Issue #933 Fix 3 — sweep.main() muss JEDEN Lauf mit SWEEP_COMPLETED oder SWEEP_ABORTED
+    """Issue #933 Fix 3 — sweep.main() muss JEDEN Lauf mit einem terminalen strukturierten Event
     beenden, unabhängig vom Abbruchgrund (sauber, SIGINT/SIGTERM, unerwartete Exception) --
     vorher war ein Snapshot eines laufenden Sweeps nur über die Trial-Kadenz im Log von einem
     abgestürzten unterscheidbar. Source-Inspektion statt vollem main()-Aufruf (CLI-Argparse-
-    Oberfläche wäre ein eigener, hier nicht nötiger Mocking-Aufwand)."""
+    Oberfläche wäre ein eigener, hier nicht nötiger Mocking-Aufwand).
+
+    Issue #1009/#1161 (Katalog #1170) — der Ternary-Ausdruck aus zwei Werten (SWEEP_COMPLETED/
+    SWEEP_ABORTED) wurde durch ``_sweep_completion_event(run_status)`` ersetzt (drei moegliche
+    Ausgaenge: SWEEP_COMPLETED/SWEEP_FINISHED/SWEEP_ABORTED, siehe dortiger Docstring — ein Lauf,
+    der alle Symbole abschloss, aber z. B. eine blockierende Invariante FAILte, emittiert seither
+    das neue SWEEP_FINISHED statt des irrefuehrenden SWEEP_ABORTED). Die #933-Kerngarantie (ein
+    terminales Event steht NACH dem Report-Schreib-Versuch, VOR dem Weiterreichen der Exception)
+    bleibt unveraendert bestehen, nur ueber die neue Funktion statt inline."""
     import inspect
 
     source = inspect.getsource(sweep.main)
-    assert '"SWEEP_COMPLETED" if run_status == "complete" else "SWEEP_ABORTED"' in source
+    assert "_sweep_completion_event(run_status)" in source
     # Muss NACH dem Report-Schreib-Versuch stehen, aber VOR dem Weiterreichen der Exception.
-    completed_idx = source.index("SWEEP_COMPLETED")
+    completed_idx = source.index("_sweep_completion_event(run_status)")
     reraise_idx = source.index("if caught_exc is not None:")
     assert completed_idx < reraise_idx
+
+    event_types = {status: sweep._sweep_completion_event(status)[0] for status in (
+        "complete", "aborted_invariant", "aborted_wallclock", "aborted_disk", "aborted_signal",
+        "aborted_error", "completed_with_quarantine", "completed_with_failures",
+        "resumed_complete", "completed_invalid", "complete_with_blocking_invariants")}
+    assert set(event_types.values()) <= {"SWEEP_COMPLETED", "SWEEP_FINISHED", "SWEEP_ABORTED"}

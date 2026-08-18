@@ -49,6 +49,64 @@ STORAGE = f"sqlite:///{WORK / 'studies.db'}"
 # Verlust, aber die `create_all`-Kollision ist ausgeschlossen.
 _study_lock = threading.Lock()
 
+# Issue #994/#1146 (Katalog #1170) — Regressionswaechter gegen eine Wiederkehr des #1126/#1130-
+# Stempel-Luecken-Fehlers: 14 in ``parsing.TournamentMetrics`` geparste ``oos_*``-Felder erreichten
+# NIE ``trial.user_attrs`` (der Merge, der das #1126/#1130-Feldblock einfuehrte, zog die Stempelung
+# unvollstaendig nach) — ``report._median_of_trial_field`` liest AUSSCHLIESSLICH ``trial.
+# user_attrs``, also blieben die abgeleiteten Report-Felder in 28/28 Studies ``None``, obwohl der
+# Backtest-Runner die Rohwerte berechnete UND ``parsing.py`` sie korrekt parste. Der Kontrakt-Test
+# (``test_issue_994_1146_metric_stamping_contract.py``) iteriert ALLE ``oos_*``-Felder von
+# ``TournamentMetrics`` und verlangt fuer jedes entweder eine Aufrufstelle
+# ``trial.set_user_attr("<feld>", ...)`` in diesem Modul ODER einen Eintrag hier — mit Begruendung,
+# WARUM das Feld legitim NICHT trial-gestempelt wird (kein stiller Drift mehr moeglich).
+_INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
+    # Holdout-only: diese Felder werden NIE im Rahmen des IS/OOS-Sweep-Trial-Objectives gefuellt,
+    # sondern ausschliesslich von confirm.py's promotiertem Holdout-Re-Evaluation-Pfad
+    # (``_metrics_dict(promoted_m_symbol)`` -> ``report.py``s ``holdout_metrics.get("oos_...")``,
+    # siehe dortige ``holdout_*``-Feldzuordnung). Ein Trial-User-Attr wuerde nie gesetzt, weil die
+    # Groesse strukturell erst NACH dem Sweep, am promotierten Kandidaten, existiert.
+    "oos_profit_factor_censored": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_censored)",
+    "oos_profit_factor_raw": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_raw)",
+    "oos_expectancy_capital_weighted": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted)",
+    "oos_expectancy_winsorized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_winsorized)",
+    "oos_expectancy_outlier_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_outlier_count)",
+    "oos_expectancy_cost_stress_1_5x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_1_5x)",
+    "oos_expectancy_cost_stress_2x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_2x)",
+    "oos_expectancy_cost_stress_full_realism": "holdout-only (confirm.py-Re-Evaluation, siehe #1162/Issue 1010)",
+    "oos_cvar_95": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_cvar_95)",
+    "oos_es_99": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_es_99)",
+    "oos_sortino_annualized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_sortino_annualized)",
+    "oos_annualization_factor_source": "holdout-only (confirm.py-Re-Evaluation, siehe report.py annualization_factor_source)",
+    "oos_excess_return": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_excess_return, #986/#1140)",
+    "oos_exposure_fraction": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_exposure_fraction, #986/#1140)",
+    "oos_alpha": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_beta": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_f_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_median, #989/#1143)",
+    "oos_n_trailing_stop_exits_with_fill_lag_telemetry": "holdout-only (confirm.py-Re-Evaluation, siehe report.py causal_hypothesis_state, #976/#1130)",
+    # In-Prozess konsumiert, ohne Persistenzbedarf: der Wert wird SYNCHRON innerhalb derselben
+    # Trial-Objective-Auswertung verbraucht (Reward-/Constraint-Berechnung, Rejection-Detail,
+    # ``optimizer_trial_completed``-Log-Event) — es existiert kein nachgelagerter Report-Konsument,
+    # der ihn aus ``trial.user_attrs`` zurueckliest.
+    "oos_max_drawdown": "synchron in Reward-/DD-Constraint-Berechnung verbraucht (run_optimization.py), kein trial_attrs-Ruecklesepfad",
+    "oos_window_start_ns": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_covered": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_coverage_gap_days": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_anchor_divergence": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
+    "oos_rejection_reasons": "synchron zu rejection_reason/is_rejection_detail verdichtet, kein eigener trial_attrs-Konsument",
+    "oos_ret_skew": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
+    "oos_ret_kurtosis": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
+    "oos_psr_z": "synchron via getattr(metrics,...) in reward.compute_reward konsumiert, kein trial_attrs-Ruecklesepfad",
+    # Kein identifizierter Konsument (Stand #1146) — weder trial_attrs noch ein direkter
+    # In-Prozess-Verbrauch. Kandidat fuer eine kuenftige Verdrahtung ODER Entfernung aus
+    # ``parsing.TournamentMetrics``, aber KEIN Symptom dieses Fixes (kein Report-Feld erwartet sie).
+    "oos_fold_returns": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+    "oos_folds_total": "kein identifizierter Konsument in Report/Confirm (Stand #1146) — nur backtest_runner-intern beim Parsen selbst",
+    "oos_sortino_aggregation_basis": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+    "oos_p95_bars_held": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+    "oos_equity_ruined": "kein identifizierter Konsument (Stand #1146) — weder Report noch In-Prozess-Verbrauch",
+}
+
 
 def _create_study_with_retry(*, study_name: str, storage: str, sampler=None,
                              direction: str | None = "maximize", directions: list[str] | None = None):
@@ -148,6 +206,26 @@ def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict
         for k, v in extra.items():
             print(f"   {str(k):<18}: {v}")
     print("=" * 60)
+
+def _emit_any_arm_reachability_result(logger: logging.Logger, unreachable: list[str], *,
+                                      check_name: str, scope: str | None) -> None:
+    """Issue #1015/#1167 (Katalog #1170) — ``check_any_arm_reachability``/``_live`` (reward.py)
+    warnten intern bereits JE UNERREICHBARER Klausel, meldeten ihr GESAMT-Urteil aber nie
+    strukturiert — ein Report konnte "alle Klauseln erreichbar" nicht von "Check nie ausgefuehrt"
+    unterscheiden. Symmetrisch (PASS UND FAIL), ``source="sweep"`` (laeuft im selben Prozess wie
+    sweep.py, "optimizer"-Sidecar, die ``report.py`` bereits liest)."""
+    passed = not unreachable
+    emit_execution_event(logger, "INVARIANT_STREAM_RESULT", {
+        "name": check_name, "check": check_name,
+        "passed": passed, "source": "sweep", "scope": scope,
+        "expected": "jede eligible_requires_any-Klausel liegt unter dem p99 der Referenzverteilung "
+                   "(strukturell erreichbar).",
+        "actual": {"unreachable_clauses": unreachable} if not passed else None,
+        "detail": (f"OR-Arm-Klausel(n) strukturell unerreichbar: {', '.join(unreachable)}."
+                  if not passed else "Alle eligible_requires_any-Klauseln erreichbar."),
+        "severity": "medium",
+    }, level=logging.INFO if passed else logging.WARNING)
+
 
 def _reemit_inference_diagnostics(logger: logging.Logger, metrics, trial_number: int) -> None:
     """Issue #804 — re-emittiert jede in ``backtest_runner._calculate_stats`` (laeuft im Backtest-
@@ -1092,6 +1170,21 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
         budget_gb = float(opt_data.get("disk_budget_gb") or 200)
         reserve_gb = float(opt_data.get("disk_reserve_gb") or 50)
         status = disk_guard.check_budget(WORK, budget_gb=budget_gb, reserve_gb=reserve_gb)
+        # Issue #1015/#1167 (Katalog #1170) — vorher nur bei STATUS_PRESSURE/STATUS_EXCEEDED ein
+        # Event, STATUS_OK spurlos: ein Lauf, in dem das Budget nie eng wurde, und einer, in dem
+        # diese Pruefung nie ausgefuehrt wurde, waren im Report ununterscheidbar. Symmetrisch (PASS
+        # UND FAIL), source="sweep" (laeuft im selben Prozess wie sweep.py, "optimizer"-Sidecar).
+        emit_execution_event(log, "INVARIANT_STREAM_RESULT", {
+            "name": "check_budget", "check": "check_budget",
+            "passed": status == disk_guard.STATUS_OK, "source": "sweep",
+            "scope": getattr(study, "study_name", None),
+            "expected": f"data/optimizer-Verbrauch <= budget_gb={budget_gb} UND freie Reserve "
+                       f">= reserve_gb={reserve_gb}.",
+            "actual": {"status": status, "budget_gb": budget_gb, "reserve_gb": reserve_gb,
+                      "trial_number": trial.number} if status != disk_guard.STATUS_OK else None,
+            "detail": f"disk_guard.check_budget ⇒ {status}.",
+            "severity": "high" if status == disk_guard.STATUS_EXCEEDED else "medium",
+        }, level=logging.INFO if status == disk_guard.STATUS_OK else logging.WARNING)
         if status == disk_guard.STATUS_PRESSURE:
             log.warning(
                 "[#795] DISK_BUDGET_PRESSURE: data/optimizer nähert sich dem Budget (%.0f GB) "
@@ -1137,17 +1230,39 @@ def check_study_coherence_violation_rate(study, opt_data: dict, *,
     wenn die Schwelle ueberschritten wurde."""
     if logger is None:
         logger = logging.getLogger("optimizer")
+    # Issue #1015/#1167 (Katalog #1170) — dieser Check emittierte bisher NUR beim Ueberschreiten
+    # (unten). "nicht konfiguriert"/"keine Daten"/"unterhalb der Schwelle" waren im Report
+    # ununterscheidbar von "nie ausgefuehrt". ``_emit_result`` haelt den PASS-Pfad symmetrisch zum
+    # bestehenden FAIL-Pfad, ohne dessen Rueckgabewert/Kontrollfluss zu aendern.
+    def _emit_result(passed: bool, *, detail: str, actual=None) -> None:
+        emit_execution_event(logger, "INVARIANT_STREAM_RESULT", {
+            "name": "check_study_coherence_violation_rate",
+            "check": "check_study_coherence_violation_rate",
+            "passed": passed, "source": "sweep",
+            "scope": getattr(study, "study_name", None),
+            "expected": f"oos_coherence_violation-Rate <= max_coherence_violation_rate"
+                       f"={max_rate}." if max_rate is not None else
+                       "kein max_coherence_violation_rate konfiguriert (Check inaktiv, "
+                       "Default-PASS).",
+            "actual": actual, "detail": detail, "severity": "high",
+        }, level=logging.INFO if passed else logging.WARNING)
+
     max_rate = opt_data.get("max_coherence_violation_rate")
     if max_rate is None:
+        _emit_result(True, detail="max_coherence_violation_rate nicht konfiguriert — Check inaktiv.")
         return False
     trials = [t for t in getattr(study, "trials", None) or []
              if getattr(t, "user_attrs", {}).get("oos_evaluated") is True]
     n_evaluated = len(trials)
     if n_evaluated == 0:
+        _emit_result(True, detail="Keine oos_evaluated Trials — Rate nicht messbar (Default-PASS).")
         return False
     violations = sum(1 for t in trials if t.user_attrs.get("oos_coherence_violation") is True)
     rate = violations / n_evaluated
     if rate <= float(max_rate):
+        _emit_result(True, detail=f"{violations}/{n_evaluated} Trials mit "
+                                  f"oos_coherence_violation <= max_coherence_violation_rate="
+                                  f"{max_rate}.")
         return False
     # Issue #803 — Budget-Ausfuehrungsgrad ZUM AKTUELLEN AUFRUFZEITPUNKT: macht den frueheren
     # Abbruch (periodischer Callback, siehe coherence_violation_early_abort_callback) messbar,
@@ -1161,6 +1276,9 @@ def check_study_coherence_violation_rate(study, opt_data: dict, *,
             budget_executed_fraction = round(n_trials_when_aborted / float(n_trials_budget), 4)
         except (TypeError, ValueError, ZeroDivisionError):
             budget_executed_fraction = None
+    _emit_result(False, actual={"rate": rate, "n_evaluated": n_evaluated, "n_violations": violations},
+                 detail=f"{violations}/{n_evaluated} Trials mit oos_coherence_violation "
+                       f"(#756-Identitaet verletzt) > max_coherence_violation_rate={max_rate}.")
     emit_execution_event(logger, "INVARIANT_CHECK_FAILED", {
         "scope": getattr(study, "study_name", None), "check": "check_log_return_coherence",
         "expected": f"<= {max_rate}", "actual": rate,
@@ -1516,7 +1634,10 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     tournament_path_check = cfg_dir / "tournament.json"
     if tournament_path_check.exists():
         with open(tournament_path_check, "r", encoding="utf-8") as f:
-            check_any_arm_reachability(json.load(f) or {})
+            _any_arm_unreachable = check_any_arm_reachability(json.load(f) or {})
+        _emit_any_arm_reachability_result(
+            logging.getLogger("optimizer"), _any_arm_unreachable,
+            check_name="check_any_arm_reachability", scope=strategy)
 
     if n_trials is None:
         n_trials = conf_n_trials
@@ -2616,6 +2737,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
             any_arm_policy_decision = resolve_any_arm_policy(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
+            _emit_any_arm_reachability_result(
+                logging.getLogger("optimizer"), any_arm_live_unreachable,
+                check_name="check_any_arm_reachability_live",
+                scope=getattr(study, "study_name", None))
     except Exception:
         any_arm_live_unreachable = []
 
@@ -3094,6 +3219,37 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr(
                 "oos_dust_round_trips_filtered_count",
                 metrics.oos_dust_round_trips_filtered_count)
+        # Issue #994/#1146 (Katalog #1170) — der #1126/#1130-Feldblock war in ``TournamentMetrics``
+        # geparst, aber NIE gestempelt: ``report._median_of_trial_field`` liest ausschliesslich
+        # ``trial.user_attrs``, nicht ``TournamentMetrics`` direkt, also blieben 14 Report-Felder in
+        # 28/28 Studies ``None``, obwohl der Backtest-Runner sie berechnete. Derselbe
+        # ``if … is not None``-Stempel-Stil wie die benachbarten Felder oben (#1035/#1097).
+        if metrics.oos_gross_loss_median_bps_trailing_stop is not None:
+            trial.set_user_attr(
+                "oos_gross_loss_median_bps_trailing_stop",
+                metrics.oos_gross_loss_median_bps_trailing_stop)
+        if metrics.oos_gross_loss_winsorized_mean_bps_trailing_stop is not None:
+            trial.set_user_attr(
+                "oos_gross_loss_winsorized_mean_bps_trailing_stop",
+                metrics.oos_gross_loss_winsorized_mean_bps_trailing_stop)
+        if metrics.oos_n_trailing_stop_losses_dust_filtered:
+            trial.set_user_attr(
+                "oos_n_trailing_stop_losses_dust_filtered",
+                metrics.oos_n_trailing_stop_losses_dust_filtered)
+        if metrics.oos_rt_notional_p05 is not None:
+            trial.set_user_attr("oos_rt_notional_p05", metrics.oos_rt_notional_p05)
+        if metrics.oos_rt_notional_p50 is not None:
+            trial.set_user_attr("oos_rt_notional_p50", metrics.oos_rt_notional_p50)
+        if metrics.oos_rt_notional_p95 is not None:
+            trial.set_user_attr("oos_rt_notional_p95", metrics.oos_rt_notional_p95)
+        if metrics.oos_atr_raw_median_bps is not None:
+            trial.set_user_attr("oos_atr_raw_median_bps", metrics.oos_atr_raw_median_bps)
+        if metrics.oos_stop_exit_fill_lag_bars_median is not None:
+            trial.set_user_attr(
+                "oos_stop_exit_fill_lag_bars_median", metrics.oos_stop_exit_fill_lag_bars_median)
+        if metrics.oos_stop_exit_slippage_bps_median is not None:
+            trial.set_user_attr(
+                "oos_stop_exit_slippage_bps_median", metrics.oos_stop_exit_slippage_bps_median)
 
         _timebox_violated_this_trial = False
         if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:
@@ -3194,6 +3350,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
         trial.set_user_attr("oos_n_periods", metrics.oos_n_periods)
+        # Issue #1011/#1163 (Katalog #1170) — Bar-Achsen-Dichte je Trial persistiert (None-safe,
+        # siehe parsing.TournamentMetrics.oos_bars_per_calendar_day-Feldkommentar), damit
+        # report.py/invariants.check_session_calendar_coherence den Study-Median bilden kann.
+        if metrics.oos_bars_per_calendar_day is not None:
+            trial.set_user_attr("oos_bars_per_calendar_day", metrics.oos_bars_per_calendar_day)
+        if metrics.oos_session_coverage_fraction is not None:
+            trial.set_user_attr(
+                "oos_session_coverage_fraction", metrics.oos_session_coverage_fraction)
         # Issue #845 — Downside-Beobachtungs-Nenner je Trial persistiert (None-safe, siehe
         # parsing.TournamentMetrics.oos_downside_obs-Feldkommentar), damit confirm.py/invariants.py
         # n_periods-Heterogenität einer Familie gegen die tatsaechlich downside-tragende
@@ -3440,7 +3604,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     tournament_path_check = cfg_dir / "tournament.json"
     if tournament_path_check.exists():
         with open(tournament_path_check, "r", encoding="utf-8") as f:
-            check_any_arm_reachability(json.load(f) or {})
+            _any_arm_unreachable = check_any_arm_reachability(json.load(f) or {})
+        _emit_any_arm_reachability_result(
+            logging.getLogger("optimizer"), _any_arm_unreachable,
+            check_name="check_any_arm_reachability", scope=strategy)
 
     if n_trials is None:
         n_trials = conf_n_trials

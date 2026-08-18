@@ -46,7 +46,8 @@ from automation.optimizer.run_optimization import (
     _constraint_violation_progress, compute_budget_execution, _best_completed_value,
 )
 from automation.optimizer.sweep import (
-    load_symbol_universe, read_symbol_bar_quality_cache,
+    load_symbol_universe, read_symbol_bar_quality_cache, _family_members,
+    symbol_bar_quality_cache_status,
 )
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
@@ -88,6 +89,24 @@ def _load_json(path: Path) -> dict | None:
         return None
 
 
+def _cost_model_has_zero_realism(base_cfg: Path | None = None) -> bool:
+    """Issue #1010/#1162 (Katalog #1170, P0) — dieselbe Erkennung wie ``sweep.warn_if_cost_model_
+    zero_realism`` (dort die Startup-WARNING, hier die Report-/Zusammenfassungs-Sicht auf DIESELBE
+    ``backtest.json``): ``True``, wenn ``overnight_financing_bps_per_day_by_asset_class`` UND
+    ``slippage_bps_by_asset_class`` fuer ALLE Asset-Klassen 0.0 sind — die ``'full_realism'``-
+    Kostenstress-Stufe ist dann ein No-Op (siehe ``invariants.check_cost_stress_distinctness``).
+    ``summary_de.py`` liest AUSSCHLIESSLICH das bereits geschriebene Report-JSON (keine zweite
+    Datenquelle) — dieses Feld ist deshalb der Traeger fuer Abschnitt 2.4, nicht ``backtest.json``
+    direkt."""
+    cfg_dir = base_cfg or config_dir()
+    cfg = _load_json(cfg_dir / "backtest.json") or {}
+    financing = cfg.get("overnight_financing_bps_per_day_by_asset_class") or {}
+    slippage = cfg.get("slippage_bps_by_asset_class") or {}
+    values = [v for v in financing.values() if isinstance(v, (int, float))] + \
+             [v for v in slippage.values() if isinstance(v, (int, float))]
+    return bool(values) and all(v == 0.0 for v in values)
+
+
 def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, float]:
     """Issue #1028 (Katalog #866) — der EFFEKTIVE ``trade_amount_pct`` je Strategie
     (``strategy_defaults.json``, ``strategies.json[params]`` hat Vorrang, siehe
@@ -104,7 +123,16 @@ def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, flo
     out: dict[str, float] = {}
     defaults = _load_json(cfg_dir / "strategy_defaults.json") or {}
     for strat, params in defaults.items():
-        if isinstance(params, dict) and params.get("trade_amount_pct") is not None:
+        # Issue #1014/#1166 (Katalog #1170) Regressionsfix — ``_schema`` ist seit diesem Fix
+        # selbst ein Dict mit einem ``"trade_amount_pct"``-Schlüssel (Dokumentationstext, kein
+        # Zahlenwert, siehe strategy_defaults.json). Ohne diesen Ausschluss (Konvention: ``_schema``
+        # ist nie eine echte Strategie, siehe test_issue_623_config_call_sites.py) landete der
+        # Prosa-String als "Strategie" ``_schema`` in dieser Map und liess
+        # ``check_sizing_parity_backtest_vs_allocator``/``check_sizing_identity_coherence`` mit
+        # ``ValueError: could not convert string to float`` crashen.
+        if strat == "_schema":
+            continue
+        if isinstance(params, dict) and isinstance(params.get("trade_amount_pct"), (int, float)):
             out[strat] = params["trade_amount_pct"]
     strategies_cfg = _load_json(cfg_dir / "strategies.json") or {}
     for entry in strategies_cfg.get("strategies") or []:
@@ -116,52 +144,100 @@ def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, flo
     return out
 
 
-def _atr_floor_bps_by_symbol(symbols: Iterable[str], base_cfg: Path | None = None) -> dict[str, float]:
+def _atr_floor_bps_by_symbol(
+    symbols: Iterable[str], base_cfg: Path | None = None,
+) -> tuple[dict[str, float], dict[str, str]]:
     """Issue #1071 (Pitfall #380-Klasse) — löst je Symbol den konfigurierten ATR-Floor auf
     (``backtest_runner.resolve_atr_floor_bps`` über dieselbe Asset-Class-Auflösungskette wie der
     Worker selbst, #924). Rohmaterial für ``invariants.check_atr_scale_homogeneity``s
     ``atr_floor_binding_studies``-Mechanismus-Unterscheidung: eine Study, deren ``atr_median_bps``
     auf diesem Wert liegt, hat einen Nenner an einer KONFIGURIERTEN Konstante, keiner Preis-
     Beobachtung. Lazy-Import (``backtest_runner`` zieht ``nautilus_trader`` — dieselbe Konvention
-    wie ``invariants.check_config_key_registry``). Fail-open ({}) bei jedem Lese-/Importfehler —
-    ein Report darf wegen dieser Zusatzauflösung nie crashen."""
+    wie ``invariants.check_config_key_registry``). Fail-open ({}, {}) bei einem Importfehler —
+    ein Report darf wegen dieser Zusatzauflösung nie crashen.
+
+    Issue #998/#1150 (Katalog #1170, Wiederkehr der #380-Pitfall-Klasse) — Root-Cause: der
+    PER-SYMBOL-``except Exception: continue`` verschluckte JEDEN Fehler (u. a.
+    ``InstrumentMetadataIncompleteError`` aus ``_resolve_asset_class_for_symbol``, ein
+    ``ValueError``-Subtyp, #898) spurlos — ein leeres Ergebnis-Dict war dadurch NICHT von "der
+    Floor bindet bei keinem Symbol" unterscheidbar (die eigentliche #1096-Abnahme), sondern
+    bedeutete "der Floor ist fuer dieses Symbol UNBEKANNT". Fix: Rueckgabe ist seit diesem Fix ein
+    ``(resolved, resolution_errors)``-Tupel; ``resolution_errors[symbol]`` traegt die
+    Fehlermeldung fuer jedes Symbol, das NICHT aufgeloest werden konnte. Der Except-Block ist auf
+    die konkret erwarteten Fehlerklassen eingegrenzt (``ValueError`` deckt sowohl den direkten
+    Raise in ``resolve_atr_floor_bps`` als auch ``InstrumentMetadataIncompleteError`` ab, da
+    Letztere ``ValueError`` erbt) — ein Programmfehler (z. B. ``AttributeError`` bei einer
+    kaputten Aufrufkette) propagiert seither, statt als "0 von N Symbolen aufgeloest" misszudeuten."""
     try:
         from automation.backtest_runner import resolve_atr_floor_bps, _resolve_asset_class_for_symbol
     except Exception:
-        return {}
+        return {}, {}
     cfg_dir = base_cfg or config_dir()
     data = _load_json(cfg_dir / "backtest.json") or {}
     atr_floor_by_asset_class = data.get("atr_floor_bps_by_asset_class") or {}
     out: dict[str, float] = {}
+    errors: dict[str, str] = {}
     for symbol in {s for s in symbols if s}:
         try:
             asset_class_key = "DEFAULT"
             if atr_floor_by_asset_class:
                 asset_class_key = _resolve_asset_class_for_symbol(symbol)
             out[symbol] = resolve_atr_floor_bps(symbol, atr_floor_by_asset_class, asset_class_key)
-        except Exception:
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            errors[symbol] = f"{type(exc).__name__}: {exc}"
+            continue
+    return out, errors
+
+
+def _asset_class_by_symbol(symbols: Iterable[str]) -> dict[str, str]:
+    """Issue #1011/#1163 (Katalog #1170) — asset_class je Symbol (``instrument_map.json``, über
+    ``backtest_runner._resolve_asset_class_for_symbol``, dieselbe Lazy-Import-Konvention wie
+    ``_atr_floor_bps_by_symbol``: ``backtest_runner`` zieht ``nautilus_trader``). Rohmaterial für
+    ``invariants.check_session_calendar_coherence`` (asset-class-GATED FAIL für EQUITY/COMMODITY).
+    Fail-open (``{}``) bei Importfehler; ein Symbol, dessen asset_class nicht auflösbar ist, fehlt
+    einfach im Ergebnis (``policy='default'`` statt ``'reject'`` — diese Funktion ist NICHT
+    gate-entscheidend für die Kostenauflösung selbst, nur eine Zusatz-Klassifikation für eine
+    bereits ``severity='high'``-Invariante; ein unauflösbares Symbol wird schlicht nicht bewertet,
+    statt den gesamten Report abzubrechen)."""
+    try:
+        from automation.backtest_runner import _resolve_asset_class_for_symbol
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for symbol in {s for s in symbols if s}:
+        try:
+            out[symbol] = _resolve_asset_class_for_symbol(symbol, policy="default")
+        except (ValueError, OSError, KeyError, TypeError):
             continue
     return out
 
 
-def _round_trip_cost_bps_by_symbol(symbols: Iterable[str]) -> dict[str, float]:
+def _round_trip_cost_bps_by_symbol(symbols: Iterable[str]) -> tuple[dict[str, float], dict[str, str]]:
     """Issue #1072 — löst je Symbol die config-abgeleitete Round-Trip-Kostenbasis (c_rt) auf
     (``backtest_runner._read_default_round_trip_cost_bps``, dieselbe Auflösungskette wie das
     kostenrelative Expectancy-Gate, #684/#775). Rohmaterial für
     ``invariants.check_stop_cost_ratio``. Lazy-Import (``backtest_runner`` zieht
-    ``nautilus_trader``, dieselbe Konvention wie ``_atr_floor_bps_by_symbol``). Fail-open ({}) bei
-    jedem Lese-/Importfehler."""
+    ``nautilus_trader``, dieselbe Konvention wie ``_atr_floor_bps_by_symbol``). Fail-open
+    ({}, {}) bei einem Importfehler.
+
+    Issue #998/#1150 (Katalog #1170) — dieselbe ``resolution_errors``-Erweiterung wie
+    ``_atr_floor_bps_by_symbol`` (siehe dortiger Docstring): ``_read_default_round_trip_cost_bps``
+    kann ``InstrumentMetadataIncompleteError`` (``ValueError``-Subtyp) propagieren, wenn
+    ``spread_bps_by_asset_class`` konfiguriert ist, aber die Asset-Class des Symbols unbekannt
+    ist — vor diesem Fix verschluckte der PER-SYMBOL-``except Exception`` das spurlos."""
     try:
         from automation.backtest_runner import _read_default_round_trip_cost_bps
     except Exception:
-        return {}
+        return {}, {}
     out: dict[str, float] = {}
+    errors: dict[str, str] = {}
     for symbol in {s for s in symbols if s}:
         try:
             out[symbol] = _read_default_round_trip_cost_bps(symbol)
-        except Exception:
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            errors[symbol] = f"{type(exc).__name__}: {exc}"
             continue
-    return out
+    return out, errors
 
 
 def _stamp_atr_floor_bps_derived(
@@ -214,6 +290,19 @@ def _max_symbol_exposure_fraction(base_cfg: Path | None = None) -> float | None:
     data = _load_json(cfg_dir / "backtest.json") or {}
     value = (data.get("live_risk") or {}).get("max_symbol_exposure_fraction")
     return float(value) if value is not None else None
+
+
+def _trade_amount_pct_parity_factor(base_cfg: Path | None = None) -> float:
+    """Issue #1014/#1166 (Katalog #1170) — ``backtest.json['live_risk']['trade_amount_pct_parity_
+    factor']``, der EXPLIZITE, dokumentierte Faktor zwischen ``strategy_defaults.json``'s
+    ``trade_amount_pct`` und ``max_symbol_exposure_fraction · 100`` (siehe ``invariants.check_
+    sizing_parity_backtest_vs_allocator``-Docstring). Default ``1.0`` (Parität, das Verhalten
+    dieser Prüfung vor #1014/#1166) — fehlt der Key, bleibt die alte Erwartung (Backtest ==
+    Allocator) bit-identisch bestehen."""
+    cfg_dir = base_cfg or config_dir()
+    data = _load_json(cfg_dir / "backtest.json") or {}
+    value = (data.get("live_risk") or {}).get("trade_amount_pct_parity_factor")
+    return float(value) if value is not None else 1.0
 
 
 def _gradient_tau(base_cfg: Path | None = None) -> float:
@@ -282,16 +371,27 @@ def _decision_chain(proposal: dict, *, n_eligible: int) -> list[dict[str, Any]]:
     ``PROMOTE_GLOBAL_DEFAULT``, #783) eine ganze Stufe (``confirm_or_selection``), unbemerkt in
     1736/1736 gruenen Studies.
 
-    Jede Stufe ist ``{stage, passed, detail}``. Eine REJECTED Study endet die Kette an der
-    tatsaechlich blockierenden Stufe (``_STAGE_FOR_REJECT_DETAIL``); vorangehende Stufen gelten als
-    bestanden (der Confirm-Pfad erreicht eine Stufe erst, nachdem die vorherigen bestanden sind).
-    Ein promoteter Kandidat traegt ALLE Stufen mit ``passed=True`` — inkl. der `#682`/`#783`-
-    Default-Route, die ``confirm_or_selection`` mit ``detail='GLOBAL_DEFAULT'`` traegt (das
-    Akzeptanzkriterium #785/2)."""
-    holdout_detail = proposal.get("holdout_reject_detail", proposal.get("is_rejection_detail"))
-    route = proposal.get("promotion_route")
-    failing_stage = _STAGE_FOR_REJECT_DETAIL.get(holdout_detail) if holdout_detail else None
+    Jede Stufe ist ``{stage, passed, detail}``.
+
+    Issue #1001/#1153 (Katalog #1170, P0) — Root-Cause: die VOR diesem Fix EINZIGE Quelle war eine
+    ABLEITUNG ("eine REJECTED Study endet die Kette an der tatsaechlich blockierenden Stufe;
+    vorangehende Stufen gelten als bestanden, weil der Confirm-Pfad eine Stufe erst erreicht,
+    nachdem die vorherigen bestanden sind") — eine Annahme, KEINE Messung, und nachweislich falsch
+    fuer B-8 (10 Studies trugen ``{"stage": "holdout", "passed": true}``, obwohl das Holdout-Gate
+    selbst scheiterte, weil ein SPAETER geprueftes Kriterium wie PBO/Boundary die Attribution
+    gewann — dieselbe Praezedenz-Luecke, die #1000/#1152 in ``confirm.py`` behoben hat).
+
+    Primaere Quelle ist seither ``proposal['stage_results']`` (``confirm.
+    confirm_per_symbol_promotion``s TATSAECHLICH gemessene ``{stage: {passed, detail}}``-Eintraege,
+    #1153 Fix Punkt 1): eine Stufe, die dort FEHLT, wurde nie ausgewertet und traegt
+    ``passed=None`` ("nicht belegt"), NIE ein stillschweigendes ``True``. Nur Alt-Proposals OHNE
+    dieses Feld (vor #1153 exportiert) fallen auf die alte Ableitung zurueck — dann aber ebenfalls
+    mit ``passed=None`` statt ``True`` fuer nicht nachweislich gemessene Stufen (#1153 Fix Punkt 2),
+    ausser bei einem tatsaechlich PROMOTETEN Kandidaten (``promote=True`` ist selbst ein starker,
+    unabhaengiger Beleg, dass jede Stufe bestand)."""
     promote = proposal.get("status") in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
+    route = proposal.get("promotion_route")
+    stage_results = proposal.get("stage_results")
 
     chain: list[dict[str, Any]] = []
     is_gate_passed = bool(n_eligible > 0 or route == "global_default_on_symbol" or promote)
@@ -301,13 +401,32 @@ def _decision_chain(proposal: dict, *, n_eligible: int) -> list[dict[str, Any]]:
     })
     if not is_gate_passed:
         return chain
+
+    if stage_results:
+        # Issue #1001/#1153 Fix Punkt 2 — MESSUNG statt Ableitung: eine im Record fehlende Stufe
+        # wurde nachweislich nie ausgewertet.
+        for stage in _DECISION_STAGE_NAMES[1:]:
+            entry = stage_results.get(stage)
+            if entry is None:
+                chain.append({"stage": stage, "passed": None, "detail": None})
+            else:
+                chain.append({
+                    "stage": stage, "passed": entry.get("passed"), "detail": entry.get("detail"),
+                })
+        return chain
+
+    # Legacy-Fallback (Alt-Proposal ohne ``stage_results``) — dieselbe Ableitung wie vor #1153,
+    # aber ``passed=None`` (statt ``True``) fuer jede Stufe, die NICHT nachweislich (ueber
+    # ``promote=True`` oder die terminale Ablehnung selbst) belegt ist.
+    holdout_detail = proposal.get("holdout_reject_detail", proposal.get("is_rejection_detail"))
+    failing_stage = _STAGE_FOR_REJECT_DETAIL.get(holdout_detail) if holdout_detail else None
     for stage in _DECISION_STAGE_NAMES[1:]:
         if failing_stage == stage:
             chain.append({"stage": stage, "passed": False, "detail": holdout_detail})
             break
         detail = "GLOBAL_DEFAULT" if (stage == "confirm_or_selection"
                                       and route == "global_default_on_symbol") else None
-        chain.append({"stage": stage, "passed": True, "detail": detail})
+        chain.append({"stage": stage, "passed": (True if promote else None), "detail": detail})
     return chain
 
 
@@ -510,7 +629,42 @@ def _read_jsonl_events(path: Path | None, event_type: str) -> list[dict]:
 # Fund wie die fuenf urspruenglichen #1138-Checks, hier aber auf der LIVE-Trading-Seite, nicht im
 # Backtest-/Report-Pfad dieses Issue-Batches — eine eigene Verdrahtung braucht einen Live-Event-
 # Aggregator, der ausserhalb dieser Sitzung liegt). Dokumentierter Verzicht, kein Vergessen.
-_DELIBERATELY_UNWIRED_INVARIANT_CHECKS: tuple[str, ...] = ("check_live_exposure_budget",)
+#
+# ``check_cost_model_resolution``/``check_cost_model_floor`` (Issue #999/#1151, Katalog #1170) —
+# beide lesen ``COST_MODEL_RESOLVED``-Events, die AUSSCHLIESSLICH im isolierten Worker-Prozess
+# unter dem Logger-Namen ``"backtest_worker"`` emittiert werden; der Report-Pfad liest jedoch den
+# Sidecar des ``"optimizer"``-Loggers im Hauptprozess — zwei disjunkte Transportwege, die Checks
+# sehen STRUKTURELL IMMER 0 Events. Siehe die ausfuehrliche Begruendung an der (entfernten)
+# ehemaligen Aufrufstelle in ``_build_report`` (Kommentar bei der frueheren #984/#1138-Verdrahtung).
+#
+# ``check_data_span`` (``backtest_runner.py``, Issue #1015/#1167, Katalog #1170) — emittiert seit
+# diesem Fix symmetrisch ein ``INVARIANT_STREAM_RESULT``-Event (PASS UND FAIL, ``source="worker"``), aber
+# unter demselben ``"backtest_worker"``-Logger wie ``COST_MODEL_RESOLVED`` oben — DERSELBE
+# strukturell disjunkte Transportweg, keine neue Ausnahme.
+#
+# ``check_deployment_gate_completeness`` (``daily_orchestrator.py`` Phase 5, Issue #1015/#1167,
+# Katalog #1170) — emittiert seit diesem Fix symmetrisch ein ``INVARIANT_STREAM_RESULT``-Event (``source=
+# "orchestrator"``), aber bewertet die Whitelist EINES Phase-5-Laufs (``whitelist_tournament.
+# json``, potenziell mehrere Sweep-``run_id``s ueberspannend), nicht die Study-Population eines
+# EINZELNEN Sweep-Reports — es gibt kein bestimmtes ``run.json``, in dessen ``invariant_checks``
+# dieses Ergebnis eindeutig einsortiert werden koennte, ohne eine Kohorten-Fiktion zu erfinden
+# (dieselbe Kohorten-Disziplin wie #941/#1107, siehe ``cohort``-Feld-Docstring in ``invariants.py``).
+#
+# ``check_invariant_coverage`` selbst (Issue #1015/#1167) — anders als ``check_invariant_registry_
+# wired`` (oben, Zeile ~612: dessen STATISCHER Text-Scan trifft die eigene Aufrufstelle automatisch
+# mit) arbeitet dieser Check gegen einen zum Auswertungszeitpunkt bereits FERTIGEN Schnappschuss
+# von ``invariant_checks`` — sein EIGENES Ergebnis existiert per Konstruktion noch nicht, wenn er
+# ausgewertet wird (es WIRD der naechste Eintrag). Ohne diesen Eintrag würde er sich selbst
+# permanent als "fehlend" melden — ein Placebo-Fund ueber die eigene Nichtexistenz-zum-
+# Messzeitpunkt, keine echte Beobachtung.
+_DELIBERATELY_UNWIRED_INVARIANT_CHECKS: tuple[str, ...] = (
+    "check_live_exposure_budget",
+    "check_cost_model_resolution",
+    "check_cost_model_floor",
+    "check_data_span",
+    "check_deployment_gate_completeness",
+    "check_invariant_coverage",
+)
 
 
 def _invariant_registry_wiring_check() -> "_inv.InvariantResult":
@@ -548,6 +702,61 @@ def _invariant_registry_wiring_check() -> "_inv.InvariantResult":
         defined, wired, deliberately_unwired=_DELIBERATELY_UNWIRED_INVARIANT_CHECKS)
 
 
+def _all_defined_check_names() -> list[str]:
+    """Issue #1015/#1167 (Katalog #1170) — ALLE ``check_*``-Funktionsdefinitionen über das
+    GESAMTE ``automation``-Paket (nicht nur ``invariants.py``, siehe ``_invariant_registry_
+    wiring_check``-Docstring oben): neun der bei Issue-Erstellung definierten Checks leben in
+    ``reward.py``/``run_optimization.py``/``wallclock_guard.py``/``disk_guard.py``/
+    ``sweep_diagnostics.py``/``backtest_runner.py``, nicht in ``invariants.py``. Text-Scan (KEIN
+    Import!) — ``backtest_runner.py`` hängt zur Laufzeit an ``nautilus_trader`` (in manchen
+    Testumgebungen nicht installiert); ein Import würde diese reine Introspektion an eine
+    Abhängigkeit koppeln, die mit der Frage "welche Funktionen sind DEFINIERT" nichts zu tun hat
+    (dasselbe Prinzip wie ``_invariant_registry_wiring_check``s eigener Text-Scan für "wired").
+    Rückgabe: sortierte, deduplizierte Namen."""
+    import re
+    optimizer_dir = Path(__file__).resolve().parent
+    automation_dir = optimizer_dir.parent
+    candidate_paths = [
+        optimizer_dir / f for f in
+        ("invariants.py", "reward.py", "run_optimization.py", "wallclock_guard.py",
+         "disk_guard.py", "sweep_diagnostics.py")
+    ] + [automation_dir / "backtest_runner.py"]
+    names: set[str] = set()
+    for path in candidate_paths:
+        try:
+            source = path.read_text("utf-8")
+        except OSError:
+            continue
+        names.update(re.findall(r"(?m)^def (check_[A-Za-z0-9_]+)\(", source))
+    return sorted(names)
+
+
+def _read_external_invariant_results() -> list[dict]:
+    """Issue #1015/#1167 (Katalog #1170) — liest ``INVARIANT_STREAM_RESULT``-Events aus dem "optimizer"-
+    Sidecar (derselbe, den ``BAR_QUALITY_PROFILE``/``CHAMPION_WRITEBACK`` bereits nutzen): sechs
+    der neun in #1167 benannten Checks laufen ausserhalb von ``_build_report`` (Sweep-
+    Hauptschleife, ``run_optimization.py`` — beide im SELBEN Prozess wie ``report.py``, siehe
+    dortige ``logging.getLogger("optimizer")``-Aufrufe), melden ihr Urteil seit diesem Fix aber
+    als eigenes Event statt als in-process ``InvariantResult``-Objekt. Die verbleibenden drei
+    (``check_live_exposure_budget``/``check_cost_model_resolution``/``check_cost_model_floor``/
+    ``check_data_span``/``check_deployment_gate_completeness`` — fünf, siehe
+    ``_DELIBERATELY_UNWIRED_INVARIANT_CHECKS``) landen in strukturell disjunkten Sidecars und
+    erscheinen hier folgerichtig NICHT. ``None``-Sidecar (kein echter Sweep-Lauf, z. B. in Tests)
+    ⇒ leere Liste, exakt wie ``_read_jsonl_events`` selbst."""
+    events = _read_jsonl_events(jsonl_sidecar_path(_log.name), "INVARIANT_STREAM_RESULT")
+    results = []
+    for event in events:
+        d = {k: v for k, v in event.items()
+             if k not in ("event_type", "timestamp_utc", "run_id", "strategy", "symbol",
+                          "study_name")}
+        d.setdefault("name", d.get("check"))
+        d.setdefault("check", d.get("name"))
+        d.setdefault("severity", "medium")
+        d.setdefault("scope", "sweep")
+        results.append(d)
+    return results
+
+
 def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
     """Issue #919 — Anteil der Round-Trips mit ``exit_reason == 'TIME_BOX'`` (hourly_strategy_
     base.ExitReason) am je-Study aufsummierten Exit-Reason-Histogramm. ``None`` ohne jede
@@ -570,15 +779,38 @@ def _sum_exit_reason_histograms(trial_attrs: list[dict]) -> dict[str, int]:
     return total
 
 
-def _median_of_sampled_param(trial_attrs: list[dict], param: str) -> float | None:
+def _median_of_sampled_param(
+    trial_attrs: list[dict], param: str, *, default_from: dict | None = None,
+) -> tuple[float | None, str]:
     """Issue #897 Fix 3 — Median eines GESAMPELTEN Suchraum-Parameters (``sampled_params[param]``)
     über eine Study. Symmetrisch zu ``_median_of_trial_field``, aber für den Config-Wert statt der
-    realisierten Telemetrie (Eingangsgrösse für ``check_effective_stop_distance``)."""
+    realisierten Telemetrie (Eingangsgrösse für ``check_effective_stop_distance``).
+
+    Issue #997/#1149 (Katalog #1170) — ``SmaCrossoverStrategy`` sampelt ``atr_trailing_multiplier``/
+    ``max_bars_in_trade`` NICHT (``spaces.py`` sampelt für diese Strategie nur ``sma_period``/
+    ``cooldown_bars``), obwohl die Basisklasse (``HourlyStrategyBase``) trotzdem einen ATR-
+    Trailing-Stop mit dem DEFAULT-Multiplikator anwendet — VOR diesem Fix kannte diese Funktion
+    keinen Default-Fallback, also blieb das Feld strukturell ``None`` fuer jede Strategie, die den
+    Parameter nicht sampelt, und die gesamte Kalibrierkette (``atr_floor_bps_derived``,
+    ``realized_stop_loss_ratio*``, ``check_stop_cost_ratio``-Kandidatur) fiel fuer sie aus.
+
+    ``default_from`` (optional, i.d.R. der ``strategy_defaults.json``-Eintrag DIESER Strategie) —
+    fehlt der Parameter im Suchraum (keine ``sampled_params``-Werte), aber ``default_from[param]``
+    existiert, wird DIESER (der tatsaechlich von ``HourlyStrategyBase`` angewendete) Wert
+    verwendet. Rueckgabe ist ein ``(value, source)``-Tupel, ``source ∈ {"sampled",
+    "strategy_default", "unavailable"}`` — KEIN stiller Ratewert: fehlt der Parameter in BEIDEN
+    Quellen, bleibt ``value=None`` und ``source="unavailable"`` (kein erfundener Wert, siehe
+    Docstring-Akzeptanzkriterium 3)."""
     values = [
         (a.get("sampled_params") or {}).get(param) for a in (trial_attrs or [])
         if (a.get("sampled_params") or {}).get(param) is not None
     ]
-    return statistics.median(values) if values else None
+    if values:
+        return statistics.median(values), "sampled"
+    default_value = (default_from or {}).get(param)
+    if default_value is not None:
+        return float(default_value), "strategy_default"
+    return None, "unavailable"
 
 
 def _study_record(proposal: dict, study,
@@ -646,6 +878,21 @@ def _study_record(proposal: dict, study,
         if a.get("oos_evaluated") is True and a.get("oos_n_periods")
     ]
     oos_n_periods_median = statistics.median(_n_periods_values) if _n_periods_values else None
+    # Issue #1011/#1163 (Katalog #1170) — Study-Median der Bar-Achsen-Dichte (siehe
+    # backtest_runner._bar_calendar_telemetry-Docstring), Rohmaterial für invariants.check_
+    # session_calendar_coherence. Dieselbe oos_evaluated-Kohorte/Median-Konvention wie oben.
+    _bars_per_calendar_day_values = [
+        a["oos_bars_per_calendar_day"] for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_bars_per_calendar_day") is not None
+    ]
+    bars_per_calendar_day_median = (
+        statistics.median(_bars_per_calendar_day_values) if _bars_per_calendar_day_values else None)
+    _session_coverage_values = [
+        a["oos_session_coverage_fraction"] for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_session_coverage_fraction") is not None
+    ]
+    session_coverage_fraction_median = (
+        statistics.median(_session_coverage_values) if _session_coverage_values else None)
     coherence_violations = sum(1 for a in trial_attrs if a.get("oos_coherence_violation") is True)
     # Issue #976 — je Study, wie oft jeder is_rejection_detail-Code über ALLE Trials auftrat.
     # Rohmaterial für invariants.check_window_unreachable_rate.
@@ -858,18 +1105,31 @@ def _study_record(proposal: dict, study,
         # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
         # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.
         _inv.check_deflation_cluster_coverage(holdout_metrics),
-        _inv.check_rejection_chain_completeness(proposal, decision_chain=decision_chain),
+        _inv.check_rejection_chain_completeness(
+            proposal, decision_chain=decision_chain, holdout_metrics=holdout_metrics,
+            tournament_config=tournament_cfg),
         _inv.check_reward_term_variance(trial_attrs),
         # Issue #984/#1138 (Katalog #986) — #822-Regressionswaechter, bislang null Aufrufstellen
         # ausserhalb von invariants.py/tests/ (Pitfall #409 in AGENTS.md).
         _inv.check_family_n_statistic_coverage(
-            trial_attrs, deflation_n_family_raw=holdout_metrics.get("deflation_n_family_raw")),
+            trial_attrs, deflation_n_family_raw=holdout_metrics.get("deflation_n_family_raw"),
+            # Issue #1008/#1160 (Katalog #1170) — dieselbe ``holdout_metrics``-Quelle wie
+            # ``deflation_n_family_raw`` oben; bewacht, dass die beiden Vokabulare (Quelle/Skip-
+            # Grund) nie unter demselben Feldnamen vermischt werden.
+            deflation_n_family_source=holdout_metrics.get("deflation_n_family_source"),
+            deflation_skipped_reason=holdout_metrics.get("deflation_skipped_reason")),
         # Issue #984/#1138 — dieselbe trial_gate_deltas-Kohorte wie gate_collinearity_unconsolidated
         # oben, jetzt zusaetzlich gegen die Entscheidungspflicht (#907) geprueft: jedes kollineare
         # Gate-Paar dieser Study braucht einen dokumentierten Eintrag in tournament.json
         # ['gate_collinearity_accepted_pairs'], sonst FAILt dieser Check blocking.
+        # Issue #1017/#1169 (Katalog #1170) — liest seither NICHT mehr die rohe, ungefilterte
+        # gate_rank_correlation_matrix, sondern gate_correlations_requiring_decision: ein Paar mit
+        # einem gate_consolidation_protected-Mitglied (z. B. max_drawdown) braucht STRUKTURELL nie
+        # einen Entscheidungs-Eintrag (die Schutzliste IST die Entscheidung, siehe dortiger
+        # Docstring) — die volle, ungefilterte Matrix bleibt unveraendert forensische #742-Report-
+        # Telemetrie (cross_study, siehe an anderer Stelle).
         _inv.check_gate_collinearity_decision_required(
-            _reward.gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)["correlations"],
+            _reward.gate_correlations_requiring_decision(trial_gate_deltas, tournament_cfg),
             threshold=float((tournament_cfg or {}).get("gate_collinearity_threshold", 0.90)),
             accepted_pairs=(tournament_cfg or {}).get("gate_collinearity_accepted_pairs"),
             policy=str((tournament_cfg or {}).get("gate_collinearity_policy", "require_decision"))),
@@ -939,6 +1199,22 @@ def _study_record(proposal: dict, study,
                     winner_outside_default_bounds[_param] = [_value, [_lo, _hi]]
         except Exception:
             winner_outside_default_bounds = {}
+
+    # Issue #997/#1149 (Katalog #1170) — strategieeigener strategy_defaults.json-Eintrag als
+    # Default-Fallback fuer nicht gesampelte Stop-Parameter (siehe _median_of_sampled_param).
+    _strategy_defaults_entry = (
+        _load_json(config_dir() / "strategy_defaults.json") or {}
+    ).get(proposal.get("strategy")) or {}
+    _atr_trailing_multiplier_median, _atr_trailing_multiplier_median_source = (
+        _median_of_sampled_param(
+            trial_attrs, "atr_trailing_multiplier", default_from=_strategy_defaults_entry))
+    _max_bars_in_trade_median, _max_bars_in_trade_median_source = _median_of_sampled_param(
+        trial_attrs, "max_bars_in_trade", default_from=_strategy_defaults_entry)
+
+    # Issue #1007/#1159 (Katalog #1170) — siehe ``deflation_n_family_frozen``-Feldkommentar unten:
+    # eine rohe ``0`` wird beim Export auf ``None`` + Skip-Grund abgebildet, nie als Zahl exportiert.
+    _deflation_n_family_frozen_raw = study_user_attrs.get("deflation_n_family_frozen")
+    _family_membership_raw = study_user_attrs.get("family_membership")
 
     record = {
         "symbol": proposal.get("symbol"),
@@ -1029,13 +1305,36 @@ def _study_record(proposal: dict, study,
         # Confirm-Aufruf dieser (Strategie, Symbol)-Study eingefrorene Multiplizitaet, seit #1131
         # PER STRATEGIE aus ``n_family_stage1`` bezogen (nicht mehr die budgetierte, symbolweite
         # Summe); stabil ueber jeden Lesezeitpunkt (SQLite-Neuladen, Confirm-Re-Lauf).
-        "deflation_n_family_frozen": study_user_attrs.get("deflation_n_family_frozen"),
+        #
+        # Issue #1007/#1159 (Katalog #1170) — Root-Cause: eine ``excluded_degenerate``-Study
+        # (#981/#1135) stempelte hier eine rohe ``0`` (``Φ⁻¹(1 − 1/N)`` ist fuer N=0 undefiniert,
+        # siehe ``deflation.sr0_multiple_testing_robust``) — latent, weil eine solche Study meist
+        # bereits am IS-Gate stirbt, aber FAIL-OPEN. Fix: ``0`` wird HIER (beim Lesen/Exportieren,
+        # nicht beim Schreiben in sweep.py) auf ``None`` abgebildet, MIT explizitem Skip-Grund —
+        # nie mehr ``deflation_n_family_frozen == 0`` in einem Study-Record.
+        "deflation_n_family_frozen": (
+            None if _deflation_n_family_frozen_raw is not None
+            and _deflation_n_family_frozen_raw <= 0
+            else _deflation_n_family_frozen_raw
+        ),
+        # Issue #1007/#1159 — der Grund, WARUM ``deflation_n_family_frozen`` oben ``None`` statt
+        # einer Zahl traegt (bewusst NICHT der gleichnamige ``deflation_skipped_reason`` aus
+        # confirm.py's ``metrics_symbol`` — jenes Feld beschreibt, warum die SR0/DSR-Berechnung
+        # DIESER Study uebersprungen wurde, ein anderer Skip an einer anderen Stelle; #1005/#1157
+        # lehrt, denselben Feldnamen nicht fuer zwei verschiedene Groessen wiederzuverwenden).
+        # ``None`` ⇒ ``deflation_n_family_frozen`` ist eine echte Zahl (>= 1) oder war nie gesetzt.
+        "deflation_n_family_frozen_skipped_reason": (
+            ("FAMILY_EXCLUDED_DEGENERATE" if _family_membership_raw == "excluded_degenerate"
+             else "FAMILY_N_ZERO")
+            if _deflation_n_family_frozen_raw is not None and _deflation_n_family_frozen_raw <= 0
+            else None
+        ),
         # Issue #981/#1135 (Katalog #986) — 'excluded_degenerate', wenn diese Study strukturell zu
         # wenige OOS-Perioden hat (< tournament.json['min_oos_periods_for_family']), um in der
         # Familien-Multiplizitaet, im check_n_periods_homogeneity-Nenner oder in der Rangliste
         # mitgezaehlt zu werden (siehe sweep._study_oos_n_periods_median). None ⇒ regulaeres
         # Familienmitglied (kein Config-Key gesetzt, oder Schwelle erreicht).
-        "family_membership": study_user_attrs.get("family_membership"),
+        "family_membership": _family_membership_raw,
         # Issue #977/#1131 — der Geltungsbereich, den ``deflation_n_family_frozen`` TATSAECHLICH
         # traegt (``'per_strategy'``/``'per_symbol_best'``), gegen ``deflation_n_family_source``
         # und ``tournament.json['promotion_family_scope']`` pruefbar (siehe invariants.check_
@@ -1220,11 +1519,28 @@ def _study_record(proposal: dict, study,
         "time_box_exit_fraction": _time_box_exit_fraction(trial_attrs),
         # Issue #897 Fix 3 — Median des je-Trial GESAMPELTEN atr_trailing_multiplier (das
         # Konfigurations-Gegenstueck zur realisierten ATR-Telemetrie oben).
-        "atr_trailing_multiplier_median": _median_of_sampled_param(
-            trial_attrs, "atr_trailing_multiplier"),
+        # Issue #997/#1149 — faellt auf den strategy_defaults.json-Eintrag zurueck, wenn die
+        # Strategie diesen Parameter nicht sampelt (z. B. SmaCrossoverStrategy); die Herkunft
+        # (source ∈ {"sampled","strategy_default","unavailable"}) macht das UNTERSCHEIDBAR von
+        # einem echten, gesampelten Median, statt beide unter demselben Feld zu verstecken.
+        "atr_trailing_multiplier_median": _atr_trailing_multiplier_median,
+        "atr_trailing_multiplier_median_source": _atr_trailing_multiplier_median_source,
+        # Issue #997/#1149 Fix Punkt 2 — dasselbe Muster fuer max_bars_in_trade (die Zeitbox greift
+        # ebenfalls unabhaengig davon, ob die Strategie sie sampelt).
+        "max_bars_in_trade_median": _max_bars_in_trade_median,
+        "max_bars_in_trade_median_source": _max_bars_in_trade_median_source,
         # Issue #862 — Rohmaterial für den globalen check_guard_reference_coherence-Wächter.
         "oos_n_periods_median": oos_n_periods_median,
+        # Issue #1011/#1163 (Katalog #1170) — Rohmaterial für invariants.check_session_calendar_
+        # coherence (asset-class-gated FAIL bei > 8) und Zusatz-Telemetrie zur Session-Abdeckung.
+        "bars_per_calendar_day": bars_per_calendar_day_median,
+        "session_coverage_fraction": session_coverage_fraction_median,
         "promotion_outcome": proposal.get("status"),
+        # Issue #1002/#1154 (Katalog #1170) — die ERSTE verletzte Promotions-Stufe (``None`` bei
+        # einer Promotion) UND alle GLEICHZEITIG verletzten Stufen — macht in Abschnitt 2.2 ohne
+        # Blick in run.json sichtbar, an welcher Stufe eine Study starb (Akzeptanzkriterium #1154).
+        "blocking_stage": proposal.get("blocking_stage"),
+        "all_failed_stages": proposal.get("all_failed_stages") or [],
         # Issue #1006 (Katalog #858) — dieselbe Deployment-Bewertung, die Phase 5 aufruft (kein
         # Nachbau); ``None`` für Nicht-Kandidaten. summary_de.py Abschnitt 2.1 liest dies statt
         # implizit "Deploybar" zu behaupten.
@@ -1257,7 +1573,8 @@ def _study_record(proposal: dict, study,
         # parallel und potenziell inkohärent aus oos_gate_deltas gepflegt zu werden.
         "gate_inventory": _inv.gate_inventory_table(
             trial_attrs, (tournament_cfg or {}).get("eligible_requires_all") or [],
-            is_rejection_detail_counts=is_rejection_detail_counts),
+            is_rejection_detail_counts=is_rejection_detail_counts,
+            tournament_config=tournament_cfg),
         # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
         # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
@@ -1273,7 +1590,28 @@ def _study_record(proposal: dict, study,
         "holdout_route": holdout_route,
         # Issue #832 Fix Punkt 2/3 — monetäre Holdout-Kennzahlen (confirm._metrics_dict), für
         # summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ohne zweiten Datenzugriff.
-        "holdout_total_return": holdout_metrics.get("oos_total_return"),
+        #
+        # Issue #1013/#1165 (Katalog #1170) — Root-Cause: ``parsing.TournamentMetrics.oos_total_
+        # return`` hat den Dataclass-Default ``0.0`` (KEIN ``float | None``) — ``parse_tournament``
+        # koaleszierte ein fehlendes ``oos_metrics['total_return']`` (der Holdout wurde NIE
+        # ausgewertet, z. B. weil ``mtm_series``/``_wf`` fehlten) still auf ``0.0``, ununterscheidbar
+        # von einer ECHTEN, gemessenen 0%-Rendite. ``oos_buyhold_return`` (Dataclass-Default
+        # ``None``) hat denselben Bug NICHT — sie bleibt in genau diesem Fall ``None``. HIER (am
+        # Report-Rand, NICHT in parsing.py — eine Signaturänderung dort würde jeden Aufrufer treffen,
+        # der ``oos_total_return`` bereits als garantiert-float behandelt) wird die Koaleszenz
+        # rückgängig gemacht: ``0.0`` + ``oos_buyhold_return is None`` + ``oos_total_trades == 0``
+        # ist exakt die undurchführbare Kombination eines NIE ausgewerteten Holdouts (ein echter
+        # Zero-Trade-Holdout mit erfolgreich berechneter mtm_series HAT einen definierten
+        # ``oos_buyhold_return``, da Buy&Hold unabhängig von Strategie-Trades ist) — summary_de.py
+        # rendert das Ergebnis als "k. A." statt "0,0 %" (Symptom: SqueezeBreakout/NVDA erschien
+        # dadurch ÜBER allen echten negativen Kandidaten).
+        "holdout_total_return": (
+            None if (
+                holdout_metrics.get("oos_total_return") == 0.0
+                and holdout_metrics.get("oos_buyhold_return") is None
+                and (holdout_metrics.get("oos_total_trades") or 0) == 0
+            ) else holdout_metrics.get("oos_total_return")
+        ),
         # Issue #945/#1111 (Katalog #960) — umbenannt von ``holdout_expectancy``: Root-Cause, vierte
         # Instanz der Klasse #304/#1033/#1097 — der Kostenstress-Ladder
         # (``holdout_expectancy_cost_stress_1_5x``/``_2x`` unten) wird aus
@@ -2037,15 +2375,27 @@ def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[
     niedrig angesetzt (Φ⁻¹(1−1/n) unterschätzt), was JEDE Promotionsentscheidung mit familienweiter
     Korrektur begünstigt. Fallback: fehlt ``n_family_stage1``, aber
     ``n_selection_statistic_available`` ist bekannt (dieselbe #822-Grundgesamtheit), wird DIESER
-    Wert verwendet, statt die Study stillschweigend auszulassen."""
+    Wert verwendet, statt die Study stillschweigend auszulassen.
+
+    Issue #1006/#1158 (Katalog #1170) — Root-Cause: der obige #1080-Fallback kannte den #981/#1135-
+    Ausschluss (``family_membership == 'excluded_degenerate'``) nicht — eine degenerierte Study
+    (zu wenige OOS-Perioden, ``deflation_n_family`` daher NIE gestempelt, siehe confirm.py's ``if
+    deflation_sr0 is not None:``-Guard) fiel auf ihre rohe ``n_selection_statistic_available``-Zahl
+    zurück, während ``sweep.py``'s eingefrorener Stempel dieselbe Study auf 0 setzt — Differenz
+    exakt 1 je betroffener Study. ``_family_members`` (``sweep.py``, dieselbe Funktion wie dort) wird
+    JETZT auch hier angewendet: eine ausgeschlossene Study zaehlt mit N1=0, unabhängig davon, ob
+    ``n_family_stage1``/``n_selection_statistic_available`` selbst > 0 wären."""
     stage1: dict[str, dict[str, int]] = {}
     stage2: dict[str, int] = {}
     for r in studies_out:
         symbol = r.get("symbol")
         strategy = r.get("strategy")
-        n1 = r.get("n_family_stage1")
-        if n1 is None:
-            n1 = r.get("n_selection_statistic_available")
+        if not _family_members(r.get("family_membership")):
+            n1 = 0
+        else:
+            n1 = r.get("n_family_stage1")
+            if n1 is None:
+                n1 = r.get("n_selection_statistic_available")
         if not symbol or not strategy or n1 is None:
             continue
         n1 = int(n1)
@@ -2183,6 +2533,10 @@ def _build_report(
     # Issue #923 — einmal je Report-Lauf gelesen (nicht je Study — dieselbe Datei, kein
     # Symbol-Scope beim Lesen selbst nötig).
     _symbol_bar_quality_cache = read_symbol_bar_quality_cache(WORK)
+    # Issue #1016/#1168 (Katalog #1170) — {cache_path, cache_found}, damit ein leeres/fehlendes
+    # symbol_bar_quality NICHT stillschweigend als "None" im Report verschwindet (siehe
+    # check_symbol_bar_quality_cache_availability-Docstring).
+    _symbol_bar_quality_cache_status = symbol_bar_quality_cache_status(WORK)
     # Issue #1028 (Katalog #866) — einmal je Report-Lauf gelesen; Rohmaterial für
     # invariants.check_sizing_identity_coherence.
     _trade_amount_pct_map = _trade_amount_pct_by_strategy()
@@ -2340,22 +2694,41 @@ def _build_report(
             p for p in Path(WORK).glob("proposal_*.json") if (_load_json(p) or {}).get("symbol"))
     except OSError:
         _store_scan_paths = []
+    # Issue #1004/#1156 (Katalog #1170, P1) — Root-Cause: ``n_own`` war FAIL-OPEN
+    # (``len(_store_scan_paths) − n_foreign``, ein reiner Komplement-Zaehler): JEDES Proposal, das
+    # NICHT nachweislich fremd war, zaehlte automatisch als eigen — inklusive Studies, deren
+    # Optuna-Study nicht ladbar war (``_scan_study is None``) oder die 0 Trials hatten (kein
+    # Nachweis in IRGENDEINE Richtung). Fix: DREIWERTIGE, POSITIV nachgewiesene Klassifikation.
+    # ``n_own`` zaehlt AUSSCHLIESSLICH (a) bereits vom Aufrufer uebergebene Proposals (die
+    # ``_already_seen_pairs``, per Konstruktion eigen) UND (b) gescannte Studies mit >= 1 Trial
+    # DIESER ``run_id`` — nie mehr per Komplement. ``n_unclassifiable`` macht "nicht ladbar/keine
+    # Trials/weder eigen noch fremd" als EIGENE, dritte Zahl sichtbar, statt sie stillschweigend
+    # unter ``n_own`` zu verstecken.
+    _n_store_scan_own = 0
     _n_store_scan_foreign = 0
+    _n_store_scan_unclassifiable = 0
     for _scan_path in _store_scan_paths:
         _scan_proposal = _load_json(_scan_path) or {}
         _scan_key = (_scan_proposal.get("strategy"), _scan_proposal.get("symbol"))
         if _scan_key in _already_seen_pairs:
+            _n_store_scan_own += 1
             continue
         _scan_study = _load_study_for_proposal(_scan_proposal)
         _scan_trials = (
             list(getattr(_scan_study, "trials", None) or []) if _scan_study is not None else [])
+        if not _scan_trials:
+            _n_store_scan_unclassifiable += 1
+            _already_seen_pairs.add(_scan_key)
+            continue
         _scan_own = [
             t for t in _scan_trials
             if (getattr(t, "user_attrs", None) or {}).get("run_id") == run_id]
         _scan_foreign = [
             t for t in _scan_trials
             if (getattr(t, "user_attrs", None) or {}).get("run_id") not in (None, run_id)]
-        if _scan_foreign and not _scan_own:
+        if _scan_own:
+            _n_store_scan_own += 1
+        elif _scan_foreign:
             _n_store_scan_foreign += 1
             _scan_run_id_found = (getattr(_scan_foreign[0], "user_attrs", None) or {}).get("run_id")
             studies_excluded_foreign_run.append({
@@ -2370,6 +2743,10 @@ def _build_report(
                 "reason": "run_id_mismatch",
                 "detection": "store_scan",
             })
+        else:
+            # Weder ein Trial dieser run_id noch eines einer ANDEREN run_id (z. B. alle Trials mit
+            # run_id=None, ein Alt-Bestand vor #821) — nachweislich weder eigen noch fremd.
+            _n_store_scan_unclassifiable += 1
         _already_seen_pairs.add(_scan_key)
     # Issue #982/#1136 Fix Punkt 2 — macht "0 ausgeschlossen" von "nicht aufgezaehlt" unterscheidbar:
     # ``scan_source`` dokumentiert, OB der Store-Scan ueberhaupt lief (er laeuft jetzt IMMER, seit
@@ -2377,10 +2754,13 @@ def _build_report(
     # gehoben hat).
     store_scan = {
         "n_studies_in_store": len(_store_scan_paths),
-        "n_own": len(_store_scan_paths) - _n_store_scan_foreign,
+        "n_own": _n_store_scan_own,
         "n_foreign": _n_store_scan_foreign,
+        # Issue #1004/#1156 — dritte, eigene Zahl statt eines stillen Rueckfalls auf n_own.
+        "n_unclassifiable": _n_store_scan_unclassifiable,
         "scan_source": "proposal_glob",
     }
+    all_checks.append(("global", _inv.check_store_scan_coherence(store_scan, len(studies_out))))
 
     # Issue #1023 Akzeptanzkriterium 2 — ist die gefilterte Menge leer, WAEHREND der Store nicht
     # leer war (jedes Proposal wurde als fremder Lauf ausgeschlossen), ist das kein leerer, sondern
@@ -2471,12 +2851,32 @@ def _build_report(
         _study_family_records,
         promotion_family_scope=(tournament_cfg or {}).get("promotion_family_scope"))))
 
-    # Issue #984/#1138 — beide Kostenmodell-Checks lasen die laengst emittierten COST_MODEL_
-    # RESOLVED-Events (backtest_runner.py, #898/#956) bislang null Aufrufstellen ausserhalb von
-    # invariants.py/tests/, obwohl die Events unabhaengig vom Pruefergebnis geschrieben wurden.
-    _cost_model_events = _read_jsonl_events(jsonl_sidecar_path(_log.name), "COST_MODEL_RESOLVED")
-    all_checks.append(("global", _inv.check_cost_model_resolution(_cost_model_events)))
-    all_checks.append(("global", _inv.check_cost_model_floor(_cost_model_events)))
+    # Issue #999/#1151 (Katalog #1170) — Root-Cause der #984/#1138-Verdrahtung: ``COST_MODEL_
+    # RESOLVED`` wird im ISOLIERTEN Worker-PROZESS emittiert (backtest_runner.py,
+    # ``_logging_cost_model.getLogger("backtest_worker")``, ueber ``ProcessPoolExecutor``) — ein
+    # frisches Python-Interpreter-Prozess hat KEINE registrierte JSONL-Sidecar-Pfad-Zuordnung fuer
+    # diesen Logger-Namen (``_JSONL_SIDECAR_PATHS`` ist Prozess-lokaler Modul-Zustand, nie ueber
+    # ``setup_bot_logging`` im Worker initialisiert). ``_read_jsonl_events(jsonl_sidecar_path(_log.
+    # name), ...)`` liest ausserdem den Sidecar des ``"optimizer"``-Loggers (des HAUPT-Prozesses),
+    # nicht den des ``"backtest_worker"``-Loggers — selbst ein im Hauptprozess erzeugtes Event
+    # würde unter dem falschen Namen gesucht. Beide Checks sahen dadurch STRUKTURELL IMMER 0
+    # Events — "emittiert, nie konsumiert", zweite Instanz von #1138, diesmal mit vorhandenem
+    # Konsumenten und fehlendem Transportweg.
+    #
+    # Fix-Entscheidung (beide im Issue als gleichwertig genannten Optionen abgewogen): der
+    # transportseitige Fix (Cost-Model-Resolution ueber den Worker-RETURN-Wert an den Hauptprozess
+    # zurueckreichen und dort ueber den "optimizer"-Logger REEMITTIEREN, analog
+    # ``run_optimization._reemit_inference_diagnostics``/``metrics.inference_diagnostics``) ist die
+    # architektonisch korrekte Loesung, aendert aber den heissen Worker-Rueckgabepfad
+    # (``TournamentMetrics``/Parsing) an einer Stelle, die in dieser Sandbox (kein installierbares
+    # ``nautilus_trader``, kein echter Multi-Prozess-Sweep-Lauf) NICHT end-to-end verifizierbar
+    # ist — derselbe Sandbox-Vorbehalt wie #987/#1141 (Katalog #986). Diese Session waehlt deshalb
+    # die im Issue EXPLIZIT als gleichwertig zugelassene Alternative: beide Checks werden aus dem
+    # Report-Invariantenstrom entfernt und in ``_DELIBERATELY_UNWIRED_INVARIANT_CHECKS``
+    # dokumentiert (siehe dort) — der Status quo (Check laeuft, kann strukturell nie etwas sehen,
+    # meldet PASS) war die einzige NICHT zulaessige Option. Ein kuenftiger transportseitiger Fix
+    # entfernt einfach die beiden Allowlist-Eintraege und fuegt die ``all_checks.append``-Zeilen
+    # wieder ein.
 
     # Issue #984/#1138 — die Verdrahtungs-Meta-Pruefung selbst: haette DIESE Session die fuenf
     # obigen Checks nicht nachgezogen, waere sie hier von sich aus rot gewesen.
@@ -2558,6 +2958,13 @@ def _build_report(
     # (abgeleitet aus holdout_expectancy_capital_weighted) muss monoton fallend und gleich gestuft
     # gegenueber DERSELBEN Basis sein, gegen die sie berichtet wird.
     all_checks.append(("global", _inv.check_cost_stress_monotonicity(studies_out)))
+    # Issue #1010/#1162 (Katalog #1170) — macht sichtbar, wenn die 'full_realism'-Kostenstufe durch
+    # ueberall 0.0 konfigurierte financing_bps/slippage_bps (backtest.json, #987/#1141) faktisch ein
+    # No-Op ist, statt es stillschweigend als "keine Wirkung" zu akzeptieren.
+    all_checks.append(("global", _inv.check_cost_stress_distinctness(studies_out)))
+    # Issue #1013/#1165 (Katalog #1170) — macht sichtbar, wenn Abschnitt 2.3 der Zusammenfassung
+    # eine Study spurlos verliert (z. B. ein nicht ausgewerteter Holdout ohne eigenen Bucket).
+    all_checks.append(("global", _inv.check_summary_row_completeness(studies_out)))
 
     # Issue #948/#1114 (Katalog #960, ersetzt #978) — seit diesem Fix eine SWEEP-WEITE Diagnose
     # (severity 'low'): die Streuung des EINEN studienweiten Annualisierungsfaktors ueber Studies
@@ -2582,8 +2989,8 @@ def _build_report(
     all_checks.append(("global", _inv.check_sizing_identity_coherence(studies_out)))
     # Issue #1071 — die per-Symbol ATR-Floor-Auflösung macht den Mechanismus (Floor-Bindung vs.
     # echte Sprungstelle) messbar, statt eine Ursache zu behaupten (siehe Docstring dort).
-    _atr_floor_by_symbol = _atr_floor_bps_by_symbol(
-        (r.get("symbol") for r in studies_out))
+    _cost_basis_symbols = sorted({r.get("symbol") for r in studies_out if r.get("symbol")})
+    _atr_floor_by_symbol, _atr_floor_resolution_errors = _atr_floor_bps_by_symbol(_cost_basis_symbols)
     # Issue #951/#1117 (Katalog #960) — der Floor ist seit #1096 Fix Punkt 1 selbst
     # COST-GEKOPPELT (backtest_runner.cost_coupled_atr_floor_bps) und variiert damit PRO STUDY
     # (über atr_trailing_multiplier_median), nicht mehr nur pro Symbol/Asset-Klasse. Vorgezogen
@@ -2592,8 +2999,40 @@ def _build_report(
     # konsumiert (Akzeptanzkriterium #951: "Der Floor-Wert erscheint im Report als abgeleitete,
     # nicht als konfigurierte Grösse").
     _min_stop_to_cost_ratio = float(tournament_cfg.get("min_stop_to_cost_ratio", 3.0))
-    _round_trip_cost_bps_by_symbol_map = _round_trip_cost_bps_by_symbol(
-        (r.get("symbol") for r in studies_out))
+    _round_trip_cost_bps_by_symbol_map, _c_rt_resolution_errors = _round_trip_cost_bps_by_symbol(
+        _cost_basis_symbols)
+    # Issue #998/#1150 (Katalog #1170, Pitfall #380-Klasse) — Root-Cause: beide Resolver fingen
+    # JEDEN Fehler je Symbol stumm ab (``except Exception: continue``); ein leeres Ergebnis-Dict
+    # war dadurch NICHT von "der Floor bindet nirgends" (die #1096-Abnahme) unterscheidbar, sondern
+    # bedeutete "der Floor ist unbekannt". ``cross_study.cost_model_resolution`` macht das
+    # UNTERSCHEIDBAR: ``n_resolved`` zaehlt Symbole mit MINDESTENS EINER erfolgreich aufgeloesten
+    # Kostenbasis (ATR-Floor ODER c_rt); ``errors`` traegt die Fehlermeldung je Symbol UND Quelle.
+    _cost_model_resolution_errors = {
+        s: {k: v for k, v in {
+            "atr_floor": _atr_floor_resolution_errors.get(s),
+            "round_trip_cost": _c_rt_resolution_errors.get(s),
+        }.items() if v is not None}
+        for s in _cost_basis_symbols
+        if s in _atr_floor_resolution_errors or s in _c_rt_resolution_errors
+    }
+    _n_cost_basis_resolved = sum(
+        1 for s in _cost_basis_symbols
+        if s in _atr_floor_by_symbol or s in _round_trip_cost_bps_by_symbol_map)
+    _cost_model_resolution = {
+        "n_symbols": len(_cost_basis_symbols),
+        "n_resolved": _n_cost_basis_resolved,
+        "errors": _cost_model_resolution_errors,
+    }
+    all_checks.append(("global", _inv.check_cost_basis_resolution(
+        studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
+        round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
+        resolution_errors=_cost_model_resolution_errors)))
+    # Issue #1011/#1163 (Katalog #1170) — macht sichtbar, wenn die synthetische 1h-Bar-Erzeugung
+    # fuer EQUITY/COMMODITY ueber einen 24/7-Kalender laeuft (keine Handelszeiten-Maske), statt
+    # implizit RTH-Bars zu unterstellen. Nach ``_cost_basis_symbols`` platziert (dieselbe Symbol-
+    # Menge wie die Kostenbasis-Aufloesung oben).
+    all_checks.append(("global", _inv.check_session_calendar_coherence(
+        studies_out, asset_class_by_symbol=_asset_class_by_symbol(_cost_basis_symbols))))
     _stamp_atr_floor_bps_derived(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
         round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
@@ -2604,9 +3043,13 @@ def _build_report(
 
     # Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter: divergiert das im Backtest
     # konfigurierte trade_amount_pct vom live tatsächlich gefahrenen MomentumLSAllocator-Deckel.
+    # Issue #1014/#1166 (Katalog #1170) — parity_factor durchgereicht, damit eine BEWUSST
+    # dokumentierte Abweichung (backtest.json['live_risk']['trade_amount_pct_parity_factor'])
+    # nicht mehr als 15 gleichlautende FAILs erscheint (siehe dortiger Docstring).
     all_checks.append((
         "global", _inv.check_sizing_parity_backtest_vs_allocator(
-            _trade_amount_pct_map, max_symbol_exposure_fraction=_max_symbol_exposure_fraction())))
+            _trade_amount_pct_map, max_symbol_exposure_fraction=_max_symbol_exposure_fraction(),
+            parity_factor=_trade_amount_pct_parity_factor())))
 
     # Issue #776 — sweep-weite Gate-Kollinearitaets-Konsolidierungs-Invariante (konsumiert den
     # #679-Alarm ueber alle Studies statt ihn stumm bleiben zu lassen).
@@ -2662,6 +3105,12 @@ def _build_report(
     # Fall), statt dass eine fehlende Emissionskette nur indirekt ueber einen nachgelagerten
     # INCONCLUSIVE-Check (check_stop_loss_vs_bar_range) auffaellt.
     all_checks.append(("global", _inv.check_exit_telemetry_completeness(studies_out)))
+
+    # Issue #1016/#1168 (Katalog #1170) — dieselbe Beobachtbarkeits-Logik wie #973/#1127 direkt
+    # oben, hier fuer symbol_bar_quality (Root-Cause #1168: None in 28/28 Studies zweier Läufe).
+    all_checks.append(("global", _inv.check_symbol_bar_quality_cache_availability(
+        studies_out, cache_path=_symbol_bar_quality_cache_status.get("cache_path"),
+        cache_found=_symbol_bar_quality_cache_status.get("cache_found", False))))
 
     # Issue #1097 (Katalog #930) — Teilmengen-Schranke zwischen gepoolten Verlust-Aggregaten;
     # siehe check_loss_metric_commensurability-Docstring.
@@ -2828,10 +3277,15 @@ def _build_report(
     exit_reason_coverage_check = _inv.check_exit_reason_coverage(studies_out)
     all_checks.append(("global", exit_reason_coverage_check))
 
-    # Issue #923 Fix 4 — n_periods streut innerhalb desselben Symbols stark je Strategie; ab
-    # einem Faktor > deflation_max_n_periods_ratio-Kalibrierpunkt (Default 6.0 hier, 4.0 dort)
-    # greift die #865-Heterogenitäts-Suppression vermutlich für praktisch jede Familie.
-    n_periods_homogeneity_check = _inv.check_n_periods_homogeneity(studies_out)
+    # Issue #923 Fix 4 — n_periods streut innerhalb desselben Symbols stark je Strategie; ab einem
+    # Faktor > deflation_max_n_periods_ratio-Kalibrierpunkt (Default 6.0 hier, 4.0 dort) ist die
+    # Kommensurabilität der symbolweiten Ranglisten/Annualisierung betroffen.
+    # Issue #1012/#1164 (Katalog #1170) — promotion_family_scope durchgereicht, damit der
+    # #865-Verweis im Meldungstext NUR erscheint, wenn er unter dem tatsaechlichen Scope
+    # ueberhaupt zutreffen kann (siehe check_n_periods_homogeneity-Docstring).
+    n_periods_homogeneity_check = _inv.check_n_periods_homogeneity(
+        studies_out,
+        promotion_family_scope=(tournament_cfg or {}).get("promotion_family_scope"))
     all_checks.append(("global", n_periods_homogeneity_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
@@ -2909,6 +3363,9 @@ def _build_report(
     for label, result in all_checks:
         d = result.to_dict()
         d["scope"] = label
+        # Issue #1015/#1167 (Katalog #1170) — jeder Eintrag traegt seine Herkunft: diese Checks
+        # laufen alle IN ``_build_report`` selbst (Report-Prozess).
+        d["source"] = "report"
         invariant_checks.append(d)
         if not result.passed:
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
@@ -2928,6 +3385,9 @@ def _build_report(
     for d in (preflight_invariant_checks or []):
         d = dict(d)
         d.setdefault("scope", "preflight")
+        # Issue #1015/#1167 (Katalog #1170) — Preflight-Checks (sweep.assert_required_config_keys_
+        # valid/assert_instrument_metadata_coherence) laufen im SWEEP-Prozess, VOR jedem Worker.
+        d.setdefault("source", "sweep")
         invariant_checks.append(d)
         if not d.get("passed", True):
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
@@ -2935,6 +3395,42 @@ def _build_report(
                 "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
                 "report_source": report_source,
             }, level=logging.ERROR)
+
+    # Issue #1015/#1167 (Katalog #1170) — Ergebnisse der AUSSERHALB von ``_build_report`` laufenden
+    # Checks (Sweep-Hauptschleife/``run_optimization.py``, siehe ``_read_external_invariant_
+    # results``-Docstring), als ``INVARIANT_STREAM_RESULT``-Events aus demselben "optimizer"-Sidecar
+    # gelesen, den ``_champions_summary``/``check_event_stream_completeness`` bereits nutzen.
+    # Gleiche Behandlung wie der Preflight-Block oben (kein ``cohort``-Stempel — diese Checks
+    # pruefen keine Study-Population dieses Reports, sondern Sweep-/Study-weite Bedingungen).
+    for d in _read_external_invariant_results():
+        invariant_checks.append(d)
+        if not d.get("passed", True):
+            emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
+                "scope": d.get("scope"), "check": d.get("name"),
+                "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
+                "report_source": report_source,
+            }, level=logging.ERROR)
+
+    # Issue #1015/#1167 (Katalog #1170) — die neue Meta-Invariante selbst: erschien jede definierte
+    # check_*-Funktion im soeben zusammengefuehrten Strom oder auf der Allowlist? Muss NACH JEDEM
+    # Merge oben stehen (braucht den finalen ``invariant_checks``-Stand), daher direkt angehaengt
+    # statt ueber ``all_checks`` (dessen invariant_checks-Aufbau bereits abgeschlossen ist).
+    _stream_check_names = sorted({
+        d.get("check") or d.get("name") for d in invariant_checks if d.get("check") or d.get("name")
+    })
+    invariant_coverage_check = _inv.check_invariant_coverage(
+        _all_defined_check_names(), _stream_check_names,
+        allowlisted_check_names=list(_DELIBERATELY_UNWIRED_INVARIANT_CHECKS))
+    _coverage_dict = invariant_coverage_check.to_dict()
+    _coverage_dict["scope"] = "global"
+    _coverage_dict["source"] = "report"
+    invariant_checks.append(_coverage_dict)
+    if not invariant_coverage_check.passed:
+        emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
+            "scope": "global", "check": invariant_coverage_check.name,
+            "expected": invariant_coverage_check.expected, "actual": invariant_coverage_check.actual,
+            "detail": invariant_coverage_check.detail, "report_source": report_source,
+        }, level=logging.ERROR)
 
     # Issue #942/#1108 (Katalog #960) — die drei orthogonalen Achsen, EINMAL hier aus der bereits
     # vorliegenden Wahrheit abgeleitet (dieselbe Quelle fuer JEDEN Aufrufer/Pfad, siehe Docstring
@@ -3009,11 +3505,39 @@ def _build_report(
         # unterscheidbar, unabhaengig von fail_fast_triggered/report_source.
         "store_scan": store_scan,
         "cross_study": {
+            # Issue #998/#1150 (Katalog #1170) — macht die Kostenbasis-Aufloesung (ATR-Floor UND
+            # c_rt, je Symbol) UNTERSCHEIDBAR von "der Floor bindet nirgends" (siehe
+            # check_cost_basis_resolution/_atr_floor_bps_by_symbol-Docstring).
+            "cost_model_resolution": _cost_model_resolution,
+            # Issue #1010/#1162 (Katalog #1170) — True, wenn die 'full_realism'-Kostenstress-Stufe
+            # ein No-Op ist (financing_bps/slippage_bps ueberall 0.0 in backtest.json). Traeger fuer
+            # summary_de.py Abschnitt 2.4 (die einzige erlaubte Datenquelle dort ist dieses Report-
+            # JSON, siehe dortiger Docstring) und unabhaengig vom check_cost_stress_distinctness-
+            # Verdikt selbst (die Methodik-Einschraenkung gilt, sobald konfiguriert, unabhaengig
+            # davon, ob genug Studies mit Trades vorlagen, um den Check auszuloesen).
+            "cost_model_zero_realism": _cost_model_has_zero_realism(),
+            # Issue #1016/#1168 (Katalog #1170) — {cache_path, cache_found}: macht "Cache-Datei
+            # fehlt komplett" von "Cache existiert, Feld trotzdem None" unterscheidbar (Root-Cause
+            # #1168: symbol_bar_quality war in 28/28 Studies zweier Läufe still None). Traeger fuer
+            # check_symbol_bar_quality_cache_availability, siehe dortiger Docstring.
+            "symbol_bar_quality_cache": _symbol_bar_quality_cache_status,
             # Issue #1091 (Katalog #924) — {frozen, observed_at_report_time} statt eines nackten
             # int je Symbol: "frozen" (budget-basiert, siehe sweep._family_n_frozen_from_studies)
             # ist ueber mehrere Reports DESSELBEN Laufs bit-identisch; "observed_at_report_time"
             # (die Alt-Zahl, #625) bleibt als Diagnose-Telemetrie erhalten — check_family_n_
             # stability (invariants.py) vergleicht beide.
+            # Issue #1005/#1157 (Katalog #1170) — dieselben zwei Zahlen trugen im selben Lauf-Artefakt
+            # DENSELBEN Feldnamen ("n_family") wie das Sweep-Ereignis (siehe sweep.py) UND wie
+            # ``n_family_stage1``/``n_family_stage2`` unten (dort eine PER-STRATEGIE-Zerlegung, hier
+            # die SYMBOLWEITE Summe) — drei numerisch verschiedene Groessen, ein Name. Eindeutige
+            # Namen entlang der bereits dokumentierten Semantik (#1091/#826): ``n_family_stage1_sum_
+            # frozen``/``n_family_stage1_sum_observed`` machen explizit, dass beide die SUMME der
+            # ``n_family_stage1``-Zerlegung sind (siehe ``_n_family_by_symbol``-Kommentar oben).
+            "n_family_stage1_sum_frozen": _n_family_frozen_by_symbol,
+            "n_family_stage1_sum_observed": _n_family_by_symbol,
+            # Konvention #1081 — Uebergangs-Alias eine Sitzung lang: alte Konsumenten (z. B.
+            # test_issue_1102) lesen dieselben, unveraenderten Werte unter dem alten, verschachtelten
+            # Namen weiter.
             "n_family": {
                 "frozen": _n_family_frozen_by_symbol,
                 "observed_at_report_time": _n_family_by_symbol,

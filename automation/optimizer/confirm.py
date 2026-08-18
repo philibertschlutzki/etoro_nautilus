@@ -174,6 +174,44 @@ def _holdout_gate_passed(metrics, risk_dd_cap: float, *, sortino_fallback_enable
     return False
 
 
+# Issue #1002/#1154 (Katalog #1170) — ``REJECTED_ON_HOLDOUT`` deckte drei disjunkte Ursachen ab:
+# ein Kandidat, der die Holdout-Stufe NIE erreicht hat (kein eligibler Trial/keine
+# Selektionsstatistik, ein Studienabbruch VOR jeder Holdout-Auswertung), das eigentliche
+# Holdout-Gate selbst, und die NACHGELAGERTE Deflations-/Multiplizitaets-Pruefung — alle drei
+# teilten sich denselben Status- UND ``blocking_stage``-Wert, obwohl Abschnitt 2.2 des Berichts
+# fuer JEDE Zeile eindeutig zeigen soll, an welcher Stufe sie starb (Akzeptanzkriterium #1154).
+# ``_CONFIRM_OR_SELECTION_HOLDOUT_DETAILS`` — der Kandidat/die Study hat die Holdout-STUFE selbst
+# nie erreicht (Struktur-/Eligibilitaets-Defekt VOR jeder Gate-Auswertung).
+_CONFIRM_OR_SELECTION_HOLDOUT_DETAILS: frozenset[str] = frozenset({
+    "REJECT_PROMOTED_TRIAL_INADMISSIBLE",  # keine einzige OOS-Periode — kein eligibler Trial.
+    "REJECT_STUDY_INVARIANT_BLOCKING",     # blockierende Invariante — die Study ist ungueltig.
+    "REJECT_COHERENCE_VIOLATION",          # Renditeserien-Kohaerenz verletzt — kontaminierter Pfad.
+    "REJECT_INVALID_TIMEBOX",              # Exit-Pfad strukturell defekt (Zeitbox-Anteil).
+    "REJECT_HOLDOUT_UNREACHABLE",          # Datenstand deckt das Holdout-Fenster noch nicht ab.
+})
+# ``_DEFLATION_HOLDOUT_DETAILS`` — die Holdout-STUFE selbst wurde bestanden; die NACHGELAGERTE
+# Deflations-/Multiplizitaets-Pruefung (DSR-Drop bzw. Heterogenitaets-Veto) lehnte danach ab.
+_DEFLATION_HOLDOUT_DETAILS: frozenset[str] = frozenset({
+    "REJECT_HOLDOUT_DSR_DROP",
+    "REJECT_DEFLATION_HETEROGENEOUS",
+})
+
+
+def _holdout_rejection_classification(holdout_reject_detail: str | None) -> tuple[str, str]:
+    """Issue #1002/#1154 — leitet ``(status, blocking_stage)`` aus dem tatsaechlichen
+    ``holdout_reject_detail`` her, statt ALLE ``not holdout_passed``-Faelle unter demselben
+    ``REJECTED_ON_HOLDOUT``/``blocking_stage='holdout'`` zu verstecken. Rueckgabe ist eines von:
+    ``("REJECTED_BEFORE_HOLDOUT", "confirm_or_selection")`` — Holdout-Stufe nie erreicht,
+    ``("REJECTED_ON_DEFLATION", "deflation")`` — Holdout bestanden, Deflation lehnte ab,
+    ``("REJECTED_ON_HOLDOUT", "holdout")`` — Default: das Holdout-Gate selbst (oder die darauf
+    aufbauende Bootstrap-CI, ``REJECT_HOLDOUT_BOOTSTRAP_CI``) lehnte ab."""
+    if holdout_reject_detail in _CONFIRM_OR_SELECTION_HOLDOUT_DETAILS:
+        return "REJECTED_BEFORE_HOLDOUT", "confirm_or_selection"
+    if holdout_reject_detail in _DEFLATION_HOLDOUT_DETAILS:
+        return "REJECTED_ON_DEFLATION", "deflation"
+    return "REJECTED_ON_HOLDOUT", "holdout"
+
+
 def confirm_on_holdout(
     study,
     strategy: str,
@@ -783,7 +821,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         })
         return {
             "promote": False,
-            "status": "REJECTED_ON_HOLDOUT",
+            # Issue #1002/#1154 — die Kohaerenz-Verletzung wird VOR jeder Holdout-Auswertung
+            # entdeckt; die Study erreicht die Holdout-Stufe nie.
+            "status": "REJECTED_BEFORE_HOLDOUT",
+            "blocking_stage": "confirm_or_selection",
+            "all_failed_stages": ["confirm_or_selection"],
+            "stage_results": {"confirm_or_selection": {
+                "passed": False, "detail": "REJECT_COHERENCE_VIOLATION"}},
             "is_rejection_detail_override": "REJECT_COHERENCE_VIOLATION",
             "promotion_route": None,
             "symbol_params": {},
@@ -830,7 +874,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         if catalog_newest_ns < oos_lo_ns:
             return {
                 "promote": False,
-                "status": "REJECTED_ON_HOLDOUT",
+                # Issue #1002/#1154 — der Datenstand deckt das Holdout-Fenster noch nicht ab; die
+                # Holdout-Stufe wird gar nicht erst evaluiert.
+                "status": "REJECTED_BEFORE_HOLDOUT",
+                "blocking_stage": "confirm_or_selection",
+                "all_failed_stages": ["confirm_or_selection"],
+                "stage_results": {"confirm_or_selection": {
+                    "passed": False, "detail": "REJECT_HOLDOUT_UNREACHABLE"}},
                 "is_rejection_detail_override": "REJECT_HOLDOUT_UNREACHABLE",
                 "symbol_params": {},
                 "R_symbol": 0.0,
@@ -891,7 +941,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         }, level=_logging_early.ERROR)
         return {
             "promote": False,
-            "status": "REJECTED_ON_HOLDOUT",
+            # Issue #1002/#1154 — der Exit-Pfad ist strukturell defekt VOR jeder Holdout-Auswertung.
+            "status": "REJECTED_BEFORE_HOLDOUT",
+            "blocking_stage": "confirm_or_selection",
+            "all_failed_stages": ["confirm_or_selection"],
+            "stage_results": {"confirm_or_selection": {
+                "passed": False, "detail": "REJECT_INVALID_TIMEBOX"}},
             "is_rejection_detail_override": "REJECT_INVALID_TIMEBOX",
             "promotion_route": None,
             "symbol_params": {},
@@ -1134,6 +1189,16 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 "promote": True,
                 "status": "PROMOTE_GLOBAL_DEFAULT",
                 "is_rejection_detail_override": None,
+                "blocking_stage": None,
+                "all_failed_stages": [],
+                # Issue #1001/#1153 — der globale Default besteht das Symbol-Holdout-Gate SELBST
+                # (siehe R_global-Berechnung oben); confirm_or_selection traegt die #682/#783-
+                # Default-Route-Kennzeichnung, PBO/Boundary wurden fuer diese Route nie ausgewertet
+                # (sie gelten nur fuer per-Symbol-getunte Trials) und bleiben deshalb UNGESETZT.
+                "stage_results": {
+                    "confirm_or_selection": {"passed": True, "detail": "GLOBAL_DEFAULT"},
+                    "holdout": {"passed": True, "detail": None},
+                },
                 "promotion_route": "global_default_on_symbol",
                 "symbol_params": dict(global_params),
                 "R_symbol": R_global,
@@ -1154,7 +1219,14 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         })
         return {
             "promote": False,
-            "status": "REJECTED_ON_HOLDOUT",
+            # Issue #1002/#1154 — die namensgebende Root-Cause: "kein eligibler Trial" erreicht
+            # die Holdout-Stufe nie, teilte sich vorher aber denselben Status wie das Holdout-Gate
+            # selbst.
+            "status": "REJECTED_BEFORE_HOLDOUT",
+            "blocking_stage": "confirm_or_selection",
+            "all_failed_stages": ["confirm_or_selection"],
+            "stage_results": {"confirm_or_selection": {
+                "passed": False, "detail": "HOLDOUT_NO_ELIGIBLE_TRIALS"}},
             "is_rejection_detail_override": "HOLDOUT_NO_ELIGIBLE_TRIALS",
             "symbol_params": {},
             "R_symbol": 0.0,
@@ -1447,9 +1519,16 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # bislang ein reiner Report-Nachlauf sind, kein Eingang in diese Entscheidung. Unbedingter
     # Hard-Stop wie REJECT_HOLDOUT_GATE — KEIN Ersatzpfad (auch nicht dsr_or_robust_pair, siehe
     # unten) darf ihn unterlaufen, deshalb hier VOR jeder DSR/PBO/Boundary-Verzweigung geprüft.
+    # Issue #995/#1147 (Pitfall #413 in AGENTS.md) — ``r.get("evaluable") is False`` zaehlt seither
+    # GLEICHWERTIG zu ``passed is False``: ein ``blocking``-Check, der seine eigene Grundgesamtheit
+    # nicht herstellen konnte (``passed=None``), ist fuer die Promotions-Entscheidung ein Befund,
+    # kein Nicht-Ereignis — dieselbe Studie darf nicht exportiert werden, nur weil der Check
+    # technisch nicht ``False`` zurueckgab.
     blocking_invariant_names = sorted({
         str(r.get("name")) for r in (study_invariant_results or [])
-        if r.get("severity") == "blocking" and r.get("passed") is False and r.get("name")
+        if r.get("severity") == "blocking"
+        and (r.get("passed") is False or r.get("evaluable") is False)
+        and r.get("name")
     })
     if holdout_passed and blocking_invariant_names:
         holdout_passed = False
@@ -1872,7 +1951,20 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # falsche Ursache aus. Fix: jeder Promotion-Ausgang setzt seinen EXAKTEN Grund; der modale
     # IS-Grund bleibt separat als ``dominant_is_rejection_detail`` in ``export_symbol_proposal``
     # (Study-Diagnose) erhalten — vermischt aber NICHT mehr mit der Promotion-Entscheidung.
-    if pbo_overfit:
+    #
+    # Issue #1000/#1152 (Katalog #1170, P0) — Root-Cause: ``pbo_overfit``/``boundary_overfit``
+    # werden UNABHAENGIG vom Holdout-Ergebnis berechnet, standen aber VOR ``not holdout_passed`` in
+    # dieser Kette — ein Kandidat, der das Holdout-BASISGATE nicht bestand (PSR bis 0,143 unter der
+    # Schwelle, negativer Sortino), wurde als ``REJECTED_SELECTION_OVERFIT``/
+    # ``REJECTED_BOUNDARY_SOLUTION`` ausgewiesen: das ZULETZT geprüfte, nicht das ZUERST verletzte
+    # Kriterium gewann. Fix: ``not holdout_passed`` steht jetzt AN ERSTER Stelle — ein Kandidat, der
+    # das Basisgate nicht besteht, ist kein Overfit-Fall, er ist gar kein Fall. Die Information ueber
+    # GLEICHZEITIG verletzte Kriterien bleibt ueber ``all_failed_stages`` erhalten (unten), ohne die
+    # Ursachen-Attribution (``status``/``is_rejection_detail_override``) zu verfaelschen.
+    if not holdout_passed:
+        status, _ = _holdout_rejection_classification(holdout_reject_detail)
+        is_rejection_detail_override = holdout_reject_detail
+    elif pbo_overfit:
         status = "REJECTED_SELECTION_OVERFIT"
         is_rejection_detail_override = "REJECT_SELECTION_PBO"
     elif boundary_unresolved and boundary_resolution_exhausted:
@@ -1891,9 +1983,6 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     elif boundary_overfit:
         status = "REJECTED_BOUNDARY_SOLUTION"
         is_rejection_detail_override = "REJECT_BOUNDARY_SOLUTION"
-    elif not holdout_passed:
-        status = "REJECTED_ON_HOLDOUT"
-        is_rejection_detail_override = holdout_reject_detail
     elif promote:
         status = "READY_FOR_PR"
         is_rejection_detail_override = None
@@ -1901,10 +1990,76 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         status = "REJECTED_NO_EDGE_OVER_GLOBAL"
         is_rejection_detail_override = "REJECT_NO_EDGE_OVER_GLOBAL"
 
+    # Issue #1000/#1152 Fix Punkt 2 — ``blocking_stage`` (die ERSTE verletzte Stufe, dieselbe
+    # Prioritaet wie die obige Kette) UND ``all_failed_stages`` (ALLE gleichzeitig verletzten
+    # Stufen — Holdout/Deflation/PBO/Boundary werden unabhaengig voneinander berechnet, koennen
+    # also gleichzeitig failen, auch wenn nur EINE davon die Attribution gewinnt).
+    all_failed_stages: list[str] = []
+    if not holdout_passed:
+        _, _holdout_stage = _holdout_rejection_classification(holdout_reject_detail)
+        all_failed_stages.append(_holdout_stage)
+    if pbo_overfit:
+        all_failed_stages.append("pbo")
+    if boundary_unresolved or boundary_overfit:
+        all_failed_stages.append("boundary")
+    blocking_stage = all_failed_stages[0] if all_failed_stages else None
+
+    # Issue #1001/#1153 (Katalog #1170, P0) — ``stage_results``: die TATSAECHLICH gemessenen
+    # Stufenergebnisse ``{stage: {passed, detail}}``, statt sie in ``report._decision_chain`` aus
+    # dem terminalen Ablehnungsgrund ABZULEITEN (Root-Cause #1153: eine REJECTED Study liess
+    # vorangehende Stufen unbedingt als "bestanden" gelten — eine Annahme, keine Messung; unter der
+    # Vor-#1152-Praezedenz nachweislich falsch fuer 10 Studies, B-8). Eine Stufe fehlt HIER GANZ,
+    # wenn sie nie AUSGEWERTET wurde (z. B. ``deflation``, sobald bereits das Punkt-Gate selbst
+    # scheiterte — die DSR-/Bootstrap-CI-Bloecke laufen nur ``if holdout_passed:``) — ``report.
+    # _decision_chain`` liest eine fehlende Stufe als ``passed=None`` ("nicht belegt"), NIE als
+    # stillschweigend bestanden.
+    stage_results: dict[str, dict] = {}
+    if not holdout_passed:
+        _, _failed_holdout_stage = _holdout_rejection_classification(holdout_reject_detail)
+        if _failed_holdout_stage == "confirm_or_selection":
+            stage_results["confirm_or_selection"] = {
+                "passed": False, "detail": holdout_reject_detail}
+            # holdout/deflation wurden nie erreicht (die Study starb VOR jeder Holdout-Auswertung).
+        elif _failed_holdout_stage == "holdout":
+            stage_results["confirm_or_selection"] = {"passed": True, "detail": None}
+            stage_results["holdout"] = {"passed": False, "detail": holdout_reject_detail}
+            # deflation wurde nie erreicht (DSR-/Bootstrap-CI-Bloecke liefen nur ``if
+            # holdout_passed:`` — das Punkt-Gate selbst hatte holdout_passed bereits auf False
+            # gesetzt).
+        else:  # "deflation"
+            stage_results["confirm_or_selection"] = {"passed": True, "detail": None}
+            stage_results["holdout"] = {"passed": True, "detail": None}
+            stage_results["deflation"] = {"passed": False, "detail": holdout_reject_detail}
+    else:
+        # Issue #682/#783 — die #682-Default-Route (GLOBAL_DEFAULT) hat einen EIGENEN, frueheren
+        # Rueckgabepfad (siehe oben) und erreicht diese Stelle nie; die per-Symbol-Route dieser
+        # Kette traegt hier deshalb immer ``detail=None``.
+        stage_results["confirm_or_selection"] = {"passed": True, "detail": None}
+        stage_results["holdout"] = {"passed": True, "detail": None}
+        # Issue #618/#636 — deflated_dsr wird IMMER berechnet, sobald SR0 herleitbar war,
+        # unabhaengig davon ob sie einen Reject ausloeste — ``holdout_passed=True`` UND kein
+        # DSR-Drop-Grund bedeutet: die Deflation lief und passierte.
+        stage_results["deflation"] = {"passed": True, "detail": None}
+    stage_results["pbo"] = {
+        "passed": not pbo_overfit, "detail": ("REJECT_SELECTION_PBO" if pbo_overfit else None)}
+    stage_results["boundary"] = {
+        "passed": not (boundary_unresolved or boundary_overfit),
+        "detail": (is_rejection_detail_override if (boundary_unresolved or boundary_overfit)
+                   else None),
+    }
+
     best_result = {
         "promote": promote,
         "status": status,
         "is_rejection_detail_override": is_rejection_detail_override,
+        # Issue #1000/#1152 (Katalog #1170) — die ERSTE verletzte Stufe (``None`` bei ``promote=
+        # True``) UND alle GLEICHZEITIG verletzten Stufen (siehe Herleitung oben).
+        "blocking_stage": blocking_stage,
+        "all_failed_stages": all_failed_stages,
+        # Issue #1001/#1153 (Katalog #1170, P0) — die tatsaechlich GEMESSENEN Stufenergebnisse
+        # (siehe Herleitung oben); ``report._decision_chain`` konsumiert dies primaer, statt
+        # nachgelagerte Stufen aus dem terminalen Ablehnungsgrund abzuleiten.
+        "stage_results": stage_results,
         # Issue #783 (Akzeptanzkriterium #3) — JEDER promotete Kandidat traegt eine nicht-leere
         # promotion_route, nicht nur die #682-Default-Route: unterscheidbar von einem kuenftigen,
         # noch unbenannten Promotions-Pfad, und macht das Feld selbst zu einem verlaesslichen
@@ -2118,10 +2273,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # 10 von 14 Studies je Symbol (KRYS). Ein Legacy-Aufrufer, der GAR KEINE Quelle uebergibt
     # (``deflation_n_family_source is None``), bleibt bewusst rueckwaertskompatibel OHNE
     # erfundenes Feld (kein Fail-Loud auf eine Groesse, die der Aufrufer nie beanspruchte).
+    # Issue #1008/#1160 (Katalog #1170) — Root-Cause der VORHERIGEN Version dieses Fallbacks: er
+    # schrieb bei einer uebersprungenen Deflation ``f"SKIPPED_{deflation_skipped_reason}"`` IN
+    # DIESES FELD — zwei Vokabulare (echte Quellen wie ``'n_family_stage1_per_strategy'`` UND
+    # Skip-Sentinels wie ``'SKIPPED_SMALL_COHORT'``) unter demselben Feldnamen, dieselbe Bug-Klasse
+    # wie #1005/#1157. Fix: ``deflation_n_family_source`` traegt AUSSCHLIESSLICH echte Quellen (oder
+    # explizit ``None``, wenn uebersprungen — als PRAESENTER Schluessel, nicht fehlend, siehe
+    # #1132-Kommentar oben) — der Skip-Grund lebt ausschliesslich in ``deflation_skipped_reason``
+    # (bereits oben gesetzt). ``invariants.check_family_n_statistic_coverage`` bewacht seither, dass
+    # diese beiden Vokabulare nie wieder vermischt werden.
     if deflation_n_family_source is not None and "deflation_n_family_source" not in best_result["metrics_symbol"]:
         best_result["metrics_symbol"]["deflation_n_family_source"] = (
-            f"SKIPPED_{deflation_skipped_reason}" if deflation_skipped_reason is not None
-            else deflation_n_family_source)
+            None if deflation_skipped_reason is not None else deflation_n_family_source)
     # Issue #845 — Ratio-Telemetrie unabhängig vom Ausgang exportiert (auch wenn sie NICHT die
     # Ausloeserin des Skips war), damit ein Operator die Kohärenz-Kohorten-Heterogenität jeder
     # Study auditieren kann, ohne die Rohdaten (Trial-User-Attrs) erneut laden zu müssen.
@@ -2258,6 +2421,14 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # dominant_is_rejection_detail), von denen nur eines (das hier) die Promotion-Entscheidung
         # tatsächlich erklärt.
         "holdout_reject_detail": holdout_reject_detail,
+        # Issue #1000/#1152 (Katalog #1170) — die ERSTE verletzte Stufe (``None`` bei ``promote=
+        # True``) UND alle GLEICHZEITIG verletzten Stufen; siehe confirm_per_symbol_promotion.
+        "blocking_stage": promotion.get("blocking_stage"),
+        "all_failed_stages": promotion.get("all_failed_stages") or [],
+        # Issue #1001/#1153 (Katalog #1170, P0) — die tatsaechlich GEMESSENEN Stufenergebnisse
+        # (siehe confirm_per_symbol_promotion-Docstring); ``report._decision_chain`` konsumiert
+        # dies primaer, statt nachgelagerte Stufen aus dem terminalen Ablehnungsgrund abzuleiten.
+        "stage_results": promotion.get("stage_results") or {},
         # Issue #453/#654/#671 — der modale IS-Study-Trial-Grund: reine SEKUNDÄRE Study-Diagnose
         # ('warum scheiterten die meisten IS-Trials dieser Study'), NIEMALS die Promotion-
         # blockierende Ursache — unabhängig davon, ob ``holdout_reject_detail`` gesetzt ist.

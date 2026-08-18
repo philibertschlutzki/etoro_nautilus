@@ -386,6 +386,25 @@ def sr0_multiple_testing_robust(
             "Fallback ohne n_periods wurde als tot verifiziert und ersatzlos entfernt; ein "
             "fehlendes n_periods an dieser Call-Site ist ein Bug im Aufrufer, kein Legacy-Fall)."
         )
+    # Issue #1007/#1159 (Katalog #1170) — ``n_trials < 1`` (insbesondere 0) ist KEIN "kein Multiple-
+    # Testing"-Fall (das ist ``n_trials == 1``, von ``sr0_multiple_testing`` bereits korrekt auf 0.0
+    # degeneriert, siehe dortiger Docstring) — es ist eine leere/nicht existente Kohorte, für die
+    # ``Φ⁻¹(1 − 1/N)`` (``expected_max_standard_normal``) UNDEFINIERT ist. Root-Cause #1159: eine
+    # ``family_membership == 'excluded_degenerate'``-Study (#981/#1135) lieferte bislang die rohe
+    # ``deflation_n_family_frozen = 0`` als ``n_trials`` an diese Funktion durch — latent (die Study
+    # stirbt in der Praxis bereits am IS-Gate, bevor dieser Pfad erreicht wird), aber FAIL-OPEN: ein
+    # künftiger Aufrufer, der diese Kombination doch erreicht, hätte still einen bedeutungslosen
+    # SR₀ erhalten statt eines Fehlers. Jeder produktive Aufrufer reicht ``n_trials`` bereits hinter
+    # einem ``>= 2``-Guard durch (siehe confirm.py/run_optimization.py) — ein Verstoss hier ist ein
+    # Bug im Aufrufer, kein Legacy-Fall.
+    if n_trials < 1:
+        raise ValueError(
+            f"sr0_multiple_testing_robust: n_trials muss >= 1 sein (erhalten: {n_trials}) — "
+            "Issue #1007/#1159: Φ⁻¹(1 − 1/N) ist für N < 1 undefiniert. Ein Aufrufer mit einer "
+            "degenerierten/leeren Kohorte (z. B. family_membership='excluded_degenerate') darf "
+            "diese Funktion nicht mit n_trials=0 erreichen — die Kohorte gehört VOR diesem Aufruf "
+            "ausgeschlossen (deflation_n_family_frozen=None, deflation_skipped_reason gesetzt)."
+        )
     observed = float(var_sr_trials) if var_sr_trials is not None else 0.0
     theoretical_var = lo2002_sharpe_variance(sr_estimate, n_periods)
     theoretical_var_source = "lo2002"

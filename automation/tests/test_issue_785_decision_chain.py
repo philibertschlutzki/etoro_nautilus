@@ -38,14 +38,22 @@ def test_global_default_route_carries_confirm_or_selection_with_global_default_d
 
 
 def test_rejection_terminates_the_chain_at_the_failing_stage():
+    """Issue #1001/#1153 (Katalog #1170, P0) — dieser Alt-Proposal-Fixture hat KEIN
+    ``stage_results``-Feld (Legacy-Pfad). Die vorangehenden Stufen sind seither NICHT mehr blind
+    ``passed=True`` ("der Confirm-Pfad erreicht eine Stufe erst, nachdem die vorherigen bestanden
+    sind" war eine Annahme, keine Messung — nachweislich falsch fuer B-8/10 Studies), sondern
+    ``passed=None`` ("nicht belegt"), ausser bei einem tatsaechlich promoteten Kandidaten."""
     proposal = {"status": "REJECTED_ON_HOLDOUT", "holdout_reject_detail": "REJECT_SELECTION_PBO"}
     chain = _decision_chain(proposal, n_eligible=10)
     stages = [c["stage"] for c in chain]
     assert stages == ["is_gate", "confirm_or_selection", "holdout", "deflation", "pbo"]
     assert chain[-1]["passed"] is False
     assert chain[-1]["detail"] == "REJECT_SELECTION_PBO"
-    # Stufen VOR pbo gelten als bestanden (der Confirm-Pfad erreicht pbo erst danach).
-    assert all(c["passed"] for c in chain[:-1])
+    # is_gate ist ueber n_eligible ECHT gemessen und bleibt True; die dazwischenliegenden Stufen
+    # (confirm_or_selection/holdout/deflation) sind bei einer REJECTED Study ohne stage_results
+    # nicht nachweislich gemessen -- "nicht belegt" (None), nicht "bestanden" (True).
+    assert chain[0]["passed"] is True
+    assert all(c["passed"] is None for c in chain[1:-1])
 
 
 def test_is_gate_failure_when_no_eligible_trials_and_not_promoted():

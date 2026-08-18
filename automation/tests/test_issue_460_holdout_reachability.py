@@ -122,5 +122,7 @@ def test_confirm_per_symbol_promotion_short_circuit(monkeypatch):
     )
 
     assert result["promote"] is False
-    assert result["status"] == "REJECTED_ON_HOLDOUT"
+    # Issue #1002/#1154 (Katalog #1170) — REJECT_HOLDOUT_UNREACHABLE erreicht die Holdout-Stufe
+    # nie und traegt seither REJECTED_BEFORE_HOLDOUT statt des geteilten REJECTED_ON_HOLDOUT.
+    assert result["status"] == "REJECTED_BEFORE_HOLDOUT"
     assert result["is_rejection_detail_override"] == "REJECT_HOLDOUT_UNREACHABLE"

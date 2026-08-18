@@ -138,6 +138,14 @@ class TournamentMetrics:
     # Equity-Kurven-Pfad (rueckwaertskompatibel).
     oos_annualization_factor_source: str | None = None
     oos_n_periods: int = 0
+    # Issue #1011/#1163 (Katalog #1170) — siehe backtest_runner._bar_calendar_telemetry-Docstring:
+    # Bars je REALEM Kalendertag der mtm_series-Zeitspanne (24.0 fuer die aktuelle, ueber 24/7
+    # aufgefuellte 1h-Bar-Achse, unabhaengig von der Asset-Klasse) UND der Anteil Bars innerhalb
+    # eines konventionellen 8h-Session-Referenzfensters ab 13 UTC an Wochentagen (reine Zusatz-
+    # Telemetrie, nicht Teil der check_session_calendar_coherence-Gate-Bedingung). None ⇒ kein
+    # verwertbarer Zeit-Index (rueckwaertskompatibel zu Pre-#1163-JSONs).
+    oos_bars_per_calendar_day: float | None = None
+    oos_session_coverage_fraction: float | None = None
     # Issue #845 — der Downside-Beobachtungs-Nenner (backtest_runner._calculate_stats
     # "downside_obs", #823 SORTINO_INSUFFICIENT_DOWNSIDE-Schwelle), durchgereicht als eigenes Feld
     # statt einer stillen Re-Interpretation von oos_n_periods: n_periods misst die volle
@@ -349,6 +357,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #980/#1134 — siehe TournamentMetrics-Docstring.
     oos_annualization_factor_source = oos_metrics.get("annualization_factor_source")
     oos_n_periods = oos_metrics.get("n_periods")
+    # Issue #1011/#1163 — siehe TournamentMetrics-Docstring.
+    oos_bars_per_calendar_day = oos_metrics.get("bars_per_calendar_day")
+    oos_session_coverage_fraction = oos_metrics.get("session_coverage_fraction")
     # Issue #845 — Downside-Beobachtungs-Nenner (None-safe ⇒ rückwärtskompatibel zu Pre-#845-JSONs).
     oos_downside_obs = oos_metrics.get("downside_obs")
     oos_ret_skew = oos_metrics.get("ret_skew")
@@ -590,6 +601,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             str(oos_annualization_factor_source)
             if oos_annualization_factor_source is not None else None),
         oos_n_periods=int(oos_n_periods) if oos_n_periods is not None else 0,
+        # Issue #1011/#1163 — siehe TournamentMetrics-Docstring.
+        oos_bars_per_calendar_day=(
+            float(oos_bars_per_calendar_day) if oos_bars_per_calendar_day is not None else None),
+        oos_session_coverage_fraction=(
+            float(oos_session_coverage_fraction)
+            if oos_session_coverage_fraction is not None else None),
         oos_downside_obs=int(oos_downside_obs) if oos_downside_obs is not None else None,
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
