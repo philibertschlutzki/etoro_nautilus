@@ -110,6 +110,14 @@
       ],
       "rationale": "Issue #906 \u2014 \u03c1 bis 0.988 gemessen (ea4c409d-Lauf, 6 Studies), aber die niedrige Eligibility-Rate dieses Laufs ist ueberwiegend eine Folge der #897-Trailing-Stop-Sperrklinke (zerstoerte Trade-Oekonomie), nicht der Gate-Haerte. Konsolidierung (min_profit_factor als weiche Near-Miss-Distanz statt hartes Gate) wird bewusst ERST nach dem #897-Kalibrierlauf entschieden (Voraussetzung: Kohorte mit reparierter Simulationsschicht, gegen die ueberhaupt kalibriert werden kann).",
       "decided_in_issue": 906
+    },
+    {
+      "pair": [
+        "oos_max_drawdown",
+        "oos_min_psr"
+      ],
+      "rationale": "Issue #1017/#1169 (Katalog #1170) \u2014 \u03c1=0.9290 (AdxAtrMomentumStrategy/PLTR) bzw. 0.9113 (SmaCrossoverStrategy/NVDA). Keine Redundanz im #679-Sinn, sondern eine Kategorienverwechslung (#811): oos_max_drawdown ist eine harte Risikoobergrenze (gate_consolidation_protected, #776 explizit behalten), oos_min_psr ein Qualitaetsgate \u2014 beide kovariieren zwangslaeufig ueber die Exposure (mehr/riskantere Trades treiben sowohl die Drawdown-Marge als auch die Signifikanz-Statistik), treffen aber unterschiedliche Zulassungsentscheidungen und sind daher NICHT konsolidierbar. Die Entscheidung war bereits ueber gate_consolidation_protected getroffen \u2014 dieser Eintrag macht sie an der Stelle sichtbar, die check_gate_collinearity_decision_required liest.",
+      "decided_in_issue": 1169
     }
   ],
   "gate_redundancy_jaccard": 0.95,

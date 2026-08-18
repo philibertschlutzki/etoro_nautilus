@@ -1122,8 +1122,14 @@ def _study_record(proposal: dict, study,
         # oben, jetzt zusaetzlich gegen die Entscheidungspflicht (#907) geprueft: jedes kollineare
         # Gate-Paar dieser Study braucht einen dokumentierten Eintrag in tournament.json
         # ['gate_collinearity_accepted_pairs'], sonst FAILt dieser Check blocking.
+        # Issue #1017/#1169 (Katalog #1170) — liest seither NICHT mehr die rohe, ungefilterte
+        # gate_rank_correlation_matrix, sondern gate_correlations_requiring_decision: ein Paar mit
+        # einem gate_consolidation_protected-Mitglied (z. B. max_drawdown) braucht STRUKTURELL nie
+        # einen Entscheidungs-Eintrag (die Schutzliste IST die Entscheidung, siehe dortiger
+        # Docstring) — die volle, ungefilterte Matrix bleibt unveraendert forensische #742-Report-
+        # Telemetrie (cross_study, siehe an anderer Stelle).
         _inv.check_gate_collinearity_decision_required(
-            _reward.gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)["correlations"],
+            _reward.gate_correlations_requiring_decision(trial_gate_deltas, tournament_cfg),
             threshold=float((tournament_cfg or {}).get("gate_collinearity_threshold", 0.90)),
             accepted_pairs=(tournament_cfg or {}).get("gate_collinearity_accepted_pairs"),
             policy=str((tournament_cfg or {}).get("gate_collinearity_policy", "require_decision"))),

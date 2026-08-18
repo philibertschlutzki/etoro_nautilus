@@ -605,6 +605,34 @@ def gate_rank_correlation_matrix(trial_gate_deltas: list, tournament_cfg: dict |
             "pair_n_samples": pair_n_samples, "non_correlable_keys": non_correlable_keys}
 
 
+def gate_correlations_requiring_decision(trial_gate_deltas: list,
+                                         tournament_cfg: dict | None = None) -> dict:
+    """Issue #1017/#1169 (Katalog #1170) — Root-Cause: ``check_gate_collinearity_decision_required``
+    (invariants.py, #907) las bislang die VOLLE, ungefilterte ``gate_rank_correlation_matrix``
+    (oben) — dieselbe Matrix, die bewusst UNGEFILTERT bleibt, weil sie forensische #742-Report-
+    Telemetrie ist (siehe ``assert_gate_collinearity_guard``-Docstring). Ein Paar aus einer
+    strukturellen Vorbedingung/harten Risikogrenze (``gate_consolidation_protected``, #810/#811 —
+    z. B. ``max_drawdown``) UND einem Qualitätsgate kovariiert über die Exposure zwangsläufig
+    (dieselbe Kategorienverwechslung, die ``gate_collinearity_redundancy_alarm`` bereits VOR der
+    Messung aus seiner Kandidatenmatrix entfernt, #811) — es trifft aber keine gemeinsame
+    Zulassungsentscheidung und braucht daher STRUKTURELL nie einen ``gate_collinearity_accepted_
+    pairs``-Eintrag. Die Schutzliste IST bereits die Entscheidung (dieselbe "eine Entscheidung,
+    ein Ort"-Disziplin wie #810 für die Prioritätstabelle) — sie zweimal zu pflegen (einmal über
+    ``gate_consolidation_protected``, einmal über einen redundanten ``accepted_pairs``-Eintrag pro
+    betroffenem Paar) ist derselbe Fehler, den #810 behoben hat.
+
+    Entfernt jedes Paar, das MINDESTENS ein ``gate_consolidation_protected``-Mitglied enthält, aus
+    der von ``gate_rank_correlation_matrix`` gelieferten ``correlations``-Map, BEVOR es
+    ``check_gate_collinearity_decision_required`` erreicht — die rohe, ungefilterte Matrix selbst
+    (Report-Telemetrie) bleibt unverändert verfügbar."""
+    protected = _gate_consolidation_protected(tournament_cfg)
+    correlations = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)["correlations"]
+    return {
+        (k1, k2): rho for (k1, k2), rho in correlations.items()
+        if k1 not in protected and k2 not in protected
+    }
+
+
 def _gate_collinearity_threshold(tournament_cfg: dict | None) -> float:
     """Issue #792 — EINE deklarative Schwelle (``tournament.json.gate_collinearity_threshold``,
     Default 0.90 — die schärfere der beiden zuvor koexistierenden Werte 0.90/0.95) für ALLE DREI
