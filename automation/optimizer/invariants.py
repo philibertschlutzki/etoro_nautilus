@@ -1290,6 +1290,75 @@ def check_family_n_statistic_coverage(trials: list[dict], *,
     )
 
 
+# Issue #1043/#1192 (Katalog #1192) — die beiden Risiko-Layer-Parameter, die
+# ``strategies.HourlyStrategyBase`` fuer JEDE Strategie bereitstellt (ATR-Trailing-Stop, Zeitbox).
+_RISK_LAYER_PARAMS: tuple[str, ...] = ("atr_trailing_multiplier", "max_bars_in_trade")
+
+# Issue #1043/#1192 Akzeptanzkriterium 2 — die begruendete Ausnahmeliste (Default leer): eine
+# Strategie, die absichtlich NICHT beide Risiko-Layer-Parameter sampelt, gehoert HIER mit einer
+# Begruendung eingetragen, statt den Check stillschweigend zu umgehen. Aktuell leer — nach dem
+# #1043-Fix sampeln alle 15 Strategien beide Parameter.
+_RISK_LAYER_ALLOWLIST: dict[str, str] = {}
+
+
+def check_risk_layer_parameter_parity(
+    strategy_names: list[str], *, allowlist: dict[str, str] | None = None,
+) -> InvariantResult:
+    """Issue #1043/#1192 (Katalog #1192) Akzeptanzkriterium 2 — jede Strategie, die von
+    ``HourlyStrategyBase`` erbt (in der Praxis: jede in ``spaces.sample_params`` bekannte
+    Strategie, siehe dortige Docstring-Liste), sampelt ENTWEDER beide Risiko-Layer-Parameter
+    (``atr_trailing_multiplier``/``max_bars_in_trade``, ``_RISK_LAYER_PARAMS``) ODER traegt einen
+    begruendeten Eintrag auf ``allowlist``/``_RISK_LAYER_ALLOWLIST``.
+
+    Root-Cause #1043: ``SmaCrossoverStrategy`` sampelte bislang KEINEN der beiden Parameter —
+    ``atr_trailing_multiplier`` blieb auf dem statischen ``strategy_default`` (k=1,5) fixiert,
+    ``max_bars_in_trade`` auf 24 — beide UNTUNBAR, obwohl die Basisklasse sie fuer jede Strategie
+    bereitstellt. Die Study war die zweitschlechteste des Referenzlaufs (−0,918 % Holdout-Return,
+    α·n = −1,450 %) bei einem TRAILING_STOP-Exit-Anteil von 58,18 % — ein ungetunter Stop dominierte
+    das Exit-Verhalten.
+
+    Ruft ``spaces.sample_params(strategy, RecordingTrial())`` fuer jeden Namen in
+    ``strategy_names`` auf (dieselbe ``bounds._RecordingTrial``-Introspektion, mit der
+    ``bounds.extract_numeric_bounds`` bereits die Suchraum-Bounds extrahiert — reine, seiteneffekt-
+    freie Introspektion, kein echter Optuna-Trial noetig) und prueft, ob BEIDE
+    ``_RISK_LAYER_PARAMS`` im resultierenden ``params``-Dict erscheinen. Eine unbekannte Strategie
+    (``ValueError`` aus ``sample_params``) wird uebersprungen (kein Befund ueber eine nicht
+    existierende Strategie) — das ist ein Aufrufer-Fehler (falscher Name in ``strategy_names``),
+    kein Suchraum-Defekt.
+
+    ``severity='medium'`` (Suchraum-Vollstaendigkeit ist ein Kalibrierungsbefund, kein
+    Promotions-Blocker per se)."""
+    from automation.optimizer import spaces as _spaces
+    from automation.optimizer.bounds import _RecordingTrial
+
+    effective_allowlist = allowlist if allowlist is not None else _RISK_LAYER_ALLOWLIST
+    missing: dict[str, list[str]] = {}
+    for strategy in strategy_names:
+        if strategy in effective_allowlist:
+            continue
+        trial = _RecordingTrial()
+        try:
+            params = _spaces.sample_params(strategy, trial)
+        except Exception:
+            continue
+        gaps = [p for p in _RISK_LAYER_PARAMS if p not in params]
+        if gaps:
+            missing[strategy] = gaps
+    passed = not missing
+    return InvariantResult(
+        name="check_risk_layer_parameter_parity",
+        passed=passed,
+        severity="medium",
+        expected=f"jede Strategie sampelt {list(_RISK_LAYER_PARAMS)} oder steht auf der "
+                 "Risk-Layer-Allowlist mit Begründung",
+        actual=missing or None,
+        detail=("OK" if passed else
+                f"{len(missing)} Strategie(n) sampeln nicht alle Risiko-Layer-Parameter: "
+                f"{missing} — atr_trailing_multiplier/max_bars_in_trade bleiben auf dem "
+                "statischen strategy_default fixiert, untunbar (#1043/#1192)."),
+    )
+
+
 def check_config_key_registry(tournament_config: dict) -> InvariantResult:
     """Issue #649/#760/#765-Regressionswächter.
 
@@ -4673,6 +4742,36 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
     )
 
 
+def check_champion_store_visibility(champions_summary: dict) -> InvariantResult:
+    """Issue #1044/#1193 — Meta-Invariante für den #1193-Sichtbarkeits-Fix. Root-Cause #1193: drei
+    aufeinanderfolgende Läufe meldeten identisch ``{stored: 0, skipped_by_reason: {STORE_EMPTY:
+    14}}`` — der Store wurde bei jedem Lauf leer vorgefunden, aber aus den Artefakten ALLEIN war
+    nicht entscheidbar, ob der Store tatsächlich zwischen Läufen geleert wird, oder ob der
+    Folgelauf schlicht in einem anderen ``WORK`` liest, das der schreibende Lauf nie sah ("Beides
+    ist aus den Artefakten allein nicht entscheidbar", Issue-Text).
+
+    FAIL (severity ``medium``, Beobachtbarkeits- keine Korrektheitsverletzung), wenn
+    ``champions_summary['store_path']`` fehlt/leer ist — ein Report, der den Store-Pfad nicht
+    benennt, kann diese Frage strukturell nie beantworten, unabhängig davon, wie oft der Vorfall
+    sich wiederholt. Schützt speziell gegen ein künftiges Refactoring, das
+    ``report._champions_summary()``s Rückgabe-Dict wieder auf die Vor-#1193-Feldmenge kürzt, ohne
+    dass ein bestehender Test dies bemerkt."""
+    store_path = champions_summary.get("store_path")
+    passed = bool(store_path)
+    return InvariantResult(
+        name="check_champion_store_visibility",
+        passed=passed,
+        expected="champions.store_path ist gesetzt (absoluter Pfad des Champion-Store-"
+                 "Verzeichnisses)",
+        actual={"store_path": store_path, "store_found": champions_summary.get("store_found"),
+               "entry_count": champions_summary.get("entry_count")},
+        severity="medium",
+        detail=("OK" if passed else
+                "champions.store_path fehlt im Report — 'leer' (STORE_EMPTY) ist von 'woanders' "
+                "(falsches WORK, STORE_PATH_MISSING) nicht unterscheidbar (#1193)."),
+    )
+
+
 def check_champion_attempt_coherence(
     reported_attempts: int | None, actual_writeback_events: int | None,
 ) -> InvariantResult:
@@ -4776,6 +4875,42 @@ def check_champion_corroboration_reachable(
                 f"max(corroboration_count)={max_corr} < {corroboration_threshold} — Ebene 2 "
                 "(#706) ist auf der EIGENEN Kohorte strukturell noch unerreichbar. Kein "
                 "globaler/Nebenprozess-Zähler kann diesen Befund mehr entkraeften (#1089)."),
+    )
+
+
+def check_structural_zero_eligible_has_diagnosis(
+    studies_out: list[dict], diagnosed_pairs: list[dict],
+) -> InvariantResult:
+    """Issue #1045/#1194 — Akzeptanzkriterium 2: eine Study mit ``stop_reason ==
+    'STRUCTURAL_ZERO_ELIGIBLE'`` MUSS einen ``diagnosed_pairs``-Eintrag für ihr (strategy, symbol)
+    hinterlassen — Root-Cause-Symptom des Issues war exakt das Gegenteil: 123 Trials, 100 % auf
+    demselben Gate (``REJECT_OOS_MIN_PSR``), ``diagnosed_pairs == []`` — "Diagnose ohne Rückschrieb".
+
+    FAIL (severity ``medium``, Beobachtbarkeits- keine Korrektheitsverletzung — dieselbe Klasse wie
+    ``check_symbol_bar_quality_cache_availability``), wenn mindestens eine STRUCTURAL_ZERO_ELIGIBLE-
+    Study kein zugehöriges ``diagnosed_pairs``-Element trägt (weder aus dem #761-Cache noch aus der
+    #1194-Live-Ableitung, siehe ``report._diagnosed_pairs_section``-Docstring). Ein Cohort mit
+    UNEINHEITLICHEM ``is_rejection_detail`` (kein dominantes Gate) FAILt hier bewusst ebenfalls —
+    das Issue verlangt einen Eintrag für JEDE STRUCTURAL_ZERO_ELIGIBLE-Study, nicht nur für die
+    homogenen Fälle; ein gemischter Cohort ohne Diagnose ist ein legitimes Signal, die
+    Klassifikation (``sweep_diagnostics.diagnose_structural_zero_eligible_gate``) zu erweitern."""
+    diagnosed_keys = {(e.get("strategy"), e.get("symbol")) for e in (diagnosed_pairs or [])}
+    affected = sorted({
+        f"{r.get('strategy')}/{r.get('symbol')}" for r in (studies_out or [])
+        if r.get("stop_reason") == "STRUCTURAL_ZERO_ELIGIBLE"
+        and (r.get("strategy"), r.get("symbol")) not in diagnosed_keys
+    })
+    passed = not affected
+    return InvariantResult(
+        name="check_structural_zero_eligible_has_diagnosis",
+        passed=passed,
+        expected="jede Study mit stop_reason=='STRUCTURAL_ZERO_ELIGIBLE' hat einen "
+                 "diagnosed_pairs-Eintrag",
+        actual={"missing_diagnosis_for": affected} if not passed else None,
+        severity="medium",
+        detail=("OK" if passed else
+                f"{len(affected)} STRUCTURAL_ZERO_ELIGIBLE-Study/ies ohne diagnosed_pairs-Eintrag: "
+                f"{affected} — Diagnose ohne Rückschrieb (#1194)."),
     )
 
 

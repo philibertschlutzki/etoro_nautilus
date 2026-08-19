@@ -843,6 +843,52 @@ def _champion_store_has_any_entry() -> bool:
         return False
 
 
+def store_status() -> dict:
+    """Issue #1044/#1193 — Diagnose-Schnappschuss des Champion-Store-Verzeichnisses: {store_path,
+    store_found, mtime_utc, entry_count, keys}. Root-Cause #1193: drei aufeinanderfolgende Läufe
+    meldeten identisch ``{stored: 0, ..., skipped_by_reason: {STORE_EMPTY: 14}}`` — aus den
+    Artefakten allein war NICHT entscheidbar, ob der Store zwischen Läufen tatsächlich geleert
+    wird, oder ob der Folgelauf schlicht in einem anderen ``WORK`` liest (zwei strukturell
+    verschiedene Ursachen, siehe Issue-Text).
+
+    BEWUSST kein Aufruf von ``_champions_dir()`` hier — dessen ``mkdir(parents=True,
+    exist_ok=True)``-Seiteneffekt würde den einzigen Moment vernichten, in dem "das Verzeichnis
+    existierte vor diesem Lauf nicht" (``STORE_PATH_MISSING``) überhaupt beobachtbar ist: JEDER
+    andere Champion-Store-Zugriff (``_champion_path``, ``_champions_dir`` selbst) legt das
+    Verzeichnis unbedingt an, sobald er zum ersten Mal läuft. ``sweep.run_per_symbol_sweep`` ruft
+    diese Funktion daher als ALLERERSTE Champion-Store-Berührung eines Laufs auf (vor jedem
+    Enqueue/Store/Writeback-Versuch) und emittiert das Ergebnis als ``CHAMPION_STORE_SCAN``-Ereignis
+    — ``report._champions_summary`` liest dieses Ereignis zurück, um ``STORE_EMPTY`` (Verzeichnis
+    existierte, war aber leer) von ``STORE_PATH_MISSING`` (Verzeichnis existierte zu Laufbeginn
+    NICHT) zu unterscheiden. Fail-open (leere Momentaufnahme) bei jedem Lesefehler — dieselbe
+    Konvention wie überall im Champion-Store."""
+    import datetime as dt
+
+    path = WORK / "champions"
+    try:
+        store_found = path.is_dir()
+    except OSError:
+        store_found = False
+    try:
+        keys = sorted(p.name for p in path.glob("champion_*.json")) if store_found else []
+    except OSError:
+        keys = []
+    mtime_utc = None
+    if store_found:
+        try:
+            mtime_utc = dt.datetime.fromtimestamp(
+                path.stat().st_mtime, dt.timezone.utc).isoformat()
+        except OSError:
+            mtime_utc = None
+    return {
+        "store_path": str(path),
+        "store_found": store_found,
+        "mtime_utc": mtime_utc,
+        "entry_count": len(keys),
+        "keys": keys,
+    }
+
+
 _NO_ENTRY_PROVENANCE_MAX_KEYS = 10
 
 

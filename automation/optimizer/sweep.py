@@ -1838,6 +1838,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     das #843-Korrektheits-Risiko einer echten Pipeline ueber Symbolgrenzen hinweg einzugehen.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
+    # Issue #1044/#1193 — ALLERERSTE Champion-Store-Beruehrung dieses Laufs (vor jedem
+    # Enqueue/Store/Writeback-Versuch weiter unten): ``champions.store_status()`` liest den
+    # Store-Pfad OHNE ihn anzulegen (siehe dortiger Docstring) — nur an DIESER Stelle ist "das
+    # Verzeichnis existierte zu Laufbeginn nicht" (STORE_PATH_MISSING) noch beobachtbar, jeder
+    # spaetere Store-Zugriff (auch ein einzelner Lookup) legt das Verzeichnis unbedingt an.
+    # ``report._champions_summary`` liest dieses Ereignis zurueck, um STORE_EMPTY von
+    # STORE_PATH_MISSING zu unterscheiden UND um den Store-Pfad/-Zustand im Report zu benennen
+    # (Akzeptanzkriterium 1 — "der Report nennt den Store-Pfad und dessen Zustand").
+    emit_execution_event(logging.getLogger("optimizer"), "CHAMPION_STORE_SCAN", champions.store_status())
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
     # Fake (HI-7-Tests) wird der Schema-Pre-Init uebersprungen — ein Fake-optimize_symbol beruehrt
     # keine SQLite-Datei, also gibt es nichts zu bootstrappen (kein Storage-Seiteneffekt im Test).
@@ -1986,6 +1995,20 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # eine einzige Study fuer es gestartet wird — analog dem bestehenden Gate-1-Pfad. Nur im echten
     # Storage-Pfad (injizierte HI-7-Fakes haben keinen echten Katalog); ``bar_quality_fn`` bleibt
     # aber unabhaengig davon injizierbar, damit dieser Block selbst ohne echten Katalog testbar ist.
+    # Issue #1046/#1195 (Katalog #1195) — Root-Cause: ``check_invariant_coverage`` FAILte, weil
+    # ``check_bar_quality`` in manchen Laeufen KOMPLETT aus dem Invarianten-Strom fehlte (``missing
+    # = ['check_bar_quality']``), NICHT weil die Mechanik unten fehlte (sie existiert bereits,
+    # siehe ``INVARIANT_STREAM_RESULT``-Emission je Symbol weiter unten) — sondern weil DIESER
+    # ganze Block uebersprungen wurde (``using_real_optimize=False``/``syms`` bereits leer VOR
+    # diesem Punkt, z. B. weil Gate 1 bereits alle Symbole gefiltert hat) oder KEIN Symbol eine
+    # Stichprobe lieferte (``_quality_by_symbol`` blieb leer). Ein `severity='high'`-Check in
+    # ``optimizer.json``s Fail-Fast-Vokabular, der in bestimmten Laeufen STILLSCHWEIGEND nie
+    # feuert, ist von "nie geprueft" nicht unterscheidbar (dieselbe #1015/#1167-Fehlerklasse).
+    # Fix: EIN globales, garantiertes ``INVARIANT_STREAM_RESULT`` fuer ``check_bar_quality`` —
+    # INCONCLUSIVE (``passed=None``), wenn kein Symbol tatsaechlich geprueft wurde, sonst
+    # unveraendert die bestehende Je-Symbol-Emission unten (die bleibt die praezisere,
+    # scope-spezifische Quelle).
+    _bar_quality_any_measured = False
     if (using_real_optimize or bar_quality_fn is not None) and syms:
         _load_sample = bar_quality_fn or _load_symbol_bar_quality_sample
         _bar_quality_cfg = opt_data.get("bar_quality") or {}
@@ -2015,6 +2038,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 bar_coverage_ratio=_sample.get("bar_coverage_ratio"),
                 median_delta_t_s=_sample.get("median_delta_t_s"),
             )
+            _bar_quality_any_measured = True
             _quality_by_symbol[_sym] = {
                 "frac_zero_true_range": _quality.get("frac_zero_true_range"),
                 "atr_median_bps": _quality.get("atr_median_bps"),
@@ -2090,33 +2114,50 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             syms = [s for s in syms if s not in _degenerate_syms]
             available_bars = count_available_bars(syms)
 
-        # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
-        # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
-        # verbleibendem Symbol via diagnose_symbol_degeneracy. Mehrere strukturell verschiedene
-        # Strategien mit binding_cause=='signal_absent' UND median_is_trades==0 sind ein Beleg fuer
-        # ein Datenproblem, das der Bar-Qualitaets-Preflight (noch) nicht erfasst hat — die
-        # Bar-Qualitaet selbst bleibt aber die NOTWENDIGE Bedingung fuer eine tatsaechliche
-        # Ablehnung; dieser Check weist selbst nie ein Symbol ab (Akzeptanzkriterium #807).
-        if syms:
-            _diag_cache = load_diagnosed_pairs_cache(work_dir=WORK)
-            _min_strategies = int(opt_data.get("symbol_degeneracy_min_strategies", 3))
-            for _sym in syms:
-                _per_strategy = [
-                    v for (strat, sym), v in _diag_cache.items()
-                    if sym == _sym and strat != _SYMBOL_DEGENERACY_SENTINEL_STRATEGY
-                ]
-                if not _per_strategy:
-                    continue
-                _agg = diagnose_symbol_degeneracy(_sym, _per_strategy, min_strategies=_min_strategies)
-                if _agg["is_degenerate"]:
-                    logging.getLogger("optimizer").warning(
-                        "[#807] %s: SYMBOL_DATA_DEGENERATE (Sekundaer-Signal aus %d gecachten "
-                        "Diagnosen, %d/%d 'signal_absent') — der Bar-Qualitaets-Preflight erfasste "
-                        "dies (noch) nicht; das Symbol wird DENNOCH nicht automatisch abgewiesen "
-                        "(Bar-Qualitaet ist die notwendige Bedingung, keine Diagnosezahl allein).",
-                        _sym, _agg["n_strategies_checked"], _agg["n_signal_absent"],
-                        _agg["min_strategies"],
-                    )
+    # Issue #1046/#1195 — der garantierte Fallback: kein einziges Symbol wurde tatsaechlich
+    # geprueft (Block oben uebersprungen ODER durchlaufen, aber jede Stichprobe fehlte) ⇒
+    # ``check_bar_quality`` erscheint TROTZDEM im Strom, als INCONCLUSIVE statt fehlend — dieselbe
+    # Tri-State-Konvention wie #995/#1147 ("nicht pruefbar" ist ein Befund, kein Nicht-Ereignis).
+    if not _bar_quality_any_measured:
+        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+            "name": "check_bar_quality", "check": "check_bar_quality",
+            "passed": None, "source": "sweep", "scope": "global",
+            "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
+                       "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
+                       "Schwellen (#807).",
+            "actual": None,
+            "detail": "Kein Symbol tatsaechlich geprueft (using_real_optimize=False oder keine "
+                     "Katalog-Stichprobe verfuegbar) — nicht auswertbar, kein Befund (#1046/#1195).",
+            "severity": "high", "evaluable": False,
+        }, level=logging.INFO)
+
+    # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
+    # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
+    # verbleibendem Symbol via diagnose_symbol_degeneracy. Mehrere strukturell verschiedene
+    # Strategien mit binding_cause=='signal_absent' UND median_is_trades==0 sind ein Beleg fuer
+    # ein Datenproblem, das der Bar-Qualitaets-Preflight (noch) nicht erfasst hat — die
+    # Bar-Qualitaet selbst bleibt aber die NOTWENDIGE Bedingung fuer eine tatsaechliche
+    # Ablehnung; dieser Check weist selbst nie ein Symbol ab (Akzeptanzkriterium #807).
+    if syms:
+        _diag_cache = load_diagnosed_pairs_cache(work_dir=WORK)
+        _min_strategies = int(opt_data.get("symbol_degeneracy_min_strategies", 3))
+        for _sym in syms:
+            _per_strategy = [
+                v for (strat, sym), v in _diag_cache.items()
+                if sym == _sym and strat != _SYMBOL_DEGENERACY_SENTINEL_STRATEGY
+            ]
+            if not _per_strategy:
+                continue
+            _agg = diagnose_symbol_degeneracy(_sym, _per_strategy, min_strategies=_min_strategies)
+            if _agg["is_degenerate"]:
+                logging.getLogger("optimizer").warning(
+                    "[#807] %s: SYMBOL_DATA_DEGENERATE (Sekundaer-Signal aus %d gecachten "
+                    "Diagnosen, %d/%d 'signal_absent') — der Bar-Qualitaets-Preflight erfasste "
+                    "dies (noch) nicht; das Symbol wird DENNOCH nicht automatisch abgewiesen "
+                    "(Bar-Qualitaet ist die notwendige Bedingung, keine Diagnosezahl allein).",
+                    _sym, _agg["n_strategies_checked"], _agg["n_signal_absent"],
+                    _agg["min_strategies"],
+                )
 
     # Issue #892 Fix Punkt 5 — sammelt jedes Symbol mit MINDESTENS einer Gate-1-Ablehnung, damit
     # ein Symbol, dessen Paare AUSSCHLIESSLICH an Gate 1 scheitern (unten: kein 'OK'-Paar), im

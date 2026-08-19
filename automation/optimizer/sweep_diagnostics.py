@@ -67,6 +67,88 @@ def resolve_ineligible_binding_cause(trials: list[dict], *, median_oos_trades: f
     return "signal_quality", detail
 
 
+# Issue #1045/#1194 — welche ``is_rejection_detail``-Gates eine FREQUENZ- (Bounds-Erweiterung ist
+# ein plausibler Hebel) vs. eine QUALITAETS-Groesse (Bounds-Erweiterung ist ein No-Op — die Trades
+# fanden bereits statt und wurden gemessen; Denylist/Budget-Deprioritisierung ist die einzig
+# sinnvolle Konsequenz) messen. Nur ``REJECT_OOS_MIN_TRADES`` misst direkt die Trade-ANZAHL; jede
+# andere OOS-Ablehnung (Issue-Referenz: ``oos_min_psr`` ⇒ Qualitaet, siehe Issue-Text) urteilt ueber
+# eine STATISTISCHE Eigenschaft der bereits stattgefundenen Trades. ``REJECT_OOS_MICRO_SIZING``/
+# ``REJECT_OOS_NOT_EVALUABLE``/``REJECT_OOS_OTHER`` bleiben ABSICHTLICH unklassifiziert (weder
+# Frequenz- noch reine Qualitaetsaussage) — ``classify_rejection_detail_gate_type`` gibt fuer sie
+# ``None`` zurueck statt zu raten (dieselbe Fail-open-Konvention wie ueberall in diesem Modul).
+_FREQUENCY_REJECTION_DETAILS = frozenset({"REJECT_OOS_MIN_TRADES"})
+_QUALITY_REJECTION_DETAILS = frozenset({
+    "REJECT_OOS_MIN_TOTAL_RETURN", "REJECT_OOS_MIN_EXPECTANCY", "REJECT_OOS_MAX_DRAWDOWN",
+    "REJECT_OOS_MIN_WIN_RATE", "REJECT_OOS_MIN_SORTINO", "REJECT_OOS_MIN_PROFIT_FACTOR",
+    "REJECT_OOS_MIN_PSR", "REJECT_OOS_MIN_EXCESS_RETURN",
+})
+
+
+def classify_rejection_detail_gate_type(is_rejection_detail: str | None) -> str | None:
+    """Issue #1045/#1194 — ``'frequency'``/``'quality'``/``None`` (unklassifiziert) fuer einen
+    ``is_rejection_detail``-Code (siehe ``run_optimization._OOS_REASON_PREFIX_MAP`` fuer die
+    vollstaendige Enum). Rein, deterministisch, kein I/O."""
+    if is_rejection_detail in _FREQUENCY_REJECTION_DETAILS:
+        return "frequency"
+    if is_rejection_detail in _QUALITY_REJECTION_DETAILS:
+        return "quality"
+    return None
+
+
+def diagnose_structural_zero_eligible_gate(
+    is_rejection_detail_counts: dict[str, int] | None, *, homogeneity_threshold: float = 1.0,
+) -> dict:
+    """Issue #1045/#1194 — Root-Cause: ``resolve_ineligible_binding_cause`` klassifiziert einen
+    ZERO_ELIGIBLE-Kollaps zwar bereits korrekt als ``'signal_quality'`` (voll evaluierte Kohorte,
+    kein Frequenz-/Inferenz-Problem), schliesst diesen Befund aber NICHT zu einer KONKRETEN
+    Handlungsempfehlung (Bounds-Erweiterung vs. Denylist/Budget-Deprioritisierung), OBWOHL die
+    Study bereits ``is_rejection_detail_counts`` traegt (100 % desselben Gates im Referenzfall:
+    123/123 Trials ``REJECT_OOS_MIN_PSR``). Diese Funktion schliesst genau diese Luecke: schlaegt
+    das GATE (nicht die Trade-Anzahl, siehe ``resolve_ineligible_binding_cause``) selbst 100 % der
+    evaluierten Trials fehl, ist die Gate-Identitaet selbst die staerkste verfuegbare Diagnose —
+    unabhaengig davon, ob der (langsamere, mehrstufigen Evidenz-/Cache-Regime unterliegende)
+    ``run_optimization.py``-Rueckschriebpfad in DIESEM Lauf griff.
+
+    ``homogeneity_threshold`` (Default 1.0, wie im Issue-Text — "100 % desselben
+    is_rejection_detail") — der Anteil des HAEUFIGSTEN Gates an ALLEN gezaehlten Ablehnungen muss
+    diese Schwelle ERREICHEN, sonst bleibt der Befund ``binding_cause='none'`` (ein gemischter
+    Cohort ist von hier aus nicht eindeutig einem einzelnen Gate zuzuordnen — kein Rateversuch).
+
+    Rueckgabe: ``{dominant_rejection_detail, dominant_fraction, gate_type, binding_cause,
+    proposed_action}``. ``proposed_action`` ist ``'search_space_override'`` (Frequenz-Gate),
+    ``'budget_deprioritization'`` (Qualitaets-Gate, MILDER als ``'denylist'`` — dieselbe
+    Vorsichtsstufe, die #830 fuer 'signal_quality' bereits etabliert hat) oder ``'none'``
+    (unklassifiziertes oder nicht-homogenes Gate). Rein, deterministisch, kein I/O — DER Vorschlag
+    wird HIER nur FORMULIERT, nicht angewendet (siehe ``report._structural_zero_eligible_diagnosed_
+    pairs``-Docstring fuer die Report-Verdrahtung; die Anwendung bleibt ein separater, bestaetigter
+    Schritt, exakt wie im Issue-Text gefordert)."""
+    counts = is_rejection_detail_counts or {}
+    total = sum(counts.values())
+    if total == 0:
+        return {"dominant_rejection_detail": None, "dominant_fraction": None,
+                "gate_type": None, "binding_cause": "none", "proposed_action": "none"}
+    dominant_detail, dominant_count = max(counts.items(), key=lambda kv: kv[1])
+    dominant_fraction = dominant_count / total
+    if dominant_fraction < homogeneity_threshold:
+        return {"dominant_rejection_detail": dominant_detail,
+                "dominant_fraction": round(dominant_fraction, 4),
+                "gate_type": None, "binding_cause": "none", "proposed_action": "none"}
+    gate_type = classify_rejection_detail_gate_type(dominant_detail)
+    if gate_type == "frequency":
+        binding_cause, proposed_action = "signal_sparse", "search_space_override"
+    elif gate_type == "quality":
+        binding_cause, proposed_action = "signal_quality", "budget_deprioritization"
+    else:
+        binding_cause, proposed_action = "none", "none"
+    return {
+        "dominant_rejection_detail": dominant_detail,
+        "dominant_fraction": round(dominant_fraction, 4),
+        "gate_type": gate_type,
+        "binding_cause": binding_cause,
+        "proposed_action": proposed_action,
+    }
+
+
 def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict:
     """Bestimmt die BINDENDE Ursache eines 0-evaluable/0-eligible-Kollapses für ein
     (Symbol, Strategie)-Paar aus den per-Trial-Kennzahlen (``oos_evaluated``, ``oos_eligible``,

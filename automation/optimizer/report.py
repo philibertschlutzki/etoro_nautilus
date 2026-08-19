@@ -1067,6 +1067,20 @@ def _study_record(proposal: dict, study,
     # derselbe fail-loud protokollierte Fallback wie zuvor.
     _symbol_bar_quality = symbol_bar_quality_cache.get(proposal.get("symbol")) if isinstance(
         symbol_bar_quality_cache, dict) else None
+    # Issue #1046/#1195 (Katalog #1195) Fix Punkt 2 — Fallback, wenn der Gate-1-Preflight-Cache
+    # KEINEN Eintrag für dieses Symbol trägt (z. B. ``using_real_optimize=False`` im Sweep-Lauf,
+    # der diesen Report erzeugte, siehe ``sweep.py``s #1046-Kommentar): ``session_coverage_
+    # fraction``/``bars_per_calendar_day`` liegen je Study bereits vor (#1011/#1163, oben in dieser
+    # Funktion berechnet) — die "billigste Quelle" laut Fix-Vorgabe, weil sie aus bereits
+    # gelaufenen Trials abgeleitet ist, ohne einen zusätzlichen Katalog-Zugriff zu benötigen.
+    # Liefert eine reduzierte, aber NICHT-None-Teilmenge des vollen Preflight-Schemas — ``source``
+    # macht die Herkunft (Live-Preflight vs. Study-Fallback) im Artefakt selbst unterscheidbar.
+    if _symbol_bar_quality is None and session_coverage_fraction_median is not None:
+        _symbol_bar_quality = {
+            "session_coverage_fraction": session_coverage_fraction_median,
+            "bars_per_calendar_day": bars_per_calendar_day_median,
+            "source": "study_fallback",
+        }
     _bar_seconds = (
         _symbol_bar_quality.get("median_delta_t_s")
         if isinstance(_symbol_bar_quality, dict) and _symbol_bar_quality.get("median_delta_t_s")
@@ -1632,8 +1646,10 @@ def _study_record(proposal: dict, study,
             trial_attrs, "oos_bar_range_median_bps"),
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
-        # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. None ⇒ kein Preflight in
-        # diesem Lauf (z. B. injizierte Tests).
+        # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. Issue #1046/#1195 — fehlt der
+        # Cache-Eintrag, aber diese Study selbst hat session_coverage_fraction gemessen, liefert
+        # der obige Fallback eine reduzierte Teilmenge (``source: 'study_fallback'``) statt None.
+        # None bleibt nur, wenn WEDER der Cache NOCH diese Study selbst je eine Bar sah.
         "symbol_bar_quality": _symbol_bar_quality,
         # Issue #919 — je Study aufsummiertes Exit-Reason-Histogramm (aus Order-Tags, #899) +
         # Median der je-Trial-Median-Haltedauer (Bars). Rohmaterial für
@@ -2007,22 +2023,75 @@ def _diagnosed_pairs_all() -> list[dict[str, Any]]:
     return list(cache.values())
 
 
-def _diagnosed_pairs_section() -> list[dict[str, Any]]:
+def _structural_zero_eligible_diagnosed_pairs(
+    studies_out: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Issue #1045/#1194 — Root-Cause: der #679/#829/#830/#831-Rückschriebpfad
+    (``run_optimization.py`` → ``sweep_diagnostics.record_diagnosed_pair``) schreibt AUSSCHLIESSLICH
+    in den ``diagnosed_pairs_cache.json``-Store, dessen Schreibpfad seit #1090 komplett unterdrückt
+    ist (``optimizer.json['diagnostic_writeback_enabled'] = false``, siehe
+    ``sweep_diagnostics._read_diagnostic_writeback_enabled``-Docstring — eine bewusste, dokumentierte
+    Sicherheitsmassnahme gegen Mehrprozess-Korruption, #1086). Symptom: 123/123 AdxAtrMomentum/TSLA-
+    Trials trafen dasselbe Gate (``REJECT_OOS_MIN_PSR``) — eine reale, gemessene, hoch-signifikante
+    Diagnose —, aber ``diagnosed_pairs`` blieb LEER, weil dieser eine Cache-Schreibpfad global AUS
+    ist.
+
+    Fix: dieselbe #1039/#1188-Lektion — ``diagnostic_writeback_enabled`` steuert NUR, ob der
+    AUTOMATISCHE Budget-Skip (``enumerate_tunable_pairs``, ANWENDUNG der Empfehlung) über Läufe
+    hinweg PERSISTIERT wird, NICHT, ob DIESER Lauf seine eigene Diagnose im Report SICHTBAR machen
+    darf. ``studies_out`` trägt bereits ``stop_reason`` UND ``is_rejection_detail_counts`` (siehe
+    ``_study_record`` oben) — genug, um ``sweep_diagnostics.diagnose_structural_zero_eligible_gate``
+    live, ohne jeden Cache-Zugriff, für DIESEN Lauf auszuwerten. Der Vorschlag wird hier NUR
+    GESCHRIEBEN (Report-Sichtbarkeit) — die ANWENDUNG (tatsächliche Denylist-/Bounds-Änderung)
+    bleibt exakt wie im Issue-Text gefordert ein separater, bestätigter Schritt (weiterhin über den
+    gated Cache-Pfad, sobald #1066/#1086 an einem echten Mehrprozess-Lauf abgenommen sind)."""
+    from automation.optimizer.sweep_diagnostics import diagnose_structural_zero_eligible_gate
+    out = []
+    for r in studies_out:
+        if r.get("stop_reason") != "STRUCTURAL_ZERO_ELIGIBLE":
+            continue
+        diagnosis = diagnose_structural_zero_eligible_gate(r.get("is_rejection_detail_counts"))
+        if diagnosis["binding_cause"] in (None, "none"):
+            continue
+        out.append({
+            "strategy": r.get("strategy"), "symbol": r.get("symbol"),
+            "action": diagnosis["proposed_action"], "binding_cause": diagnosis["binding_cause"],
+            "n_runs_confirmed": None, "expires_after_runs": None,
+            "budget_executed_fraction": r.get("budget_executed_fraction"),
+            "dominant_rejection_detail": diagnosis["dominant_rejection_detail"],
+            "dominant_fraction": diagnosis["dominant_fraction"],
+            "source": "live_derivation",
+        })
+    return out
+
+
+def _diagnosed_pairs_section(studies_out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Einträge (nicht nur die ``'denylist'``-
     Teilmenge von ``_diagnosed_pairs_skipped_section``) mit ``action``, ``binding_cause``,
     ``n_runs_confirmed`` und ``expires_after_runs`` je Eintrag: die Deaktivierungs-/Deprioritisierungs-
     Entscheidungen müssen genauso nachvollziehbar sein wie die Promotion-Entscheidungen, nicht nur
-    im Cache-JSON verborgen."""
-    return [
-        {
+    im Cache-JSON verborgen.
+
+    Issue #1045/#1194 — GEMERGT mit den LIVE (cache-unabhängig) aus ``studies_out`` abgeleiteten
+    STRUCTURAL_ZERO_ELIGIBLE-Befunden dieses Laufs (siehe
+    ``_structural_zero_eligible_diagnosed_pairs``-Docstring) — derselbe "primär aus studies_out,
+    Cache als Anreicherung"-Vertrag wie ``_boundary_solutions_section`` (#1039/#1188). Ein
+    Cache-Eintrag (mehr Historie: ``n_runs_confirmed``/``expires_after_runs``) überschreibt den
+    Live-Befund für dasselbe (strategy, symbol)-Paar, falls beide existieren."""
+    by_key: dict[tuple[Any, Any], dict[str, Any]] = {
+        (e["strategy"], e["symbol"]): e
+        for e in _structural_zero_eligible_diagnosed_pairs(studies_out or [])
+    }
+    for entry in _diagnosed_pairs_all():
+        by_key[(entry.get("strategy"), entry.get("symbol"))] = {
             "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
             "action": entry.get("action"), "binding_cause": entry.get("binding_cause"),
             "n_runs_confirmed": entry.get("n_runs_confirmed"),
             "expires_after_runs": entry.get("expires_after_runs"),
             "budget_executed_fraction": entry.get("budget_executed_fraction"),
+            "source": "diagnosis_cache",
         }
-        for entry in _diagnosed_pairs_all()
-    ]
+    return sorted(by_key.values(), key=lambda e: (str(e.get("strategy")), str(e.get("symbol"))))
 
 
 # Issue #1039/#1188 (Katalog #1188) — dieselbe Schwelle wie confirm.py's ``boundary_overfit``
@@ -2247,10 +2316,18 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     import collections
     from automation.optimizer import champions as _champions_mod
 
+    # Issue #1044/#1193 Fix Punkt 2 — {store_path, store_found, mtime_utc, entry_count, keys},
+    # analog ``symbol_bar_quality_cache_status`` (#1016/#1168): macht "leer" (STORE_EMPTY) von
+    # "woanders" (falsches WORK, STORE_PATH_MISSING) unterscheidbar, statt drei aufeinanderfolgende
+    # Läufe identisch ``{stored: 0, ...}`` melden zu lassen, ohne dass der Report selbst sagt, WO
+    # er nachgesehen hat. Ein frischer Scan (nicht das evtl. veraltete CHAMPION_STORE_SCAN-Ereignis
+    # unten) — der aktuelle Store-Zustand JETZT, unabhängig davon, ob ein Ereignisstrom auflösbar ist.
+    _store_status = _champions_mod.store_status()
+
     empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
              "skipped_by_reason": {}, "semantics_migrated": 0,
              "admissible_despite_simulation_stale": 0, "max_corroboration_count": None,
-             "attempts": None}
+             "attempts": None, **_store_status}
     try:
         champions_dir = _champions_mod._champions_dir()
         paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
@@ -2367,12 +2444,36 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
             skipped_by_reason["QUALITY_STALE" if stale else "NOT_CORROBORATED_OR_WINDOW_NOT_ADVANCED"] += 1
         attempts = len(pairs_seen)
 
+    # Issue #1044/#1193 Fix Punkt 3 — STORE_PATH_MISSING vs. STORE_EMPTY: ``_store_status`` oben ist
+    # der Report-ZEIT-Zustand (nach dem Lauf — ``_champions_dir()`` (Zeile oben) hat das Verzeichnis
+    # inzwischen laengst angelegt, falls es das nicht schon war). Ob das Verzeichnis VOR DIESEM LAUF
+    # existierte, ist NUR aus dem ``CHAMPION_STORE_SCAN``-Ereignis rekonstruierbar (von
+    # ``run_per_symbol_sweep`` als ALLERERSTE Champion-Store-Beruehrung emittiert, siehe
+    # ``champions.store_status``-Docstring). Drei Faelle: (1) ``_events_path`` traegt ein
+    # CHAMPION_STORE_SCAN-Ereignis — die massgebliche Lauf-Start-Evidenz. (2) Kein Ereignisstrom
+    # auflösbar (``_events_path is None``, echter ``--report-only``-Prozess) — Fallback auf den
+    # aktuellen ``_store_status``-Scan (degradiert, aber bester verfuegbarer Ersatz, analog dem
+    # ``attempts``-Fallback oben). (3) Ein Ereignisstrom EXISTIERT, traegt aber KEIN
+    # CHAMPION_STORE_SCAN-Ereignis (ein Lauf von VOR diesem Fix, oder ein Test, der nur
+    # CHAMPION_WRITEBACK-Ereignisse registriert) — hier gibt es KEINE verlaessliche Lauf-Start-
+    # Evidenz; ohne sie NICHT umbenennen (STORE_EMPTY bleibt STORE_EMPTY) statt eines unbelegten
+    # Rateversuchs ueber den (moeglicherweise laengst veraenderten) aktuellen Zustand.
+    _store_found_at_run_start: bool | None
+    if _events_path is None:
+        _store_found_at_run_start = _store_status["store_found"]
+    else:
+        _scan_events = _read_jsonl_events(_events_path, "CHAMPION_STORE_SCAN")
+        _store_found_at_run_start = bool(_scan_events[0].get("store_found")) if _scan_events else None
+    if _store_found_at_run_start is False and skipped_by_reason.get("STORE_EMPTY"):
+        skipped_by_reason["STORE_PATH_MISSING"] = skipped_by_reason.pop("STORE_EMPTY")
+
     return {
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
         "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
         "semantics_migrated": semantics_migrated,
         "admissible_despite_simulation_stale": admissible_despite_simulation_stale,
         "max_corroboration_count": max_corroboration_count, "attempts": attempts,
+        **_store_status,
     }
 
 
@@ -3219,6 +3320,17 @@ def _build_report(
     registry_check = _inv.check_config_key_registry(tournament_cfg)
     all_checks.append(("global", registry_check))
 
+    # Issue #1043/#1192 (Katalog #1192) Akzeptanzkriterium 2 — jede AKTIVE Strategie sampelt
+    # beide Risiko-Layer-Parameter oder steht auf der begruendeten Allowlist (siehe
+    # invariants.check_risk_layer_parameter_parity-Docstring).
+    _active_strategy_names = [
+        e.get("strategy_class") for e in ((_load_json(config_dir() / "strategies.json") or {})
+                                          .get("strategies") or [])
+        if isinstance(e, dict) and e.get("active") and e.get("strategy_class")
+    ]
+    all_checks.append((
+        "global", _inv.check_risk_layer_parameter_parity(_active_strategy_names)))
+
     # Issue #1080 (Katalog #866-2) — n_family[symbol] muss exakt der Summe seiner eigenen
     # Stage1-Zerlegung entsprechen; eine Luecke beweist, dass mindestens eine Study fehlt.
     all_checks.append(("global", _inv.check_n_family_partition(_n_family_by_symbol, n_family_stage1)))
@@ -3531,6 +3643,11 @@ def _build_report(
     champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
     all_checks.append(("global", champion_writeback_check))
 
+    # Issue #1044/#1193 — macht ein Wiederauftreten des #1193-Sichtbarkeits-Regressions selbst
+    # sichtbar: der Report muss den Champion-Store-Pfad benennen (siehe
+    # invariants.check_champion_store_visibility-Docstring).
+    all_checks.append(("global", _inv.check_champion_store_visibility(champions_summary)))
+
     # Issue #1099 (Katalog #932) — Kalibrierungswaechter fuer den #1099-Fix selbst: eine UNABHAENGIG
     # (ueber _count_jsonl_events statt _read_jsonl_events) erneut ausgezaehlte CHAMPION_WRITEBACK-
     # Ereigniszahl muss exakt ``champions_summary['attempts']`` entsprechen — ein Wiederauftreten der
@@ -3592,6 +3709,13 @@ def _build_report(
     diagnosis_ledger_coherence_check = _inv.check_diagnosis_ledger_coherence(
         _diagnosed_pairs_all(), total_runs_started=_diagnosis_ledger_total_runs_started)
     all_checks.append(("global", diagnosis_ledger_coherence_check))
+
+    # Issue #1045/#1194 — Akzeptanzkriterium 2: jede STRUCTURAL_ZERO_ELIGIBLE-Study muss einen
+    # diagnosed_pairs-Eintrag hinterlassen (siehe check_structural_zero_eligible_has_diagnosis-
+    # Docstring). Geprüft gegen dieselbe, gemergte Liste, die der Report unter cross_study.
+    # diagnosed_pairs zeigt (_diagnosed_pairs_section, jetzt cache- UND live-derivation-gespeist).
+    all_checks.append(("global", _inv.check_structural_zero_eligible_has_diagnosis(
+        studies_out, _diagnosed_pairs_section(studies_out))))
 
     # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
     # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen
@@ -4025,7 +4149,7 @@ def _build_report(
             "diagnosed_pairs_skipped": _diagnosed_pairs_skipped_section(),
             # Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Eintraege (denylist UND deprioritized
             # UND none-mit-Ursache), nicht nur die uebersprungene Teilmenge oben.
-            "diagnosed_pairs": _diagnosed_pairs_section(),
+            "diagnosed_pairs": _diagnosed_pairs_section(studies_out),
             # Issue #831 Fix Punkt 4 — Randlösungen (boundary_hit_fraction > 0.3) mit ihrem
             # konkreten Bounds-Vorschlag, unabhängig davon, ob die Study eligible Trials hatte.
             # Issue #1039/#1188 — primär aus ``studies_out`` selbst abgeleitet (siehe dortiger

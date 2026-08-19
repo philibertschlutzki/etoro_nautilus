@@ -216,6 +216,47 @@ def _dyn_tp_params(trial) -> dict:
     return params
 
 
+def _sample_risk_layer(
+    trial, *, strategy: str, symbol: str | None,
+    atr_bounds: tuple[float, float] = (0.5, 3.0),
+    max_bars_bounds: tuple[int, int] = (12, _MAX_BARS_IN_TRADE_CAP),
+) -> dict:
+    """Issue #1043/#1192 (Katalog #1192) — gemeinsamer Sampling-Block für die beiden Risiko-Layer-
+    Parameter, die ``strategies.HourlyStrategyBase`` für JEDE Strategie bereitstellt
+    (ATR-Trailing-Stop, Zeitbox): ``atr_trailing_multiplier``/``max_bars_in_trade``.
+
+    Root-Cause #1043: ``SmaCrossoverStrategy`` (dieser Datei) sampelte bislang KEINEN einzigen
+    Risikoparameter — ``atr_trailing_multiplier``/``max_bars_in_trade`` blieben auf dem statischen
+    ``strategy_default`` fixiert (kein Tuning-Effekt), obwohl die Basisklasse sie fuer jede
+    Strategie bereitstellt. Die Study war mit −0,918 % Holdout-Return und −1,450 % α·n die
+    zweitschlechteste des Referenzlaufs, bei einem TRAILING_STOP-Exit-Anteil von 58,18 % — ein
+    ungetunter Stop dominierte das Exit-Verhalten, ohne je optimiert worden zu sein.
+
+    Bewusste Scope-Entscheidung: NUR die ``SmaCrossoverStrategy``-Luecke wird ueber diesen
+    gemeinsamen Block geschlossen (der einzige nachgewiesene Fall). Die uebrigen 13 Strategien-
+    Zweige sampeln BEIDE Parameter bereits selbst, mit strategiespezifisch kalibrierten, historisch
+    begruendeten Bandbreiten (z. B. FlashCrashReversal/VwapExhaustion: ``max_bars_in_trade``-
+    Untergrenze 6 statt 12) — sie auf diesen gemeinsamen Block umzustellen wäre eine reine
+    Refactoring-Uebung ohne Verhaltensaenderung, aber mit echtem Transkriptionsrisiko fuer 13
+    bereits korrekt funktionierende, kalibrierte Suchraeume. ``invariants.
+    check_risk_layer_parameter_parity`` verifiziert das Ergebnis (beide Parameter im ``params``-
+    Dict jeder Strategie) unabhaengig davon, WELCHER Codepfad (dieser gemeinsame Block oder ein
+    eigenstaendiger Zweig) sie liefert — die Beobachtung zaehlt, nicht die Implementierung.
+
+    ``atr_bounds``/``max_bars_bounds`` bleiben je Aufrufer ueberschreibbar (Fix-Vorgabe: "Bänder je
+    Strategie überschreibbar halten"); Default ``(0.5, 3.0)``/``(12, _MAX_BARS_IN_TRADE_CAP)``
+    entspricht der bereits an der Mehrzahl der bestehenden Strategien-Zweige (Dynamic Breakout,
+    FlashCrashReversal ausgenommen der 6er-Untergrenze, TrendPullback, VwapExhaustion ausgenommen)
+    verwendeten Bandbreite. Symbol-Override-faehig ueber ``_bounds_for`` (dieselbe #669/#761-
+    Prioritaetskette wie jeder andere Suchraum-Parameter)."""
+    atr_lo, atr_hi = atr_bounds
+    mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", *max_bars_bounds)
+    return {
+        "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", atr_lo, atr_hi),
+        "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
+    }
+
+
 def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
     """Issue #669 — ``symbol`` (optional, Default ``None``) aktiviert symbol-spezifische
     Suchraum-Bounds-Überschreibungen für die trade-armen Strategien (siehe ``_bounds_for``). Fehlt
@@ -238,9 +279,12 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "SmaCrossoverStrategy":
+        # Issue #1043/#1192 — vor diesem Fix sampelte SmaCrossover KEINEN Risikoparameter
+        # (siehe ``_sample_risk_layer``-Docstring fuer die volle Root-Cause/den Referenzbefund).
         params = {
             "sma_period": trial.suggest_int("sma_period", 5, 60),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            **_sample_risk_layer(trial, strategy=strategy, symbol=symbol),
         }
     elif strategy == "ComboTrendVwapStrategy":
         # Konzept §4 alignment (ISSUE-OPT-377): macd_fast 3–14, macd_gap 4–26
