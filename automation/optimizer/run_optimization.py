@@ -96,7 +96,9 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_covered": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
     "oos_coverage_gap_days": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
     "oos_anchor_divergence": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
-    "oos_rejection_reasons": "synchron zu rejection_reason/is_rejection_detail verdichtet, kein eigener trial_attrs-Konsument",
+    # Issue #1032/#1181 — ENTFERNT (vormals hier als "kein trial_attrs-Konsument" allowlisted):
+    # invariants.gate_inventory_table (#1003/#1155) IST ein trial_attrs-Konsument. Siehe
+    # Stempelstelle oben, neben is_rejection_detail.
     "oos_ret_skew": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
     "oos_ret_kurtosis": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
     "oos_psr_z": "synchron via getattr(metrics,...) in reward.compute_reward konsumiert, kein trial_attrs-Ruecklesepfad",
@@ -3318,6 +3320,15 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         is_rejection_detail = _classify_is_rejection_detail(
             metrics, timebox_violated=_timebox_violated_this_trial)
         trial.set_user_attr("is_rejection_detail", is_rejection_detail)
+        # Issue #1032/#1181 (Katalog #866-2) — Root-Cause: invariants.gate_inventory_table's
+        # #1003/#1155-Fix ("n_solo_rejections wird PRIMAER aus oos_rejection_reasons gebildet")
+        # liest exakt dieses Feld aus trial_attrs — es wurde aber nie gestempelt
+        # (_INTENTIONALLY_UNSTAMPED_METRIC_FIELDS führte es fälschlich als "synchron verbraucht,
+        # kein trial_attrs-Konsument"). has_reasons_field war dadurch am Report-Zeitpunkt IMMER
+        # False, sodass n_solo_rejections lautlos auf die alte, delta-basierte Näherung zurückfiel
+        # — genau die #1155-Fehlerklasse, obwohl der Fix-Code bereits existierte.
+        if metrics.oos_rejection_reasons:
+            trial.set_user_attr("oos_rejection_reasons", list(metrics.oos_rejection_reasons))
         trial.set_user_attr("oos_timebox_invalidated", bool(_timebox_violated_this_trial))
         # Issue #917 Fix 2 — welche Gates konkret auf einer undefinierten Grösse liefen (leer im
         # Regelfall). Additiv, unabhängig von is_rejection_detail selbst gestempelt, damit auch ein

@@ -69,6 +69,9 @@ _STAGE_FOR_REJECT_DETAIL = {
     "REJECT_NO_EDGE_OVER_GLOBAL": "holdout",
     "REJECT_HOLDOUT_DSR_DROP": "deflation",
     "REJECT_HOLDOUT_BOOTSTRAP_CI": "deflation",
+    # Issue #1034/#1183 — Holdout bestanden, aber die Familien-Multiplizitaet fuer die
+    # DSR-Korrektur ist unaufloesbar (deflation_n_family <= 0 trotz erreichter Deflationsstufe).
+    "REJECT_PROMOTION_FAMILY_UNRESOLVABLE": "deflation",
     "REJECT_SELECTION_PBO": "pbo",
     "REJECT_BOUNDARY_SOLUTION": "boundary",
     "HOLD_BOUNDARY_UNRESOLVED": "boundary",
@@ -1205,6 +1208,10 @@ def _study_record(proposal: dict, study,
         _inv.check_rejection_chain_completeness(
             proposal, decision_chain=decision_chain, holdout_metrics=holdout_metrics,
             tournament_config=tournament_cfg),
+        # Issue #1035/#1184 Akzeptanzkriterium 1 — keine decision_chain-Stufe darf den detail-Code
+        # einer ANDEREN Stufe tragen (Regressionswächter gegen den geerbten Boundary/Holdout-
+        # Detail-Bug).
+        _inv.check_decision_chain_stage_detail_isolation(decision_chain),
         _inv.check_reward_term_variance(trial_attrs),
         # Issue #984/#1138 (Katalog #986) — #822-Regressionswaechter, bislang null Aufrufstellen
         # ausserhalb von invariants.py/tests/ (Pitfall #409 in AGENTS.md).
@@ -1290,7 +1297,17 @@ def _study_record(proposal: dict, study,
     # (#761) das erlaubt hat. Macht sichtbar, wenn ein automatischer Rückschrieb bereits produktiv
     # war, bevor er im nächsten Lauf weiter eskaliert (Beweis B-5 im #866-Katalog: der
     # TrendPullback-Gewinner trug ``ema_period=18`` gegen die Default-Untergrenze 50).
-    winner_outside_default_bounds: dict[str, list] = {}
+    #
+    # Issue #1035/#1184 Fix Punkt 2 (Katalog #1189) — umbenannt von ``winner_outside_default_
+    # bounds``: der alte Name suggerierte eine allgemeine Bounds-Diagnose, ist aber STRUKTURELL nur
+    # dann ueberhaupt erreichbar, wenn ein aktiver #761-Bounds-Override den Suchraum bereits ueber
+    # die kuratierten Default-Bänder hinaus geweitet hat (``_default_bounds`` bleibt die kuratierte
+    # Referenz, der Gewinner samplet aus dem GEWEITETEN, ``active``-Raum — siehe run_optimization.
+    # _boundary_hit_analysis-Docstring fuer dieselbe active/default-Unterscheidung). Diese Zeile ist
+    # daher eine STRIKTE (nicht die 2%-tolerante ``boundary_veto_evidence``-)Teilmenge und dient als
+    # eigene Report-Zeile: "der Override hat bereits produktiv gewirkt", unterscheidbar von der
+    # blossen Naehe zum (unveraenderten) Default-Rand, die das #622/#763-Veto selbst treibt.
+    winner_outside_default_bounds_after_override: dict[str, list] = {}
     if scored and proposal.get("strategy"):
         try:
             from automation.optimizer.bounds import extract_numeric_bounds
@@ -1302,9 +1319,9 @@ def _study_record(proposal: dict, study,
                     continue
                 _lo, _hi = _bound
                 if _value < _lo or _value > _hi:
-                    winner_outside_default_bounds[_param] = [_value, [_lo, _hi]]
+                    winner_outside_default_bounds_after_override[_param] = [_value, [_lo, _hi]]
         except Exception:
-            winner_outside_default_bounds = {}
+            winner_outside_default_bounds_after_override = {}
 
     # Issue #997/#1149 (Katalog #1170) — strategieeigener strategy_defaults.json-Eintrag als
     # Default-Fallback fuer nicht gesampelte Stop-Parameter (siehe _median_of_sampled_param).
@@ -1334,7 +1351,7 @@ def _study_record(proposal: dict, study,
         "strategy": proposal.get("strategy"),
         # Issue #1067 — leer, wenn der Gewinner innerhalb des Default-Suchbands liegt (der weit
         # überwiegende Regelfall, bit-identisch zum Pre-#1067-Bericht).
-        "winner_outside_default_bounds": winner_outside_default_bounds or None,
+        "winner_outside_default_bounds_after_override": winner_outside_default_bounds_after_override or None,
         "n_trials": n_trials,
         "n_evaluable": n_evaluable,
         "n_selection_statistic_available": n_selection_statistic_available,

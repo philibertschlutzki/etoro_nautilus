@@ -959,18 +959,33 @@ def check_boundary_veto_has_evidence(proposal: dict) -> InvariantResult:
 
     ``proposal``: der vollständige exportierte Proposal-Dict (``status`` auf der OBERSTEN Ebene,
     ``boundary_veto_evidence`` in ``proposal['holdout']['symbol']``, derselbe Zugriffspfad wie
-    ``check_promotion_multiplicity_route``)."""
+    ``check_promotion_multiplicity_route``).
+
+    Issue #1035/#1184 Akzeptanzkriterium 2 — ZUSAETZLICH (unabhängig vom TERMINALEN ``status``, der
+    nur die ERSTE verletzte Stufe einer Prioritätskette abbildet — ``confirm.py``s ``if not
+    holdout_passed: ... elif pbo_overfit: ... elif boundary_unresolved: ...``) über ``proposal[
+    'stage_results']['boundary']['passed']`` geprüft: eine Study, deren Boundary-Stufe FÜR SICH
+    scheiterte (``boundary_unresolved``/``boundary_overfit``, unabhängig vom Holdout-Ergebnis
+    berechnet), deren terminaler ``status`` aber einer ANDEREN, höher priorisierten Stufe
+    zugeschrieben wurde (z. B. ``REJECTED_ON_HOLDOUT`` gewinnt vor einer ebenfalls verletzten
+    Boundary-Stufe), wurde vom alten, rein status-basierten Gate NIE erfasst — dieselbe Klasse wie
+    #1035 Fix Punkt 1 (das an dieselbe Prioritätskette gekoppelte, geerbte Detail), hier auf der
+    Evidenz-Prüfung. ``stage_results`` fehlt bei Alt-Proposals (Legacy-Aufrufer) ⇒ diese
+    Zusatzbedingung bleibt inaktiv, bit-identisch zum Pre-#1035-Verhalten."""
     status = proposal.get("status")
+    stage_boundary_failed = (
+        ((proposal.get("stage_results") or {}).get("boundary") or {}).get("passed") is False)
     expected = ("boundary_veto_evidence nicht-leer für REJECTED_BOUNDARY_SOLUTION/"
-                "HOLD_BOUNDARY_UNRESOLVED")
-    if status not in ("REJECTED_BOUNDARY_SOLUTION", "HOLD_BOUNDARY_UNRESOLVED"):
+                "HOLD_BOUNDARY_UNRESOLVED/stage_results.boundary.passed=false")
+    if status not in ("REJECTED_BOUNDARY_SOLUTION", "HOLD_BOUNDARY_UNRESOLVED") and not stage_boundary_failed:
         return InvariantResult(
             name="check_boundary_veto_has_evidence",
             passed=True,
             expected=expected,
             actual=None,
             severity="blocking",
-            detail=f"status={status!r} — kein Randlösungs-Ausgang, nicht anwendbar.",
+            detail=f"status={status!r}, stage_results.boundary.passed nicht false — kein "
+                   "Randlösungs-Ausgang, nicht anwendbar.",
         )
     evidence = ((proposal.get("holdout") or {}).get("symbol") or {}).get("boundary_veto_evidence")
     passed = bool(evidence)
@@ -1159,7 +1174,18 @@ def check_family_n_statistic_coverage(trials: list[dict], *,
     Richtung (beide ``None``, obwohl Deflation angeblich lief) wird HIER bewusst NICHT geprueft —
     ``check_family_n_statistic_coverage`` kennt an dieser Call-Site nicht zuverlaessig, ob die
     Deflation fuer diese Study ueberhaupt erreicht wurde (eine vor der Deflations-Stufe
-    abgelehnte Study traegt legitim beide Felder als ``None``, siehe ``report._decision_chain``)."""
+    abgelehnte Study traegt legitim beide Felder als ``None``, siehe ``report._decision_chain``).
+
+    Issue #1034/#1183 (Katalog #1183, Akzeptanzkriterium 2) — ZUSAETZLICHER, unbedingter FAIL
+    (``severity='blocking'``), wenn ``deflation_n_family_raw`` ZWAR gesetzt ist (die Deflationsstufe
+    wurde erreicht — ``confirm.py`` schreibt dieses Feld NUR innerhalb von ``if deflation_sr0 is
+    not None:``, also nur, sobald SR₀ tatsaechlich berechnet wurde), aber ``<= 0`` traegt: eine
+    unaufloesbare Familien-Multiplizitaet (z. B. ``family_membership == 'excluded_degenerate'``,
+    #981/#1135) darf die Deflationsstufe NIE mit ``deflation_n_family ∈ {None, 0}`` erreichen —
+    ``confirm_per_symbol_promotion`` lehnt diesen Fall seit #1034 mit
+    ``REJECT_PROMOTION_FAMILY_UNRESOLVABLE`` ab (kein Ersatzpfad); ein Vorkommen HIER ist ein
+    Regressions-Symptom (der confirm.py-Guard wurde umgangen/entfernt), kein legitimer Zustand —
+    dieselbe Rolle wie jeder andere ``severity='blocking'``-Waechter in diesem Modul."""
     if deflation_n_family_raw is None:
         coverage_result = InvariantResult(
             name="check_family_n_statistic_coverage",
@@ -1167,6 +1193,20 @@ def check_family_n_statistic_coverage(trials: list[dict], *,
             expected="deflation_n_family_raw <= Trials mit oos_selection_statistic_available",
             actual=None,
             detail="deflation_n_family_raw unbekannt — nicht anwendbar.",
+        )
+    elif deflation_n_family_raw <= 0:
+        coverage_result = InvariantResult(
+            name="check_family_n_statistic_coverage",
+            passed=False,
+            severity="blocking",
+            expected="deflation_n_family_raw >= 1, sobald die Deflationsstufe erreicht wird",
+            actual=deflation_n_family_raw,
+            detail=(
+                f"deflation_n_family_raw={deflation_n_family_raw} — die Deflationsstufe wurde "
+                "erreicht (SR0 berechnet), aber die Familien-Multiplizitaet ist unaufloesbar "
+                "(None/0, z. B. FAMILY_EXCLUDED_DEGENERATE, #981/#1135). Eine solche Study darf "
+                "nicht promotet werden (#1034/#1183: REJECT_PROMOTION_FAMILY_UNRESOLVABLE)."
+            ),
         )
     else:
         n_with_statistic = sum(
@@ -1387,6 +1427,52 @@ def check_rejection_chain_completeness(
             (None if not coherence_violations else
              "Kohaerenz-Widerspruch (#1153): " + " ".join(coherence_violations)),
         ])) or "OK"),
+    )
+
+
+def check_decision_chain_stage_detail_isolation(
+    decision_chain: list[dict] | None,
+) -> InvariantResult:
+    """Issue #1035/#1184 Akzeptanzkriterium 1 — Regressionswächter: kein ``detail`` einer Stufe im
+    ``decision_chain`` entspricht dem ``detail`` einer ANDEREN Stufe derselben Kette.
+
+    Root-Cause #1035: ``confirm.confirm_per_symbol_promotion``s ``stage_results['boundary'][
+    'detail']`` las bislang ``is_rejection_detail_override`` — eine Grösse, die die Ursache der
+    ERSTEN (höchstpriorisierten) verletzten Stufe der Gesamtentscheidung trägt (``if not
+    holdout_passed: ... elif boundary_unresolved: ...``), NICHT die Ursache der Boundary-Stufe
+    selbst. Eine Study, die SOWOHL das Holdout-Gate verfehlte ALS AUCH (unabhängig berechnet) an
+    der Boundary klemmte, erbte so den HOLDOUT-Grund (z. B. ``REJECT_HOLDOUT_GATE``) als
+    vermeintlichen Boundary-Stufen-Grund — zwei disjunkte Stufen trugen denselben Detail-Code, ein
+    Leser konnte die tatsächliche Boundary-Ursache nicht mehr vom geerbten Holdout-Grund
+    unterscheiden. Fix: jede Stufe setzt seither ihren EIGENEN, dedizierten Code (siehe
+    ``stage_results['pbo']``/``['boundary']`` in confirm.py: ``REJECT_SELECTION_PBO``/
+    ``REJECT_SELECTION_BOUNDARY``) statt des terminalen ``is_rejection_detail_override``.
+
+    Diese Invariante ist die dauerhafte Gegenprobe: für JEDES Paar verschiedener Stufen mit
+    jeweils einem NICHT-``None``-``detail`` prüft sie, dass die beiden ``detail``-Werte NICHT
+    identisch sind (ein legitimer decision_chain hat je Stufe ein disjunktes Code-Vokabular — zwei
+    unterschiedliche Stufen teilen sich strukturell nie denselben Grund). ``decision_chain`` fehlt/
+    leer (Legacy-Aufrufer) ⇒ nicht anwendbar (PASS, kein erfundener Befund)."""
+    chain = decision_chain or []
+    labeled = [(c.get("stage"), c.get("detail")) for c in chain if c.get("detail") is not None]
+    collisions: list[dict] = []
+    for i in range(len(labeled)):
+        stage_a, detail_a = labeled[i]
+        for j in range(i + 1, len(labeled)):
+            stage_b, detail_b = labeled[j]
+            if stage_a != stage_b and detail_a == detail_b:
+                collisions.append({"stages": [stage_a, stage_b], "detail": detail_a})
+    passed = not collisions
+    return InvariantResult(
+        name="check_decision_chain_stage_detail_isolation",
+        passed=passed,
+        severity="high",
+        expected="jede decision_chain-Stufe trägt ein disjunktes detail-Vokabular",
+        actual=collisions,
+        detail=("OK" if passed else
+                f"decision_chain-Stufen teilen sich denselben detail-Code: {collisions} — eine "
+                "Stufe hat den Grund einer ANDEREN Stufe geerbt statt ihren eigenen zu tragen "
+                "(#1035/#1184-Regression)."),
     )
 
 
@@ -2514,15 +2600,39 @@ def check_gate_marginal_contribution(
     gate_inventory_table mit tournament_config aufgerufen wurde) eine WAHRSCHEINLICHKEIT
     (reward.gate_marginal_pass_rate_delta, [0, 1]) statt eines rohen Trial-Zaehlers -- die
     Aggregation summiert seither float statt int (ein int(...)-Cast wuerde jeden Bruchwert
-    < 1.0 stumm auf 0 abschneiden und faelschlich jedes Gate als beitragslos melden)."""
+    < 1.0 stumm auf 0 abschneiden und faelschlich jedes Gate als beitragslos melden).
+
+    Issue #1033/#1182 (Katalog #866-2, Pitfall #422 in AGENTS.md) — Root-Cause: eine Study-Zeile
+    mit ``marginal_delta=None`` (``n_rejections == 0`` in dieser Study — das Gate wurde dort NIE
+    ausgewertet, siehe ``gate_inventory_table``-Docstring) wurde ueber ``float(entry.get(
+    'marginal_delta') or 0)`` als ``0.0`` GEMESSEN behandelt, UND ihr ``n_evaluated`` floss trotzdem
+    in den Nenner — "nicht gemessen" wurde so zu "gemessen und null" (dieselbe Fehlerklasse wie
+    #995/#1147, hier auf der Aggregationsebene). Ein Gate, dessen Zeilen AUSSCHLIESSLICH ``None``
+    tragen (z. B. ``min_trades``/``max_drawdown``, wenn sie in JEDER Study bereits an der
+    Studien-eigenen ``eligible_requires_all``-Konjunktion frueh binden und daher nie selbst
+    "n_rejections>0" erreichen), erschien dadurch faelschlich als "0 marginaler Beitrag ueber die
+    volle Kohorte" statt als "nie gemessen".
+
+    Fix: ``None``-Beitraege werden aus Zaehler UND Nenner ausgeschlossen; ein Gate mit weniger als
+    ``min_evaluated`` TATSAECHLICH GEMESSENEN Beobachtungen (nach dem Ausschluss) erscheint als
+    ``inconclusive_gates`` (mit der Herkunft — Anzahl Zeilen total/gemessen — in ``provenance``),
+    NICHT als ``offenders`` ("ohne marginalen Beitrag")."""
     totals: dict[str, dict[str, float]] = {}
     for r in study_records:
         for entry in r.get("gate_inventory") or []:
             gate = entry.get("gate")
             if not gate:
                 continue
-            agg = totals.setdefault(gate, {"marginal_delta": 0.0, "n_evaluated": 0})
-            agg["marginal_delta"] += float(entry.get("marginal_delta") or 0)
+            agg = totals.setdefault(gate, {
+                "marginal_delta": 0.0, "n_evaluated": 0,
+                "n_entries_total": 0, "n_entries_measured": 0,
+            })
+            agg["n_entries_total"] += 1
+            marginal_delta = entry.get("marginal_delta")
+            if marginal_delta is None:
+                continue
+            agg["n_entries_measured"] += 1
+            agg["marginal_delta"] += float(marginal_delta)
             agg["n_evaluated"] += int(entry.get("n_evaluated") or 0)
     if not totals:
         return InvariantResult(
@@ -2533,8 +2643,15 @@ def check_gate_marginal_contribution(
             detail="Keine Studies mit gate_inventory-Telemetrie — nicht anwendbar.",
         )
     protected = set(gate_consolidation_protected or [])
+    inconclusive_gates = {
+        gate: {"n_evaluated_measured": agg["n_evaluated"],
+              "n_entries_total": agg["n_entries_total"],
+              "n_entries_measured": agg["n_entries_measured"]}
+        for gate, agg in totals.items() if agg["n_evaluated"] < min_evaluated
+    }
     offenders = {
-        gate: agg for gate, agg in totals.items()
+        gate: {"marginal_delta": agg["marginal_delta"], "n_evaluated": agg["n_evaluated"]}
+        for gate, agg in totals.items()
         if agg["n_evaluated"] >= min_evaluated and agg["marginal_delta"] == 0
     }
     passed = not offenders
@@ -2548,14 +2665,20 @@ def check_gate_marginal_contribution(
         detail_parts.append(
             f"GESCHÜTZT (gate_consolidation_protected) — Neukalibrierungs-, KEINE "
             f"Entfernungsempfehlung: {protected_offenders} (#1076).")
+    if inconclusive_gates:
+        detail_parts.append(
+            f"INCONCLUSIVE (nie gemessen oder < {min_evaluated} gemessene Beobachtungen nach "
+            f"Ausschluss von marginal_delta=None): {sorted(inconclusive_gates)} (#1033/#1182).")
     return InvariantResult(
         name="check_gate_marginal_contribution",
         passed=passed,
-        expected=f"kein Gate mit Σ marginal_delta == 0 über >= {min_evaluated} Beobachtungen",
+        expected=f"kein Gate mit Σ marginal_delta == 0 über >= {min_evaluated} GEMESSENE "
+                 "Beobachtungen (marginal_delta=None ausgeschlossen)",
         actual=offenders if offenders else None,
-        detail=("OK" if passed else
-                f"{len(offenders)} Gate(s) ohne jeden marginalen Beitrag über eine ausreichend "
-                f"grosse Kohorte: {offenders} — " + " ".join(detail_parts)),
+        provenance={"inconclusive_gates": inconclusive_gates} if inconclusive_gates else None,
+        detail=("OK" if (passed and not inconclusive_gates) else
+                (f"{len(offenders)} Gate(s) ohne jeden marginalen Beitrag über eine ausreichend "
+                 f"grosse Kohorte: {offenders} — " if offenders else "") + " ".join(detail_parts)),
     )
 
 

@@ -13,7 +13,7 @@ im Report; ``record_diagnosed_pair`` deckelt zusätzlich die Anzahl aufeinanderf
 Weitungs-Übernahmen je Parameter (``_MAX_WIDEN_APPLICATIONS``).
 
 #1067 — ``_contracts.MIN_BARS_IN_TRADE_FLOOR`` ist die symmetrische Untergrenze zu
-``MAX_BARS_IN_TRADE_HARD_CAP``; ``report._study_record`` stempelt ``winner_outside_default_bounds``,
+``MAX_BARS_IN_TRADE_HARD_CAP``; ``report._study_record`` stempelt ``winner_outside_default_bounds_after_override``,
 sobald der Gewinner-Trial ausserhalb des kuratierten Default-Suchbands liegt.
 
 #1068 — ``invariants.check_diagnosis_ledger_coherence`` FAILt, wenn der #761-Diagnose-Cache mehr
@@ -193,7 +193,7 @@ def test_max_bars_in_trade_widen_never_drops_below_floor():
     assert lo >= MIN_BARS_IN_TRADE_FLOOR
 
 
-# ── #1067: report._study_record winner_outside_default_bounds ───────────────────────────────────
+# ── #1067: report._study_record winner_outside_default_bounds_after_override ───────────────────────────────────
 def _study_with_winner(params):
     class _T:
         def __init__(self, params):
@@ -209,22 +209,22 @@ def _study_with_winner(params):
     return _S()
 
 
-def test_winner_outside_default_bounds_empty_for_in_band_winner():
+def test_winner_outside_default_bounds_after_override_empty_for_in_band_winner():
     from automation.optimizer.report import _study_record
     proposal = {"symbol": "TSLA.ETORO", "strategy": "TrendPullbackStrategy"}
     study = _study_with_winner({"ema_period": 120, "cooldown_bars": 10})
     record, _checks = _study_record(proposal, study)
-    assert record["winner_outside_default_bounds"] is None
+    assert record["winner_outside_default_bounds_after_override"] is None
 
 
-def test_winner_outside_default_bounds_flags_a_below_floor_winner():
+def test_winner_outside_default_bounds_after_override_flags_a_below_floor_winner():
     from automation.optimizer.report import _study_record
     proposal = {"symbol": "TSLA.ETORO", "strategy": "TrendPullbackStrategy"}
     # ema_period Default-Suchband ist (50, 300) — 18 liegt darunter (Beweis B-5/#1067-Referenzfall).
     study = _study_with_winner({"ema_period": 18, "max_bars_in_trade": 5})
     record, _checks = _study_record(proposal, study)
-    assert "ema_period" in record["winner_outside_default_bounds"]
-    assert record["winner_outside_default_bounds"]["ema_period"][0] == 18
+    assert "ema_period" in record["winner_outside_default_bounds_after_override"]
+    assert record["winner_outside_default_bounds_after_override"]["ema_period"][0] == 18
 
 
 # ── #1068: check_diagnosis_ledger_coherence ─────────────────────────────────────────────────────

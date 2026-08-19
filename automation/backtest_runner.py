@@ -650,6 +650,15 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     # Klausel, damit die Gate-Kollinearitäts-Diagnose (reward.gate_rank_correlation_matrix) sie
     # neben expectancy/psr/any_condition sehen kann (vorher fehlte dieser Delta-Eintrag komplett).
     prof_folds_frac_delta = None
+    # Issue #1031/#1180 (Katalog #866-2, Pitfall #425 in AGENTS.md) — am HOLDOUT-Punkt
+    # (splits==1, tournament.json aggregation_note: "pooled == der eine Fold") kann
+    # profitable_folds_frac strukturell nur 0 oder 1 sein — dieselben zwei Werte, die
+    # sign(oos_total_return) bereits traegt (Beweis B-12: ρ=1,0 zwischen beiden Groessen am
+    # Holdout). Das Gate ist dort keine unabhaengige Pruefung, sondern ein umbenanntes
+    # Vorzeichen einer bereits vorhandenen Kennzahl. Ab < 2 Folds wird die Klausel NICHT
+    # ausgewertet (kein stiller Immer-Erfuellt-Fall, sondern ein explizit markierter
+    # SKIPPED_SINGLE_FOLD-Zustand, sichtbar in oos_gate_deltas/oos_condition_reasons).
+    prof_folds_skipped_single_fold = False
     if req_profitable_folds_frac is not None:
         n_folds_total = oos_metrics.get("oos_folds_total")
         n_folds_prof = oos_metrics.get("oos_profitable_folds", 0)
@@ -660,7 +669,13 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         n_folds_evaluable = oos_metrics.get("oos_folds_evaluable")
         if n_folds_evaluable is None:
             n_folds_evaluable = n_folds_total
-        if n_folds_total:
+        if n_folds_total is not None and n_folds_total < 2:
+            prof_folds_skipped_single_fold = True
+            prof_folds_reason = (
+                f"oos_min_profitable_folds_frac: SKIPPED_SINGLE_FOLD (oos_folds_total="
+                f"{n_folds_total} < 2 — profitable_folds_frac ist am Einfenster-Holdout kein "
+                "unabhaengiges Signal, siehe sign(oos_total_return), #1031/#1180)")
+        elif n_folds_total:
             if profitable_folds_weighting == "recency":
                 # Issue #676 — bereits von ``apply_fold_aggregation`` mit dem korrigierten
                 # (evaluierbare-Folds-)Nenner berechnet; hier NUR gelesen (Single Source of Truth,
