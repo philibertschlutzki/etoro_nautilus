@@ -52,15 +52,22 @@ def test_no_value_error_across_many_trials(strategy):
         study.tell(trial, 0.0)
 
 
+# Issue #1043/#1192 — SmaCrossover sampelt seither zusaetzlich die beiden Risiko-Layer-Parameter
+# (spaces._sample_risk_layer); die FixedTrial-Fixtures dieser Datei muessen sie seither mitgeben
+# (Optuna FixedTrial fordert JEDEN gesuchten Namen explizit an).
+_SMA_RISK_LAYER_FIXED = {"atr_trailing_multiplier": 1.5, "max_bars_in_trade": 12}
+
+
 def test_lambda_gamma_only_appear_in_true_branch_fixed_trial():
-    ft_off = optuna.trial.FixedTrial({"sma_period": 20, "cooldown_bars": 10, "dyn_tp_enabled": False})
+    ft_off = optuna.trial.FixedTrial({
+        "sma_period": 20, "cooldown_bars": 10, "dyn_tp_enabled": False, **_SMA_RISK_LAYER_FIXED})
     p_off = spaces.sample_params("SmaCrossoverStrategy", ft_off)
     assert p_off["dyn_tp_enabled"] is False
     assert "dyn_tp_lambda" not in p_off and "dyn_tp_gamma" not in p_off
 
     ft_on = optuna.trial.FixedTrial({
         "sma_period": 20, "cooldown_bars": 10, "dyn_tp_enabled": True,
-        "dyn_tp_lambda": 0.5, "dyn_tp_gamma": 2.0,
+        "dyn_tp_lambda": 0.5, "dyn_tp_gamma": 2.0, **_SMA_RISK_LAYER_FIXED,
     })
     p_on = spaces.sample_params("SmaCrossoverStrategy", ft_on)
     assert p_on["dyn_tp_enabled"] is True
@@ -69,11 +76,13 @@ def test_lambda_gamma_only_appear_in_true_branch_fixed_trial():
 
 
 def test_dyn_tp_enabled_false_bit_identical_to_pre_713_param_set():
-    """Ein dyn_tp_enabled=False-Trial fügt exakt EINEN neuen Key hinzu (dyn_tp_enabled selbst) —
-    keine weiteren Parameter, bit-identisch zum Pre-#713-Suchraum ausserhalb dieses einen Flags."""
-    ft = optuna.trial.FixedTrial({"sma_period": 20, "cooldown_bars": 10, "dyn_tp_enabled": False})
+    """Ein dyn_tp_enabled=False-Trial fügt exakt EINEN neuen Key gegenüber der (seit #1043 um die
+    Risiko-Layer-Parameter erweiterten) SmaCrossover-Basismenge hinzu (dyn_tp_enabled selbst)."""
+    ft = optuna.trial.FixedTrial({
+        "sma_period": 20, "cooldown_bars": 10, "dyn_tp_enabled": False, **_SMA_RISK_LAYER_FIXED})
     params = spaces.sample_params("SmaCrossoverStrategy", ft)
-    assert set(params.keys()) == {"sma_period", "cooldown_bars", "dyn_tp_enabled"}
+    assert set(params.keys()) == {
+        "sma_period", "cooldown_bars", "dyn_tp_enabled", *_SMA_RISK_LAYER_FIXED}
 
 
 @pytest.mark.parametrize("strategy", _active_strategies())

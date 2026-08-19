@@ -38,9 +38,16 @@ def test_theoretical_max_oos_trades_reaches_oos_min_trades_at_default_bounds(str
 
 
 def test_theoretical_max_oos_trades_is_none_for_strategy_without_cycle_model():
-    """SmaCrossoverStrategy hat kein cooldown_bars/max_bars_in_trade-Zyklusmodell im Suchraum —
-    die Schranke ist dafuer nicht definierbar (kein falsch-positiver Bounds-Alarm)."""
-    assert theoretical_max_oos_trades("SmaCrossoverStrategy", walk_forward=BT["walk_forward"]) is None
+    """GapContinuationStrategy hat kein cooldown_bars/max_bars_in_trade-Zyklusmodell im Suchraum
+    (nur atr_trailing_multiplier/max_bars_in_trade, kein cooldown_bars) — die Schranke ist dafuer
+    nicht definierbar (kein falsch-positiver Bounds-Alarm).
+
+    Issue #1043/#1192 — vormals war SmaCrossoverStrategy das Beispiel hier: sie sampelte KEINEN
+    Risikoparameter (weder cooldown_bars noch max_bars_in_trade waren ihr Fehlen relevant, siehe
+    dortiger Root-Cause), seither sampelt sie beide (spaces._sample_risk_layer) UND besass
+    cooldown_bars bereits vorher — sie hat jetzt sehr wohl ein Zyklusmodell und ist daher kein
+    gueltiges Beispiel fuer diesen Test mehr."""
+    assert theoretical_max_oos_trades("GapContinuationStrategy", walk_forward=BT["walk_forward"]) is None
 
 
 def test_theoretical_max_oos_trades_uses_the_fastest_cycle_bound():

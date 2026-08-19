@@ -650,6 +650,15 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     # Klausel, damit die Gate-Kollinearitäts-Diagnose (reward.gate_rank_correlation_matrix) sie
     # neben expectancy/psr/any_condition sehen kann (vorher fehlte dieser Delta-Eintrag komplett).
     prof_folds_frac_delta = None
+    # Issue #1031/#1180 (Katalog #866-2, Pitfall #425 in AGENTS.md) — am HOLDOUT-Punkt
+    # (splits==1, tournament.json aggregation_note: "pooled == der eine Fold") kann
+    # profitable_folds_frac strukturell nur 0 oder 1 sein — dieselben zwei Werte, die
+    # sign(oos_total_return) bereits traegt (Beweis B-12: ρ=1,0 zwischen beiden Groessen am
+    # Holdout). Das Gate ist dort keine unabhaengige Pruefung, sondern ein umbenanntes
+    # Vorzeichen einer bereits vorhandenen Kennzahl. Ab < 2 Folds wird die Klausel NICHT
+    # ausgewertet (kein stiller Immer-Erfuellt-Fall, sondern ein explizit markierter
+    # SKIPPED_SINGLE_FOLD-Zustand, sichtbar in oos_gate_deltas/oos_condition_reasons).
+    prof_folds_skipped_single_fold = False
     if req_profitable_folds_frac is not None:
         n_folds_total = oos_metrics.get("oos_folds_total")
         n_folds_prof = oos_metrics.get("oos_profitable_folds", 0)
@@ -660,7 +669,13 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         n_folds_evaluable = oos_metrics.get("oos_folds_evaluable")
         if n_folds_evaluable is None:
             n_folds_evaluable = n_folds_total
-        if n_folds_total:
+        if n_folds_total is not None and n_folds_total < 2:
+            prof_folds_skipped_single_fold = True
+            prof_folds_reason = (
+                f"oos_min_profitable_folds_frac: SKIPPED_SINGLE_FOLD (oos_folds_total="
+                f"{n_folds_total} < 2 — profitable_folds_frac ist am Einfenster-Holdout kein "
+                "unabhaengiges Signal, siehe sign(oos_total_return), #1031/#1180)")
+        elif n_folds_total:
             if profitable_folds_weighting == "recency":
                 # Issue #676 — bereits von ``apply_fold_aggregation`` mit dem korrigierten
                 # (evaluierbare-Folds-)Nenner berechnet; hier NUR gelesen (Single Source of Truth,
@@ -1226,6 +1241,33 @@ def resolve_slippage_bps(inst_id_str: str,
     if asset_class_key not in slippage_bps_by_asset_class:
         return 0.0
     return float(slippage_bps_by_asset_class[asset_class_key])
+
+
+def resolve_stop_exit_slippage_bps(closing_price: float | None, trailing_stop_price: float | None,
+                                   *, is_short_close: bool) -> float | None:
+    """Issue #1029/#1178 (Katalog #866-2, Pitfall #422 in AGENTS.md) — seitenbereinigte, als
+    ADVERSE Groesse vorzeichenbehaftete Fill-Slippage eines TRAILING_STOP-Exits (``+`` = advers,
+    ``−`` = guenstiger Fill als der Stop-Level).
+
+    Root-Cause: die urspruengliche Formel (``(fill_px − trailing_stop_price) / trailing_stop_price
+    × 10000``) war NICHT seitenbereinigt. Fuer eine LONG-Position (schliessender SELL) ist ein Fill
+    UNTER dem Stop advers (die Formel liefert dafuer korrekt negativ); fuer eine SHORT-Position
+    (schliessender BUY) ist ein Fill UEBER dem Stop advers, aber dieselbe Formel liefert dafuer
+    POSITIV — LONG- und SHORT-Round-Trips wurden mit ENTGEGENGESETZTEM Vorzeichen fuer denselben
+    oekonomischen Sachverhalt in denselben Median gemischt.
+
+    ``is_short_close=True`` — die schliessende Order ist ein BUY (deckt eine SHORT-Position):
+    advers, wenn ueber dem Stop gefuellt (``+(fill_px − trailing_stop_price)/trailing_stop_price
+    × 10000``). ``is_short_close=False`` — die schliessende Order ist ein SELL (verkauft eine
+    LONG-Position): advers, wenn UNTER dem Stop gefuellt (``+(trailing_stop_price − fill_px)/
+    trailing_stop_price × 10000``, das Vorzeichen der Rohformel gedreht).
+
+    ``None``, wenn ``closing_price`` oder ``trailing_stop_price`` fehlt (kein TRAILING_STOP-Exit
+    oder keine Order-Tag-Telemetrie)."""
+    if closing_price is None or not trailing_stop_price:
+        return None
+    sign = 1.0 if is_short_close else -1.0
+    return sign * (closing_price - trailing_stop_price) / trailing_stop_price * 10_000.0
 
 
 def cost_coupled_atr_floor_bps(base_floor_bps: float, *, atr_trailing_multiplier: float | None,
@@ -4022,6 +4064,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     return {
         "exit_reason_histogram": histogram,
         "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
+        # Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — robustes Gegenstueck zu
+        # gross_loss_mean_bps (ALLE Verlust-Round-Trips, nicht nur TRAILING_STOP), Nenner fuer
+        # invariants.check_trailing_stop_loss_share Bedingung 2 seit diesem Fix (median/median
+        # statt median/mean).
+        "gross_loss_median_bps": statistics.median(losses_bps) if losses_bps else None,
         "gross_win_mean_bps": statistics.mean(wins_bps) if wins_bps else None,
         "atr_median_bps": statistics.median(atr_medians) if atr_medians else None,
         "atr_min_bps": statistics.median(atr_mins) if atr_mins else None,
@@ -4436,7 +4483,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None,
                                  *, is_data_end_fallback: bool = False,
-                                 closing_price: float | None = None) -> None:
+                                 closing_price: float | None = None,
+                                 is_short_close: bool = False) -> None:
             """Aggregiert die FIFO-Matches EINER zusammenhängenden Position (Position-Open
             → Flat) zu genau einem Round-Trip (Issue #508). Die Round-Trip-PnL ist die Summe
             der Teil-Fill-PnLs (inkl. bereits allokierter Kosten); der Exit-Timestamp ist der
@@ -4463,8 +4511,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             ``ORDER_SUBMIT_TS_NS``/``TRAILING_STOP_PRICE``-Tag der schliessenden Order (nur bei
             TRAILING_STOP gesetzt, siehe ``hourly_strategy_base._execute_market_close``) ergeben
             ``stop_exit_fill_lag_ns`` (Absetzen → Fill, die von ``stop_exit_lag_bars`` — Signal →
-            Absetzen — strukturell NICHT erfasste Latenz) und ``stop_exit_slippage_bps``
-            (vorzeichenbehaftet: ``(fill_px − trailing_stop_price) / trailing_stop_price × 10000``)."""
+            Absetzen — strukturell NICHT erfasste Latenz) und ``stop_exit_slippage_bps`` (Issue
+            #1029/#1178 — seitenbereinigt ueber ``is_short_close``, siehe
+            ``resolve_stop_exit_slippage_bps()``-Modulfunktions-Docstring)."""
             if not matches:
                 return
             rt_pnl = sum(m[0] for m in matches)
@@ -4523,15 +4572,22 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             stop_exit_fill_lag_ns = (
                 (rt_exit_ts - _submit_ts_ns) if _submit_ts_ns is not None else None)
             _stop_px = None if is_data_end_fallback else meta.get("trailing_stop_price")
-            stop_exit_slippage_bps = (
-                (closing_price - _stop_px) / _stop_px * 10_000.0
-                if (closing_price is not None and _stop_px) else None)
+            # Issue #1029/#1178 — seitenbereinigt, als ADVERSE Groesse vorzeichenbehaftet, siehe
+            # resolve_stop_exit_slippage_bps-Docstring.
+            stop_exit_slippage_bps = resolve_stop_exit_slippage_bps(
+                closing_price, _stop_px, is_short_close=is_short_close)
             rt_exit_meta.append({
                 "exit_reason": "DATA_END" if is_data_end_fallback else meta.get("exit_reason"),
                 "atr_median_bps": meta.get("atr_median_bps"),
                 "atr_min_bps": meta.get("atr_min_bps"),
                 # Issue #975/#1129 — der ROHE (ungefloorte) ATR-Median, siehe _parse_exit_order_tags.
                 "atr_raw_median_bps": meta.get("atr_raw_median_bps"),
+                # Issue #953/#1119/#1171 (Katalog #866-2) — Root-Cause: dieser Key wird korrekt
+                # GESETZT (_parse_exit_order_tags, "BAR_RANGE_MEDIAN_BPS") und korrekt GELESEN
+                # (die Aggregation weiter unten, ``if m.get("bar_range_median_bps") is not None``),
+                # kam aber in DIESEM Dict nie an — die Grundgesamtheit war strukturell leer, jeder
+                # nachgelagerte Median entsprechend ``None`` in 100 % der Studies (Pitfall #421).
+                "bar_range_median_bps": meta.get("bar_range_median_bps"),
                 "pnl_bps": pnl_bps,
                 # Issue #972/#1126 — das Round-Trip-Notional selbst als Telemetrie (Rohmaterial fuer
                 # rt_notional_p05/p50/p95, macht den bps-Nenner auditierbar).
@@ -4605,7 +4661,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             sell_queue.popleft()
                     # Short vollständig gedeckt (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not sell_queue and current_rt:
-                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price)
+                        # Issue #1029/#1178 — schliessende Order ist ein BUY (deckt eine SHORT-
+                        # Position) -> is_short_close=True fuer die Slippage-Vorzeichenkonvention.
+                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price,
+                                            is_short_close=True)
                         current_rt = []
                         current_rt_order_ids = []
                     if qty > 0:
@@ -4636,7 +4695,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             buy_queue.popleft()
                     # Long vollständig verkauft (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not buy_queue and current_rt:
-                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price)
+                        # Issue #1029/#1178 — schliessende Order ist ein SELL (verkauft eine LONG-
+                        # Position) -> is_short_close=False (Default) fuer die Slippage-Konvention.
+                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price,
+                                            is_short_close=False)
                         current_rt = []
                         current_rt_order_ids = []
                     if qty > 0:
@@ -4767,7 +4829,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         oos_buyhold_return = None  # Issue #552 — Buy&Hold-Benchmark-Return über das OOS-Fenster.
         # Issue #986/#1140 — α/β-Regression der Perioden-Returns gegen die Benchmark-Perioden-
         # Returns (None, solange keine indexgleiche Benchmark-Serie vorlag).
-        oos_alpha = oos_beta = oos_alpha_tstat = None
+        oos_alpha = oos_beta = oos_alpha_tstat = oos_alpha_n_periods = None
         if mtm_series is not None and not mtm_series.empty and _wf:
             # Issue #551 — Equity-Slices HALB-OFFEN [s, e), konsistent zur Trade-Klassifikation
             # (``any(s <= ts < e ...)``). ``pandas.loc[a:b]`` ist auf BEIDEN Seiten geschlossen; da
@@ -4855,6 +4917,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         _alpha_beta_result = _alpha_beta_regression(_strat_log_rets, _bench_log_rets)
                         if _alpha_beta_result is not None:
                             oos_alpha, oos_beta, oos_alpha_tstat = _alpha_beta_result
+                            # Issue #1038/#1187 (Katalog #1187) — die Perioden-Anzahl der
+                            # Regression selbst: ``α`` (der per-Bar-Log-Return-Intercept) ist auf
+                            # der Groessenordnung 1e-6 unlesbar; das oekonomisch aussagekraeftige
+                            # Holdout-Alpha ist ``α·n`` (kumulierter Log-Return-Beitrag ueber das
+                            # gesamte Fenster). ``n`` ist hier IDENTISCH zur Regressions-
+                            # Stichprobengroesse (``len(_strat_log_rets) == len(_bench_log_rets)``).
+                            oos_alpha_n_periods = len(_strat_log_rets)
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 
@@ -5148,6 +5217,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 oos_metrics["oos_alpha"] = oos_alpha
                 oos_metrics["oos_beta"] = oos_beta
                 oos_metrics["oos_alpha_tstat"] = oos_alpha_tstat
+                # Issue #1038/#1187 — dieselbe Regressions-Stichprobengroesse wie oben; macht
+                # ``α·n`` (das oekonomisch lesbare Holdout-Alpha, Akzeptanzkriterium #1038) im
+                # Report berechenbar.
+                oos_metrics["oos_alpha_n_periods"] = oos_alpha_n_periods
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt

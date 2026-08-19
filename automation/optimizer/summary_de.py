@@ -167,7 +167,9 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
     # Report erzeugte.
     _work_completed = report.get("work_completed")
     _decision_admissible = report.get("decision_admissible")
-    _fail_fast_triggered = report.get("fail_fast_triggered")
+    # Issue #1037/#1186 — umbenannt von ``fail_fast_triggered`` (der alte Name behauptete
+    # faelschlich einen Abbruch, siehe ``report._build_report``-Docstring).
+    _blocking_invariant_triggered = report.get("blocking_invariant_triggered")
     if _work_completed is False:
         status_note = (
             f" **Hinweis:** dieser Lauf ist NICHT vollständig ({_RUN_STATUS_LABELS_DE.get(run_status, run_status)}"
@@ -183,10 +185,11 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
             if _symbols_completed_v is not None and _symbols_planned_v is not None
             else "alle geplanten Symbole"
         )
-        _fail_fast_str = f" ({_fail_fast_triggered})" if _fail_fast_triggered else ""
+        _blocking_invariant_str = (
+            f" ({_blocking_invariant_triggered})" if _blocking_invariant_triggered else "")
         status_note = (
             f" **Hinweis:** Vollständig gerechnet ({_coverage_str}), aber wegen blockierender "
-            f"Invarianten{_fail_fast_str} nicht entscheidungsfähig — siehe unten."
+            f"Invarianten{_blocking_invariant_str} nicht entscheidungsfähig — siehe unten."
         )
     elif _work_completed is None:
         # Legacy-Fallback: ein Report ohne die #942-Felder (aeltere Artefakte/Test-Fixtures) faellt
@@ -226,19 +229,42 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
     # blockierendem Check (distincte 'scope'-Werte, report.py stempelt "{strategy}/{symbol}" für
     # study-lokale Checks bzw. "global" für laufweite) — eine Namensliste allein beantwortet nicht,
     # ob EIN Ausreisser oder die halbe Kohorte betroffen ist.
-    _blocking_scopes: dict[str, set[str]] = {}
+    #
+    # Issue #1036/#1185 — Root-Cause: ``not c.get("passed", True)`` ist fuer ``passed=None``
+    # (INCONCLUSIVE, #995/#1147 — der Check konnte seine Grundgesamtheit nicht herstellen, siehe
+    # Pitfall #413 in AGENTS.md) ebenfalls ``True`` (``not None == True``) — dieselbe Klassifikation
+    # wie ein NACHGEWIESENES FAIL (``passed=False``). Section 5.1/5.1b trennt diese beiden Zustaende
+    # bereits korrekt (``failing_checks``/``inconclusive_checks`` unten in ``_section_5_
+    # anomalies``); Section 1 muss aus DERSELBEN Klassifikation speisen, sonst nennen die beiden
+    # Abschnitte desselben Berichts unterschiedliche Mengen fuer denselben Check.
+    _blocking_fail_scopes: dict[str, set[str]] = {}
+    _blocking_inconclusive_scopes: dict[str, set[str]] = {}
     for c in (report.get("invariant_checks") or []):
-        if not c.get("passed", True) and c.get("severity") == "blocking":
-            _blocking_scopes.setdefault(_check_name(c), set()).add(c.get("scope") or "global")
-    blocking_note = ""
-    if _blocking_scopes:
-        _blocking_parts = [
+        if c.get("severity") != "blocking":
+            continue
+        if c.get("passed") is False:
+            _blocking_fail_scopes.setdefault(_check_name(c), set()).add(c.get("scope") or "global")
+        elif c.get("passed") is None or c.get("evaluable") is False:
+            _blocking_inconclusive_scopes.setdefault(
+                _check_name(c), set()).add(c.get("scope") or "global")
+
+    def _scoped_parts(scopes_by_name: dict[str, set[str]]) -> list[str]:
+        return [
             f"{name} ({len(scopes)} Study/Studies)" if scopes != {"global"} else name
-            for name, scopes in sorted(_blocking_scopes.items())
+            for name, scopes in sorted(scopes_by_name.items())
         ]
-        blocking_note = (
-            f" **BLOCKIERENDE Invarianten-FAIL(s):** {', '.join(_blocking_parts)} — siehe "
-            "Abschnitt 5.1 für Details."
+
+    blocking_note = ""
+    if _blocking_fail_scopes:
+        blocking_note += (
+            f" **BLOCKIERENDE Invarianten-FAIL(s):** {', '.join(_scoped_parts(_blocking_fail_scopes))} "
+            "— siehe Abschnitt 5.1 für Details."
+        )
+    if _blocking_inconclusive_scopes:
+        blocking_note += (
+            " Zusätzlich nicht auswertbar (blockierend): "
+            f"{', '.join(_scoped_parts(_blocking_inconclusive_scopes))} — siehe Abschnitt 5.1b "
+            "für Details."
         )
     return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note + blocking_note
 
@@ -494,17 +520,26 @@ def _section_2_monetary_result(report: dict) -> str:
             # normal_rows garantiert bereits exposure_ >= _min_exposure_for_normalization.
             return excess_ / exposure_ if excess_ is not None and exposure_ else None
 
+        # Issue #1038/#1187 (Katalog #1187) — Root-Cause: ``α`` (Grössenordnung 1e-6/Bar) mit 5
+        # Nachkommastellen zeigte in 13/13 Zeilen ``0.00000``/``-0.00000``/``-0.00001`` — technisch
+        # korrekt gerundet, aber ökonomisch unlesbar. Ersetzt durch ``α·n (%)`` (das KUMULIERTE
+        # Holdout-Alpha über das gesamte Fenster, n = ``holdout_alpha_n_periods`` — dieselbe Grösse,
+        # die die Issue-Referenzwerte −1,450 % … +0,449 % zeigt) plus ``α (bps/Bar)`` (die
+        # Rohgrösse selbst, jetzt in einer Einheit, in der 1e-6 nicht auf Null rundet). ``t(α)``
+        # bleibt unverändert (bereits eine dimensionslose t-Statistik, keine Rundungsprobe nötig).
         lines.append(
             "| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | "
-            "Excess/Exposure | α | β | t(α) | Vorzeichen |"
+            "Excess/Exposure | α·n (%) | α (bps/Bar) | β | t(α) | Vorzeichen |"
         )
-        lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|")
+        lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
         for r in sorted(normal_rows, key=lambda r: _excess_per_exposure(r) or 0.0, reverse=True):
             excess = r["holdout_excess_return"]
             buyhold = r.get("holdout_buyhold_return")
             exposure = r.get("holdout_exposure_fraction")
             excess_per_exposure = _excess_per_exposure(r)
             alpha_tstat = r.get("holdout_alpha_tstat")
+            alpha_times_n_pct = r.get("holdout_alpha_times_n_pct")
+            alpha_bps = r.get("holdout_alpha_bps_per_bar")
             if r.get("holdout_no_alpha_detected"):
                 sign = "NO_ALPHA_DETECTED (|t(α)| < 1)"
             elif buyhold is not None and buyhold < 0:
@@ -519,7 +554,9 @@ def _section_2_monetary_result(report: dict) -> str:
                 f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
                 f"{_fmt_pct(buyhold)} | {_fmt_pct(excess)} | {_fmt_pct(exposure)} | "
                 f"{_fmt_pct(excess_per_exposure) if excess_per_exposure is not None else 'k. A.'} | "
-                f"{_fmt_num(r.get('holdout_alpha'), digits=5)} | {_fmt_num(r.get('holdout_beta'), digits=3)} | "
+                f"{_fmt_num(alpha_times_n_pct, digits=3) + ' %' if alpha_times_n_pct is not None else 'k. A.'} | "
+                f"{_fmt_num(alpha_bps, digits=2) if alpha_bps is not None else 'k. A.'} | "
+                f"{_fmt_num(r.get('holdout_beta'), digits=3)} | "
                 f"{_fmt_num(alpha_tstat, digits=2)} | {sign} |"
             )
         lines.append("")
@@ -601,6 +638,31 @@ def _section_2_monetary_result(report: dict) -> str:
             "#1010/#1162). Eine Kalibrierung mit realen Broker-Sätzen (Kontoauszug/"
             "Gebührenübersicht) ist ausdrücklich NICHT Teil dieses Fixes."
         )
+    # Issue #1029/#1178 (Katalog #866-2) — stop_exit_slippage_bps war in KEINEM Report-Abschnitt
+    # und in KEINER Invariante ausgewiesen, obwohl sie in 14/14 Studies eines Referenzlaufs befuellt
+    # war (Median −12,41 bps, ~19 % des Median-Stop-Verlusts) — die groesste einzelne, gemessene
+    # und bislang ignorierte Ertragsposition. Seitenbereinigt und ADVERS vorzeichenbehaftet (``+``
+    # = advers), siehe backtest_runner.resolve_stop_exit_slippage_bps-Docstring.
+    _slippage_rows = [
+        r for r in studies
+        if r.get("stop_exit_slippage_bps") is not None or r.get("round_trip_cost_bps") is not None
+    ]
+    if _slippage_rows:
+        lines.append("")
+        lines.append(
+            "**Fill-Slippage bei TRAILING_STOP-Exits** (gemessene Ausführungsdifferenz, NICHT "
+            "Teil des obigen Kostenmodells — positiv = advers, d. h. schlechter gefüllt als der "
+            "Stop-Level):"
+        )
+        lines.append("")
+        lines.append("| Strategie | Symbol | c_rt (bps) | Slippage (bps, Median, advers=+) |")
+        lines.append("|---|---|---:|---:|")
+        for r in sorted(_slippage_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('round_trip_cost_bps'), digits=2)} | "
+                f"{_fmt_num(r.get('stop_exit_slippage_bps'), digits=2)} |"
+            )
     return "\n".join(lines)
 
 
@@ -616,6 +678,19 @@ def _section_3_duration(report: dict) -> str:
     lines.append(f"- Gesamtlaufzeit: {_fmt_hours(report.get('wallclock_s'))}")
     lines.append(f"- n_jobs: {cli_args.get('n_jobs', 'k. A.')} (Quelle: {cli_args.get('n_jobs_source', 'k. A.')})")
     lines.append(f"- Lauf-Status: {_run_status_label_de(report)}")
+    # Issue #1021/#1196 Fix 4.2 — macht sichtbar, dass dieser Lauf per Warm-Start (Optuna
+    # load_if_exists) auf Trials eines VORLAUFS aufsetzt: das veraendert deflation_n_family,
+    # constraint_improvement_rate, n_modelled_trials und den TPE-Seed und darf nicht unsichtbar
+    # bleiben.
+    _store_reuse = (report.get("cross_study") or {}).get("store_reuse") or {}
+    if _store_reuse.get("reused"):
+        lines.append(
+            f"- ⚠️ **Store-Wiederverwendung (Warm-Start):** {_store_reuse.get('studies_affected', 0)} "
+            f"Study/Studies setzt/setzen auf Trials von Vorlauf/Vorläufen "
+            f"{_store_reuse.get('prior_run_ids', [])} auf ({_store_reuse.get('n_trials_prior', 0)} "
+            f"Trials Vorlauf + {_store_reuse.get('n_trials_own', 0)} Trials dieser Lauf) — "
+            "beeinflusst deflation_n_family/TPE-Seed, siehe #1021/#1196."
+        )
     if report.get("symbols_planned") is not None:
         lines.append(
             f"- Symbole: {report.get('symbols_completed', 'k. A.')} von {report.get('symbols_planned', 'k. A.')} abgeschlossen"
@@ -704,6 +779,39 @@ def _section_3_duration(report: dict) -> str:
     if cpu_utilisation_backtest is not None:
         lines.append(f"Echte CPU-Auslastung (cpu_utilisation_backtest = Σ Backtest-CPU-Zeit je "
                      f"Trial / (n_jobs × Sweep-Wallclock)): {_fmt_pct(cpu_utilisation_backtest)}")
+    lines.append("")
+
+    # Issue #1027/#1176 Schritt 1 (Katalog #866-2) — Sichtbarkeit ohne Semantikbruch: die
+    # synthetische 1h-Bar-Erzeugung kennt fuer EQUITY/COMMODITY keine Handelszeiten-Maske
+    # (invariants.check_session_calendar_coherence); bis eine RTH-Maske gebaut ist (Schritt 2,
+    # eigener Semantik-Bump + Pflicht-Purge, siehe AGENTS.md-Sperrvermerk), macht dieser Abschnitt
+    # den Bar-Achsen-Zustand je Study SICHTBAR, statt ihn implizit anzunehmen.
+    lines.append("### 3.5 Bar-Achse / Handelszeiten-Abdeckung")
+    lines.append("")
+    _bar_axis_rows = [
+        r for r in studies
+        if r.get("bars_per_calendar_day") is not None or r.get("session_coverage_fraction") is not None
+    ]
+    if not _bar_axis_rows:
+        lines.append(
+            "Keine Bar-Achsen-Telemetrie in diesem Report (Pre-#1011/#1163-Lauf oder leere Kohorte)."
+        )
+    else:
+        lines.append(
+            "`bars_per_calendar_day` > 8 auf EQUITY/COMMODITY ist die Signatur einer 24/7-"
+            "aufgefüllten Bar-Achse (24,0 = kein Handelszeiten-Filter); "
+            "`session_coverage_fraction` ist der Anteil der Bars innerhalb der erwarteten Session "
+            "(siehe `invariants.check_session_calendar_coherence`, #1011/#1163/#1027/#1176)."
+        )
+        lines.append("")
+        lines.append("| Strategie | Symbol | Bars/Kalendertag | Session-Abdeckung |")
+        lines.append("|---|---|---:|---:|")
+        for r in sorted(_bar_axis_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('bars_per_calendar_day'), digits=2)} | "
+                f"{_fmt_pct(r.get('session_coverage_fraction'))} |"
+            )
     return "\n".join(lines)
 
 
@@ -732,15 +840,52 @@ def _section_4_longest_trades(report: dict) -> str:
     longest = (report.get("cross_study") or {}).get("longest_holding_studies") or []
     if not longest:
         lines.append("Keine Haltedauer-Telemetrie in diesem Report (Pre-#832-Lauf oder leere Kohorte).")
-        return "\n".join(lines)
-    lines.append("| Strategie | Symbol | Max. Haltedauer | P95 Haltedauer |")
-    lines.append("|---|---|---:|---:|")
-    for entry in longest:
+    else:
+        lines.append("| Strategie | Symbol | Max. Haltedauer | P95 Haltedauer |")
+        lines.append("|---|---|---:|---:|")
+        for entry in longest:
+            lines.append(
+                f"| {entry.get('strategy')} | {entry.get('symbol')} | "
+                f"{_fmt_holding_duration_with_bar_note(entry.get('max_holding_time_s'))} | "
+                f"{_fmt_holding_duration_with_bar_note(entry.get('p95_holding_time_s'))} |"
+            )
+
+    # Issue #1030/#1179 (Katalog #866-2) — TIME_BOX ist mit ~49 % der haeufigste Exit-Mechanismus
+    # ueberhaupt, misst aber KALENDER-Bars auf der (bis #1176 Schritt 2) 24/7-aufgefuellten Achse:
+    # 24 Bars sind heute buchstaeblich 1 Kalendertag, nicht ~1 Handelstag. Bis zur RTH-Umstellung
+    # (Schritt 2) wird der Median zusaetzlich in HANDELSSTUNDEN ausgewiesen
+    # (bars · session_coverage_fraction), damit ein Leser die beiden Achsen nicht verwechselt.
+    _timebox_rows = (report.get("studies") or [])
+    _timebox_rows = [
+        r for r in _timebox_rows
+        if r.get("time_box_exit_fraction") is not None or r.get("median_bars_held") is not None
+    ]
+    if _timebox_rows:
+        lines.append("")
+        lines.append("### 4.1 Zeitbox-Anteil und Median-Haltedauer (Kalender- vs. Handelszeit)")
+        lines.append("")
         lines.append(
-            f"| {entry.get('strategy')} | {entry.get('symbol')} | "
-            f"{_fmt_holding_duration_with_bar_note(entry.get('max_holding_time_s'))} | "
-            f"{_fmt_holding_duration_with_bar_note(entry.get('p95_holding_time_s'))} |"
+            "`Handels-Bars (geschätzt)` = `Median-Bars · session_coverage_fraction` — solange die "
+            "Bar-Achse ungefiltert 24/7 läuft (#1027/#1176 Schritt 1), ist das eine grobe Näherung, "
+            "keine echte Handelszeiten-Zählung (die kommt erst mit Schritt 2)."
         )
+        lines.append("")
+        lines.append(
+            "| Strategie | Symbol | TIME_BOX-Anteil | Median-Bars (Kalender) | "
+            "Handels-Bars (geschätzt) |"
+        )
+        lines.append("|---|---|---:|---:|---:|")
+        for r in sorted(_timebox_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            _bars = r.get("median_bars_held")
+            _coverage = r.get("session_coverage_fraction")
+            _trading_bars = (
+                round(_bars * _coverage, 2) if _bars is not None and _coverage is not None else None)
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_pct(r.get('time_box_exit_fraction'))} | "
+                f"{_fmt_num(_bars, digits=2)} | "
+                f"{_fmt_num(_trading_bars, digits=2)} |"
+            )
     return "\n".join(lines)
 
 
@@ -856,6 +1001,42 @@ def _section_5_anomalies(report: dict) -> str:
     lines.append(f"- Randlösungen mit Bounds-Vorschlag (#831): {total_boundary}")
     lines.append(f"- Automatisch denylistete Paare (#829/#830): {n_denylisted}")
     lines.append(f"- Budget-deprioritisierte Paare (#830): {n_deprioritized}")
+    # Issue #1026/#1175 (Katalog #866-2) — ATR-Floor-Bindung war bislang NUR im rohen
+    # invariant_checks-Provenance-Blob sichtbar, nicht in der Zusammenfassung selbst.
+    _atr_floor = (report.get("cross_study") or {}).get("atr_floor_binding_studies") or {}
+    if _atr_floor.get("evaluable") is False:
+        lines.append(
+            "- ATR-Floor-gebundene Studies: nicht auswertbar (atr_raw_median_bps/"
+            "atr_floor_bps_derived fehlen in jeder Study, #1026/#1175)")
+    else:
+        _atr_floor_studies = _atr_floor.get("studies") or []
+        lines.append(f"- ATR-Floor-gebundene Studies (#1175): {len(_atr_floor_studies)}")
+        if _atr_floor_studies:
+            lines.append(f"  {', '.join(_atr_floor_studies)}")
+
+    # Issue #1040/#1189 (Katalog #1189) — Root-Cause: ``boundary_veto_evidence`` belegt aktive
+    # Overrides bereits INDIREKT (active_bounds vs. default_bounds je klemmendem Parameter EINES
+    # Gewinner-Trials), waehrend der Report gleichzeitig "diagnosed_pairs: []"/"Automatisch
+    # denylistete Paare: 0" meldete — ein Leser konnte nicht erkennen, dass z. B. TrendPullback.
+    # ema_period ueber [5, 25] statt der kuratierten Default-Bounds [50, 300] gesucht wurde. Eigener
+    # Abschnitt, NUR wenn nicht leer (Fix-Vorgabe #1040) — kein leerer Abschnitt in jedem Report.
+    _active_overrides = (report.get("cross_study") or {}).get("active_bounds_overrides") or []
+    if _active_overrides:
+        lines.append("")
+        lines.append(f"### 5.4 Aktive Suchraum-Overrides ({len(_active_overrides)})")
+        lines.append("")
+        lines.append("| Strategie | Symbol | Parameter | Aktiv | Default | Quelle | Lauf | Begründung |")
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for o in sorted(_active_overrides, key=lambda o: (
+                o.get("strategy") or "", o.get("symbol") or "", o.get("parameter") or "")):
+            active_b = o.get("active_bounds")
+            default_b = o.get("default_bounds")
+            lines.append(
+                f"| {o.get('strategy')} | {o.get('symbol')} | {o.get('parameter')} | "
+                f"{active_b if active_b else 'k. A.'} | {default_b if default_b else 'k. A.'} | "
+                f"{o.get('source') or 'k. A.'} | {o.get('set_in_run_id') or 'k. A.'} | "
+                f"{o.get('rationale') or 'k. A.'} |"
+            )
     return "\n".join(lines)
 
 

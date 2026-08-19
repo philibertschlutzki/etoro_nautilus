@@ -194,6 +194,10 @@ _CONFIRM_OR_SELECTION_HOLDOUT_DETAILS: frozenset[str] = frozenset({
 _DEFLATION_HOLDOUT_DETAILS: frozenset[str] = frozenset({
     "REJECT_HOLDOUT_DSR_DROP",
     "REJECT_DEFLATION_HETEROGENEOUS",
+    # Issue #1034/#1183 — Holdout bestanden, aber die Familien-Multiplizitaet fuer die
+    # anschliessende DSR-Multiplizitaetskorrektur ist unaufloesbar (0), siehe
+    # confirm_per_symbol_promotion-Guard.
+    "REJECT_PROMOTION_FAMILY_UNRESOLVABLE",
 })
 
 
@@ -600,6 +604,9 @@ def _metrics_dict(m) -> dict:
         "oos_alpha": getattr(m, "oos_alpha", None),
         "oos_beta": getattr(m, "oos_beta", None),
         "oos_alpha_tstat": getattr(m, "oos_alpha_tstat", None),
+        # Issue #1038/#1187 — die Regressions-Stichprobengroesse; macht α·n (das oekonomisch
+        # lesbare Holdout-Alpha) in report.py berechenbar.
+        "oos_alpha_n_periods": getattr(m, "oos_alpha_n_periods", None),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
         # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
         # unterscheiden kann.
@@ -1538,6 +1545,36 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             "(kein Ersatzpfad).", strategy, symbol, blocking_invariant_names,
         )
 
+    # Issue #1034/#1183 (Katalog #1183) — eine Study, die die Deflationsstufe erreicht
+    # (``deflated_selection`` aktiv, ``deflation_n >= 2`` — ihre EIGENE Kohorte ist gross genug),
+    # deren FAMILIEN-Multiplizitaet aber strukturell unaufloesbar ist (``deflation_n_family``
+    # explizit vom Aufrufer auf 0 aufgeloest, z. B. ``family_membership == 'excluded_degenerate'``,
+    # #981/#1135), darf NICHT stillschweigend auf ihr per-Study-N zurueckfallen — genau das tut
+    # ``deflation_n_effective = max(deflation_n, deflation_n_family_effective)`` weiter oben ohne
+    # diesen Guard: eine unaufloesbare Familien-Multiplizitaet (0) wird von ``max()`` maskiert,
+    # sodass die DSR mit einer UNTERSCHAETZTEN Multiplizitaet berechnet wird, ohne jedes Flag —
+    # dieselbe Fail-Open-Fehlerklasse wie #1007/#995. Variante (b) aus #1034 (die konservative,
+    # zur bestehenden Fail-Loud-Linie passende): ein unbedingter Hard-Stop wie
+    # ``REJECT_STUDY_INVARIANT_BLOCKING`` — KEIN Ersatzpfad (auch nicht ``dsr_or_robust_pair``)
+    # darf ihn unterlaufen. ``deflation_n_family is None`` (Legacy-/Unit-Test-Aufrufer, die den
+    # Parameter nie uebergeben) bleibt bit-identisch zum Pre-#1034-Verhalten — NUR ein Aufrufer, der
+    # eine Familien-Multiplizitaet ERMITTELT hat und sie EXPLIZIT leer (0) meldet, loest den
+    # Hard-Stop aus (siehe sweep._run_confirm_and_export: ``n_family_stage1_map.get(..., 0)``,
+    # real IMMER ein int, nie None).
+    family_n_unresolvable = (
+        deflated_selection and deflation_n >= 2
+        and deflation_n_family is not None and int(deflation_n_family) <= 0
+    )
+    if holdout_passed and family_n_unresolvable:
+        holdout_passed = False
+        holdout_reject_detail = "REJECT_PROMOTION_FAMILY_UNRESOLVABLE"
+        logging.getLogger("optimizer").warning(
+            "[#1034] %s/%s: Deflationsstufe erreicht (deflation_n=%d), aber deflation_n_family "
+            "unaufloesbar (%r) ⇒ REJECT_PROMOTION_FAMILY_UNRESOLVABLE (kein Ersatzpfad, keine "
+            "stillschweigende per-Study-N-Substitution).",
+            strategy, symbol, deflation_n, deflation_n_family,
+        )
+
     # Issue #865 (Pitfall #277) — die Heterogenitäts-Politik wird JETZT angewendet, VOR der DSR-
     # Berechnung/-Entscheidung unten — nicht erst an der Export-Kohärenzgrenze (die dortige #845-
     # Prüfung kam bislang zu spät: die Promotion hatte die DSR bereits aus der inkommensurablen
@@ -1816,6 +1853,17 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         boundary_frac = None
         boundary_directions = None
         boundary_veto_evidence = None
+    # Issue #1035/#1184 Fix Punkt 3 — die drei Werte oben stammen aus DREI getrennten Aufrufen von
+    # ``_boundary_hit_analysis`` (je einer pro Konsument-Wrapper); Divergenz zwischen ihnen (z. B.
+    # ``boundary_directions`` gefüllt, ``boundary_veto_evidence`` dennoch ``None`` — SmaCrossover-
+    # Symptom aus #1035) darf ein bereits benanntes Veto nicht ohne jede Evidenz im Proposal lassen.
+    # Fallback: eine minimale Evidenz (nur ``direction``, ohne die volle #958/#1124-Detailtiefe wie
+    # ``sampled_value``/``distance_to_edge``) aus ``boundary_directions`` rekonstruieren — besser als
+    # ``None``, wo das Veto nachweislich bereits einen benannten Grund hat.
+    if boundary_directions and not boundary_veto_evidence:
+        boundary_veto_evidence = {
+            _param: {"direction": _side} for _param, _side in boundary_directions.items()
+        }
     boundary_overfit = bool(boundary_frac is not None and boundary_frac > 0.3)
     if boundary_overfit:
         logging.getLogger("optimizer").warning(
@@ -2042,9 +2090,19 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         stage_results["deflation"] = {"passed": True, "detail": None}
     stage_results["pbo"] = {
         "passed": not pbo_overfit, "detail": ("REJECT_SELECTION_PBO" if pbo_overfit else None)}
+    # Issue #1035/#1184 Fix Punkt 1 — ein EIGENER, dedizierter Detail-Code für die Boundary-Stufe
+    # (``REJECT_SELECTION_BOUNDARY``, dasselbe Vorbild wie ``REJECT_SELECTION_PBO`` direkt darüber),
+    # statt ``is_rejection_detail_override`` zu lesen. Root-Cause #1035: ``is_rejection_detail_
+    # override`` traegt die Ursache der GEWONNENEN (ersten verletzten) Prioritaetsstufe der
+    # Gesamtentscheidung (siehe die ``if not holdout_passed: ... elif boundary_unresolved: ...``-
+    # Kette oben) — eine Study, die SOWOHL das Holdout-Gate verfehlt ALS AUCH (unabhaengig
+    # berechnet) an der Boundary klemmt, erbte hier den HOLDOUT-Grund (z. B.
+    # ``REJECT_HOLDOUT_GATE``) als vermeintlichen Boundary-Stufen-Grund, obwohl die Boundary-Stufe
+    # selbst nie der Gewinner der Prioritaetskette war. Der stage_results-Eintrag beschreibt NUR,
+    # ob DIESE Stufe fuer sich bestand — ihr Detail darf nie den Code einer anderen Stufe tragen.
     stage_results["boundary"] = {
         "passed": not (boundary_unresolved or boundary_overfit),
-        "detail": (is_rejection_detail_override if (boundary_unresolved or boundary_overfit)
+        "detail": ("REJECT_SELECTION_BOUNDARY" if (boundary_unresolved or boundary_overfit)
                    else None),
     }
 
@@ -2327,6 +2385,10 @@ _CONFIRM_STAGE_REJECTIONS = frozenset({
     # Issue #773 — die Study wurde VOR jedem Holdout-Backtest wegen einer verletzten
     # Renditeserien-Kohaerenz abgelehnt; der modale IS-Per-Trial-Grund erklaert diese Ursache nicht.
     "REJECT_COHERENCE_VIOLATION",
+    # Issue #1034/#1183 — Holdout bestanden, an der Deflations-/Multiplizitaetsstufe abgelehnt
+    # (unaufloesbare Familien-Multiplizitaet); der modale Per-Trial-IS-Grund erklaert nicht, warum
+    # die Familien-Multiplizitaet unaufloesbar war.
+    "REJECT_PROMOTION_FAMILY_UNRESOLVABLE",
 })
 
 

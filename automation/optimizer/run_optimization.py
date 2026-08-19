@@ -82,8 +82,12 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_alpha": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_beta": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_alpha_n_periods": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #1038/#1187)",
     "oos_f_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_median, #989/#1143)",
-    "oos_n_trailing_stop_exits_with_fill_lag_telemetry": "holdout-only (confirm.py-Re-Evaluation, siehe report.py causal_hypothesis_state, #976/#1130)",
+    # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
+    # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
+    # Nachbarfeldern) und von report._study_record aus trial_attrs summiert — die vorherige
+    # Begruendung war die Bruchstelle selbst, keine gueltige Ausnahme.
     # In-Prozess konsumiert, ohne Persistenzbedarf: der Wert wird SYNCHRON innerhalb derselben
     # Trial-Objective-Auswertung verbraucht (Reward-/Constraint-Berechnung, Rejection-Detail,
     # ``optimizer_trial_completed``-Log-Event) — es existiert kein nachgelagerter Report-Konsument,
@@ -93,7 +97,9 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_covered": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
     "oos_coverage_gap_days": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
     "oos_anchor_divergence": "nur im optimizer_trial_completed-Log-Event (nicht trial.user_attrs), Issue #455",
-    "oos_rejection_reasons": "synchron zu rejection_reason/is_rejection_detail verdichtet, kein eigener trial_attrs-Konsument",
+    # Issue #1032/#1181 — ENTFERNT (vormals hier als "kein trial_attrs-Konsument" allowlisted):
+    # invariants.gate_inventory_table (#1003/#1155) IST ein trial_attrs-Konsument. Siehe
+    # Stempelstelle oben, neben is_rejection_detail.
     "oos_ret_skew": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
     "oos_ret_kurtosis": "synchron via getattr(metrics,...) in confirm.py's DSR-Berechnung konsumiert, kein trial_attrs-Ruecklesepfad",
     "oos_psr_z": "synchron via getattr(metrics,...) in reward.compute_reward konsumiert, kein trial_attrs-Ruecklesepfad",
@@ -3183,6 +3189,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_median_bars_held", metrics.oos_median_bars_held)
         if metrics.oos_gross_loss_mean_bps is not None:
             trial.set_user_attr("oos_gross_loss_mean_bps", metrics.oos_gross_loss_mean_bps)
+        # Issue #1024/#1173 — siehe TournamentMetrics-Docstring.
+        if metrics.oos_gross_loss_median_bps is not None:
+            trial.set_user_attr("oos_gross_loss_median_bps", metrics.oos_gross_loss_median_bps)
         # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
         if metrics.oos_gross_loss_mean_bps_trailing_stop is not None:
             trial.set_user_attr(
@@ -3250,6 +3259,17 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         if metrics.oos_stop_exit_slippage_bps_median is not None:
             trial.set_user_attr(
                 "oos_stop_exit_slippage_bps_median", metrics.oos_stop_exit_slippage_bps_median)
+        # Issue #1023/#1172 (Katalog #866-2) — exakt dieselbe Bruchstelle wie #994/#1146, eine
+        # Ebene tiefer: die beiden Nachbarzeilen oben stempeln ihre Groesse, aber der dazugehoerige
+        # STICHPROBENZAEHLER (wie viele TRAILING_STOP-Exits ueberhaupt Fill-Lag-Telemetrie tragen)
+        # blieb ungestempelt. Ohne ihn ist "0,0 Bars Latenz" von "nie gemessen" nicht
+        # unterscheidbar (die vormalige _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS-Begruendung
+        # "holdout-only" war falsch — report._study_record summiert dieses Feld nachweislich aus
+        # trial_attrs, nicht aus dem Holdout-Re-Evaluation-Pfad).
+        if metrics.oos_n_trailing_stop_exits_with_fill_lag_telemetry:
+            trial.set_user_attr(
+                "oos_n_trailing_stop_exits_with_fill_lag_telemetry",
+                metrics.oos_n_trailing_stop_exits_with_fill_lag_telemetry)
 
         _timebox_violated_this_trial = False
         if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:
@@ -3301,6 +3321,15 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         is_rejection_detail = _classify_is_rejection_detail(
             metrics, timebox_violated=_timebox_violated_this_trial)
         trial.set_user_attr("is_rejection_detail", is_rejection_detail)
+        # Issue #1032/#1181 (Katalog #866-2) — Root-Cause: invariants.gate_inventory_table's
+        # #1003/#1155-Fix ("n_solo_rejections wird PRIMAER aus oos_rejection_reasons gebildet")
+        # liest exakt dieses Feld aus trial_attrs — es wurde aber nie gestempelt
+        # (_INTENTIONALLY_UNSTAMPED_METRIC_FIELDS führte es fälschlich als "synchron verbraucht,
+        # kein trial_attrs-Konsument"). has_reasons_field war dadurch am Report-Zeitpunkt IMMER
+        # False, sodass n_solo_rejections lautlos auf die alte, delta-basierte Näherung zurückfiel
+        # — genau die #1155-Fehlerklasse, obwohl der Fix-Code bereits existierte.
+        if metrics.oos_rejection_reasons:
+            trial.set_user_attr("oos_rejection_reasons", list(metrics.oos_rejection_reasons))
         trial.set_user_attr("oos_timebox_invalidated", bool(_timebox_violated_this_trial))
         # Issue #917 Fix 2 — welche Gates konkret auf einer undefinierten Grösse liefen (leer im
         # Regelfall). Additiv, unabhängig von is_rejection_detail selbst gestempelt, damit auch ein

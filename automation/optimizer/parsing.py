@@ -188,6 +188,11 @@ class TournamentMetrics:
     oos_alpha: float | None = None
     oos_beta: float | None = None
     oos_alpha_tstat: float | None = None
+    # Issue #1038/#1187 (Katalog #1187) — die Regressions-Stichprobengroesse (Anzahl der
+    # Perioden-Returns, die in ``oos_alpha``/``oos_beta`` eingingen). ``α`` selbst (Groessenordnung
+    # 1e-6/Bar) ist ohne diese Zahl im Report unlesbar; ``α·n`` ist das oekonomisch aussagekraeftige
+    # Holdout-Alpha (kumulierter Log-Return-Beitrag ueber das gesamte Fenster).
+    oos_alpha_n_periods: int | None = None
     # Issue #710 — Haltedauer-Metrik (Bars, NICHT Sekunden — alle Strategien laufen auf 1h-Bars).
     # Median (robuste Zentraltendenz gegen schiefe per-Fold-Verteilungen) + p95 (Deadline-Nähe).
     # Optional[float]=None ⇒ migrationssicher (Legacy-JSONs/Fixtures ohne das Feld laufen unveraendert
@@ -226,6 +231,10 @@ class TournamentMetrics:
     oos_exit_reason_histogram: dict | None = None
     oos_max_holding_bars: float | None = None
     oos_gross_loss_mean_bps: float | None = None
+    # Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — robustes Gegenstueck zu
+    # oos_gross_loss_mean_bps (ALLE Verlust-Round-Trips), Nenner fuer
+    # invariants.check_trailing_stop_loss_share Bedingung 2 (median/median statt median/mean).
+    oos_gross_loss_median_bps: float | None = None
     # Issue #1035 (Katalog #866) — dieselbe Groesse, aber NUR ueber nachweisliche TRAILING_STOP-
     # Exits (siehe backtest_runner._aggregate_exit_telemetry-Docstring).
     oos_gross_loss_mean_bps_trailing_stop: float | None = None
@@ -376,6 +385,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_alpha = oos_metrics.get("oos_alpha")
     oos_beta = oos_metrics.get("oos_beta")
     oos_alpha_tstat = oos_metrics.get("oos_alpha_tstat")
+    # Issue #1038/#1187 — die Regressions-Stichprobengroesse (None-safe; fehlt unter denselben
+    # Bedingungen wie oos_alpha).
+    oos_alpha_n_periods = oos_metrics.get("oos_alpha_n_periods")
     # Issue #850 — Exposure-Telemetrie (None-safe ⇒ rückwärtskompatibel zu Pre-#850-JSONs).
     oos_exposure_fraction = oos_metrics.get("exposure_fraction")
     # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
@@ -399,6 +411,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_exit_reason_histogram = oos_metrics.get("exit_reason_histogram")
     oos_max_holding_bars = oos_metrics.get("max_holding_bars")
     oos_gross_loss_mean_bps = oos_metrics.get("gross_loss_mean_bps")
+    # Issue #1024/#1173 — siehe TournamentMetrics-Docstring.
+    oos_gross_loss_median_bps = oos_metrics.get("gross_loss_median_bps")
     # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
     oos_gross_loss_mean_bps_trailing_stop = oos_metrics.get("gross_loss_mean_bps_trailing_stop")
     # Issue #972/#1126 — siehe TournamentMetrics-Docstring.
@@ -619,6 +633,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_alpha=float(oos_alpha) if oos_alpha is not None else None,
         oos_beta=float(oos_beta) if oos_beta is not None else None,
         oos_alpha_tstat=float(oos_alpha_tstat) if oos_alpha_tstat is not None else None,
+        # Issue #1038/#1187 — Regressions-Stichprobengroesse (None-safe).
+        oos_alpha_n_periods=(
+            int(oos_alpha_n_periods) if oos_alpha_n_periods is not None else None),
         oos_exposure_fraction=float(oos_exposure_fraction) if oos_exposure_fraction is not None else None,
         # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
         oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,
@@ -634,6 +651,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_exit_reason_histogram=dict(oos_exit_reason_histogram) if oos_exit_reason_histogram else None,
         oos_max_holding_bars=float(oos_max_holding_bars) if oos_max_holding_bars is not None else None,
         oos_gross_loss_mean_bps=float(oos_gross_loss_mean_bps) if oos_gross_loss_mean_bps is not None else None,
+        # Issue #1024/#1173 — siehe TournamentMetrics-Docstring.
+        oos_gross_loss_median_bps=(
+            float(oos_gross_loss_median_bps) if oos_gross_loss_median_bps is not None else None),
         # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
         oos_gross_loss_mean_bps_trailing_stop=(
             float(oos_gross_loss_mean_bps_trailing_stop)

@@ -11,7 +11,7 @@ Zaehler ausschliesslich aus einer erneut gelesenen Checkpoint-DATEI kamen, deren
 fehlschlagen konnte.
 
 Fix: GENAU EIN Statusfeld mit drei orthogonalen Achsen (``work_completed``/``decision_admissible``/
-``fail_fast_triggered``) statt eines ueberladenen Strings, aus DERSELBEN Quelle (``invariant_checks``
+``blocking_invariant_triggered``) statt eines ueberladenen Strings, aus DERSELBEN Quelle (``invariant_checks``
 plus Symbol-Zaehler) fuer JEDEN Report-Erzeugungspfad abgeleitet (``report._build_report``); die
 Symbol-Zaehler kommen seither primaer aus einem In-Prozess-Spiegel (``sweep.sweep_symbol_funnel``),
 der von Datei-I/O und fremden Prozessen unabhaengig ist.
@@ -77,12 +77,12 @@ def _minimal_report(**overrides):
 
 def test_section_1_never_claims_work_abort_when_work_completed_true():
     """Akzeptanzkriterium #942: Report C's Faktenstand (14/14 Studies, work_completed=True,
-    decision_admissible=False, fail_fast_triggered='check_effective_stop_distance') darf NICHT als
+    decision_admissible=False, blocking_invariant_triggered='check_effective_stop_distance') darf NICHT als
     Arbeitsabbruch erscheinen."""
     report = _minimal_report(
         symbols_completed=14, symbols_planned=14,
         work_completed=True, decision_admissible=False,
-        fail_fast_triggered="check_effective_stop_distance",
+        blocking_invariant_triggered="check_effective_stop_distance",
     )
     text = summary_de.generate_german_summary(report)
     section_1 = text.split("## 2.")[0]
@@ -94,7 +94,7 @@ def test_section_1_never_claims_work_abort_when_work_completed_true():
 def test_section_1_claims_incompleteness_only_when_work_completed_false():
     report = _minimal_report(
         symbols_completed=2, symbols_planned=14,
-        work_completed=False, decision_admissible=True, fail_fast_triggered=None,
+        work_completed=False, decision_admissible=True, blocking_invariant_triggered=None,
     )
     text = summary_de.generate_german_summary(report)
     section_1 = text.split("## 2.")[0]
@@ -104,7 +104,7 @@ def test_section_1_claims_incompleteness_only_when_work_completed_false():
 def test_section_1_no_status_note_when_fully_complete_and_admissible():
     report = _minimal_report(
         run_status="complete", symbols_completed=14, symbols_planned=14,
-        work_completed=True, decision_admissible=True, fail_fast_triggered=None,
+        work_completed=True, decision_admissible=True, blocking_invariant_triggered=None,
     )
     text = summary_de.generate_german_summary(report)
     section_1 = text.split("## 2.")[0]
@@ -117,7 +117,7 @@ def test_run_status_label_overrides_misleading_aborted_invariant_wording():
     report = _minimal_report(
         run_status="aborted_invariant", symbols_completed=14, symbols_planned=14,
         work_completed=True, decision_admissible=False,
-        fail_fast_triggered="check_effective_stop_distance",
+        blocking_invariant_triggered="check_effective_stop_distance",
     )
     label = summary_de._run_status_label_de(report)
     assert "echter Arbeitsabbruch" not in label

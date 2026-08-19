@@ -213,15 +213,20 @@ def test_section_2_3_falls_back_to_inline_ratio_without_precomputed_field():
 
 
 def test_section_2_3_shows_alpha_beta_tstat_columns():
+    """Issue #1038/#1187 — die rohe α-Spalte (5 Nachkommastellen auf 1e-6-Groessenordnung) wurde
+    durch α·n (%) und α (bps/Bar) ersetzt; β/t(α) bleiben unveraendert."""
     report = _minimal_report(studies=[
         {"strategy": "S", "symbol": "A.ETORO", "holdout_total_return": 0.05,
          "holdout_buyhold_return": 0.03, "holdout_excess_return": 0.02,
          "holdout_exposure_fraction": 0.6, "holdout_alpha": 0.00045,
+         "holdout_alpha_n_periods": 200, "holdout_alpha_times_n_pct": 0.00045 * 200 * 100.0,
+         "holdout_alpha_bps_per_bar": 0.00045 * 10000.0,
          "holdout_beta": 0.42, "holdout_alpha_tstat": 3.1, "holdout_no_alpha_detected": False},
     ])
     text = summary_de.generate_german_summary(report)
     section_2_3 = text.split("### 2.3")[1].split("### 2.4")[0]
-    assert "0.00045" in section_2_3
+    assert "9.000" in section_2_3  # alpha*n*100 = 0.00045*200*100 = 9.0 %
+    assert "4.50" in section_2_3   # alpha in bps/Bar = 0.00045*10000 = 4.5
     assert "0.420" in section_2_3
     assert "3.10" in section_2_3
 

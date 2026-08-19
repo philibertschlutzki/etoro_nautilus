@@ -261,3 +261,19 @@ _register_inference_code(
                 "unveraendert gueltig (#1031).",
     nullifies_metrics=(),
 )
+
+
+# Issue #1021/#1196 — EINZIGE Ausnahmeklasse für den ``report.py``-Kohorten-Wächter (#1086). Vorher
+# ein nackter ``RuntimeError`` mit strukturiertem Präfix im Meldungstext: die vier Aufrufstellen in
+# ``sweep.py`` (symbol-lokale Probe #933, Zwischenreport #933 Fix 4, Fail-Fast-Probe #839, finaler
+# Report #742) fingen ALLE ``Exception`` pauschal ab und werteten eine echte, unauflösbare
+# Kohortenvermischung (zwei Prozesse gleichzeitig auf demselben Store, #1086) exakt so "non-fatal"
+# wie einen KeyError oder einen Plattenfehler. Ein eigener Typ macht die Ausnahme an jeder
+# Aufrufstelle SELEKTIV fangbar (``except ReportCohortUnresolvable: raise`` vor dem generischen
+# ``except Exception:``), ohne den Exception-Text nach einem Präfix parsen zu müssen.
+class ReportCohortUnresolvable(RuntimeError):
+    """Eine Study traegt Trials von zwei ``run_id``s, deren Laufzeitfenster sich UEBERLAPPEN — die
+    Kohorte ist nicht auflösbar (echte Nebenläufigkeit, #1086). Sequenzielle Store-Wiederverwendung
+    (``load_if_exists``-Warm-Start, der beabsichtigte Normalbetrieb) loest dies NICHT mehr aus,
+    seit report.py die Laufzeitfenster statt nur die blosse Anwesenheit zweier ``run_id``s prueft
+    (#1021/#1196)."""

@@ -23,7 +23,8 @@ from pathlib import Path
 import datetime as dt
 
 from automation.optimizer import bounds
-from automation.optimizer._contracts import pair_key, split_pair_key
+from automation.optimizer import invariants
+from automation.optimizer._contracts import pair_key, split_pair_key, ReportCohortUnresolvable
 from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
@@ -1837,6 +1838,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     das #843-Korrektheits-Risiko einer echten Pipeline ueber Symbolgrenzen hinweg einzugehen.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
+    # Issue #1044/#1193 — ALLERERSTE Champion-Store-Beruehrung dieses Laufs (vor jedem
+    # Enqueue/Store/Writeback-Versuch weiter unten): ``champions.store_status()`` liest den
+    # Store-Pfad OHNE ihn anzulegen (siehe dortiger Docstring) — nur an DIESER Stelle ist "das
+    # Verzeichnis existierte zu Laufbeginn nicht" (STORE_PATH_MISSING) noch beobachtbar, jeder
+    # spaetere Store-Zugriff (auch ein einzelner Lookup) legt das Verzeichnis unbedingt an.
+    # ``report._champions_summary`` liest dieses Ereignis zurueck, um STORE_EMPTY von
+    # STORE_PATH_MISSING zu unterscheiden UND um den Store-Pfad/-Zustand im Report zu benennen
+    # (Akzeptanzkriterium 1 — "der Report nennt den Store-Pfad und dessen Zustand").
+    emit_execution_event(logging.getLogger("optimizer"), "CHAMPION_STORE_SCAN", champions.store_status())
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
     # Fake (HI-7-Tests) wird der Schema-Pre-Init uebersprungen — ein Fake-optimize_symbol beruehrt
     # keine SQLite-Datei, also gibt es nichts zu bootstrappen (kein Storage-Seiteneffekt im Test).
@@ -1985,6 +1995,20 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # eine einzige Study fuer es gestartet wird — analog dem bestehenden Gate-1-Pfad. Nur im echten
     # Storage-Pfad (injizierte HI-7-Fakes haben keinen echten Katalog); ``bar_quality_fn`` bleibt
     # aber unabhaengig davon injizierbar, damit dieser Block selbst ohne echten Katalog testbar ist.
+    # Issue #1046/#1195 (Katalog #1195) — Root-Cause: ``check_invariant_coverage`` FAILte, weil
+    # ``check_bar_quality`` in manchen Laeufen KOMPLETT aus dem Invarianten-Strom fehlte (``missing
+    # = ['check_bar_quality']``), NICHT weil die Mechanik unten fehlte (sie existiert bereits,
+    # siehe ``INVARIANT_STREAM_RESULT``-Emission je Symbol weiter unten) — sondern weil DIESER
+    # ganze Block uebersprungen wurde (``using_real_optimize=False``/``syms`` bereits leer VOR
+    # diesem Punkt, z. B. weil Gate 1 bereits alle Symbole gefiltert hat) oder KEIN Symbol eine
+    # Stichprobe lieferte (``_quality_by_symbol`` blieb leer). Ein `severity='high'`-Check in
+    # ``optimizer.json``s Fail-Fast-Vokabular, der in bestimmten Laeufen STILLSCHWEIGEND nie
+    # feuert, ist von "nie geprueft" nicht unterscheidbar (dieselbe #1015/#1167-Fehlerklasse).
+    # Fix: EIN globales, garantiertes ``INVARIANT_STREAM_RESULT`` fuer ``check_bar_quality`` —
+    # INCONCLUSIVE (``passed=None``), wenn kein Symbol tatsaechlich geprueft wurde, sonst
+    # unveraendert die bestehende Je-Symbol-Emission unten (die bleibt die praezisere,
+    # scope-spezifische Quelle).
+    _bar_quality_any_measured = False
     if (using_real_optimize or bar_quality_fn is not None) and syms:
         _load_sample = bar_quality_fn or _load_symbol_bar_quality_sample
         _bar_quality_cfg = opt_data.get("bar_quality") or {}
@@ -2014,6 +2038,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 bar_coverage_ratio=_sample.get("bar_coverage_ratio"),
                 median_delta_t_s=_sample.get("median_delta_t_s"),
             )
+            _bar_quality_any_measured = True
             _quality_by_symbol[_sym] = {
                 "frac_zero_true_range": _quality.get("frac_zero_true_range"),
                 "atr_median_bps": _quality.get("atr_median_bps"),
@@ -2089,33 +2114,50 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             syms = [s for s in syms if s not in _degenerate_syms]
             available_bars = count_available_bars(syms)
 
-        # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
-        # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
-        # verbleibendem Symbol via diagnose_symbol_degeneracy. Mehrere strukturell verschiedene
-        # Strategien mit binding_cause=='signal_absent' UND median_is_trades==0 sind ein Beleg fuer
-        # ein Datenproblem, das der Bar-Qualitaets-Preflight (noch) nicht erfasst hat — die
-        # Bar-Qualitaet selbst bleibt aber die NOTWENDIGE Bedingung fuer eine tatsaechliche
-        # Ablehnung; dieser Check weist selbst nie ein Symbol ab (Akzeptanzkriterium #807).
-        if syms:
-            _diag_cache = load_diagnosed_pairs_cache(work_dir=WORK)
-            _min_strategies = int(opt_data.get("symbol_degeneracy_min_strategies", 3))
-            for _sym in syms:
-                _per_strategy = [
-                    v for (strat, sym), v in _diag_cache.items()
-                    if sym == _sym and strat != _SYMBOL_DEGENERACY_SENTINEL_STRATEGY
-                ]
-                if not _per_strategy:
-                    continue
-                _agg = diagnose_symbol_degeneracy(_sym, _per_strategy, min_strategies=_min_strategies)
-                if _agg["is_degenerate"]:
-                    logging.getLogger("optimizer").warning(
-                        "[#807] %s: SYMBOL_DATA_DEGENERATE (Sekundaer-Signal aus %d gecachten "
-                        "Diagnosen, %d/%d 'signal_absent') — der Bar-Qualitaets-Preflight erfasste "
-                        "dies (noch) nicht; das Symbol wird DENNOCH nicht automatisch abgewiesen "
-                        "(Bar-Qualitaet ist die notwendige Bedingung, keine Diagnosezahl allein).",
-                        _sym, _agg["n_strategies_checked"], _agg["n_signal_absent"],
-                        _agg["min_strategies"],
-                    )
+    # Issue #1046/#1195 — der garantierte Fallback: kein einziges Symbol wurde tatsaechlich
+    # geprueft (Block oben uebersprungen ODER durchlaufen, aber jede Stichprobe fehlte) ⇒
+    # ``check_bar_quality`` erscheint TROTZDEM im Strom, als INCONCLUSIVE statt fehlend — dieselbe
+    # Tri-State-Konvention wie #995/#1147 ("nicht pruefbar" ist ein Befund, kein Nicht-Ereignis).
+    if not _bar_quality_any_measured:
+        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+            "name": "check_bar_quality", "check": "check_bar_quality",
+            "passed": None, "source": "sweep", "scope": "global",
+            "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
+                       "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
+                       "Schwellen (#807).",
+            "actual": None,
+            "detail": "Kein Symbol tatsaechlich geprueft (using_real_optimize=False oder keine "
+                     "Katalog-Stichprobe verfuegbar) — nicht auswertbar, kein Befund (#1046/#1195).",
+            "severity": "high", "evaluable": False,
+        }, level=logging.INFO)
+
+    # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
+    # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
+    # verbleibendem Symbol via diagnose_symbol_degeneracy. Mehrere strukturell verschiedene
+    # Strategien mit binding_cause=='signal_absent' UND median_is_trades==0 sind ein Beleg fuer
+    # ein Datenproblem, das der Bar-Qualitaets-Preflight (noch) nicht erfasst hat — die
+    # Bar-Qualitaet selbst bleibt aber die NOTWENDIGE Bedingung fuer eine tatsaechliche
+    # Ablehnung; dieser Check weist selbst nie ein Symbol ab (Akzeptanzkriterium #807).
+    if syms:
+        _diag_cache = load_diagnosed_pairs_cache(work_dir=WORK)
+        _min_strategies = int(opt_data.get("symbol_degeneracy_min_strategies", 3))
+        for _sym in syms:
+            _per_strategy = [
+                v for (strat, sym), v in _diag_cache.items()
+                if sym == _sym and strat != _SYMBOL_DEGENERACY_SENTINEL_STRATEGY
+            ]
+            if not _per_strategy:
+                continue
+            _agg = diagnose_symbol_degeneracy(_sym, _per_strategy, min_strategies=_min_strategies)
+            if _agg["is_degenerate"]:
+                logging.getLogger("optimizer").warning(
+                    "[#807] %s: SYMBOL_DATA_DEGENERATE (Sekundaer-Signal aus %d gecachten "
+                    "Diagnosen, %d/%d 'signal_absent') — der Bar-Qualitaets-Preflight erfasste "
+                    "dies (noch) nicht; das Symbol wird DENNOCH nicht automatisch abgewiesen "
+                    "(Bar-Qualitaet ist die notwendige Bedingung, keine Diagnosezahl allein).",
+                    _sym, _agg["n_strategies_checked"], _agg["n_signal_absent"],
+                    _agg["min_strategies"],
+                )
 
     # Issue #892 Fix Punkt 5 — sammelt jedes Symbol mit MINDESTENS einer Gate-1-Ablehnung, damit
     # ein Symbol, dessen Paare AUSSCHLIESSLICH an Gate 1 scheitern (unten: kein 'OK'-Paar), im
@@ -2956,6 +2998,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                          "detail": _chk.get("detail")},
                         level=logging.INFO if _chk.get("passed") else logging.WARNING,
                     )
+            except ReportCohortUnresolvable:
+                # Issue #1021/#1196 Fix 4.3.1 — eine ECHTE, unaufloesbare Kohortenvermischung
+                # (#1086, ueberlappende Laufzeitfenster zweier Sweep-Prozesse) ist kein transienter
+                # Probe-Fehler; sie darf NICHT als "non-fatal" verschluckt werden, waehrend der
+                # Sweep weiterrechnet und sich am Ende trotzdem als 'complete' meldet.
+                raise
             except Exception:
                 logging.getLogger("optimizer").warning(
                     "[#933] Symbol-lokale Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
@@ -2998,6 +3046,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 report_source="progress_incremental",
                 preflight_invariant_checks=preflight_invariant_checks,
             )
+        except ReportCohortUnresolvable:
+            # Issue #1021/#1196 Fix 4.3.1 — siehe Begruendung an der Symbol-Probe-Aufrufstelle oben.
+            raise
         except Exception:
             logging.getLogger("optimizer").warning(
                 "[#933] Zwischen-Report-Schreiben fehlgeschlagen (non-fatal, Lauf setzt fort).",
@@ -3061,6 +3112,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
                     _probe_invariant_checks, _fail_fast_invariants)
                 _fail_fast_probe_errors = 0
+            except ReportCohortUnresolvable:
+                # Issue #1021/#1196 Fix 4.3.1 — siehe Begruendung an der Symbol-Probe-Aufrufstelle
+                # oben; hier zusaetzlich: der Fail-Fast-Deaktivierungszaehler (unten) darf eine
+                # echte Kohortenvermischung nicht als "zweiten transienten Fehler" wegzaehlen.
+                raise
             except Exception:
                 _fail_fast_probe_errors += 1
                 if _fail_fast_probe_errors >= 2:
@@ -3550,8 +3606,15 @@ def main(argv: list[str] | None = None) -> list[Path]:
             and symbols_planned is not None and symbols_completed >= symbols_planned):
         run_status = "completed_invalid"
 
+    # Issue #1021/#1196 Fix 4.3.2 — ob das FINALE Report-Artefakt tatsaechlich geschrieben wurde,
+    # unabhaengig vom (moeglicherweise veralteten) ``run_status``-Wert: ein Lauf, der 'complete'
+    # behauptet, aber wegen eines Schreibfehlers keinen Report hinterlaesst, ist von einem
+    # erfolgreichen Lauf sonst nur ueber ein fehlendes Artefakt auf der Platte unterscheidbar.
+    _report_written = False
     # Issue #742 — EIN aggregiertes Report-Artefakt am Ende des Laufs, atomar geschrieben. Darf den
-    # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle).
+    # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle) —
+    # AUSSER bei ``ReportCohortUnresolvable`` (#1021/#1196 Fix 4.3.1): eine echte, unaufloesbare
+    # Kohortenvermischung ist kein Report-Schreibfehler, sondern ein Befund ueber den Store selbst.
     try:
         from automation.optimizer import report as _report
         _cli_args = {"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
@@ -3567,12 +3630,14 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # damit invariants.check_cohort_declaration_consistency sie gegen die Report-Scan-Kohorte
         # DIESES finalen Artefakts vergleichen kann.
         _prior_probe_checks = sweep_fail_fast_probe_invariant_checks
-        # Issue #942/#1108 (Katalog #960) — durchgereicht, damit ``_build_report`` daraus (zusammen
-        # mit ``symbols_completed``/``symbols_planned``) die drei orthogonalen Achsen
-        # (``work_completed``/``decision_admissible``/``fail_fast_triggered``) EINMAL, an EINER
-        # Stelle, fuer BEIDE Pfade (regulaerer Abschluss/Abbruch) ableitet — statt ``run_status``
-        # als einzige, ueberladene Wahrheit ueber zwei getrennte Code-Pfade zu setzen.
-        _fail_fast_triggered = sweep_fail_fast_invariant
+        # Issue #942/#1108/#1037 (Katalog #960/#1186) — durchgereicht, damit ``_build_report``
+        # daraus (zusammen mit ``symbols_completed``/``symbols_planned``/``run_status``) die VIER
+        # orthogonalen Achsen (``work_completed``/``decision_admissible``/``work_aborted``/
+        # ``blocking_invariant_triggered``) EINMAL, an EINER Stelle, fuer BEIDE Pfade (regulaerer
+        # Abschluss/Abbruch) ableitet — statt ``run_status`` als einzige, ueberladene Wahrheit ueber
+        # zwei getrennte Code-Pfade zu setzen. Umbenannt von ``_fail_fast_triggered`` (#1037 — der
+        # alte Name behauptete faelschlich einen Abbruch, siehe ``report._build_report``-Docstring).
+        _blocking_invariant_triggered = sweep_fail_fast_invariant
         # Issue #985/#1139 (Katalog #986) — die Preflight-Check-Ergebnisse DIESES Laufs (sofern
         # ``using_real_optimize``), analog ``_prior_probe_checks`` als globales Signal aus
         # ``run_per_symbol_sweep`` durchgereicht.
@@ -3585,7 +3650,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
                 prior_probe_invariant_checks=_prior_probe_checks,
-                fail_fast_triggered=_fail_fast_triggered,
+                blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
             )
         else:
@@ -3601,9 +3666,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
                 prior_probe_invariant_checks=_prior_probe_checks,
-                fail_fast_triggered=_fail_fast_triggered,
+                blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
             )
+        _report_written = True
         # Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — ein Lauf mit mindestens einer
         # blockierenden Invarianten-FAIL darf nicht dasselbe Statuswort 'complete' tragen wie ein
         # sauberer Lauf ("complete" bei zwei blockierenden FAILs UND "complete" bei null FAILs war
@@ -3625,9 +3691,29 @@ def main(argv: list[str] | None = None) -> list[Path]:
         summary_path = _summary_de.write_german_summary_for_report_path(report_path)
         if summary_path is not None:
             print(f"📝 Zusammenfassung: {summary_path}")
+    except ReportCohortUnresolvable:
+        # Issue #1021/#1196 Fix 4.3.1 — siehe Begruendung an der Symbol-Probe-Aufrufstelle oben:
+        # eine echte, unaufloesbare Kohortenvermischung darf den Lauf NICHT stillschweigend als
+        # 'complete' ohne Report enden lassen. Fatal, propagiert bis zum CLI-Exit-Code.
+        raise
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
+
+    # Issue #1021/#1196 Fix 4.3.2 — ein Lauf ohne geschriebenen Report ist nicht 'complete',
+    # unabhaengig davon, WARUM das Schreiben scheiterte (jeder Fall ausser der oben bereits fatalen
+    # ReportCohortUnresolvable). Verallgemeinerung des Ausgangsbefunds: 2411s Rechenzeit, 1940
+    # Trials, 14 Proposals — und ohne diesen Fix trotzdem ``run_status='complete'``.
+    _report_artifact_check = invariants.check_report_artifact_written(
+        run_status=run_status, report_written=_report_written)
+    emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+        "name": _report_artifact_check.name, "check": _report_artifact_check.name,
+        "passed": _report_artifact_check.passed, "source": "sweep", "scope": "global",
+        "severity": _report_artifact_check.severity, "expected": _report_artifact_check.expected,
+        "actual": _report_artifact_check.actual, "detail": _report_artifact_check.detail,
+    }, level=logging.INFO if _report_artifact_check.passed else logging.ERROR)
+    if run_status == "complete" and not _report_written:
+        run_status = "aborted_no_report"
 
     # Issue #933 (Pitfall #306) — die LETZTE Zeile jedes Laufs, egal ob er sauber durchlief oder
     # per SIGINT/SIGTERM/Exception abbrach: vorher war ein Snapshot eines laufenden Sweeps von
@@ -3640,6 +3726,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # Issue #939 — auditierbar, WELCHE Symbole isoliert scheiterten (statt nur, dass
         # run_status von 'complete' abweicht).
         "failed_symbols": sorted(sweep_failed_symbols),
+        # Issue #1021/#1196 Fix 4.3.2 — macht "kein Report, weil das Symptom dieses Issues" von
+        # jedem anderen Nicht-'complete'-Status unterscheidbar, ohne den run_status-String zu
+        # parsen.
+        "report_written": _report_written,
     }
     if _sweep_event_type == "SWEEP_FINISHED":
         # Konvention #1081 — Uebergangs-Alias eine Sitzung lang: ein Log-Parser, der noch nach dem
@@ -3823,12 +3913,12 @@ def _sweep_completion_event(run_status: str) -> tuple[str, int]:
 def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
     """Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — liest das gerade geschriebene
     #742-Report-Artefakt zurück und korrigiert dessen ``run_status`` von ``'complete'`` auf
-    ``'complete_with_blocking_invariants'``, sobald mindestens ein ``severity='blocking'``-Check
-    fehlgeschlagen ist ("complete" bei blockierenden FAILs und "complete" bei null FAILs waren
-    zuvor ununterscheidbar — ein Cap ist eine Zensur, ein geteiltes Statuswort ist es analog).
-    Der Patch ist atomar (``write_json_atomic``, dieselbe Garantie wie der Erstschrieb) und
-    fail-open bei jedem Lese-/Parse-Fehler (gibt ``'complete'`` unverändert zurück, non-fatal —
-    ein defektes Report-Artefakt darf den Lauf nicht zusätzlich verschlechtern).
+    ``'completed_invalid'``, sobald mindestens ein ``severity='blocking'``-Check fehlgeschlagen ist
+    ("complete" bei blockierenden FAILs und "complete" bei null FAILs waren zuvor ununterscheidbar
+    — ein Cap ist eine Zensur, ein geteiltes Statuswort ist es analog). Der Patch ist atomar
+    (``write_json_atomic``, dieselbe Garantie wie der Erstschrieb) und fail-open bei jedem Lese-/
+    Parse-Fehler (gibt ``'complete'`` unverändert zurück, non-fatal — ein defektes Report-Artefakt
+    darf den Lauf nicht zusätzlich verschlechtern).
 
     Rückgabe: der (ggf. korrigierte) ``run_status``-String, den der Aufrufer als neue Wahrheit
     übernimmt.
@@ -3838,7 +3928,16 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
     ``invariant_checks``-Liste abgeleitet, die diese Funktion hier erneut liest) — beide Werte
     sind IMMER konsistent (dieselbe Quelle), diese Funktion bleibt fuer die Rueckwaertskompatibilitaet
     des ``run_status``-Strings bestehen, ist aber NICHT mehr die kanonische Wahrheit ueber
-    Zulaessigkeit; das ist seither ``decision_admissible``."""
+    Zulaessigkeit; das ist seither ``decision_admissible``.
+
+    Issue #1037/#1186 (Katalog #1186, Akzeptanzkriterium 1) — Root-Cause: diese Funktion schrieb
+    bislang ``'complete_with_blocking_invariants'``, waehrend der ANDERE Downgrade-Pfad weiter oben
+    im Symbol-Loop (``run_status == 'aborted_invariant' and symbols_completed >= symbols_planned``)
+    fuer denselben Faktenstand (vollstaendige Abdeckung, blockierende Invariante, kein echter
+    Abbruch) bereits ``'completed_invalid'`` schrieb — ZWEI verschiedene Strings fuer dieselbe
+    Zelle der Ableitungstabelle (siehe ``report._build_report``-Docstring). Diese Funktion schreibt
+    seither DENSELBEN kanonischen String wie jener Pfad — ``'complete_with_blocking_invariants'``
+    wird nicht mehr erzeugt."""
     try:
         written_report = json.loads(Path(report_path).read_text("utf-8"))
         blocking_fails = [
@@ -3847,13 +3946,13 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
         ]
         if not blocking_fails:
             return "complete"
-        run_status = "complete_with_blocking_invariants"
+        run_status = "completed_invalid"
         written_report["run_status"] = run_status
         write_json_atomic(report_path, written_report)
         logging.getLogger("optimizer").warning(
-            "[#1016] %d blockierende Invarianten-FAIL(s) (%s) — run_status auf "
-            "'complete_with_blocking_invariants' korrigiert (kein Lauf mit blockierenden FAILs "
-            "darf als 'complete' erscheinen).", len(blocking_fails),
+            "[#1016/#1037] %d blockierende Invarianten-FAIL(s) (%s) — run_status auf "
+            "'completed_invalid' korrigiert (kein Lauf mit blockierenden FAILs darf als "
+            "'complete' erscheinen).", len(blocking_fails),
             ", ".join(sorted({c.get("name") or c.get("check") for c in blocking_fails})),
         )
         return run_status
