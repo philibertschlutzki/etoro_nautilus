@@ -742,6 +742,39 @@ def _section_3_duration(report: dict) -> str:
     if cpu_utilisation_backtest is not None:
         lines.append(f"Echte CPU-Auslastung (cpu_utilisation_backtest = Σ Backtest-CPU-Zeit je "
                      f"Trial / (n_jobs × Sweep-Wallclock)): {_fmt_pct(cpu_utilisation_backtest)}")
+    lines.append("")
+
+    # Issue #1027/#1176 Schritt 1 (Katalog #866-2) — Sichtbarkeit ohne Semantikbruch: die
+    # synthetische 1h-Bar-Erzeugung kennt fuer EQUITY/COMMODITY keine Handelszeiten-Maske
+    # (invariants.check_session_calendar_coherence); bis eine RTH-Maske gebaut ist (Schritt 2,
+    # eigener Semantik-Bump + Pflicht-Purge, siehe AGENTS.md-Sperrvermerk), macht dieser Abschnitt
+    # den Bar-Achsen-Zustand je Study SICHTBAR, statt ihn implizit anzunehmen.
+    lines.append("### 3.5 Bar-Achse / Handelszeiten-Abdeckung")
+    lines.append("")
+    _bar_axis_rows = [
+        r for r in studies
+        if r.get("bars_per_calendar_day") is not None or r.get("session_coverage_fraction") is not None
+    ]
+    if not _bar_axis_rows:
+        lines.append(
+            "Keine Bar-Achsen-Telemetrie in diesem Report (Pre-#1011/#1163-Lauf oder leere Kohorte)."
+        )
+    else:
+        lines.append(
+            "`bars_per_calendar_day` > 8 auf EQUITY/COMMODITY ist die Signatur einer 24/7-"
+            "aufgefüllten Bar-Achse (24,0 = kein Handelszeiten-Filter); "
+            "`session_coverage_fraction` ist der Anteil der Bars innerhalb der erwarteten Session "
+            "(siehe `invariants.check_session_calendar_coherence`, #1011/#1163/#1027/#1176)."
+        )
+        lines.append("")
+        lines.append("| Strategie | Symbol | Bars/Kalendertag | Session-Abdeckung |")
+        lines.append("|---|---|---:|---:|")
+        for r in sorted(_bar_axis_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('bars_per_calendar_day'), digits=2)} | "
+                f"{_fmt_pct(r.get('session_coverage_fraction'))} |"
+            )
     return "\n".join(lines)
 
 
@@ -770,15 +803,52 @@ def _section_4_longest_trades(report: dict) -> str:
     longest = (report.get("cross_study") or {}).get("longest_holding_studies") or []
     if not longest:
         lines.append("Keine Haltedauer-Telemetrie in diesem Report (Pre-#832-Lauf oder leere Kohorte).")
-        return "\n".join(lines)
-    lines.append("| Strategie | Symbol | Max. Haltedauer | P95 Haltedauer |")
-    lines.append("|---|---|---:|---:|")
-    for entry in longest:
+    else:
+        lines.append("| Strategie | Symbol | Max. Haltedauer | P95 Haltedauer |")
+        lines.append("|---|---|---:|---:|")
+        for entry in longest:
+            lines.append(
+                f"| {entry.get('strategy')} | {entry.get('symbol')} | "
+                f"{_fmt_holding_duration_with_bar_note(entry.get('max_holding_time_s'))} | "
+                f"{_fmt_holding_duration_with_bar_note(entry.get('p95_holding_time_s'))} |"
+            )
+
+    # Issue #1030/#1179 (Katalog #866-2) — TIME_BOX ist mit ~49 % der haeufigste Exit-Mechanismus
+    # ueberhaupt, misst aber KALENDER-Bars auf der (bis #1176 Schritt 2) 24/7-aufgefuellten Achse:
+    # 24 Bars sind heute buchstaeblich 1 Kalendertag, nicht ~1 Handelstag. Bis zur RTH-Umstellung
+    # (Schritt 2) wird der Median zusaetzlich in HANDELSSTUNDEN ausgewiesen
+    # (bars · session_coverage_fraction), damit ein Leser die beiden Achsen nicht verwechselt.
+    _timebox_rows = (report.get("studies") or [])
+    _timebox_rows = [
+        r for r in _timebox_rows
+        if r.get("time_box_exit_fraction") is not None or r.get("median_bars_held") is not None
+    ]
+    if _timebox_rows:
+        lines.append("")
+        lines.append("### 4.1 Zeitbox-Anteil und Median-Haltedauer (Kalender- vs. Handelszeit)")
+        lines.append("")
         lines.append(
-            f"| {entry.get('strategy')} | {entry.get('symbol')} | "
-            f"{_fmt_holding_duration_with_bar_note(entry.get('max_holding_time_s'))} | "
-            f"{_fmt_holding_duration_with_bar_note(entry.get('p95_holding_time_s'))} |"
+            "`Handels-Bars (geschätzt)` = `Median-Bars · session_coverage_fraction` — solange die "
+            "Bar-Achse ungefiltert 24/7 läuft (#1027/#1176 Schritt 1), ist das eine grobe Näherung, "
+            "keine echte Handelszeiten-Zählung (die kommt erst mit Schritt 2)."
         )
+        lines.append("")
+        lines.append(
+            "| Strategie | Symbol | TIME_BOX-Anteil | Median-Bars (Kalender) | "
+            "Handels-Bars (geschätzt) |"
+        )
+        lines.append("|---|---|---:|---:|---:|")
+        for r in sorted(_timebox_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            _bars = r.get("median_bars_held")
+            _coverage = r.get("session_coverage_fraction")
+            _trading_bars = (
+                round(_bars * _coverage, 2) if _bars is not None and _coverage is not None else None)
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_pct(r.get('time_box_exit_fraction'))} | "
+                f"{_fmt_num(_bars, digits=2)} | "
+                f"{_fmt_num(_trading_bars, digits=2)} |"
+            )
     return "\n".join(lines)
 
 

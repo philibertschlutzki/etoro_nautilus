@@ -107,6 +107,18 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
 # Suchraum-Bound über alle 15 Strategien (Untergrenzen bleiben unverändert). Issue #858 — Single
 # Source of Truth über einen Import statt einer eigenen Kopie des Literals, konsistent mit
 # ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP``.
+#
+# Issue #1030/#1179 (Katalog #866-2) — ACHSEN-HINWEIS fuer JEDES ``max_bars_in_trade``-Band in
+# diesem Modul (der untenstehende Cap UND jede Strategie-spezifische ``_bounds_for(...,
+# "max_bars_in_trade", lo, _MAX_BARS_IN_TRADE_CAP)``-Zeile): alle Bands sind heute in KALENDER-Bars
+# gesampelt (die synthetische 1h-Bar-Achse laeuft fuer EQUITY/COMMODITY ueber einen 24/7-Kalender
+# statt einer Handelszeiten-Maske, ``invariants.check_session_calendar_coherence``,
+# #1011/#1163/#1027/#1176) — die ueblichen Default-Untergrenzen 6/8/12 sind KEINE Handelsstunden-
+# Naeherung, sondern buchstaeblich Kalenderstunden. Nach einer kuenftigen RTH-Umstellung (#1176
+# Schritt 2, eigener ``simulation_semantics_version``-Bump + Pflicht-Purge) sind diese Bands
+# QUANTITATIV NEU ZU KALIBRIEREN (grobe Faustregel aus der Session-Coverage dieses Katalogs: ~12-24
+# Kalender-Bars ⇒ ~7-14 Handels-Bars fuer dieselbe reale Haltedauer) — sie werden durch diesen Fix
+# NICHT automatisch mitverschoben.
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 # Issue #1067 — die symmetrische Untergrenze zu ``_MAX_BARS_IN_TRADE_CAP`` (Single Source of Truth,
 # siehe _contracts.py-Docstring).
