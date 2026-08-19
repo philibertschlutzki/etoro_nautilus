@@ -1837,6 +1837,12 @@ def _study_record(proposal: dict, study,
     _rt_configured_distance = (
         float(_rt_k) * float(_rt_atr)
         if (_rt_atr and _rt_k is not None) else None)
+    # Issue #1026/#1175 (Katalog #866-2) — die konfigurierte Stopdistanz (k_median · ATR_median,
+    # bps) als eigenstaendiges Report-Feld: Rohmaterial fuer die ``atr_floor_binding_studies``-
+    # Provenance (siehe invariants.check_atr_scale_homogeneity), vorher nur lokal in dieser
+    # Funktion berechnet und nirgends exportiert.
+    record["stop_distance_bps"] = (
+        round(_rt_configured_distance, 4) if _rt_configured_distance is not None else None)
     _rt_loss_median = record.get("gross_loss_median_bps_trailing_stop")
     if _rt_loss_median is not None and _rt_configured_distance and _rt_configured_distance > 0:
         record["realized_stop_loss_ratio"] = round(float(_rt_loss_median) / _rt_configured_distance, 4)
@@ -3747,13 +3753,19 @@ def _build_report(
             # als Rohmaterial fuer den Suchbudget-Vorschlag des naechsten Laufs (sweep.py liest
             # diese Sektion aus dem juengsten Report und deprioritisiert die betroffenen Paare).
             "search_budget_proposal": _search_budget_proposal_section(all_checks),
-            # Issue #1071 — Studies, deren atr_median_bps auf dem konfigurierten ATR-Floor ihres
-            # Symbols liegt (siehe invariants.check_atr_scale_homogeneity-Docstring); leer, wenn der
-            # Check PASST oder keine Study floor-gebunden ist.
-            "atr_floor_binding_studies": sorted(
-                (atr_scale_homogeneity_check.provenance or {}).get("atr_floor_binding_studies", [])
-                if atr_scale_homogeneity_check.provenance else []
-            ),
+            # Issue #1071/#1026/#1175 — Studies, deren ROHER (ungefloorter) ATR-Median unter dem
+            # konfigurierten ATR-Floor liegt (siehe invariants.check_atr_scale_homogeneity-
+            # Docstring: ``atr_raw_median_bps < atr_floor_bps_derived``, unabhaengig vom
+            # Spannweiten-Offender-Status des Symbols). ``evaluable=False`` (statt einer stillen
+            # leeren ``studies``-Liste), wenn KEINE Study beide Eingangsfelder traegt — eine leere
+            # Liste war zuvor von "nicht gemessen" nicht unterscheidbar (Akzeptanzkriterium 3).
+            "atr_floor_binding_studies": (
+                lambda _prov: {
+                    "evaluable": bool(_prov.get("atr_floor_binding_evaluable", False)),
+                    "studies": sorted(_prov.get("atr_floor_binding_studies") or []),
+                    "detail": _prov.get("atr_floor_binding_studies_detail") or {},
+                }
+            )(atr_scale_homogeneity_check.provenance or {}),
             # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.

@@ -3970,7 +3970,22 @@ def check_atr_scale_homogeneity(
     Jede Study, die ``atr_floor_bps_derived`` trägt (``report._study_record``, die per-Study
     abgeleitete Grösse), wird GEGEN DIESEN Wert geprüft statt gegen die gröbere, rein
     asset-class-aufgelöste ``atr_floor_bps_by_symbol``-Konstante — ein Rückfall auf Letztere bleibt
-    für Legacy-Aufrufer/-Fixtures ohne das Feld erhalten (rückwärtskompatibel)."""
+    für Legacy-Aufrufer/-Fixtures ohne das Feld erhalten (rückwärtskompatibel).
+
+    Issue #1026/#1175 (Katalog #866-2) — Root-Cause: ``floor_binding_studies`` wurde bislang (a)
+    NUR innerhalb eines bereits OFFENDING Symbols (``ratio > max_ratio``) berechnet — ein Symbol
+    mit NUR EINER Study oder einer Spannweite unter der Schwelle konnte nie als floor-gebunden
+    erscheinen, obwohl die Study selbst floor-gebunden war —, und (b) über einen GLEICHHEITS-
+    Vergleich des EFFEKTIVEN, bereits ratschen-gefloorten ``atr_median_bps`` gegen den Floor
+    (``abs(val - floor) <= tolerance``): der Ratschen-Mechanismus haelt den STUDY-MEDIAN des
+    effektiven ATR haeufig knapp OBERHALB des Floors, selbst wenn der Floor ueber grosse Teile des
+    Fensters band — der Gleichheits-Vergleich sah das folgerichtig nie. Fix: der Wächter fragt
+    stattdessen direkt, ob der Floor GEBUNDEN HÄTTE (``atr_raw_median_bps < atr_floor_bps_derived``,
+    der ROHE, ungefloorte Median gegen den Floor selbst) — unabhängig vom Spannweiten-Offender-
+    Status des Symbols, über JEDE Study mit beiden Feldern. Fehlen beide Felder in JEDER Study
+    (kein Symbol misst ``atr_raw_median_bps``/``atr_floor_bps_derived``) ⇒ ``evaluable=False``
+    statt einer stillen leeren Liste (Tri-State-Mechanik wie #995/#1147) — eine leere Liste war
+    zuvor nicht von "nichts bindet" unterscheidbar."""
     by_symbol: dict[str, list[tuple[str, float, float | None]]] = {}
     for r in study_records:
         atr = r.get("atr_median_bps")
@@ -3979,6 +3994,65 @@ def check_atr_scale_homogeneity(
         if atr and symbol:
             by_symbol.setdefault(symbol, []).append(
                 (strategy, float(atr), r.get("atr_floor_bps_derived")))
+
+    # Issue #1026/#1175 — floor_binding_studies unabhaengig von der Spannweiten-Offender-Schleife
+    # unten: JEDE Study mit einem aufloesbaren Floor wird direkt geprueft. Bevorzugtes Kriterium
+    # (Fix 4.1): ``atr_raw_median_bps < effective_floor`` — der ROHE Median gegen den Floor,
+    # unabhaengig vom Ratschen-Mechanismus, der den EFFEKTIVEN ``atr_median_bps`` haeufig knapp
+    # oberhalb des Floors haelt. Legacy-Rueckfall (kein ``atr_raw_median_bps``, z. B. Pre-#1129-
+    # Reports): der vorherige Gleichheits-Vergleich des EFFEKTIVEN Werts gegen den Floor bleibt
+    # erhalten (rueckwaertskompatibel, bit-identisch zum Pre-#1026-Verhalten fuer solche Records).
+    floor_binding_studies: list[str] = []
+    floor_binding_provenance: dict[str, dict] = {}
+    n_studies_measured = 0
+    for r in study_records:
+        symbol, strategy = r.get("symbol"), r.get("strategy")
+        if not symbol or not strategy:
+            continue
+        derived_floor = r.get("atr_floor_bps_derived")
+        sym_floor = (atr_floor_bps_by_symbol or {}).get(symbol)
+        effective_floor = derived_floor if derived_floor is not None else sym_floor
+        if effective_floor is None:
+            continue
+        label = f"{strategy}/{symbol}"
+        raw = r.get("atr_raw_median_bps")
+        if raw is not None:
+            n_studies_measured += 1
+            if float(raw) < float(effective_floor) - floor_tolerance:
+                floor_binding_studies.append(label)
+                floor_binding_provenance[label] = {
+                    "raw": round(float(raw), 4), "floor": round(float(effective_floor), 4),
+                    "faktor": (round(float(effective_floor) / float(raw), 2) if raw else None),
+                    "stopdistanz_bps": r.get("stop_distance_bps"),
+                    "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
+                    "criterion": "atr_raw_median_bps_below_floor",
+                }
+        else:
+            val = r.get("atr_median_bps")
+            if val is None:
+                continue
+            n_studies_measured += 1
+            if abs(float(val) - float(effective_floor)) <= floor_tolerance:
+                floor_binding_studies.append(label)
+                floor_binding_provenance[label] = {
+                    "floor": round(float(effective_floor), 4), "atr_median_bps": round(float(val), 4),
+                    "stopdistanz_bps": r.get("stop_distance_bps"),
+                    "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
+                    "criterion": "legacy_effective_atr_equals_floor",
+                }
+    # Issue #1026/#1175 Akzeptanzkriterium 3 — ``[]`` allein ist zwischen "gemessen, nichts
+    # bindet" und "nicht gemessen" nicht unterscheidbar; dieses Flag macht die Evaluierbarkeit der
+    # ``atr_floor_binding_studies``-Sektion selbst explizit (unabhaengig vom Spannweiten-
+    # Gesamtergebnis dieses Checks, das eine ANDERE Frage beantwortet), report.py Sektion 5.3
+    # liest es, um zwischen einer leeren Liste und "INCONCLUSIVE" zu unterscheiden.
+    floor_binding_evaluable = n_studies_measured > 0
+    _floor_provenance = {
+        "atr_floor_binding_studies": sorted(set(floor_binding_studies)),
+        "atr_floor_binding_studies_detail": floor_binding_provenance,
+        "atr_floor_binding_evaluable": floor_binding_evaluable,
+        "atr_floor_binding_n_studies_measured": n_studies_measured,
+    }
+
     candidates = {sym: vals for sym, vals in by_symbol.items() if len(vals) >= 2}
     if not candidates:
         return InvariantResult(
@@ -3988,9 +4062,9 @@ def check_atr_scale_homogeneity(
             actual=None,
             detail="Kein Symbol mit >= 2 Strategien-Studies und atr_median_bps — nicht anwendbar.",
             severity="high",
+            provenance=_floor_provenance,
         )
     offenders: dict[str, float] = {}
-    floor_binding_studies: list[str] = []
     for sym, triples in candidates.items():
         vals = [v for _s, v, _f in triples]
         lo, hi = min(vals), max(vals)
@@ -3999,11 +4073,6 @@ def check_atr_scale_homogeneity(
         ratio = hi / lo
         if ratio > max_ratio:
             offenders[sym] = round(ratio, 2)
-            sym_floor = (atr_floor_bps_by_symbol or {}).get(sym)
-            for strategy, val, derived_floor in triples:
-                effective_floor = derived_floor if derived_floor is not None else sym_floor
-                if effective_floor is not None and abs(val - effective_floor) <= floor_tolerance:
-                    floor_binding_studies.append(f"{strategy}/{sym}")
     passed = not offenders
     if not passed and floor_binding_studies:
         mechanism = (
@@ -4022,8 +4091,7 @@ def check_atr_scale_homogeneity(
         expected=f"max(atr_median_bps)/min(atr_median_bps) <= {max_ratio} je Symbol",
         actual=offenders if offenders else None,
         severity="high",
-        provenance=({"atr_floor_binding_studies": sorted(set(floor_binding_studies))}
-                    if floor_binding_studies else None),
+        provenance=_floor_provenance,
         detail=("OK" if passed else
                 f"{len(offenders)} Symbol(e) mit einer ATR-Spannweite über {max_ratio}x zwischen "
                 f"Strategien: {offenders}. {mechanism} (#1028/#1071)"),

@@ -869,6 +869,18 @@ def _section_5_anomalies(report: dict) -> str:
     lines.append(f"- Randlösungen mit Bounds-Vorschlag (#831): {total_boundary}")
     lines.append(f"- Automatisch denylistete Paare (#829/#830): {n_denylisted}")
     lines.append(f"- Budget-deprioritisierte Paare (#830): {n_deprioritized}")
+    # Issue #1026/#1175 (Katalog #866-2) — ATR-Floor-Bindung war bislang NUR im rohen
+    # invariant_checks-Provenance-Blob sichtbar, nicht in der Zusammenfassung selbst.
+    _atr_floor = (report.get("cross_study") or {}).get("atr_floor_binding_studies") or {}
+    if _atr_floor.get("evaluable") is False:
+        lines.append(
+            "- ATR-Floor-gebundene Studies: nicht auswertbar (atr_raw_median_bps/"
+            "atr_floor_bps_derived fehlen in jeder Study, #1026/#1175)")
+    else:
+        _atr_floor_studies = _atr_floor.get("studies") or []
+        lines.append(f"- ATR-Floor-gebundene Studies (#1175): {len(_atr_floor_studies)}")
+        if _atr_floor_studies:
+            lines.append(f"  {', '.join(_atr_floor_studies)}")
     return "\n".join(lines)
 
 
