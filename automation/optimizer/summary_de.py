@@ -601,6 +601,31 @@ def _section_2_monetary_result(report: dict) -> str:
             "#1010/#1162). Eine Kalibrierung mit realen Broker-Sätzen (Kontoauszug/"
             "Gebührenübersicht) ist ausdrücklich NICHT Teil dieses Fixes."
         )
+    # Issue #1029/#1178 (Katalog #866-2) — stop_exit_slippage_bps war in KEINEM Report-Abschnitt
+    # und in KEINER Invariante ausgewiesen, obwohl sie in 14/14 Studies eines Referenzlaufs befuellt
+    # war (Median −12,41 bps, ~19 % des Median-Stop-Verlusts) — die groesste einzelne, gemessene
+    # und bislang ignorierte Ertragsposition. Seitenbereinigt und ADVERS vorzeichenbehaftet (``+``
+    # = advers), siehe backtest_runner.resolve_stop_exit_slippage_bps-Docstring.
+    _slippage_rows = [
+        r for r in studies
+        if r.get("stop_exit_slippage_bps") is not None or r.get("round_trip_cost_bps") is not None
+    ]
+    if _slippage_rows:
+        lines.append("")
+        lines.append(
+            "**Fill-Slippage bei TRAILING_STOP-Exits** (gemessene Ausführungsdifferenz, NICHT "
+            "Teil des obigen Kostenmodells — positiv = advers, d. h. schlechter gefüllt als der "
+            "Stop-Level):"
+        )
+        lines.append("")
+        lines.append("| Strategie | Symbol | c_rt (bps) | Slippage (bps, Median, advers=+) |")
+        lines.append("|---|---|---:|---:|")
+        for r in sorted(_slippage_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('round_trip_cost_bps'), digits=2)} | "
+                f"{_fmt_num(r.get('stop_exit_slippage_bps'), digits=2)} |"
+            )
     return "\n".join(lines)
 
 

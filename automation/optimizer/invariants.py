@@ -6642,6 +6642,104 @@ def check_ineligible_cohort_partition_identity(study_counts: dict) -> InvariantR
     )
 
 
+def check_stop_distance_microstructure_floor(study_records: list[dict]) -> InvariantResult:
+    """Issue #1028/#1177 (Katalog #866-2, Pitfall #427 in AGENTS.md) — der ATR-Floor war bislang
+    REIN kostengekoppelt (``backtest_runner.cost_coupled_atr_floor_bps``, #1096): er garantiert nur
+    ``Stopdistanz >= min_stop_to_cost_ratio · c_rt``, nicht ``Stopdistanz >= eine Median-Bar-
+    Spanne``. Ein Stop INNERHALB der Bar-Spanne ist keine Verlustobergrenze, sondern ein
+    Rausch-Trigger — der realisierte Verlust wird dann von der Bewegung EINER Bar plus Fill-
+    Slippage bestimmt, nicht von der konfigurierten Stopdistanz.
+
+    FAIL (severity ``high`` — diagnostisch, siehe ``report._stamp_atr_floor_bps_derived``-
+    Docstring: die Mikrostruktur-Untergrenze ist additive Report-Telemetrie, noch nicht in die
+    Simulation zurückgespeist), wenn ``stop_distance_bps < bar_range_median_bps`` für eine Study
+    mit beiden Feldern — die tatsächlich SIMULIERTE Stopdistanz lag unter der beobachteten
+    Median-Bar-Spanne. Studies ohne beide Felder werden übersprungen (fail-open auf fehlender
+    Evidenz)."""
+    offenders: dict[str, dict] = {}
+    n_measured = 0
+    for r in study_records:
+        stop_distance = r.get("stop_distance_bps")
+        bar_range = r.get("bar_range_median_bps")
+        if stop_distance is None or bar_range is None:
+            continue
+        n_measured += 1
+        if float(stop_distance) < float(bar_range):
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "stop_distance_bps": round(float(stop_distance), 4),
+                "bar_range_median_bps": round(float(bar_range), 4),
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_stop_distance_microstructure_floor",
+        passed=passed,
+        expected="stop_distance_bps >= bar_range_median_bps je Study",
+        actual=offenders or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} von {n_measured} gemessenen Studies haben eine simulierte "
+                "Stopdistanz UNTER der beobachteten Median-Bar-Spanne — der Stop ist dort ein "
+                "Rausch-Trigger, keine Verlustobergrenze (#1028/#1177, Pitfall #427)."),
+    )
+
+
+def check_stop_exit_slippage_materiality(
+    study_records: list[dict], *, max_fraction: float = 0.25,
+) -> InvariantResult:
+    """Issue #1029/#1178 (Katalog #866-2) — Fill-Slippage bei TRAILING_STOP-Exits erschien bislang
+    in KEINEM Report-Abschnitt und in KEINER Invariante, obwohl sie in einem Referenzlauf in 14/14
+    Studies befüllt war (Median −12,41 bps über alle Studies, rund 19 % des Median-Stop-Verlusts
+    und rund die Hälfte der Median-Stopdistanz) — die grösste einzelne, bereits GEMESSENE und
+    bislang ignorierte Ertragsposition des Laufs.
+
+    FAIL (severity ``high`` — die Slippage selbst ist gemessene Realität, kein Bug; ein FAIL ist
+    ein Aufruf, sie ins Kostenmodell zu überführen, nicht eine Korrektheitsverletzung), wenn
+    ``|median(stop_exit_slippage_bps)| > max_fraction · median(gross_loss_median_bps_trailing_
+    stop)`` (Default ``max_fraction=0.25``) über alle Studies mit beiden Feldern. ``stop_exit_
+    slippage_bps`` ist seit #1029/#1178 seitenbereinigt und ADVERS vorzeichenbehaftet (``+`` =
+    advers), der Betrag wird hier verglichen (das Vorzeichen selbst ist keine Aussage über die
+    Materialität)."""
+    slippages = [
+        abs(float(r["stop_exit_slippage_bps"])) for r in study_records
+        if r.get("stop_exit_slippage_bps") is not None
+    ]
+    losses = [
+        float(r["gross_loss_median_bps_trailing_stop"]) for r in study_records
+        if r.get("gross_loss_median_bps_trailing_stop") is not None
+    ]
+    if not slippages or not losses:
+        return InvariantResult(
+            name="check_stop_exit_slippage_materiality",
+            passed=True,
+            expected=f"|median(stop_exit_slippage_bps)| <= {max_fraction} · "
+                     "median(gross_loss_median_bps_trailing_stop)",
+            actual=None,
+            severity="high",
+            detail="Keine Study mit beiden Feldern — nicht auswertbar.",
+        )
+    median_slippage = statistics.median(slippages)
+    median_loss = statistics.median(losses)
+    threshold = max_fraction * median_loss
+    passed = median_slippage <= threshold
+    return InvariantResult(
+        name="check_stop_exit_slippage_materiality",
+        passed=passed,
+        expected=f"|median(stop_exit_slippage_bps)| <= {max_fraction} · "
+                 "median(gross_loss_median_bps_trailing_stop)",
+        actual=None if passed else {
+            "median_abs_slippage_bps": round(median_slippage, 4),
+            "median_gross_loss_bps_trailing_stop": round(median_loss, 4),
+            "threshold_bps": round(threshold, 4),
+        },
+        severity="high",
+        detail=("OK" if passed else
+                f"Median |Slippage| ({round(median_slippage, 2)} bps) > {max_fraction} × Median "
+                f"Stop-Verlust ({round(median_loss, 2)} bps, Schwelle {round(threshold, 2)} bps) — "
+                "die gemessene Fill-Slippage ist eine materielle, bislang im Kostenmodell "
+                "unberücksichtigte Ertragsposition (#1029/#1178)."),
+    )
+
+
 def check_report_artifact_written(*, run_status: str | None, report_written: bool) -> InvariantResult:
     """Issue #1021/#1196 Fix 4.3 — ein Lauf, der ``run_status='complete'`` meldet, aber keinen
     ``run_<run_id>.json`` geschrieben hat, ist die Verallgemeinerung des Ausgangsbefunds: der

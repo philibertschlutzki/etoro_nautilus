@@ -1228,6 +1228,33 @@ def resolve_slippage_bps(inst_id_str: str,
     return float(slippage_bps_by_asset_class[asset_class_key])
 
 
+def resolve_stop_exit_slippage_bps(closing_price: float | None, trailing_stop_price: float | None,
+                                   *, is_short_close: bool) -> float | None:
+    """Issue #1029/#1178 (Katalog #866-2, Pitfall #422 in AGENTS.md) — seitenbereinigte, als
+    ADVERSE Groesse vorzeichenbehaftete Fill-Slippage eines TRAILING_STOP-Exits (``+`` = advers,
+    ``−`` = guenstiger Fill als der Stop-Level).
+
+    Root-Cause: die urspruengliche Formel (``(fill_px − trailing_stop_price) / trailing_stop_price
+    × 10000``) war NICHT seitenbereinigt. Fuer eine LONG-Position (schliessender SELL) ist ein Fill
+    UNTER dem Stop advers (die Formel liefert dafuer korrekt negativ); fuer eine SHORT-Position
+    (schliessender BUY) ist ein Fill UEBER dem Stop advers, aber dieselbe Formel liefert dafuer
+    POSITIV — LONG- und SHORT-Round-Trips wurden mit ENTGEGENGESETZTEM Vorzeichen fuer denselben
+    oekonomischen Sachverhalt in denselben Median gemischt.
+
+    ``is_short_close=True`` — die schliessende Order ist ein BUY (deckt eine SHORT-Position):
+    advers, wenn ueber dem Stop gefuellt (``+(fill_px − trailing_stop_price)/trailing_stop_price
+    × 10000``). ``is_short_close=False`` — die schliessende Order ist ein SELL (verkauft eine
+    LONG-Position): advers, wenn UNTER dem Stop gefuellt (``+(trailing_stop_price − fill_px)/
+    trailing_stop_price × 10000``, das Vorzeichen der Rohformel gedreht).
+
+    ``None``, wenn ``closing_price`` oder ``trailing_stop_price`` fehlt (kein TRAILING_STOP-Exit
+    oder keine Order-Tag-Telemetrie)."""
+    if closing_price is None or not trailing_stop_price:
+        return None
+    sign = 1.0 if is_short_close else -1.0
+    return sign * (closing_price - trailing_stop_price) / trailing_stop_price * 10_000.0
+
+
 def cost_coupled_atr_floor_bps(base_floor_bps: float, *, atr_trailing_multiplier: float | None,
                                round_trip_cost_bps: float, min_stop_to_cost_ratio: float = 3.0) -> float:
     """Issue #1096 (Katalog #929) Fix Punkt 1 — hebt ``base_floor_bps`` (die asset-class-
@@ -4441,7 +4468,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None,
                                  *, is_data_end_fallback: bool = False,
-                                 closing_price: float | None = None) -> None:
+                                 closing_price: float | None = None,
+                                 is_short_close: bool = False) -> None:
             """Aggregiert die FIFO-Matches EINER zusammenhängenden Position (Position-Open
             → Flat) zu genau einem Round-Trip (Issue #508). Die Round-Trip-PnL ist die Summe
             der Teil-Fill-PnLs (inkl. bereits allokierter Kosten); der Exit-Timestamp ist der
@@ -4468,8 +4496,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             ``ORDER_SUBMIT_TS_NS``/``TRAILING_STOP_PRICE``-Tag der schliessenden Order (nur bei
             TRAILING_STOP gesetzt, siehe ``hourly_strategy_base._execute_market_close``) ergeben
             ``stop_exit_fill_lag_ns`` (Absetzen → Fill, die von ``stop_exit_lag_bars`` — Signal →
-            Absetzen — strukturell NICHT erfasste Latenz) und ``stop_exit_slippage_bps``
-            (vorzeichenbehaftet: ``(fill_px − trailing_stop_price) / trailing_stop_price × 10000``)."""
+            Absetzen — strukturell NICHT erfasste Latenz) und ``stop_exit_slippage_bps`` (Issue
+            #1029/#1178 — seitenbereinigt ueber ``is_short_close``, siehe
+            ``resolve_stop_exit_slippage_bps()``-Modulfunktions-Docstring)."""
             if not matches:
                 return
             rt_pnl = sum(m[0] for m in matches)
@@ -4528,9 +4557,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             stop_exit_fill_lag_ns = (
                 (rt_exit_ts - _submit_ts_ns) if _submit_ts_ns is not None else None)
             _stop_px = None if is_data_end_fallback else meta.get("trailing_stop_price")
-            stop_exit_slippage_bps = (
-                (closing_price - _stop_px) / _stop_px * 10_000.0
-                if (closing_price is not None and _stop_px) else None)
+            # Issue #1029/#1178 — seitenbereinigt, als ADVERSE Groesse vorzeichenbehaftet, siehe
+            # resolve_stop_exit_slippage_bps-Docstring.
+            stop_exit_slippage_bps = resolve_stop_exit_slippage_bps(
+                closing_price, _stop_px, is_short_close=is_short_close)
             rt_exit_meta.append({
                 "exit_reason": "DATA_END" if is_data_end_fallback else meta.get("exit_reason"),
                 "atr_median_bps": meta.get("atr_median_bps"),
@@ -4616,7 +4646,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             sell_queue.popleft()
                     # Short vollständig gedeckt (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not sell_queue and current_rt:
-                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price)
+                        # Issue #1029/#1178 — schliessende Order ist ein BUY (deckt eine SHORT-
+                        # Position) -> is_short_close=True fuer die Slippage-Vorzeichenkonvention.
+                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price,
+                                            is_short_close=True)
                         current_rt = []
                         current_rt_order_ids = []
                     if qty > 0:
@@ -4647,7 +4680,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             buy_queue.popleft()
                     # Long vollständig verkauft (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not buy_queue and current_rt:
-                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price)
+                        # Issue #1029/#1178 — schliessende Order ist ein SELL (verkauft eine LONG-
+                        # Position) -> is_short_close=False (Default) fuer die Slippage-Konvention.
+                        _finalize_round_trip(current_rt, current_rt_order_ids, closing_price=price,
+                                            is_short_close=False)
                         current_rt = []
                         current_rt_order_ids = []
                     if qty > 0:

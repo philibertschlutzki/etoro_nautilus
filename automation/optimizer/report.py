@@ -241,15 +241,29 @@ def _round_trip_cost_bps_by_symbol(symbols: Iterable[str]) -> tuple[dict[str, fl
     return out, errors
 
 
+def _k_min_bar_range_multiple(base_cfg: Path | None = None) -> float:
+    """Issue #1028/#1177 (Katalog #866-2) — ``backtest.json['k_min_bar_range_multiple']``: die
+    Mikrostruktur-Untergrenze fuer den ATR-Floor wird als ``k_min_bar_range_multiple ·
+    bar_range_median_bps`` gebildet (Default 1.0 — die Stopdistanz mindestens eine Median-
+    Bar-Spanne). Fehlt der Key ⇒ 1.0 (rueckwaertskompatibel)."""
+    cfg_dir = base_cfg or config_dir()
+    data = _load_json(cfg_dir / "backtest.json") or {}
+    value = data.get("k_min_bar_range_multiple")
+    return float(value) if value is not None else 1.0
+
+
 def _stamp_atr_floor_bps_derived(
     studies_out: list[dict[str, Any]], *,
     atr_floor_bps_by_symbol: dict[str, float],
     round_trip_cost_bps_by_symbol: dict[str, float],
     min_stop_to_cost_ratio: float,
+    k_min_bar_range_multiple: float | None = None,
 ) -> None:
     """Issue #951/#1117 (Katalog #960) — stempelt ``atr_floor_bps_derived`` (den per Study
     COST-GEKOPPELTEN ATR-Floor, ``backtest_runner.cost_coupled_atr_floor_bps``, #1096 Fix Punkt 1)
-    in JEDEN ``studies_out``-Eintrag, mutiert in place.
+    in JEDEN ``studies_out``-Eintrag, mutiert in place. Dieses Feld bleibt exakt der Floor, der in
+    ``run_single_backtest_worker`` TATSÄCHLICH SIMULIERT wurde — es ändert sich mit diesem Fix
+    NICHT (siehe ``atr_floor_bps_recommended`` unten fuer die diagnostische Erweiterung).
 
     Root-Cause: ``_atr_floor_bps_by_symbol`` (oben) löst NUR die statische, asset-class-aufgelöste
     Konstante auf (``backtest_runner.resolve_atr_floor_bps``) — der tatsächlich SIMULIERTE Floor
@@ -260,24 +274,68 @@ def _stamp_atr_floor_bps_derived(
     Report nur als KONFIGURIERTE Grösse (die Asset-Class-Konstante), nie als die tatsächlich
     ABGELEITETE (Akzeptanzkriterium #951). ``None`` je Study, wenn eine der drei Eingangsgrössen
     (Symbol-Floor, Kostenbasis, ``atr_trailing_multiplier_median``) fehlt — kein Rateergebnis auf
-    unvollständigen Eingaben."""
+    unvollständigen Eingaben.
+
+    Issue #1028/#1177 (Katalog #866-2) — der so gebildete Floor ist REIN kostengekoppelt: er
+    garantiert nur "Stopdistanz >= min_stop_to_cost_ratio · c_rt", nicht "Stopdistanz >= eine
+    Median-Bar-Spanne" — ein Stop innerhalb der Bar-Spanne ist kein Verlustlimit, sondern ein
+    Rausch-Trigger. Eine ZWEITE, unabhängige Untergrenze (Marktmikrostruktur,
+    ``k_min_bar_range_multiple · bar_range_median_bps``, siehe ``_k_min_bar_range_multiple``) wird
+    hier zusätzlich berechnet und als ``atr_floor_bps_microstructure``/``atr_floor_bps_recommended``/
+    ``atr_floor_source`` ausgewiesen — bewusst NUR diagnostisch (additive Report-Telemetrie), NICHT
+    in die tatsächliche Simulation zurückgespeist: ``bar_range_median_bps`` (#1022/#1171) ist ein
+    RETROSPEKTIVER Round-Trip-Aggregat (Median waehrend einer bereits geschlossenen Position), zum
+    Zeitpunkt der Stop-Platzierung eines NEUEN Trials nicht verfügbar — eine live wirksame
+    Mikrostruktur-Untergrenze braucht einen eigenen, VORAUSSCHAUENDEN Bar-Spannen-Schätzer (ein
+    Rolling-Fenster über bereits abgeschlossene Bars), was denselben Risikoklasse-Eingriff in den
+    Kern-ATR-Schätzer/Simulationspfad ist, den #1096 Fix Punkt 2/3 und #1069 Fix Punkte 2-4 bereits
+    bewusst zurückgestellt haben (kein echter Mehrsymbol-Referenzlauf in dieser Sandbox
+    verfügbar, um eine Korrektheitsregression im GESAMTEN ATR-Schätzer auszuschliessen)."""
     try:
         from automation.backtest_runner import cost_coupled_atr_floor_bps
     except Exception:
         for r in studies_out:
             r["atr_floor_bps_derived"] = None
+            r["atr_floor_bps_microstructure"] = None
+            r["atr_floor_bps_recommended"] = None
+            r["atr_floor_source"] = "none"
         return
+    _k_bar_range = (
+        k_min_bar_range_multiple if k_min_bar_range_multiple is not None
+        else _k_min_bar_range_multiple())
     for r in studies_out:
         base_floor = atr_floor_bps_by_symbol.get(r.get("symbol"))
         c_rt = round_trip_cost_bps_by_symbol.get(r.get("symbol"))
+        # Issue #1029/#1178 (Katalog #866-2) — c_rt als erstklassiges Study-Feld, Rohmaterial fuer
+        # Report-Abschnitt 2.4 (stop_exit_slippage_bps NEBEN c_rt, damit ein Leser die Groessenordnung
+        # der gemessenen Slippage gegen die Kostenbasis einordnen kann).
+        r["round_trip_cost_bps"] = c_rt
         k_median = r.get("atr_trailing_multiplier_median")
         if base_floor is None or c_rt is None or k_median is None:
             r["atr_floor_bps_derived"] = None
-            continue
-        r["atr_floor_bps_derived"] = round(cost_coupled_atr_floor_bps(
-            float(base_floor), atr_trailing_multiplier=float(k_median),
-            round_trip_cost_bps=float(c_rt),
-            min_stop_to_cost_ratio=min_stop_to_cost_ratio), 4)
+        else:
+            r["atr_floor_bps_derived"] = round(cost_coupled_atr_floor_bps(
+                float(base_floor), atr_trailing_multiplier=float(k_median),
+                round_trip_cost_bps=float(c_rt),
+                min_stop_to_cost_ratio=min_stop_to_cost_ratio), 4)
+        # Issue #1028/#1177 — Mikrostruktur-Schranke, rein diagnostisch (siehe Docstring oben).
+        _bar_range = r.get("bar_range_median_bps")
+        if _bar_range is not None and k_median:
+            r["atr_floor_bps_microstructure"] = round(
+                _k_bar_range * float(_bar_range) / float(k_median), 4)
+        else:
+            r["atr_floor_bps_microstructure"] = None
+        _cost_floor = r["atr_floor_bps_derived"]
+        _micro_floor = r["atr_floor_bps_microstructure"]
+        if _cost_floor is None and _micro_floor is None:
+            r["atr_floor_bps_recommended"] = None
+            r["atr_floor_source"] = "none"
+        elif _micro_floor is None or (_cost_floor is not None and _cost_floor >= _micro_floor):
+            r["atr_floor_bps_recommended"] = _cost_floor
+            r["atr_floor_source"] = "cost"
+        else:
+            r["atr_floor_bps_recommended"] = _micro_floor
+            r["atr_floor_source"] = "bar_range"
 
 
 def _max_symbol_exposure_fraction(base_cfg: Path | None = None) -> float | None:
@@ -3209,6 +3267,12 @@ def _build_report(
     atr_scale_homogeneity_check = _inv.check_atr_scale_homogeneity(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol)
     all_checks.append(("global", atr_scale_homogeneity_check))
+    # Issue #1028/#1177 (Katalog #866-2) — die Mikrostruktur-Untergrenze ist erst nach #1171
+    # (bar_range_median_bps) messbar; siehe check_stop_distance_microstructure_floor-Docstring.
+    all_checks.append(("global", _inv.check_stop_distance_microstructure_floor(studies_out)))
+    # Issue #1029/#1178 (Katalog #866-2) — dieselbe Kohorte, macht die gemessene Fill-Slippage
+    # materiell sichtbar statt sie stillschweigend zu ignorieren.
+    all_checks.append(("global", _inv.check_stop_exit_slippage_materiality(studies_out)))
 
     # Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter: divergiert das im Backtest
     # konfigurierte trade_amount_pct vom live tatsächlich gefahrenen MomentumLSAllocator-Deckel.
