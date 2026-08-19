@@ -82,6 +82,7 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_alpha": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_beta": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    "oos_alpha_n_periods": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #1038/#1187)",
     "oos_f_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_median, #989/#1143)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden

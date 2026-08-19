@@ -111,12 +111,17 @@ def test_config_defaults_match_issue_proposal():
         assert key in cfg["_schema"]["fields"]
 
 
-# ── run_status='complete_with_blocking_invariants' read-back patch ──────────────────────────────
+# ── run_status='completed_invalid' read-back patch ───────────────────────────────────────────────
 
 def test_run_status_patch_upgrades_complete_with_blocking_fails(tmp_path):
     """Issue #1016 Fix Punkt 2 — die Funktion, die sweep.main() nach generate_sweep_report
-    aufruft: ein geschriebener Report mit >= 1 severity='blocking'-FAIL wird auf
-    'complete_with_blocking_invariants' nachkorrigiert, atomar, im Report-Artefakt selbst."""
+    aufruft: ein geschriebener Report mit >= 1 severity='blocking'-FAIL wird auf 'completed_invalid'
+    nachkorrigiert, atomar, im Report-Artefakt selbst.
+
+    Issue #1037/#1186 — umbenannt von 'complete_with_blocking_invariants' auf 'completed_invalid':
+    derselbe kanonische String, den auch der ANDERE Downgrade-Pfad (Symbol-Loop in sweep.main(),
+    ``run_status == 'aborted_invariant' and symbols_completed >= symbols_planned``) fuer denselben
+    Faktenstand traegt -- vor #1037 divergierten diese beiden Pfade auf zwei verschiedene Strings."""
     report_path = tmp_path / "report.json"
     report_path.write_text(json.dumps({
         "run_status": "complete",
@@ -128,9 +133,8 @@ def test_run_status_patch_upgrades_complete_with_blocking_fails(tmp_path):
 
     new_status = sweep._downgrade_run_status_for_blocking_invariants(report_path)
 
-    assert new_status == "complete_with_blocking_invariants"
-    assert json.loads(report_path.read_text("utf-8"))["run_status"] == (
-        "complete_with_blocking_invariants")
+    assert new_status == "completed_invalid"
+    assert json.loads(report_path.read_text("utf-8"))["run_status"] == "completed_invalid"
 
 
 def test_run_status_patch_leaves_clean_report_unmodified(tmp_path):

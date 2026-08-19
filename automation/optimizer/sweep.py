@@ -3589,12 +3589,14 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # damit invariants.check_cohort_declaration_consistency sie gegen die Report-Scan-Kohorte
         # DIESES finalen Artefakts vergleichen kann.
         _prior_probe_checks = sweep_fail_fast_probe_invariant_checks
-        # Issue #942/#1108 (Katalog #960) — durchgereicht, damit ``_build_report`` daraus (zusammen
-        # mit ``symbols_completed``/``symbols_planned``) die drei orthogonalen Achsen
-        # (``work_completed``/``decision_admissible``/``fail_fast_triggered``) EINMAL, an EINER
-        # Stelle, fuer BEIDE Pfade (regulaerer Abschluss/Abbruch) ableitet — statt ``run_status``
-        # als einzige, ueberladene Wahrheit ueber zwei getrennte Code-Pfade zu setzen.
-        _fail_fast_triggered = sweep_fail_fast_invariant
+        # Issue #942/#1108/#1037 (Katalog #960/#1186) — durchgereicht, damit ``_build_report``
+        # daraus (zusammen mit ``symbols_completed``/``symbols_planned``/``run_status``) die VIER
+        # orthogonalen Achsen (``work_completed``/``decision_admissible``/``work_aborted``/
+        # ``blocking_invariant_triggered``) EINMAL, an EINER Stelle, fuer BEIDE Pfade (regulaerer
+        # Abschluss/Abbruch) ableitet — statt ``run_status`` als einzige, ueberladene Wahrheit ueber
+        # zwei getrennte Code-Pfade zu setzen. Umbenannt von ``_fail_fast_triggered`` (#1037 — der
+        # alte Name behauptete faelschlich einen Abbruch, siehe ``report._build_report``-Docstring).
+        _blocking_invariant_triggered = sweep_fail_fast_invariant
         # Issue #985/#1139 (Katalog #986) — die Preflight-Check-Ergebnisse DIESES Laufs (sofern
         # ``using_real_optimize``), analog ``_prior_probe_checks`` als globales Signal aus
         # ``run_per_symbol_sweep`` durchgereicht.
@@ -3607,7 +3609,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
                 prior_probe_invariant_checks=_prior_probe_checks,
-                fail_fast_triggered=_fail_fast_triggered,
+                blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
             )
         else:
@@ -3623,7 +3625,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
                 prior_probe_invariant_checks=_prior_probe_checks,
-                fail_fast_triggered=_fail_fast_triggered,
+                blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
             )
         _report_written = True
@@ -3870,12 +3872,12 @@ def _sweep_completion_event(run_status: str) -> tuple[str, int]:
 def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
     """Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — liest das gerade geschriebene
     #742-Report-Artefakt zurück und korrigiert dessen ``run_status`` von ``'complete'`` auf
-    ``'complete_with_blocking_invariants'``, sobald mindestens ein ``severity='blocking'``-Check
-    fehlgeschlagen ist ("complete" bei blockierenden FAILs und "complete" bei null FAILs waren
-    zuvor ununterscheidbar — ein Cap ist eine Zensur, ein geteiltes Statuswort ist es analog).
-    Der Patch ist atomar (``write_json_atomic``, dieselbe Garantie wie der Erstschrieb) und
-    fail-open bei jedem Lese-/Parse-Fehler (gibt ``'complete'`` unverändert zurück, non-fatal —
-    ein defektes Report-Artefakt darf den Lauf nicht zusätzlich verschlechtern).
+    ``'completed_invalid'``, sobald mindestens ein ``severity='blocking'``-Check fehlgeschlagen ist
+    ("complete" bei blockierenden FAILs und "complete" bei null FAILs waren zuvor ununterscheidbar
+    — ein Cap ist eine Zensur, ein geteiltes Statuswort ist es analog). Der Patch ist atomar
+    (``write_json_atomic``, dieselbe Garantie wie der Erstschrieb) und fail-open bei jedem Lese-/
+    Parse-Fehler (gibt ``'complete'`` unverändert zurück, non-fatal — ein defektes Report-Artefakt
+    darf den Lauf nicht zusätzlich verschlechtern).
 
     Rückgabe: der (ggf. korrigierte) ``run_status``-String, den der Aufrufer als neue Wahrheit
     übernimmt.
@@ -3885,7 +3887,16 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
     ``invariant_checks``-Liste abgeleitet, die diese Funktion hier erneut liest) — beide Werte
     sind IMMER konsistent (dieselbe Quelle), diese Funktion bleibt fuer die Rueckwaertskompatibilitaet
     des ``run_status``-Strings bestehen, ist aber NICHT mehr die kanonische Wahrheit ueber
-    Zulaessigkeit; das ist seither ``decision_admissible``."""
+    Zulaessigkeit; das ist seither ``decision_admissible``.
+
+    Issue #1037/#1186 (Katalog #1186, Akzeptanzkriterium 1) — Root-Cause: diese Funktion schrieb
+    bislang ``'complete_with_blocking_invariants'``, waehrend der ANDERE Downgrade-Pfad weiter oben
+    im Symbol-Loop (``run_status == 'aborted_invariant' and symbols_completed >= symbols_planned``)
+    fuer denselben Faktenstand (vollstaendige Abdeckung, blockierende Invariante, kein echter
+    Abbruch) bereits ``'completed_invalid'`` schrieb — ZWEI verschiedene Strings fuer dieselbe
+    Zelle der Ableitungstabelle (siehe ``report._build_report``-Docstring). Diese Funktion schreibt
+    seither DENSELBEN kanonischen String wie jener Pfad — ``'complete_with_blocking_invariants'``
+    wird nicht mehr erzeugt."""
     try:
         written_report = json.loads(Path(report_path).read_text("utf-8"))
         blocking_fails = [
@@ -3894,13 +3905,13 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
         ]
         if not blocking_fails:
             return "complete"
-        run_status = "complete_with_blocking_invariants"
+        run_status = "completed_invalid"
         written_report["run_status"] = run_status
         write_json_atomic(report_path, written_report)
         logging.getLogger("optimizer").warning(
-            "[#1016] %d blockierende Invarianten-FAIL(s) (%s) — run_status auf "
-            "'complete_with_blocking_invariants' korrigiert (kein Lauf mit blockierenden FAILs "
-            "darf als 'complete' erscheinen).", len(blocking_fails),
+            "[#1016/#1037] %d blockierende Invarianten-FAIL(s) (%s) — run_status auf "
+            "'completed_invalid' korrigiert (kein Lauf mit blockierenden FAILs darf als "
+            "'complete' erscheinen).", len(blocking_fails),
             ", ".join(sorted({c.get("name") or c.get("check") for c in blocking_fails})),
         )
         return run_status

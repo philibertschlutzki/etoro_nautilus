@@ -47,7 +47,10 @@ def test_actual_always_carries_all_measured_ratios_even_when_passing():
     records = [_record("S", "X", atr_bps=20.0, k=2.0, loss_bps=16.0)]  # ratio == 0.4 (min bound)
     result = inv.check_effective_stop_distance(records)
     assert result.passed is True
-    assert result.actual == {"S/X": {"ratio_median": 0.4, "ratio_pooled_mean": 0.4}}
+    # Issue #1042/#1191 — umbenannt von ``ratio_pooled_mean`` (Namenskollision mit report.py's
+    # ``realized_stop_loss_ratio_mean_per_trial``, siehe dortiger Feldkommentar).
+    assert result.actual == {
+        "S/X": {"ratio_median": 0.4, "realized_stop_loss_ratio_mean_pooled": 0.4}}
 
 
 def test_low_ratio_still_fails_as_before():

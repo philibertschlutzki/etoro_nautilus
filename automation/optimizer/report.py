@@ -1841,6 +1841,28 @@ def _study_record(proposal: dict, study,
             abs(holdout_metrics["oos_alpha_tstat"]) < 1.0
             if holdout_metrics.get("oos_alpha_tstat") is not None else None
         ),
+        # Issue #1038/#1187 (Katalog #1187) — ``holdout_alpha`` (Grössenordnung 1e-6/Bar) ist in
+        # jeder lesbaren Nachkommastellenzahl faktisch immer "0.00000" — die ökonomisch
+        # aussagekräftige Grösse ist das KUMULIERTE Holdout-Alpha ``α·n`` über das gesamte Fenster
+        # (n = ``holdout_alpha_n_periods``, dieselbe Regressions-Stichprobengrösse). Beide additiv
+        # verknüpft mit β: ``α·n + β·Σ(Benchmark-Log-Returns) == Σ(Strategie-Log-Returns)`` (die
+        # OLS-Normalgleichung selbst — kein Rundungsfehler ausser Gleitkomma-Präzision).
+        # ``holdout_alpha_times_n_pct`` folgt derselben linearen ln(1+r)≈r-Näherung, die auch die
+        # übrigen Prozent-Spalten dieses Berichts verwenden (Größenordnung < 5 %, siehe Issue-
+        # Referenzwerte −1,450 % … +0,449 %) — kein zweites, inkonsistentes Rundungsschema.
+        "holdout_alpha_n_periods": holdout_metrics.get("oos_alpha_n_periods"),
+        "holdout_alpha_times_n_pct": (
+            holdout_metrics["oos_alpha"] * holdout_metrics["oos_alpha_n_periods"] * 100.0
+            if (holdout_metrics.get("oos_alpha") is not None
+                and holdout_metrics.get("oos_alpha_n_periods") is not None)
+            else None
+        ),
+        # Issue #1038/#1187 Fix — α selbst zusätzlich in bps je Bar (1e-6 → 0.01 bps, lesbar statt
+        # einer scheinbaren Null).
+        "holdout_alpha_bps_per_bar": (
+            holdout_metrics["oos_alpha"] * 10000.0
+            if holdout_metrics.get("oos_alpha") is not None else None
+        ),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
         # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — WELCHER Parameter (und in welche
         # Richtung) die Randlösung dominiert, siehe confirm.confirm_per_symbol_promotion. ``None``
@@ -1904,9 +1926,22 @@ def _study_record(proposal: dict, study,
     # Issue #972/#1126 (Pitfall #405 in AGENTS.md) — ``gross_loss_mean_bps_trailing_stop`` ist ein
     # UNGESCHUETZTES arithmetisches Mittel. ``realized_stop_loss_ratio`` ist seit diesem Fix die
     # MEDIAN-Variante (robust gegen Ausreisser); der vormalige Mittelwert-Quotient bleibt additiv
-    # als ``realized_stop_loss_ratio_mean`` erhalten (Zero-Regression fuer bestehende Konsumenten,
-    # die explizit den Mittelwert wollen). ``None``, wenn eine der drei Eingangsgrössen fehlt oder
-    # die konfigurierte Distanz <= 0 ist (kein Urteil auf einer undefinierten Zahl).
+    # als ``realized_stop_loss_ratio_mean_per_trial`` erhalten (Zero-Regression fuer bestehende
+    # Konsumenten, die explizit den Mittelwert wollen). ``None``, wenn eine der drei Eingangsgrössen
+    # fehlt oder die konfigurierte Distanz <= 0 ist (kein Urteil auf einer undefinierten Zahl).
+    #
+    # Issue #1042/#1191 (Katalog #1191) — umbenannt von ``realized_stop_loss_ratio_mean``: dieses
+    # Feld quotientiert ``oos_gross_loss_mean_bps_trailing_stop`` — den MEDIAN der PER-TRIAL-Mittel
+    # (jeder Trial mittelt zuerst SEINE eigenen Verlust-Round-Trips, dann Median ueber die Trials
+    # dieser Study). Die Invarianten-Nutzlast ``check_effective_stop_distance``s
+    # ``realized_stop_loss_ratio_mean_pooled`` (siehe dortiger Docstring) quotientiert dagegen
+    # ``oos_gross_loss_mean_bps_trailing_stop_pooled`` — einen EINZIGEN, trade-gewichteten
+    # gepoolten Mittelwert ueber ALLE Trades der Study. Beide hiessen zuvor fast identisch
+    # (``realized_stop_loss_ratio_mean`` vs. ``ratio_pooled_mean``) und unterschieden sich um bis
+    # zu 0,63 (Issue-Referenzwert: DynamicBreakout 14,6036 vs. 13,9747) — derselbe #1005/#1157-
+    # Namenskollisions-Fehlerklasse (zwei GETRENNTE Aggregationen unter kaum unterscheidbaren
+    # Namen). Der Suffix ``_per_trial`` macht die tatsaechliche Aggregationsebene DIESES Feldes
+    # jetzt Teil seines Namens.
     _rt_atr = record.get("atr_median_bps")
     _rt_k = record.get("atr_trailing_multiplier_median")
     _rt_configured_distance = (
@@ -1925,16 +1960,17 @@ def _study_record(proposal: dict, study,
         record["realized_stop_loss_ratio"] = None
     _rt_loss_mean = record.get("oos_gross_loss_mean_bps_trailing_stop")
     if _rt_loss_mean is not None and _rt_configured_distance and _rt_configured_distance > 0:
-        record["realized_stop_loss_ratio_mean"] = round(float(_rt_loss_mean) / _rt_configured_distance, 4)
+        record["realized_stop_loss_ratio_mean_per_trial"] = round(
+            float(_rt_loss_mean) / _rt_configured_distance, 4)
     else:
-        record["realized_stop_loss_ratio_mean"] = None
+        record["realized_stop_loss_ratio_mean_per_trial"] = None
     # Issue #972/#1126 Akzeptanzkriterium 3 — relative Abweichung Mittel<->Median; > 0,5 markiert die
     # Study explizit als ausreissergetrieben (der Mittelwert wird durch wenige extreme Trades
     # dominiert, statt die typische Beobachtung wiederzugeben).
     if (record["realized_stop_loss_ratio"] not in (None, 0)
-            and record["realized_stop_loss_ratio_mean"] is not None):
+            and record["realized_stop_loss_ratio_mean_per_trial"] is not None):
         _rel_dev = round(
-            abs(record["realized_stop_loss_ratio_mean"] - record["realized_stop_loss_ratio"])
+            abs(record["realized_stop_loss_ratio_mean_per_trial"] - record["realized_stop_loss_ratio"])
             / abs(record["realized_stop_loss_ratio"]), 4)
         record["realized_stop_loss_ratio_mean_median_rel_dev"] = _rel_dev
         record["realized_stop_loss_ratio_outlier_driven"] = _rel_dev > 0.5
@@ -1989,33 +2025,84 @@ def _diagnosed_pairs_section() -> list[dict[str, Any]]:
     ]
 
 
-def _boundary_solutions_section() -> list[dict[str, Any]]:
-    """Issue #831 Fix Punkt 4 — Randlösungen (``binding_cause == 'boundary_solution'``, aus
-    ``confirm.py``/``run_optimization._emit_study_summary``, beide seit #831) als eigene
-    Report-Sektion: ``{strategy, symbol, fraction, params, proposed_bounds}`` je Study, deren
-    Gewinner an der Suchraumgrenze klebt (``boundary_hit_fraction > 0.3``, #597/#763)."""
-    return [
-        {
-            "strategy": e.get("strategy"), "symbol": e.get("symbol"),
-            "fraction": e.get("boundary_hit_fraction"),
-            "params": e.get("boundary_params"),
-            "proposed_bounds": e.get("proposed_bounds"),
-            # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — derselbe klemmende Parameter wie
-            # im Study-Record (siehe _study_record), hier zusaetzlich neben dem Bounds-Vorschlag.
-            "boundary_parameter": e.get("boundary_parameter"),
-            "boundary_side": e.get("boundary_side"),
-            # Issue #958/#1124 (Katalog #960) — die volle, benannte Evidenz je klemmendem
-            # Parameter ({sampled_value, active_bounds, default_bounds, distance_to_edge}, siehe
-            # run_optimization._boundary_veto_evidence-Docstring).
-            "boundary_veto_evidence": e.get("boundary_veto_evidence"),
-            # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — wie oft dieser Parameter bereits
-            # nachgeweitet wurde (sweep_diagnostics.record_diagnosed_pair), damit im Report
-            # nachvollziehbar ist, wie nah ein Kandidat an der Weitungs-Sperre
-            # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) steht.
-            "widen_applications": e.get("widen_applications") or {},
-        }
+# Issue #1039/#1188 (Katalog #1188) — dieselbe Schwelle wie confirm.py's ``boundary_overfit``
+# (``#622``: ``boundary_frac > 0.3``), jetzt auch als benannte Konstante hier, wo sie die
+# Study-Records-Ableitung von ``boundary_solutions`` speist.
+_BOUNDARY_SOLUTION_FRACTION_THRESHOLD = 0.3
+
+
+def _boundary_solutions_section(studies_out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Issue #831 Fix Punkt 4 — Randlösungen als eigene Report-Sektion: ``{strategy, symbol,
+    fraction, params, proposed_bounds, ...}`` je Study, deren Gewinner an der Suchraumgrenze klebt.
+
+    Issue #1039/#1188 (Katalog #1188) — Root-Cause: diese Sektion wurde AUSSCHLIESSLICH aus dem
+    #761-Diagnose-Cache (``_diagnosed_pairs_all()``, ``binding_cause == 'boundary_solution'``)
+    gespeist — einem SEPARATEN Pfad, der nur schreibt, wenn ``diagnostic_writeback_enabled=True``
+    ist (seit #1090 standardmässig ``False`` in der ausgelieferten ``optimizer.json``). Drei
+    Studies trugen im Referenzlauf ``winner_outside_default_bounds_after_override``/neun trugen
+    ``boundary_hit_fraction > 0`` in ihren EIGENEN Study-Records — aber der Diagnose-Cache blieb
+    leer, ``boundary_solutions == []`` widersprach den Study-Feldern DESSELBEN Reports, ohne dass
+    der Widerspruch auffiel. Fix: die Menge wird jetzt PRIMÄR aus den bereits gebauten
+    ``studies_out``-Records abgeleitet (``winner_outside_default_bounds_after_override`` gesetzt
+    ODER ``boundary_hit_fraction > 0.3``) — dieselbe Quelle wie jedes andere Study-Feld, IMMER
+    konsistent mit ihnen. Der Diagnose-Cache bleibt als ZUSÄTZLICHE Anreicherung erhalten
+    (``proposed_bounds``/``widen_applications``, die NUR dort existieren, wenn Writeback lief) —
+    per (strategy, symbol) gemerged, fehlt aber nicht mehr GANZ, nur weil der Cache leer ist.
+    ``studies_out=None`` (Legacy-Aufrufer) ⇒ bit-identisch zum Pre-#1039-Verhalten (nur
+    Diagnose-Cache)."""
+    diagnosed_by_key = {
+        (e.get("strategy"), e.get("symbol")): e
         for e in _diagnosed_pairs_all() if e.get("binding_cause") == "boundary_solution"
-    ]
+    }
+    if studies_out is None:
+        return [
+            {
+                "strategy": e.get("strategy"), "symbol": e.get("symbol"),
+                "fraction": e.get("boundary_hit_fraction"),
+                "params": e.get("boundary_params"),
+                "proposed_bounds": e.get("proposed_bounds"),
+                "boundary_parameter": e.get("boundary_parameter"),
+                "boundary_side": e.get("boundary_side"),
+                "boundary_veto_evidence": e.get("boundary_veto_evidence"),
+                "widen_applications": e.get("widen_applications") or {},
+            }
+            for e in diagnosed_by_key.values()
+        ]
+    out: list[dict[str, Any]] = []
+    for r in studies_out:
+        frac = r.get("boundary_hit_fraction")
+        has_strict_override = bool(r.get("winner_outside_default_bounds_after_override"))
+        if not (has_strict_override
+                or (frac is not None and frac > _BOUNDARY_SOLUTION_FRACTION_THRESHOLD)):
+            continue
+        cache_entry = diagnosed_by_key.get((r.get("strategy"), r.get("symbol"))) or {}
+        out.append({
+            "strategy": r.get("strategy"), "symbol": r.get("symbol"),
+            "fraction": frac,
+            # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — derselbe klemmende Parameter wie
+            # im Study-Record; faellt auf den Diagnose-Cache-Eintrag zurueck, falls die Study-
+            # Felder (aeltere Artefakte) den Parameter selbst nicht trugen.
+            "boundary_parameter": r.get("boundary_parameter") or cache_entry.get("boundary_parameter"),
+            "boundary_side": r.get("boundary_side") or cache_entry.get("boundary_side"),
+            # Issue #958/#1124 (Katalog #960) — die volle, benannte Evidenz je klemmendem
+            # Parameter, primär aus dem Study-Record selbst (immer verfügbar, sobald das Veto
+            # feuerte), sonst aus dem Diagnose-Cache.
+            "boundary_veto_evidence": (
+                r.get("boundary_veto_evidence") or cache_entry.get("boundary_veto_evidence")),
+            # Issue #1067 — der strikte Bounds-Bruch (falls vorhanden) direkt in dieser Sektion
+            # sichtbar, nicht nur im Study-Record selbst.
+            "winner_outside_default_bounds_after_override": (
+                r.get("winner_outside_default_bounds_after_override")),
+            # Diese beiden Felder existieren AUSSCHLIESSLICH im #761-Diagnose-Cache (ein
+            # konkreter, geweiteter Bounds-VORSCHLAG ist kein Study-Messwert) — None/leer, wenn
+            # Writeback fuer dieses Paar (noch) nicht lief.
+            "params": cache_entry.get("boundary_params"),
+            "proposed_bounds": cache_entry.get("proposed_bounds"),
+            # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — wie oft dieser Parameter bereits
+            # nachgeweitet wurde.
+            "widen_applications": cache_entry.get("widen_applications") or {},
+        })
+    return out
 
 
 def _search_budget_proposal_section(
@@ -2612,6 +2699,18 @@ def _compute_work_completed(
     return symbols_completed >= symbols_planned
 
 
+def _compute_work_aborted(run_status: str) -> bool:
+    """Issue #1037/#1186 (Katalog #1186) — die DRITTE orthogonale Achse: ``True`` genau dann, wenn
+    ``run_status`` einen echten Arbeitsabbruch beschreibt. Dieselbe, bereits etablierte Definition
+    wie ``sweep._sweep_completion_event`` ("jeder ``run_status``, der mit ``'aborted_'`` beginnt")
+    — EINE Quelle statt einer zweiten, potenziell abweichenden Kopie dieser Regel. Ersetzt das
+    vorherige ``fail_fast_triggered``-Feld, dessen NAME faelschlich "ein Abbruch geschah" suggerierte,
+    obwohl es lediglich benannte, DASS eine blockierende Invariante gefailt hat — unabhaengig davon,
+    ob der Lauf deswegen abbrach (Root-Cause #1037: ``fail_fast_triggered='check_x'`` UND
+    ``run_status='completed_invalid'`` — also VOLLSTAENDIG, kein Abbruch — traten gemeinsam auf)."""
+    return run_status.startswith("aborted_")
+
+
 def _as_naive_utc(dt: datetime | None) -> datetime | None:
     """Issue #1021/#1196 — normalisiert ein tz-aware oder naives ``datetime`` auf naive UTC, damit
     Optuna-Trial-Zeitstempel (naiv) und aus ``started_at_utc``/``wallclock_s`` abgeleitete
@@ -2672,20 +2771,68 @@ def _build_report(
     symbols_gate1_rejected: int | None = None,
     report_source: str = "final",
     prior_probe_invariant_checks: list[dict] | None = None,
-    fail_fast_triggered: str | None = None,
+    blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
 ) -> dict:
-    # Issue #942/#1108 (Katalog #960) — ``fail_fast_triggered`` (der Name der Fail-Fast-Invariante,
-    # die den Sweep abgebrochen hat, oder ``None``) treibt ZUSAMMEN mit den unten berechneten
-    # ``work_completed``/``decision_admissible`` die drei orthogonalen Achsen, die den bisher
-    # ueberladenen ``run_status``-String ersetzen (siehe dortige Feld-Docstrings unten). Root-Cause
-    # #1108: derselbe Faktenstand (14/14 Studies, volles Budget, Fail-Fast-Abbruch NACH Abschluss
-    # der Arbeit) ergab je nach Report-Erzeugungspfad ZWEI verschiedene ``run_status``-Werte
-    # (``completed_invalid`` vs. ``aborted_invariant``, LETZTERER faelschlich als "echter
-    # Arbeitsabbruch" gelesen) — die drei neuen Felder werden HIER, EINMAL, aus derselben Quelle
-    # (den bereits berechneten ``invariant_checks`` plus den durchgereichten Symbol-Zaehlern)
+    # Issue #942/#1108 (Katalog #960) — ``blocking_invariant_triggered`` (der Name der
+    # Fail-Fast-Invariante, die eine LIVE In-Prozess-Probe waehrend des Sweeps ausloeste, oder
+    # ``None``) treibt ZUSAMMEN mit den unten berechneten ``work_completed``/``decision_admissible``/
+    # ``work_aborted`` die VIER orthogonalen Achsen, die den bisher ueberladenen ``run_status``-
+    # String ergaenzen (siehe dortige Feld-Docstrings unten). Root-Cause #1108: derselbe Faktenstand
+    # (14/14 Studies, volles Budget, Fail-Fast-Abbruch NACH Abschluss der Arbeit) ergab je nach
+    # Report-Erzeugungspfad ZWEI verschiedene ``run_status``-Werte (``completed_invalid`` vs.
+    # ``aborted_invariant``, LETZTERER faelschlich als "echter Arbeitsabbruch" gelesen) — die vier
+    # neuen Felder werden HIER, EINMAL, aus derselben Quelle (den bereits berechneten
+    # ``invariant_checks`` plus den durchgereichten Symbol-Zaehlern plus ``run_status`` selbst)
     # abgeleitet, unabhaengig davon, welcher Pfad (regulaerer Abschluss oder Abbruch-Exception)
     # ``_build_report`` letztlich aufruft.
+    #
+    # Issue #1037/#1186 (Katalog #1186) — Root-Cause der VORHERIGEN Version dieses Feldes
+    # (``fail_fast_triggered``): der NAME selbst behauptete "ein Fail-Fast-ABBRUCH geschah", obwohl
+    # das Feld lediglich den Namen einer gefailten blockierenden Invariante trug — VOELLIG
+    # unabhaengig davon, ob der Lauf deswegen tatsaechlich abbrach (``sweep.py``s Fail-Fast-Probe
+    # kann NACH vollstaendiger Abarbeitung aller geplanten Symbole feuern, siehe #1065-Kommentar in
+    # ``sweep.py``). Umbenannt auf ``blocking_invariant_triggered`` (kein "fail_fast" mehr im Namen)
+    # — Akzeptanzkriterium #1037/2 ist damit STRUKTURELL erfuellt: kein Feldname mit "fail_fast"
+    # existiert mehr im Report, der ohne echten Abbruch (``work_aborted``) gesetzt sein koennte.
+    #
+    # ``run_status``-Ableitungstabelle (Akzeptanzkriterium #1037/1 — zwei Laeufe mit identischem
+    # ``(work_completed, decision_admissible, work_aborted)`` tragen denselben ``run_status``):
+    #
+    #   work_completed | decision_admissible | work_aborted | run_status
+    #   ---------------|----------------------|--------------|----------------------------------
+    #   True            True                  False          'complete' (oder eine der rein
+    #                                                          INFORMATIVEN, nicht-widerspruechlichen
+    #                                                          Sub-Varianten 'completed_with_
+    #                                                          quarantine'/'completed_with_failures'/
+    #                                                          'resumed_complete' — sie behaupten
+    #                                                          KEINEN Abbruch und KEINE Inadmissibilitaet,
+    #                                                          nur eine abweichende Teilkohorte/einen
+    #                                                          fortgesetzten Lauf)
+    #   True            False                 False          'completed_invalid' (KANONISCH — die
+    #                                                          EINZIGE Zeichenkette fuer diese Zelle;
+    #                                                          vor #1037 divergierten hier zwei
+    #                                                          unabhaengige Code-Pfade in
+    #                                                          ``sweep.py`` auf 'completed_invalid'
+    #                                                          vs. 'complete_with_blocking_
+    #                                                          invariants' fuer denselben Faktenstand)
+    #   False           beliebig              True           'aborted_disk'/'aborted_wallclock'/
+    #                                                          'aborted_signal'/'aborted_error'/
+    #                                                          'aborted_invariant' (die SPEZIFISCHE
+    #                                                          Abbruch-Ursache bleibt ein eigenes,
+    #                                                          vom Aufrufer gesetztes Feld — die drei
+    #                                                          booleschen Achsen KONSTRAIEREN
+    #                                                          run_status, ersetzen aber nicht dessen
+    #                                                          feinere Forensik-Aufloesung, siehe
+    #                                                          ``_compute_work_aborted``)
+    #   False           beliebig              False          unerreichbar in der Praxis (ein Lauf,
+    #                                                          der nicht alle Symbole abschloss, OHNE
+    #                                                          eine 'aborted_*'-Ursache zu tragen, hat
+    #                                                          keinen definierten run_status-Wert in
+    #                                                          diesem System)
+    #
+    # ``work_completed is None`` (Symbol-Zaehler unbekannt) faellt auf den rohen ``run_status``-
+    # String zurueck (Legacy-Verhalten, siehe ``summary_de._run_status_label_de``).
     # Issue #1083 (Katalog #866-2, Kohorte "Stufe 1 Ergänzung", Pitfall #379) — ``_build_report``
     # wird pro Lauf an MEHREREN Call-Sites erneut ausgewertet (Symbol-Fortschritts-Probe,
     # Zwischenreport-Schreiber, Fail-Fast-Probe, finaler Artefakt-Schreiber, siehe ``sweep.py``).
@@ -3665,6 +3812,44 @@ def _build_report(
                 "report_source": report_source,
             }, level=logging.ERROR)
 
+    # Issue #942/#1108/#1037 (Katalog #960/#1186) — zwei der VIER orthogonalen Achsen VORAB
+    # berechnet (haengen nur an Funktionsparametern, nicht an ``invariant_checks``), damit der
+    # #1037-Regressionswaechter direkt darauf noch VOR der #1015/#1167-Abdeckungspruefung unten in
+    # den Strom aufgenommen werden kann (die Abdeckungspruefung braucht den FINALEN Stand, siehe
+    # dortiger Kommentar — ``_decision_admissible`` bleibt bewusst NACH ihr, damit sie auch die
+    # Abdeckungspruefung selbst mitzaehlt, wie zuvor).
+    _work_completed = _compute_work_completed(symbols_completed, symbols_planned)
+    _work_aborted = _compute_work_aborted(run_status)
+    # Issue #1037/#1186 (Katalog #1186, Akzeptanzkriterium 1/2) — permanenter Regressionswaechter
+    # auf den gerade berechneten Achsen selbst (medium, rein diagnostisch — beeinflusst
+    # ``_decision_admissible`` nicht, das erst weiter unten aus dem finalen ``invariant_checks``-
+    # Stand abgeleitet wird).
+    _axes_coherence_check = _inv.check_run_status_axes_coherence({
+        "work_completed": _work_completed, "work_aborted": _work_aborted, "run_status": run_status,
+    })
+    _axes_coherence_dict = _axes_coherence_check.to_dict()
+    _axes_coherence_dict["scope"] = "global"
+    _axes_coherence_dict["source"] = "report"
+    invariant_checks.append(_axes_coherence_dict)
+
+    # Issue #1040/#1189 (Katalog #1189) — lazy importiert (dieselbe Konvention wie die einzige
+    # bisherige bounds.py-Aufrufstelle in dieser Datei, ``_boundary_hit_analysis``-Nachbarschaft in
+    # confirm.py): ``bounds.py`` importiert ``spaces.py``, das seinerseits ``sweep_diagnostics``
+    # lazy laedt — ein Modul-Top-Level-Import wuerde diese Kette unnoetig frueh aufloesen.
+    from automation.optimizer.bounds import active_bounds_overrides as _active_bounds_overrides_fn
+    _active_bounds_overrides_list = _active_bounds_overrides_fn()
+
+    # Issue #1039/#1188 (Katalog #1188) — einmal berechnet (statt zweimal wie zuvor implizit
+    # angenommen), damit die Sektion selbst UND die Regressions-Gegenprobe garantiert dieselbe
+    # Liste sehen.
+    _boundary_solutions_list = _boundary_solutions_section(studies_out)
+    _boundary_solutions_check = _inv.check_boundary_solutions_matches_study_records(
+        _boundary_solutions_list, studies_out)
+    _boundary_solutions_dict = _boundary_solutions_check.to_dict()
+    _boundary_solutions_dict["scope"] = "global"
+    _boundary_solutions_dict["source"] = "report"
+    invariant_checks.append(_boundary_solutions_dict)
+
     # Issue #1015/#1167 (Katalog #1170) — die neue Meta-Invariante selbst: erschien jede definierte
     # check_*-Funktion im soeben zusammengefuehrten Strom oder auf der Allowlist? Muss NACH JEDEM
     # Merge oben stehen (braucht den finalen ``invariant_checks``-Stand), daher direkt angehaengt
@@ -3686,11 +3871,10 @@ def _build_report(
             "detail": invariant_coverage_check.detail, "report_source": report_source,
         }, level=logging.ERROR)
 
-    # Issue #942/#1108 (Katalog #960) — die drei orthogonalen Achsen, EINMAL hier aus der bereits
-    # vorliegenden Wahrheit abgeleitet (dieselbe Quelle fuer JEDEN Aufrufer/Pfad, siehe Docstring
-    # oben): kein zweites, unabhaengig gesetztes Statuswort mehr.
+    # Issue #942/#1108 (Katalog #960) — die dritte orthogonale Achse: ``decision_admissible`` wird
+    # ABSICHTLICH ERST HIER, NACH der obigen Abdeckungspruefung, aus dem finalen ``invariant_checks``-
+    # Stand abgeleitet (dieselbe Reihenfolge wie vor #1037 — unveraendert).
     _decision_admissible = _compute_decision_admissible(invariant_checks)
-    _work_completed = _compute_work_completed(symbols_completed, symbols_planned)
 
     report = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
@@ -3718,23 +3902,38 @@ def _build_report(
         # einer unvollstaendigen studies[]-Liste erschlossen werden zu muessen. Default 'complete'
         # (bit-identisch fuer jeden Aufrufer, der die drei neuen Kwargs nicht setzt).
         "run_status": run_status,
-        # Issue #942/#1108 (Katalog #960) — die drei orthogonalen Achsen, die ``run_status`` (oben,
-        # aus Rueckwaertskompatibilitaetsgruenden UNVERAENDERT erhalten) NICHT eindeutig genug
-        # ausdrueckt:
-        #   work_completed      — alle geplanten Symbole tatsaechlich abgeschlossen (None = unbekannt,
-        #                          weder Checkpoint noch In-Prozess-Spiegel verfuegbar).
-        #   decision_admissible — keine ``severity='blocking'``-Invariante FAILt in diesem Report.
-        #   fail_fast_triggered — Name der Fail-Fast-Invariante, die den Sweep abgebrochen hat, oder
-        #                          None (kein Fail-Fast-Abbruch in diesem Lauf).
+        # Issue #942/#1108/#1037 (Katalog #960/#1186) — die VIER orthogonalen Achsen, die
+        # ``run_status`` (oben, aus Rueckwaertskompatibilitaetsgruenden UNVERAENDERT erhalten) NICHT
+        # eindeutig genug ausdrueckt:
+        #   work_completed             — alle geplanten Symbole tatsaechlich abgeschlossen (None =
+        #                                 unbekannt, weder Checkpoint noch In-Prozess-Spiegel
+        #                                 verfuegbar).
+        #   decision_admissible        — keine ``severity='blocking'``-Invariante FAILt in diesem
+        #                                 Report.
+        #   work_aborted               — ``run_status`` beschreibt einen ECHTEN Arbeitsabbruch
+        #                                 (``_compute_work_aborted``, #1037). Ersetzt das Missver-
+        #                                 staendnis, das der VORHERIGE Feldname ``fail_fast_
+        #                                 triggered`` nahelegte ("etwas wurde abgebrochen") — DIESES
+        #                                 Feld ist die tatsaechliche, unbedingt korrekte Antwort auf
+        #                                 genau diese Frage.
+        #   blocking_invariant_triggered — Name der blockierenden Invariante, deren LIVE In-Prozess-
+        #                                 Fail-Fast-Probe waehrend des Sweeps feuerte, oder ``None``.
+        #                                 Kann gesetzt sein, OHNE dass ``work_aborted`` wahr ist (die
+        #                                 Probe kann NACH vollstaendiger Symbol-Abarbeitung feuern) —
+        #                                 das war die #1037-Root-Cause des alten Feldnamens.
         # Root-Cause #1108: derselbe Faktenstand (14/14 Studies, volles Budget, Fail-Fast-Abbruch
         # NACH Abschluss der Arbeit) ergab ``completed_invalid`` ("vollstaendig gerechnet") in zwei
         # Reports und ``aborted_invariant`` ("echter Arbeitsabbruch") in einem dritten — dieselben
-        # Fakten, zwei sich WIDERSPRECHENDE Lesarten desselben ueberladenen Strings.
-        # ``summary_de.py`` formuliert seine Kern-Aussage aus DIESEN drei Feldern, nicht mehr aus
+        # Fakten, zwei sich WIDERSPRECHENDE Lesarten desselben ueberladenen Strings. Root-Cause
+        # #1037: sogar ZWEI Reports, die BEIDE korrekt "kein Abbruch" meinten, trugen zwei
+        # verschiedene ``run_status``-Strings (``completed_invalid`` vs. ``complete_with_blocking_
+        # invariants``) — siehe die Ableitungstabelle oben im Docstring dieser Funktion.
+        # ``summary_de.py`` formuliert seine Kern-Aussage aus DIESEN vier Feldern, nicht mehr aus
         # ``run_status`` allein (siehe dortige Sektion 1).
         "work_completed": _work_completed,
         "decision_admissible": _decision_admissible,
-        "fail_fast_triggered": fail_fast_triggered,
+        "work_aborted": _work_aborted,
+        "blocking_invariant_triggered": blocking_invariant_triggered,
         "symbols_completed": symbols_completed,
         "symbols_planned": symbols_planned,
         # Issue #942 (Katalog A) — Funnel-Transparenz: symbols_discovered (rohes Symbol-Universum
@@ -3756,7 +3955,7 @@ def _build_report(
         "studies_excluded_foreign_run": studies_excluded_foreign_run,
         # Issue #982/#1136 (Katalog #986) — {n_studies_in_store, n_own, n_foreign, scan_source}:
         # macht "0 ausgeschlossen" (Scan lief, Store war sauber) von "nicht aufgezaehlt" (kein Scan)
-        # unterscheidbar, unabhaengig von fail_fast_triggered/report_source.
+        # unterscheidbar, unabhaengig von blocking_invariant_triggered/report_source.
         "store_scan": store_scan,
         "cross_study": {
             # Issue #998/#1150 (Katalog #1170) — macht die Kostenbasis-Aufloesung (ATR-Floor UND
@@ -3829,7 +4028,16 @@ def _build_report(
             "diagnosed_pairs": _diagnosed_pairs_section(),
             # Issue #831 Fix Punkt 4 — Randlösungen (boundary_hit_fraction > 0.3) mit ihrem
             # konkreten Bounds-Vorschlag, unabhängig davon, ob die Study eligible Trials hatte.
-            "boundary_solutions": _boundary_solutions_section(),
+            # Issue #1039/#1188 — primär aus ``studies_out`` selbst abgeleitet (siehe dortiger
+            # Docstring), nicht mehr ausschliesslich aus dem #761-Diagnose-Cache.
+            "boundary_solutions": _boundary_solutions_list,
+            # Issue #1040/#1189 (Katalog #1189) — Inventar ALLER aktiven Suchraum-Overrides
+            # (kuratiert UND automatisch vorgeschlagen), je (Strategie, Symbol, Parameter) mit
+            # active/default-Bounds, Quelle und Herkunft (siehe bounds.active_bounds_overrides-
+            # Docstring). Macht sichtbar, DASS/WORueBER ein Suchraum ueberhaupt geweitet wurde,
+            # statt nur ex-post ueber boundary_veto_evidence (nur der GEWINNER-Trial EINER Study)
+            # erschliessbar zu sein.
+            "active_bounds_overrides": _active_bounds_overrides_list,
             # Issue #1082 Fix Punkt (a) — Studies unter der check_objective_branch_coverage-Schwelle
             # als Rohmaterial fuer den Suchbudget-Vorschlag des naechsten Laufs (sweep.py liest
             # diese Sektion aus dem juengsten Report und deprioritisiert die betroffenen Paare).
@@ -3914,7 +4122,7 @@ def generate_sweep_report(
     symbols_gate1_rejected: int | None = None,
     report_source: str = "final",
     prior_probe_invariant_checks: list[dict] | None = None,
-    fail_fast_triggered: str | None = None,
+    blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
@@ -3944,7 +4152,7 @@ def generate_sweep_report(
         symbols_discovered=symbols_discovered,
         symbols_gate1_rejected=symbols_gate1_rejected,
         prior_probe_invariant_checks=prior_probe_invariant_checks,
-        fail_fast_triggered=fail_fast_triggered,
+        blocking_invariant_triggered=blocking_invariant_triggered,
         preflight_invariant_checks=preflight_invariant_checks,
     )
     out_dir = reports_dir or REPORTS_DIR
@@ -3967,7 +4175,7 @@ def generate_report_for_run(
     symbols_discovered: int | None = None,
     symbols_gate1_rejected: int | None = None,
     prior_probe_invariant_checks: list[dict] | None = None,
-    fail_fast_triggered: str | None = None,
+    blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
@@ -3997,7 +4205,7 @@ def generate_report_for_run(
         symbols_discovered=symbols_discovered,
         symbols_gate1_rejected=symbols_gate1_rejected,
         prior_probe_invariant_checks=prior_probe_invariant_checks,
-        fail_fast_triggered=fail_fast_triggered,
+        blocking_invariant_triggered=blocking_invariant_triggered,
         preflight_invariant_checks=preflight_invariant_checks,
     )
 

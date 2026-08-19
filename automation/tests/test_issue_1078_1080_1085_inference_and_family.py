@@ -98,6 +98,10 @@ def test_check_n_family_partition_not_applicable_without_overlap():
 
 # ── #1085: check_dust_round_trip_share ───────────────────────────────────────────────────────────
 def test_dust_round_trip_share_fails_on_the_866_catalog_reference_case():
+    """Issue #1041/#1190 — der Nenner ist seit diesem Fix die VOLLE (ungefilterte) Population
+    (oos_total_trades_with_exit_telemetry + dust_round_trips_filtered), nicht mehr nur die bereits
+    gefilterte Menge. 1156/(9794+1156) = 0.1056; 3301/(34413+3301) = 0.0875 -- beide Werte sinken
+    gegenueber der fehlerhaften Vorher-Formel (0.118 / 0.0959), bleiben aber > max_share=0.01."""
     records = [
         {"strategy": "DonchianRegimeBreakoutStrategy", "symbol": "TSLA.ETORO",
          "dust_round_trips_filtered": 1156, "oos_total_trades_with_exit_telemetry": 9794},
@@ -107,7 +111,7 @@ def test_dust_round_trip_share_fails_on_the_866_catalog_reference_case():
     result = inv.check_dust_round_trip_share(records)
     assert result.passed is False
     assert result.actual["DonchianRegimeBreakoutStrategy/TSLA.ETORO"] > 0.10
-    assert result.actual["Rsi2ReversionStrategy/TSLA.ETORO"] > 0.09
+    assert result.actual["Rsi2ReversionStrategy/TSLA.ETORO"] > 0.08
 
 
 def test_dust_round_trip_share_passes_below_one_percent():

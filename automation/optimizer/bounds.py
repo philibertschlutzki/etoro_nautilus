@@ -90,3 +90,94 @@ def theoretical_max_oos_trades(strategy: str, *, walk_forward: dict,
     total_oos_bars = (float(walk_forward["splits"]) * float(walk_forward["oos_window_days"])
                       * float(bars_per_day))
     return int(total_oos_bars // cycle_bars)
+
+
+def active_bounds_overrides() -> list[dict[str, Any]]:
+    """Issue #1040/#1189 (Katalog #1189) — Inventar ALLER aktiven Suchraum-Overrides (kuratiert
+    UND automatisch vorgeschlagen), je (Strategie, Symbol, Parameter): ``{strategy, symbol,
+    parameter, active_bounds, default_bounds, source, set_in_run_id, rationale}``.
+
+    Symptom #1040: ``boundary_veto_evidence`` belegt aktive Overrides bereits indirekt
+    (``active_bounds`` vs. ``default_bounds`` je klemmendem Parameter EINES Gewinner-Trials), aber
+    KEINE Report-Sektion listet, WELCHE (Strategie, Symbol, Parameter)-Kombinationen ueberhaupt
+    unter einem geweiteten Suchraum liefen — ein Leser kann nicht erkennen, dass z. B.
+    TrendPullback.ema_period ueber [5, 25] statt der kuratierten Default-Bounds [50, 300] gesucht
+    wurde, ohne den Diagnose-Cache/``search_space_overrides.json`` von Hand zu lesen.
+
+    Zwei Quellen (dieselben, die ``spaces._bounds_for`` in dieser Prioritaet anwendet):
+    1. ``search_space_overrides.json`` (``spaces._load_search_space_overrides``) — eine
+       KURATIERTE, menschliche PR-Entscheidung. ``rationale`` ist die Datei-weite
+       ``_schema.description`` (keine feinere Pro-Parameter-Begruendung existiert in diesem
+       Format); ``set_in_run_id`` bleibt ``None`` (ein statischer Config-Eintrag ist an keinen
+       einzelnen Lauf gebunden).
+    2. Der #761-Diagnose-Cache (``sweep_diagnostics.load_diagnosed_pairs_cache``) — ein
+       AUTOMATISCH vorgeschlagener Override (``binding_cause == 'boundary_solution'``,
+       ``action == 'search_space_override'``). ``rationale`` benennt die Ursache
+       (``binding_cause``); ``set_in_run_id`` ist der Cache-Eintrag ``first_seen_run_id``
+       (Akzeptanzkriterium #1040/2 — die Herkunft ist je Override auf Datei+Lauf aufloesbar).
+
+    Ein Parameter kann in BEIDEN Quellen erscheinen (die kuratierte gewinnt laut ``spaces.
+    _bounds_for``-Prioritaet zur Laufzeit) — beide Eintraege bleiben hier sichtbar, damit ein
+    Operator den tatsaechlich wirksamen von einem toten (durch die kuratierte Regel bereits
+    ueberdeckten) automatischen Vorschlag unterscheiden kann. Leer, wenn keine Quelle etwas
+    beitraegt (bit-identisch zum Vorher, kein erfundener Eintrag)."""
+    out: list[dict[str, Any]] = []
+    try:
+        curated = spaces._load_search_space_overrides()
+    except Exception:
+        curated = {}
+    curated_rationale = None
+    try:
+        from automation.optimizer.trial_config import config_dir
+        path = config_dir() / "search_space_overrides.json"
+        if path.exists():
+            import json as _json
+            curated_rationale = (
+                (_json.loads(path.read_text("utf-8")) or {}).get("_schema") or {}
+            ).get("description")
+    except Exception:
+        curated_rationale = None
+    for strategy, symbols in (curated or {}).items():
+        try:
+            default_bounds = extract_numeric_bounds(strategy)
+        except Exception:
+            default_bounds = {}
+        for symbol, params in (symbols or {}).items():
+            for param, bound in (params or {}).items():
+                if not bound or len(bound) != 2:
+                    continue
+                default = default_bounds.get(param)
+                out.append({
+                    "strategy": strategy, "symbol": symbol, "parameter": param,
+                    "active_bounds": [bound[0], bound[1]],
+                    "default_bounds": [default[0], default[1]] if default else None,
+                    "source": "curated",
+                    "set_in_run_id": None,
+                    "rationale": curated_rationale,
+                })
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        auto_cache = load_diagnosed_pairs_cache()
+    except Exception:
+        auto_cache = {}
+    for (strategy, symbol), entry in (auto_cache or {}).items():
+        proposed = entry.get("proposed_bounds") or {}
+        if not proposed:
+            continue
+        try:
+            default_bounds = extract_numeric_bounds(strategy)
+        except Exception:
+            default_bounds = {}
+        for param, bound in proposed.items():
+            if not bound or len(bound) != 2:
+                continue
+            default = default_bounds.get(param)
+            out.append({
+                "strategy": strategy, "symbol": symbol, "parameter": param,
+                "active_bounds": [bound[0], bound[1]],
+                "default_bounds": [default[0], default[1]] if default else None,
+                "source": "auto_proposed",
+                "set_in_run_id": entry.get("first_seen_run_id"),
+                "rationale": entry.get("binding_cause"),
+            })
+    return out

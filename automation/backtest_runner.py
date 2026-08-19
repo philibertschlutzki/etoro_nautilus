@@ -4829,7 +4829,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         oos_buyhold_return = None  # Issue #552 — Buy&Hold-Benchmark-Return über das OOS-Fenster.
         # Issue #986/#1140 — α/β-Regression der Perioden-Returns gegen die Benchmark-Perioden-
         # Returns (None, solange keine indexgleiche Benchmark-Serie vorlag).
-        oos_alpha = oos_beta = oos_alpha_tstat = None
+        oos_alpha = oos_beta = oos_alpha_tstat = oos_alpha_n_periods = None
         if mtm_series is not None and not mtm_series.empty and _wf:
             # Issue #551 — Equity-Slices HALB-OFFEN [s, e), konsistent zur Trade-Klassifikation
             # (``any(s <= ts < e ...)``). ``pandas.loc[a:b]`` ist auf BEIDEN Seiten geschlossen; da
@@ -4917,6 +4917,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         _alpha_beta_result = _alpha_beta_regression(_strat_log_rets, _bench_log_rets)
                         if _alpha_beta_result is not None:
                             oos_alpha, oos_beta, oos_alpha_tstat = _alpha_beta_result
+                            # Issue #1038/#1187 (Katalog #1187) — die Perioden-Anzahl der
+                            # Regression selbst: ``α`` (der per-Bar-Log-Return-Intercept) ist auf
+                            # der Groessenordnung 1e-6 unlesbar; das oekonomisch aussagekraeftige
+                            # Holdout-Alpha ist ``α·n`` (kumulierter Log-Return-Beitrag ueber das
+                            # gesamte Fenster). ``n`` ist hier IDENTISCH zur Regressions-
+                            # Stichprobengroesse (``len(_strat_log_rets) == len(_bench_log_rets)``).
+                            oos_alpha_n_periods = len(_strat_log_rets)
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 
@@ -5210,6 +5217,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 oos_metrics["oos_alpha"] = oos_alpha
                 oos_metrics["oos_beta"] = oos_beta
                 oos_metrics["oos_alpha_tstat"] = oos_alpha_tstat
+                # Issue #1038/#1187 — dieselbe Regressions-Stichprobengroesse wie oben; macht
+                # ``α·n`` (das oekonomisch lesbare Holdout-Alpha, Akzeptanzkriterium #1038) im
+                # Report berechenbar.
+                oos_metrics["oos_alpha_n_periods"] = oos_alpha_n_periods
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt

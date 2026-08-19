@@ -604,6 +604,9 @@ def _metrics_dict(m) -> dict:
         "oos_alpha": getattr(m, "oos_alpha", None),
         "oos_beta": getattr(m, "oos_beta", None),
         "oos_alpha_tstat": getattr(m, "oos_alpha_tstat", None),
+        # Issue #1038/#1187 — die Regressions-Stichprobengroesse; macht α·n (das oekonomisch
+        # lesbare Holdout-Alpha) in report.py berechenbar.
+        "oos_alpha_n_periods": getattr(m, "oos_alpha_n_periods", None),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
         # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
         # unterscheiden kann.

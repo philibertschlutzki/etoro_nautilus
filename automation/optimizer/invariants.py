@@ -1002,6 +1002,42 @@ def check_boundary_veto_has_evidence(proposal: dict) -> InvariantResult:
     )
 
 
+def check_boundary_solutions_matches_study_records(
+    boundary_solutions: list[dict], study_records: list[dict],
+) -> InvariantResult:
+    """Issue #1039/#1188 (Katalog #1188) — Regressionswächter: ``cross_study.boundary_solutions``
+    darf nie leer sein, während mindestens eine Study
+    ``winner_outside_default_bounds_after_override`` trägt.
+
+    Root-Cause #1039: ``report._boundary_solutions_section`` wurde AUSSCHLIESSLICH aus dem #761-
+    Diagnose-Cache gespeist (nur nicht-leer, wenn ``diagnostic_writeback_enabled=True``, seit #1090
+    NICHT der Default) — ein Referenzlauf zeigte ``boundary_solutions == []``, obwohl drei Studies
+    ``winner_outside_default_bounds`` trugen (der strikte Bounds-Bruch, siehe ``report._study_
+    record``). Seit #1039 wird die Sektion primär aus den Study-Records selbst abgeleitet, wodurch
+    dieser Widerspruch strukturell nicht mehr auftreten sollte — dieser Check ist die dauerhafte
+    Gegenprobe, falls eine künftige Änderung erneut auf eine cache-only-Quelle zurückfällt.
+
+    ``severity='medium'`` (Diagnose-/Report-Kohärenz, kein Promotions-Veto)."""
+    studies_with_override = [
+        f"{r.get('strategy')}/{r.get('symbol')}" for r in study_records
+        if r.get("winner_outside_default_bounds_after_override")
+    ]
+    passed = bool(boundary_solutions) or not studies_with_override
+    return InvariantResult(
+        name="check_boundary_solutions_matches_study_records",
+        passed=passed,
+        severity="medium",
+        expected="boundary_solutions nicht leer, sobald mindestens eine Study "
+                 "winner_outside_default_bounds_after_override trägt",
+        actual={"n_boundary_solutions": len(boundary_solutions or []),
+               "studies_with_override": studies_with_override},
+        detail=("OK" if passed else
+                f"boundary_solutions == [], obwohl {len(studies_with_override)} Study/Studies "
+                f"({', '.join(studies_with_override)}) winner_outside_default_bounds_after_override "
+                "tragen (#1039/#1188-Regression)."),
+    )
+
+
 def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     """Issue #652/#670-Regressionswächter.
 
@@ -3816,19 +3852,32 @@ def check_dust_round_trip_share(study_records: list[dict], *,
     ``dust_round_trips_filtered`` (Σ ``oos_dust_round_trips_filtered_count`` über die Trials dieser
     Study; seit #946/#1112, Katalog #960, AN DER ROUND-TRIP-QUELLE verworfen —
     ``backtest_runner._filter_dust_round_trips`` — statt nur an der Expectancy-Konsumstelle, siehe
-    dortiger Docstring) gegen ``oos_total_trades_with_exit_telemetry`` als Nenner. Severity
-    ``high`` — eine hohe Quote ist ein Datenqualitäts-/Extraktionsbefund, kein Promotions-Blocker
-    per se."""
+    dortiger Docstring) gegen ``oos_total_trades_with_exit_telemetry + dust_round_trips_filtered``
+    als Nenner (die volle, UNGEFILTERTE Round-Trip-Population — siehe #1041/#1190-Fix unten).
+    Severity ``high`` — eine hohe Quote ist ein Datenqualitäts-/Extraktionsbefund, kein
+    Promotions-Blocker per se.
+
+    Issue #1041/#1190 (Katalog #1190) — Root-Cause: ``oos_total_trades_with_exit_telemetry`` ist
+    die Menge NACH dem Dust-Filter (``dust_round_trips_filtered`` bereits abgezogen) — der
+    vorherige Quotient ``dust_round_trips_filtered / oos_total_trades_with_exit_telemetry`` ist
+    daher KEIN Anteil (Zähler ist nicht Teilmenge des Nenners) und kann > 1 werden. Nachgerechnet
+    (AdxAtr, Issue-Referenzwert): 1800/63241 = 0,02846 (gemeldet 0,0285) bestätigt die fehlerhafte
+    Formel; der korrekte Anteil an der VOLLEN (ungefilterten) Population ist
+    1800/(63241+1800) = 1800/65041 = 0,02768. Die Schwelle (``max_share``) bleibt unveraendert —
+    die Verschiebung ist bei den bislang beobachteten Werten < 10 % relativ und aendert keine
+    Klassifikation (Akzeptanzkriterium #1041)."""
     with_data = [
         r for r in study_records
         if r.get("dust_round_trips_filtered") is not None
-        and (r.get("oos_total_trades_with_exit_telemetry") or 0) > 0
+        and ((r.get("oos_total_trades_with_exit_telemetry") or 0)
+             + (r.get("dust_round_trips_filtered") or 0)) > 0
     ]
     if not with_data:
         return InvariantResult(
             name="check_dust_round_trip_share",
             passed=True,
-            expected=f"dust_round_trips_filtered / oos_total_trades_with_exit_telemetry <= {max_share} je Study",
+            expected=f"dust_round_trips_filtered / (oos_total_trades_with_exit_telemetry + "
+                     f"dust_round_trips_filtered) <= {max_share} je Study",
             actual=None,
             severity="high",
             detail="Keine Studies mit Dust-Round-Trip-Telemetrie — nicht anwendbar.",
@@ -3836,15 +3885,20 @@ def check_dust_round_trip_share(study_records: list[dict], *,
     offenders: dict[str, float] = {}
     for r in with_data:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
-        denom = int(r["oos_total_trades_with_exit_telemetry"])
-        share = round(int(r["dust_round_trips_filtered"]) / denom, 4)
+        dust = int(r["dust_round_trips_filtered"])
+        # Issue #1041/#1190 — der Nenner ist die VOLLE (ungefilterte) Round-Trip-Population: die
+        # bereits gefilterte Menge PLUS die herausgefilterten Dust-Legs selbst. Ein Quotient
+        # gebildet auf der bereits gefilterten Menge liegt strukturell nicht in [0, 1].
+        denom = int(r["oos_total_trades_with_exit_telemetry"]) + dust
+        share = round(dust / denom, 4)
         if share > max_share:
             offenders[key] = share
     passed = not offenders
     return InvariantResult(
         name="check_dust_round_trip_share",
         passed=passed,
-        expected=f"dust_round_trips_filtered / oos_total_trades_with_exit_telemetry <= {max_share} je Study",
+        expected=f"dust_round_trips_filtered / (oos_total_trades_with_exit_telemetry + "
+                 f"dust_round_trips_filtered) <= {max_share} je Study",
         actual=offenders if offenders else None,
         severity="high",
         detail=("OK" if passed else
@@ -5173,7 +5227,14 @@ def check_effective_stop_distance(study_records: list[dict], *,
         _pooled_ratio = (
             round(float(_pooled_mean_loss) / configured_distance_bps, 4)
             if _pooled_mean_loss is not None else None)
-        all_ratios[key] = {"ratio_median": ratio, "ratio_pooled_mean": _pooled_ratio}
+        # Issue #1042/#1191 (Katalog #1191) — umbenannt von ``ratio_pooled_mean``: dieses Feld
+        # quotientiert ``oos_gross_loss_mean_bps_trailing_stop_pooled`` (ein EINZIGER, trade-
+        # gewichteter Mittelwert ueber ALLE Trades der Study), NICHT dieselbe Groesse wie
+        # ``report._study_record``s ``realized_stop_loss_ratio_mean_per_trial`` (Median der
+        # PER-TRIAL-Mittel) — beide hiessen zuvor fast identisch und unterschieden sich um bis zu
+        # 0,63 (#1005/#1157-Namenskollisions-Klasse, siehe dortiger Feldkommentar).
+        all_ratios[key] = {
+            "ratio_median": ratio, "realized_stop_loss_ratio_mean_pooled": _pooled_ratio}
         if ratio < min_ratio:
             offenders_low[key] = ratio
         elif ratio > max_ratio:
@@ -6896,4 +6957,53 @@ def check_report_artifact_written(*, run_status: str | None, report_written: boo
         detail=("OK — Report geschrieben." if passed else
                 "run_status='complete' gemeldet, aber KEIN run_<run_id>.json geschrieben — ein "
                 "Lauf ohne Report ist nicht 'complete' (#1021/#1196)."),
+    )
+
+
+def check_run_status_axes_coherence(report: dict) -> InvariantResult:
+    """Issue #1037/#1186 (Katalog #1186) Akzeptanzkriterium 1/2 — Regressionswächter: die VIER
+    orthogonalen Achsen (``work_completed``/``decision_admissible``/``work_aborted``/
+    ``blocking_invariant_triggered``, ``report._build_report``) dürfen sich nie widersprechen.
+
+    Root-Cause #1037: ``fail_fast_triggered`` (Vorgänger von ``blocking_invariant_triggered``) war
+    per Namen ein Abbruch-Signal, konnte aber gesetzt sein, ohne dass ``run_status`` einen echten
+    Abbruch trug (die Fail-Fast-Probe feuert manchmal erst NACH vollständiger Symbol-Abarbeitung).
+    Zwei FAIL-Bedingungen:
+    1. ``work_completed is True and work_aborted is True`` gleichzeitig — ein Lauf, der ALLE
+       geplante Arbeit erledigt hat, ist per Definition kein Abbruch.
+    2. ``run_status`` trägt einen ``'aborted_'``-Präfix, obwohl ``work_aborted`` das NICHT
+       widerspiegelt (oder umgekehrt) — dieselbe Regel wie ``report._compute_work_aborted``, hier
+       als unabhängige Gegenprobe auf dem bereits geschriebenen Report-Artefakt.
+
+    ``work_aborted``/``work_completed`` fehlend (Legacy-Artefakt ohne die #1037-Felder) ⇒ nicht
+    anwendbar (PASS, kein erfundener Befund)."""
+    work_completed = report.get("work_completed")
+    work_aborted = report.get("work_aborted")
+    run_status = report.get("run_status") or ""
+    if work_completed is None or work_aborted is None:
+        return InvariantResult(
+            name="check_run_status_axes_coherence",
+            passed=True,
+            expected="work_completed/work_aborted/run_status widerspruchsfrei",
+            actual=None,
+            detail="work_completed/work_aborted fehlt (Legacy-Artefakt) — nicht anwendbar.",
+        )
+    problems: list[str] = []
+    if work_completed is True and work_aborted is True:
+        problems.append(
+            "work_completed=True UND work_aborted=True gleichzeitig — ein Lauf, der ALLE "
+            "geplante Arbeit erledigt hat, ist kein Abbruch.")
+    status_claims_abort = run_status.startswith("aborted_")
+    if status_claims_abort != bool(work_aborted):
+        problems.append(
+            f"run_status={run_status!r} (Abbruch-Praefix={status_claims_abort}) widerspricht "
+            f"work_aborted={work_aborted!r}.")
+    passed = not problems
+    return InvariantResult(
+        name="check_run_status_axes_coherence",
+        passed=passed,
+        severity="medium",
+        expected="work_completed/work_aborted/run_status widerspruchsfrei",
+        actual=problems,
+        detail="OK" if passed else "; ".join(problems),
     )
