@@ -30,7 +30,7 @@ import dataclasses
 import json
 import logging
 import statistics
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -818,6 +818,7 @@ def _study_record(proposal: dict, study,
                   guard_dominance_threshold: float | None = None,
                   symbol_bar_quality_cache: dict | None = None,
                   run_id: str | None = None,
+                  trials_override: list | None = None,
                   ) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
     """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743).
 
@@ -829,8 +830,20 @@ def _study_record(proposal: dict, study,
     ``compute_budget_execution``, damit ``budget_executed_fraction`` ausschliesslich Trials DIESES
     Laufs zählt, statt einer ungepurgten Study mehrerer Läufe (siehe dortiger Docstring). ``None``
     (Default, z. B. Legacy-/Test-Aufrufer) ⇒ bit-identisches Alt-Verhalten (alle Study-Trials).
-    derselbe ``_contracts.BAR_SECONDS_DEFAULT``-Fallback wie vor #923."""
-    trials = list(getattr(study, "trials", None) or []) if study is not None else []
+    derselbe ``_contracts.BAR_SECONDS_DEFAULT``-Fallback wie vor #923.
+
+    ``trials_override`` (Issue #1021/#1196 Fix 4.1/Akzeptanzkriterium 2) — wenn gesetzt, ERSETZT
+    diese Liste ``study.trials`` als Grundgesamtheit JEDER Study-Metrik unten (n_trials,
+    n_eligible, ...), statt sie aus dem vollen (ggf. per Warm-Start ueber mehrere Laeufe
+    gewachsenen) Store zu lesen. ``_build_report`` uebergibt hier ``_own_run_trials``, sobald eine
+    Study nachweislich Trials eines VORLAUFS enthaelt (sequenzielle Store-Wiederverwendung, siehe
+    ``cross_study.store_reuse``) — der Report dieses Laufs zaehlt dann ausschliesslich SEIN
+    eigenes Budget, nicht die kumulierte Store-Groesse. ``None`` (Default) ⇒ bit-identisches
+    Alt-Verhalten (alle ``study.trials``)."""
+    trials = (
+        list(trials_override) if trials_override is not None
+        else list(getattr(study, "trials", None) or []) if study is not None else []
+    )
     trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in trials]
 
     n_trials = len(trials)
@@ -2466,6 +2479,52 @@ def _compute_work_completed(
     return symbols_completed >= symbols_planned
 
 
+def _as_naive_utc(dt: datetime | None) -> datetime | None:
+    """Issue #1021/#1196 — normalisiert ein tz-aware oder naives ``datetime`` auf naive UTC, damit
+    Optuna-Trial-Zeitstempel (naiv) und aus ``started_at_utc``/``wallclock_s`` abgeleitete
+    Lauf-Zeitfenster (tz-aware) miteinander vergleichbar sind, ohne dass eine der beiden Quellen
+    ihre eigene Repräsentation ändern muss."""
+    if dt is not None and dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _trial_time_window(trials: list) -> tuple[datetime, datetime] | None:
+    """Issue #1021/#1196 — (min(datetime_start), max(datetime_complete oder datetime_start)) über
+    ``trials``. ``None``, wenn KEIN Trial dieser Menge einen Zeitstempel trägt (fehlende Evidenz —
+    der Aufrufer bleibt dann fail-loud, siehe ``_windows_overlap``-Aufrufstelle im Kohorten-
+    Wächter)."""
+    starts = [t.datetime_start for t in trials if getattr(t, "datetime_start", None) is not None]
+    ends = [t.datetime_complete for t in trials if getattr(t, "datetime_complete", None) is not None]
+    ends = ends or starts
+    if not starts or not ends:
+        return None
+    return (min(starts), max(ends))
+
+
+def _trial_time_windows_by_run_id(
+    trials: list,
+) -> dict[str | None, tuple[datetime, datetime] | None]:
+    """Issue #1021/#1196 — ``trials`` (typischerweise ``_foreign_run_trials`` einer Study) nach
+    ``run_id`` gruppiert, je Gruppe das Zeitfenster aus ``_trial_time_window``."""
+    by_run_id: dict[str | None, list] = {}
+    for t in trials:
+        rid = (getattr(t, "user_attrs", None) or {}).get("run_id")
+        by_run_id.setdefault(rid, []).append(t)
+    return {rid: _trial_time_window(ts) for rid, ts in by_run_id.items()}
+
+
+def _windows_overlap(
+    window_a: tuple[datetime, datetime], window_b: tuple[datetime, datetime],
+) -> bool:
+    """Issue #1021/#1196 — zwei geschlossene Zeitintervalle überlappen, wenn keins vollständig vor
+    dem anderen liegt. Beide Seiten werden vor dem Vergleich auf naive UTC normalisiert (siehe
+    ``_as_naive_utc``)."""
+    a0, a1 = _as_naive_utc(window_a[0]), _as_naive_utc(window_a[1])
+    b0, b1 = _as_naive_utc(window_b[0]), _as_naive_utc(window_b[1])
+    return a0 <= b1 and b0 <= a1
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -2568,6 +2627,28 @@ def _build_report(
         except (TypeError, ValueError):
             _run_started_dt = None
     _foreign_run_tolerance_s = 3600.0
+    # Issue #1021/#1196 — Lauf-Zeitfenster dieses Reports, als Fallback fuer den Kohorten-Wächter
+    # unten, wenn eine Study keine eigenen Trial-Zeitstempel traegt (z. B. eine leere Study). Ende
+    # ist ``started_at_utc + wallclock_s`` (finaler Report, praezise) oder "jetzt" (Zwischen-/Probe-
+    # Aufrufe waehrend eines laufenden Sweeps, #933/#839 — der Lauf ist zu diesem Zeitpunkt noch
+    # nicht fertig, jede fremde Aktivitaet gilt konservativ als moeglicherweise gleichzeitig).
+    _run_window: tuple[datetime, datetime] | None = None
+    if _run_started_dt is not None:
+        _run_finished_dt = None
+        if wallclock_s:
+            try:
+                _run_finished_dt = _run_started_dt + timedelta(seconds=float(wallclock_s))
+            except (TypeError, ValueError, OverflowError):
+                _run_finished_dt = None
+        _run_window = (_run_started_dt, _run_finished_dt or datetime.now(timezone.utc))
+    # Issue #1021/#1196 — Aggregat fuer ``cross_study.store_reuse`` (Fix 4.2): macht sichtbar, dass
+    # dieser Lauf per Warm-Start auf einem Store mit Trials eines VORLAUFS aufsetzt — das veraendert
+    # ``deflation_n_family``, ``constraint_improvement_rate`` und den TPE-Seed und darf nicht
+    # unsichtbar bleiben.
+    _store_reuse_prior_run_ids: set[str] = set()
+    _store_reuse_n_trials_prior = 0
+    _store_reuse_n_trials_own = 0
+    _store_reuse_studies_affected = 0
     # Issue #1039 (Katalog #866) — Folgefehler aus #1023: ``cross_study.n_family`` (DSR-
     # Multiplizitaet, siehe unten) muss auf DERSELBEN gefilterten Kohorte laufen wie ``studies_out``,
     # sonst aggregiert es weiterhin ueber die Vortags-Studies, obwohl der Report selbst sie nicht
@@ -2601,21 +2682,46 @@ def _build_report(
         _has_run_id_evidence = bool(_own_run_trials or _foreign_run_trials)
 
         if _own_run_trials and _foreign_run_trials:
-            # Issue #1086 — eine Study, die SOWOHL Trials dieses Laufs ALS AUCH Trials eines
-            # anderen ``run_id`` traegt, wurde nachweislich von mindestens zwei Laeufen
-            # GLEICHZEITIG angefasst (die #1086-Lock-Datei in ``sweep.py`` verhindert genau das
-            # fuer kuenftige Laeufe) — eine studienweite Aggregation (n_trials_completed,
-            # Guard-Statistiken, ...) kann in diesem Zustand keinem der beiden Laeufe sauber
-            # zugeordnet werden. Fail-loud statt eines Urteils auf vermischter Evidenz.
+            # Issue #1021/#1196 — zwei run_ids in EINER Study sind der NORMALFALL bei
+            # load_if_exists (sequenzieller Warm-Start, #799/#851): jeder Trial traegt ueber seinen
+            # run_id-Stempel eindeutig GENAU eine run_id, die Trennung der Kohorten ist damit
+            # exakt, unabhaengig davon, ob eine zweite run_id in derselben Study auftaucht.
+            # Unaufloesbar ist die Kohorte NUR, wenn sich die tatsaechlichen Laufzeitfenster der
+            # beteiligten run_ids UEBERLAPPEN (#1086 — zwei Sweep-Prozesse haben denselben Store
+            # GLEICHZEITIG beschrieben). Der Diskriminator ist das gemessene Zeitfenster
+            # (``trial.datetime_start``/``datetime_complete``, mit dem Lauf-Zeitfenster als Fallback
+            # fuer eine Study ohne eigene Trial-Zeitstempel), nicht die blosse Anwesenheit einer
+            # zweiten run_id, wie die vorherige Fassung dieses Wächters annahm.
             _foreign_ids = sorted({
                 (getattr(t, "user_attrs", None) or {}).get("run_id") for t in _foreign_run_trials
             })
-            raise RuntimeError(
-                f"[REPORT_COHORT_UNRESOLVABLE] Study '{study_name}' ({proposal.get('strategy')}/"
-                f"{proposal.get('symbol')}) traegt sowohl Trials von run_id={run_id!r} als auch "
-                f"von {_foreign_ids!r} — Kohorte nicht auflösbar (vermutlich gleichzeitiger "
-                "Zugriff zweier Sweep-Prozesse auf denselben Store ohne Lock-Datei, #1086)."
-            )
+            _own_window = _trial_time_window(_own_run_trials) or _run_window
+            _foreign_windows = _trial_time_windows_by_run_id(_foreign_run_trials)
+            if _own_window is None:
+                # Keine Zeitstempel-Evidenz auf der eigenen Seite verfuegbar — bisheriges
+                # Fail-Loud-Verhalten (fail-closed auf fehlender Evidenz, #1021 Fix 4.1).
+                _overlapping = sorted(_foreign_windows)
+            else:
+                _overlapping = sorted(
+                    rid for rid, win in _foreign_windows.items()
+                    if win is None or _windows_overlap(win, _own_window)
+                )
+            if _overlapping:
+                raise _contracts.ReportCohortUnresolvable(
+                    f"[REPORT_COHORT_UNRESOLVABLE] Study '{study_name}' ({proposal.get('strategy')}/"
+                    f"{proposal.get('symbol')}) traegt sowohl Trials von run_id={run_id!r} als auch "
+                    f"von {_foreign_ids!r} — die Laufzeitfenster von run_id={run_id!r} "
+                    f"({_own_window!r}) und {_overlapping!r} ueberlappen — zwei Sweep-Prozesse "
+                    "haben denselben Store gleichzeitig beschrieben (#1086). Getrennte --work-dir "
+                    "verwenden."
+                )
+            # Sequenzielle Wiederverwendung (kein Fenster ueberlappt): die run_id-Stempel trennen
+            # die Kohorten exakt — der beabsichtigte Warm-Start-Normalbetrieb (#1021/#1196 widerlegt
+            # die #1086-Vermutung fuer diesen Fall explizit). Telemetrie statt Abbruch (Fix 4.2).
+            _store_reuse_prior_run_ids.update(rid for rid in _foreign_windows if rid is not None)
+            _store_reuse_n_trials_prior += len(_foreign_run_trials)
+            _store_reuse_n_trials_own += len(_own_run_trials)
+            _store_reuse_studies_affected += 1
 
         if _has_run_id_evidence:
             is_foreign_run = not _own_run_trials
@@ -2657,7 +2763,12 @@ def _build_report(
             proposal, study, tournament_cfg,
             guard_dominance_threshold=float(
                 optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)),
-            symbol_bar_quality_cache=_symbol_bar_quality_cache, run_id=run_id)
+            symbol_bar_quality_cache=_symbol_bar_quality_cache, run_id=run_id,
+            # Issue #1021/#1196 Akzeptanzkriterium 2 — bei nachgewiesener sequenzieller
+            # Store-Wiederverwendung (Trials eines Vorlaufs UND dieses Laufs in derselben Study,
+            # der Ueberlappungs-Wächter oben hat NICHT ausgeloest) zaehlt dieser Report
+            # ausschliesslich seine EIGENEN Trials, nicht die kumulierte Store-Groesse.
+            trials_override=_own_run_trials if _foreign_run_trials else None)
         # Issue #1028 (Katalog #866) — Rohmaterial für invariants.check_sizing_identity_coherence.
         record["trade_amount_pct"] = _trade_amount_pct_map.get(record.get("strategy"))
         # Issue #1088 (Katalog #921) — nur gestempelt, wenn TATSAECHLICH ein Trial dieser Study den
@@ -3521,6 +3632,18 @@ def _build_report(
             # #1168: symbol_bar_quality war in 28/28 Studies zweier Läufe still None). Traeger fuer
             # check_symbol_bar_quality_cache_availability, siehe dortiger Docstring.
             "symbol_bar_quality_cache": _symbol_bar_quality_cache_status,
+            # Issue #1021/#1196 Fix 4.2 — macht sichtbar, dass dieser Lauf per Warm-Start (Optuna
+            # ``load_if_exists``) auf Trials eines VORLAUFS aufsetzt, statt es unsichtbar in
+            # ``deflation_n_family``/``constraint_improvement_rate``/dem TPE-Seed verschwinden zu
+            # lassen. ``reused=False`` bei jeder Study strikt eigener Kohorte (frischer Store).
+            "store_reuse": {
+                "reused": _store_reuse_studies_affected > 0,
+                "prior_run_ids": sorted(_store_reuse_prior_run_ids),
+                "n_trials_prior": _store_reuse_n_trials_prior,
+                "n_trials_own": _store_reuse_n_trials_own,
+                "studies_affected": _store_reuse_studies_affected,
+                "warm_start_effective": _store_reuse_studies_affected > 0,
+            },
             # Issue #1091 (Katalog #924) — {frozen, observed_at_report_time} statt eines nackten
             # int je Symbol: "frozen" (budget-basiert, siehe sweep._family_n_frozen_from_studies)
             # ist ueber mehrere Reports DESSELBEN Laufs bit-identisch; "observed_at_report_time"

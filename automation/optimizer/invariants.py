@@ -6488,3 +6488,39 @@ def check_live_exposure_budget(exposure_snapshots: list[dict], *,
                 f"({max_total_exposure_fraction}): {offenders} — Bug in der #999-Budget-Formel, "
                 "keine Dateneigenart."),
     )
+
+
+def check_report_artifact_written(*, run_status: str | None, report_written: bool) -> InvariantResult:
+    """Issue #1021/#1196 Fix 4.3 — ein Lauf, der ``run_status='complete'`` meldet, aber keinen
+    ``run_<run_id>.json`` geschrieben hat, ist die Verallgemeinerung des Ausgangsbefunds: der
+    zweite Sweep eines Tages rechnete 2411s durch, meldete ``SWEEP_COMPLETED``/``run_status=
+    'complete'`` und schrieb dabei kein einziges Entscheidungsartefakt, weil alle vier
+    Report-Aufrufstellen in ``sweep.py`` die dabei geworfene ``ReportCohortUnresolvable`` als
+    "non-fatal" abfingen. Root-Cause behoben (#1021 Fix 4.1: der Wächter unterscheidet jetzt
+    sequenzielle Store-Wiederverwendung von echter Nebenläufigkeit) UND dieser Check als zweite,
+    unabhängige Verteidigungslinie: ``severity='blocking'`` — ``complete`` ohne geschriebenen
+    Report ist niemals ein zulässiger Endzustand, unabhängig von der Ursache eines künftigen
+    Schreibfehlers.
+
+    ``run_status`` ungleich ``'complete'`` ⇒ nicht anwendbar (ein expliziter Abbruch-/
+    In-Progress-Status behauptet nicht, dass ein Report existiert)."""
+    if run_status != "complete":
+        return InvariantResult(
+            name="check_report_artifact_written",
+            passed=True,
+            expected="run_status='complete' impliziert einen geschriebenen run_<run_id>.json",
+            actual=None,
+            severity="blocking",
+            detail=f"run_status={run_status!r} != 'complete' — nicht anwendbar.",
+        )
+    passed = bool(report_written)
+    return InvariantResult(
+        name="check_report_artifact_written",
+        passed=passed,
+        expected="run_status='complete' impliziert einen geschriebenen run_<run_id>.json",
+        actual={"run_status": run_status, "report_written": report_written},
+        severity="blocking",
+        detail=("OK — Report geschrieben." if passed else
+                "run_status='complete' gemeldet, aber KEIN run_<run_id>.json geschrieben — ein "
+                "Lauf ohne Report ist nicht 'complete' (#1021/#1196)."),
+    )

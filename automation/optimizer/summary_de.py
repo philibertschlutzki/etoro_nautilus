@@ -616,6 +616,19 @@ def _section_3_duration(report: dict) -> str:
     lines.append(f"- Gesamtlaufzeit: {_fmt_hours(report.get('wallclock_s'))}")
     lines.append(f"- n_jobs: {cli_args.get('n_jobs', 'k. A.')} (Quelle: {cli_args.get('n_jobs_source', 'k. A.')})")
     lines.append(f"- Lauf-Status: {_run_status_label_de(report)}")
+    # Issue #1021/#1196 Fix 4.2 — macht sichtbar, dass dieser Lauf per Warm-Start (Optuna
+    # load_if_exists) auf Trials eines VORLAUFS aufsetzt: das veraendert deflation_n_family,
+    # constraint_improvement_rate, n_modelled_trials und den TPE-Seed und darf nicht unsichtbar
+    # bleiben.
+    _store_reuse = (report.get("cross_study") or {}).get("store_reuse") or {}
+    if _store_reuse.get("reused"):
+        lines.append(
+            f"- ⚠️ **Store-Wiederverwendung (Warm-Start):** {_store_reuse.get('studies_affected', 0)} "
+            f"Study/Studies setzt/setzen auf Trials von Vorlauf/Vorläufen "
+            f"{_store_reuse.get('prior_run_ids', [])} auf ({_store_reuse.get('n_trials_prior', 0)} "
+            f"Trials Vorlauf + {_store_reuse.get('n_trials_own', 0)} Trials dieser Lauf) — "
+            "beeinflusst deflation_n_family/TPE-Seed, siehe #1021/#1196."
+        )
     if report.get("symbols_planned") is not None:
         lines.append(
             f"- Symbole: {report.get('symbols_completed', 'k. A.')} von {report.get('symbols_planned', 'k. A.')} abgeschlossen"

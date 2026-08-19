@@ -12,9 +12,13 @@ Deckt ab:
     genau seine eigene (Akzeptanzkriterium #1086).
   - ``studies_excluded_foreign_run`` traegt den Namen UND die fremde ``run_id`` der ausgeschlossenen
     Study, nicht nur einen Zaehler.
-  - eine Study mit VERMISCHTEN ``run_id``-Trials (zwei Laeufe haben dieselbe Study gleichzeitig
-    angefasst) bricht den Report mit ``REPORT_COHORT_UNRESOLVABLE`` ab, statt ein Urteil auf
-    vermischter Evidenz zu faellen.
+  - eine Study mit VERMISCHTEN, zeitlich UEBERLAPPENDEN ``run_id``-Trials (zwei Laeufe haben
+    dieselbe Study gleichzeitig angefasst) bricht den Report mit ``REPORT_COHORT_UNRESOLVABLE`` ab,
+    statt ein Urteil auf vermischter Evidenz zu faellen. Issue #1021/#1196 verfeinert den
+    Diskriminator von "traegt ueberhaupt zwei run_ids" auf "die Laufzeitfenster der beteiligten
+    run_ids ueberlappen tatsaechlich" — reine sequenzielle Store-Wiederverwendung (Warm-Start ohne
+    Overlap) loest die Ausnahme seither NICHT mehr aus, siehe
+    ``test_issue_1021_1196_sequential_store_reuse.py``.
   - ``sweep._acquire_sweep_run_lock``/``_release_sweep_run_lock``: ein zweiter Prozess mit
     abweichender ``run_id`` wird mit ``SWEEP_CONCURRENT_RUN_DETECTED`` abgewiesen; derselbe
     ``run_id`` (Resume) und ein verwaister (toter) Halter werden akzeptiert.
@@ -44,9 +48,15 @@ def _make_study(storage_url: str, study_name: str, run_id: str | None = None,
             "base": 1.0 + i, "divergence": 0.3 * i, "dd_penalty": 0.25 * i, "param_pen": 0.2 * i,
             "turnover": 0.3 * i, "fold_dispersion": 0.25 * i, "tie_breaker": 0.2 * i,
         })
-        # Issue #1086 — die letzte Trial dieser Study traegt ggf. eine ANDERE run_id (simuliert
-        # zwei Laeufe, die dieselbe Study gleichzeitig ohne Lock-Datei angefasst haben).
-        if mixed_run_id is not None and i == n - 1:
+        # Issue #1086 — EINE Trial in der MITTE dieser Study traegt ggf. eine ANDERE run_id
+        # (simuliert zwei Laeufe, die dieselbe Study gleichzeitig ohne Lock-Datei angefasst haben).
+        # Issue #1021/#1196 — bewusst NICHT die letzte Trial (das waere, wall-clock-seitig,
+        # ununterscheidbar von sequenzieller Store-Wiederverwendung: die fremde run_id liefe dann
+        # nachweislich NACH der eigenen ab, kein Overlap). Die mittlere Position stellt sicher, dass
+        # das eigene Zeitfenster (min(start) der ersten bis max(end) der letzten EIGENEN Trial) das
+        # fremde Zeitfenster zeitlich UMSCHLIESST — ein echter, messbarer Overlap, wie ihn zwei
+        # tatsaechlich gleichzeitig laufende Sweep-Prozesse erzeugen wuerden.
+        if mixed_run_id is not None and i == n // 2:
             trial.set_user_attr("run_id", mixed_run_id)
         elif run_id is not None:
             trial.set_user_attr("run_id", run_id)
@@ -121,8 +131,10 @@ def test_concurrent_sweeps_each_see_only_their_own_cohort(tmp_path, monkeypatch)
 
 
 def test_mixed_run_id_evidence_within_one_study_fails_loud(tmp_path, monkeypatch):
-    """Eine Study, die Trials von ZWEI verschiedenen run_ids traegt (gleichzeitiger Zugriff ohne
-    Lock-Datei), kann keinem der beiden Laeufe sauber zugeordnet werden."""
+    """Eine Study, die Trials von ZWEI verschiedenen run_ids mit UEBERLAPPENDEN Zeitfenstern traegt
+    (gleichzeitiger Zugriff ohne Lock-Datei), kann keinem der beiden Laeufe sauber zugeordnet
+    werden (#1021/#1196: der Overlap, nicht die blosse Anwesenheit einer zweiten run_id, ist der
+    Diskriminator)."""
     sweep_dir = tmp_path / "sweep"
     sweep_dir.mkdir()
     storage_url = f"sqlite:///{sweep_dir / 'mixed.db'}"

@@ -23,7 +23,8 @@ from pathlib import Path
 import datetime as dt
 
 from automation.optimizer import bounds
-from automation.optimizer._contracts import pair_key, split_pair_key
+from automation.optimizer import invariants
+from automation.optimizer._contracts import pair_key, split_pair_key, ReportCohortUnresolvable
 from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
@@ -2956,6 +2957,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                          "detail": _chk.get("detail")},
                         level=logging.INFO if _chk.get("passed") else logging.WARNING,
                     )
+            except ReportCohortUnresolvable:
+                # Issue #1021/#1196 Fix 4.3.1 — eine ECHTE, unaufloesbare Kohortenvermischung
+                # (#1086, ueberlappende Laufzeitfenster zweier Sweep-Prozesse) ist kein transienter
+                # Probe-Fehler; sie darf NICHT als "non-fatal" verschluckt werden, waehrend der
+                # Sweep weiterrechnet und sich am Ende trotzdem als 'complete' meldet.
+                raise
             except Exception:
                 logging.getLogger("optimizer").warning(
                     "[#933] Symbol-lokale Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
@@ -2998,6 +3005,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 report_source="progress_incremental",
                 preflight_invariant_checks=preflight_invariant_checks,
             )
+        except ReportCohortUnresolvable:
+            # Issue #1021/#1196 Fix 4.3.1 — siehe Begruendung an der Symbol-Probe-Aufrufstelle oben.
+            raise
         except Exception:
             logging.getLogger("optimizer").warning(
                 "[#933] Zwischen-Report-Schreiben fehlgeschlagen (non-fatal, Lauf setzt fort).",
@@ -3061,6 +3071,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
                     _probe_invariant_checks, _fail_fast_invariants)
                 _fail_fast_probe_errors = 0
+            except ReportCohortUnresolvable:
+                # Issue #1021/#1196 Fix 4.3.1 — siehe Begruendung an der Symbol-Probe-Aufrufstelle
+                # oben; hier zusaetzlich: der Fail-Fast-Deaktivierungszaehler (unten) darf eine
+                # echte Kohortenvermischung nicht als "zweiten transienten Fehler" wegzaehlen.
+                raise
             except Exception:
                 _fail_fast_probe_errors += 1
                 if _fail_fast_probe_errors >= 2:
@@ -3550,8 +3565,15 @@ def main(argv: list[str] | None = None) -> list[Path]:
             and symbols_planned is not None and symbols_completed >= symbols_planned):
         run_status = "completed_invalid"
 
+    # Issue #1021/#1196 Fix 4.3.2 — ob das FINALE Report-Artefakt tatsaechlich geschrieben wurde,
+    # unabhaengig vom (moeglicherweise veralteten) ``run_status``-Wert: ein Lauf, der 'complete'
+    # behauptet, aber wegen eines Schreibfehlers keinen Report hinterlaesst, ist von einem
+    # erfolgreichen Lauf sonst nur ueber ein fehlendes Artefakt auf der Platte unterscheidbar.
+    _report_written = False
     # Issue #742 — EIN aggregiertes Report-Artefakt am Ende des Laufs, atomar geschrieben. Darf den
-    # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle).
+    # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle) —
+    # AUSSER bei ``ReportCohortUnresolvable`` (#1021/#1196 Fix 4.3.1): eine echte, unaufloesbare
+    # Kohortenvermischung ist kein Report-Schreibfehler, sondern ein Befund ueber den Store selbst.
     try:
         from automation.optimizer import report as _report
         _cli_args = {"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
@@ -3604,6 +3626,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 fail_fast_triggered=_fail_fast_triggered,
                 preflight_invariant_checks=_preflight_checks,
             )
+        _report_written = True
         # Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — ein Lauf mit mindestens einer
         # blockierenden Invarianten-FAIL darf nicht dasselbe Statuswort 'complete' tragen wie ein
         # sauberer Lauf ("complete" bei zwei blockierenden FAILs UND "complete" bei null FAILs war
@@ -3625,9 +3648,29 @@ def main(argv: list[str] | None = None) -> list[Path]:
         summary_path = _summary_de.write_german_summary_for_report_path(report_path)
         if summary_path is not None:
             print(f"📝 Zusammenfassung: {summary_path}")
+    except ReportCohortUnresolvable:
+        # Issue #1021/#1196 Fix 4.3.1 — siehe Begruendung an der Symbol-Probe-Aufrufstelle oben:
+        # eine echte, unaufloesbare Kohortenvermischung darf den Lauf NICHT stillschweigend als
+        # 'complete' ohne Report enden lassen. Fatal, propagiert bis zum CLI-Exit-Code.
+        raise
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
+
+    # Issue #1021/#1196 Fix 4.3.2 — ein Lauf ohne geschriebenen Report ist nicht 'complete',
+    # unabhaengig davon, WARUM das Schreiben scheiterte (jeder Fall ausser der oben bereits fatalen
+    # ReportCohortUnresolvable). Verallgemeinerung des Ausgangsbefunds: 2411s Rechenzeit, 1940
+    # Trials, 14 Proposals — und ohne diesen Fix trotzdem ``run_status='complete'``.
+    _report_artifact_check = invariants.check_report_artifact_written(
+        run_status=run_status, report_written=_report_written)
+    emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+        "name": _report_artifact_check.name, "check": _report_artifact_check.name,
+        "passed": _report_artifact_check.passed, "source": "sweep", "scope": "global",
+        "severity": _report_artifact_check.severity, "expected": _report_artifact_check.expected,
+        "actual": _report_artifact_check.actual, "detail": _report_artifact_check.detail,
+    }, level=logging.INFO if _report_artifact_check.passed else logging.ERROR)
+    if run_status == "complete" and not _report_written:
+        run_status = "aborted_no_report"
 
     # Issue #933 (Pitfall #306) — die LETZTE Zeile jedes Laufs, egal ob er sauber durchlief oder
     # per SIGINT/SIGTERM/Exception abbrach: vorher war ein Snapshot eines laufenden Sweeps von
@@ -3640,6 +3683,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # Issue #939 — auditierbar, WELCHE Symbole isoliert scheiterten (statt nur, dass
         # run_status von 'complete' abweicht).
         "failed_symbols": sorted(sweep_failed_symbols),
+        # Issue #1021/#1196 Fix 4.3.2 — macht "kein Report, weil das Symptom dieses Issues" von
+        # jedem anderen Nicht-'complete'-Status unterscheidbar, ohne den run_status-String zu
+        # parsen.
+        "report_written": _report_written,
     }
     if _sweep_event_type == "SWEEP_FINISHED":
         # Konvention #1081 — Uebergangs-Alias eine Sitzung lang: ein Log-Parser, der noch nach dem
