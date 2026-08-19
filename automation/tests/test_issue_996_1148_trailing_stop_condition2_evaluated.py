@@ -13,14 +13,15 @@ Bedingung 2 in > 50 % der Kandidaten-Studies, ist das GESAMTERGEBNIS ``evaluable
 from automation.optimizer import invariants as inv
 
 
-def _study(label, n_exits, n_losses, mean_loss_ts=None, mean_loss_all=None):
+def _study(label, n_exits, n_losses, median_loss_ts=None, median_loss_all=None):
     strategy, symbol = label.split("/")
     return {
         "strategy": strategy, "symbol": symbol,
         "exit_reason_histogram": {"TRAILING_STOP": n_exits},
         "oos_n_trailing_stop_losses": n_losses,
-        "gross_loss_median_bps_trailing_stop": mean_loss_ts,
-        "oos_gross_loss_mean_bps": mean_loss_all,
+        "gross_loss_median_bps_trailing_stop": median_loss_ts,
+        # Issue #1024/#1173 (Pitfall #423) — der Nenner ist seit diesem Fix ebenfalls ein Median.
+        "gross_loss_median_bps": median_loss_all,
     }
 
 
@@ -39,20 +40,20 @@ def test_reproduces_symptom_condition2_numerator_missing_everywhere_is_not_evalu
 
 
 def test_condition2_available_for_majority_is_evaluable_and_still_fails_normally():
-    studies = [_study(f"A/S{i}.ETORO", 100, 70, mean_loss_ts=200.0, mean_loss_all=50.0)
+    studies = [_study(f"A/S{i}.ETORO", 100, 70, median_loss_ts=200.0, median_loss_all=50.0)
                for i in range(5)]
     result = inv.check_trailing_stop_loss_share(studies)
     assert result.evaluable is True
     assert result.passed is False
     for entry in result.actual.values():
-        assert entry["conditions_evaluated"] == ["loss_share", "mean_loss_ratio"]
-        assert set(entry["conditions_violated"]) == {"loss_share", "mean_loss_ratio"}
+        assert entry["conditions_evaluated"] == ["loss_share", "median_loss_ratio"]
+        assert set(entry["conditions_violated"]) == {"loss_share", "median_loss_ratio"}
 
 
 def test_condition2_missing_in_exactly_half_is_still_evaluable():
     """> 50 % (strikt), nicht >= 50 % — 50/50 bleibt evaluable."""
     studies = [
-        _study("A/S0.ETORO", 100, 70, mean_loss_ts=200.0, mean_loss_all=50.0),
+        _study("A/S0.ETORO", 100, 70, median_loss_ts=200.0, median_loss_all=50.0),
         _study("A/S1.ETORO", 100, 70),
     ]
     result = inv.check_trailing_stop_loss_share(studies)
@@ -61,7 +62,7 @@ def test_condition2_missing_in_exactly_half_is_still_evaluable():
 
 def test_condition2_missing_in_majority_but_not_all_is_not_evaluable():
     studies = [
-        _study("A/S0.ETORO", 100, 70, mean_loss_ts=200.0, mean_loss_all=50.0),
+        _study("A/S0.ETORO", 100, 70, median_loss_ts=200.0, median_loss_all=50.0),
         _study("A/S1.ETORO", 100, 70),
         _study("A/S2.ETORO", 100, 70),
     ]
@@ -73,14 +74,14 @@ def test_condition2_missing_in_majority_but_not_all_is_not_evaluable():
 def test_detail_names_the_actually_firing_condition_per_offender():
     studies = [
         # Nur Bedingung 1 verletzt.
-        _study("A/S0.ETORO", 100, 70, mean_loss_ts=10.0, mean_loss_all=50.0),
+        _study("A/S0.ETORO", 100, 70, median_loss_ts=10.0, median_loss_all=50.0),
         # Nur Bedingung 2 verletzt.
-        _study("A/S1.ETORO", 100, 10, mean_loss_ts=200.0, mean_loss_all=50.0),
+        _study("A/S1.ETORO", 100, 10, median_loss_ts=200.0, median_loss_all=50.0),
     ]
     result = inv.check_trailing_stop_loss_share(studies)
     assert result.evaluable is True
     assert result.actual["A/S0.ETORO"]["conditions_violated"] == ["loss_share"]
-    assert result.actual["A/S1.ETORO"]["conditions_violated"] == ["mean_loss_ratio"]
+    assert result.actual["A/S1.ETORO"]["conditions_violated"] == ["median_loss_ratio"]
     assert "ausschliesslich ueber Bedingung 1" in result.detail
     assert "ausschliesslich ueber Bedingung 2" in result.detail
 

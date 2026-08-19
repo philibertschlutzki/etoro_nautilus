@@ -226,6 +226,10 @@ class TournamentMetrics:
     oos_exit_reason_histogram: dict | None = None
     oos_max_holding_bars: float | None = None
     oos_gross_loss_mean_bps: float | None = None
+    # Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — robustes Gegenstueck zu
+    # oos_gross_loss_mean_bps (ALLE Verlust-Round-Trips), Nenner fuer
+    # invariants.check_trailing_stop_loss_share Bedingung 2 (median/median statt median/mean).
+    oos_gross_loss_median_bps: float | None = None
     # Issue #1035 (Katalog #866) — dieselbe Groesse, aber NUR ueber nachweisliche TRAILING_STOP-
     # Exits (siehe backtest_runner._aggregate_exit_telemetry-Docstring).
     oos_gross_loss_mean_bps_trailing_stop: float | None = None
@@ -399,6 +403,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_exit_reason_histogram = oos_metrics.get("exit_reason_histogram")
     oos_max_holding_bars = oos_metrics.get("max_holding_bars")
     oos_gross_loss_mean_bps = oos_metrics.get("gross_loss_mean_bps")
+    # Issue #1024/#1173 — siehe TournamentMetrics-Docstring.
+    oos_gross_loss_median_bps = oos_metrics.get("gross_loss_median_bps")
     # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
     oos_gross_loss_mean_bps_trailing_stop = oos_metrics.get("gross_loss_mean_bps_trailing_stop")
     # Issue #972/#1126 — siehe TournamentMetrics-Docstring.
@@ -634,6 +640,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_exit_reason_histogram=dict(oos_exit_reason_histogram) if oos_exit_reason_histogram else None,
         oos_max_holding_bars=float(oos_max_holding_bars) if oos_max_holding_bars is not None else None,
         oos_gross_loss_mean_bps=float(oos_gross_loss_mean_bps) if oos_gross_loss_mean_bps is not None else None,
+        # Issue #1024/#1173 — siehe TournamentMetrics-Docstring.
+        oos_gross_loss_median_bps=(
+            float(oos_gross_loss_median_bps) if oos_gross_loss_median_bps is not None else None),
         # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
         oos_gross_loss_mean_bps_trailing_stop=(
             float(oos_gross_loss_mean_bps_trailing_stop)

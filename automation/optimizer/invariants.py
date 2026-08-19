@@ -2686,42 +2686,60 @@ def check_loss_metric_commensurability(study_records: list[dict]) -> InvariantRe
     (``report._pooled_mean_of_trial_field``, beide Seiten trade-gewichtet über dieselbe
     Trial-Kohorte) ist die Schranke eine mathematische Tautologie — ein FAIL hier bedeutet, dass
     mindestens eine der beiden Zählungen selbst fehlerhaft ist (z. B. eine zukünftige Regression
-    in der Order-Tag-Klassifikation), nicht eine Kalibrierungsfrage."""
+    in der Order-Tag-Klassifikation), nicht eine Kalibrierungsfrage.
+
+    Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — zusätzliche, unabhängige Verfügbarkeits-
+    Kommensurabilität für das (Median/Median-)Paar aus ``check_trailing_stop_loss_share``:
+    ``gross_loss_median_bps`` (der Nenner) muss verfügbar sein, wann immer
+    ``gross_loss_median_bps_trailing_stop`` (der Zähler) verfügbar ist UND es tatsächlich
+    Verlust-Trades ausserhalb der Trailing-Stop-Teilmenge gibt (``oos_n_losses >
+    oos_n_trailing_stop_losses``) — sonst wiederholt eine künftige Änderung unbemerkt exakt die
+    #1024-Fehlerklasse (der Zähler wurde 2021 robust gemacht, der Nenner blieb Jahre zurück)."""
     offenders: dict[str, dict] = {}
     n_measured = 0
     for r in study_records:
-        mean_all = r.get("oos_gross_loss_mean_bps_pooled")
-        mean_stop = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
+        label = f"{r.get('strategy')}/{r.get('symbol')}"
         n_all = r.get("oos_n_losses")
         n_stop = r.get("oos_n_trailing_stop_losses")
-        if mean_all is None or mean_stop is None or not n_all or not n_stop:
-            continue
-        n_measured += 1
-        sum_all = float(mean_all) * float(n_all)
-        sum_stop = float(mean_stop) * float(n_stop)
-        # Kleine Fliesskomma-Toleranz (relative 1e-6) statt einer strikten Ungleichung.
-        if sum_all < sum_stop * (1.0 - 1e-6):
-            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
-                "sum_all_losses_bps": round(sum_all, 4),
-                "sum_trailing_stop_losses_bps": round(sum_stop, 4),
-            }
+        mean_all = r.get("oos_gross_loss_mean_bps_pooled")
+        mean_stop = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
+        if mean_all is not None and mean_stop is not None and n_all and n_stop:
+            n_measured += 1
+            sum_all = float(mean_all) * float(n_all)
+            sum_stop = float(mean_stop) * float(n_stop)
+            # Kleine Fliesskomma-Toleranz (relative 1e-6) statt einer strikten Ungleichung.
+            if sum_all < sum_stop * (1.0 - 1e-6):
+                offenders.setdefault(label, {}).update({
+                    "sum_all_losses_bps": round(sum_all, 4),
+                    "sum_trailing_stop_losses_bps": round(sum_stop, 4),
+                })
+        # Issue #1024/#1173 — Nenner-Verfuegbarkeit fuer das Median/Median-Paar, UNABHAENGIG von
+        # der Verfuegbarkeit der gepoolten Mean-Felder oben (zwei getrennte Nachweise, derselbe
+        # Kommensurabilitaets-Zweck).
+        median_ts = r.get("gross_loss_median_bps_trailing_stop")
+        median_all = r.get("gross_loss_median_bps")
+        if median_ts is not None and median_all is None and n_all and n_stop and n_all > n_stop:
+            offenders.setdefault(label, {})["median_loss_denominator_missing"] = True
     passed = not offenders
     return InvariantResult(
         name="check_loss_metric_commensurability",
         passed=passed,
-        expected="Σ(alle Verluste) >= Σ(Stop-Verluste) je Study (Teilmengen-Schranke)",
+        expected=("Σ(alle Verluste) >= Σ(Stop-Verluste) je Study (Teilmengen-Schranke) UND "
+                  "gross_loss_median_bps verfuegbar, wann immer gross_loss_median_bps_trailing_"
+                  "stop es ist"),
         actual=offenders or None,
         severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} von {n_measured} gemessenen Studies verletzen die "
-                "Teilmengen-Schranke — mindestens eine der beiden Zaehlungen ist inkonsistent "
-                "(#1097-Fehlerklasse, Pitfall #304)."),
+                "Teilmengen-Schranke oder die Nenner-Verfuegbarkeit fuer das Median/Median-Paar "
+                "— mindestens eine der beiden Zaehlungen ist inkonsistent (#1097/#1024-"
+                "Fehlerklasse, Pitfall #304/#423)."),
     )
 
 
 def check_trailing_stop_loss_share(
     study_records: list[dict], *,
-    max_loss_share: float = 0.60, max_mean_loss_ratio: float = 1.25,
+    max_loss_share: float = 0.60, max_median_loss_ratio: float = 1.25,
 ) -> InvariantResult:
     """Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer die #1092/#1094-Fixes: der
     Trailing-Stop ist im Referenzlauf ueber 1.084.300 Round-Trips der HAEUFIGSTE (43,74 % aller
@@ -2732,25 +2750,36 @@ def check_trailing_stop_loss_share(
 
     FAIL (severity ``blocking``) je Study, wenn EINE der beiden Bedingungen verletzt ist:
       1. ``n_trailing_stop_losses / n_trailing_stop_exits > max_loss_share`` (Default 0.60)
-      2. ``mean_loss_trailing_stop / mean_loss_all > max_mean_loss_ratio`` (Default 1.25)
+      2. ``median_loss_trailing_stop / median_loss_all > max_median_loss_ratio`` (Default 1.25)
 
     Beide Schwellen sind ``optimizer.json``-Keys (``trailing_stop_max_loss_share``/
-    ``trailing_stop_max_mean_loss_ratio``, Pitfall #369 — zweiseitig dokumentiert). Studies ohne
+    ``trailing_stop_max_median_loss_ratio``, Pitfall #369 — zweiseitig dokumentiert). Studies ohne
     Trailing-Stop-Exit-Telemetrie (Pre-#899-JSON, kein Trade) werden uebersprungen (fail-open auf
     fehlender Evidenz).
 
     Issue #972/#1126 (Pitfall #405 in AGENTS.md) — der Zaehler von Bedingung 2 ist seit diesem Fix
     ``gross_loss_median_bps_trailing_stop`` (robuster Median-der-Trial-Mediane) statt des
-    ungeschuetzten ``oos_gross_loss_mean_bps_trailing_stop``. Der Nenner (``oos_gross_loss_mean_
-    bps``, ALLE Verlust-Trades) bleibt unveraendert — ausserhalb des #1126-Scopes (der auf
-    ``losses_bps_trailing_stop`` beschraenkt ist).
+    ungeschuetzten ``oos_gross_loss_mean_bps_trailing_stop``.
+
+    Issue #1024/#1173 (Katalog #866-2, Pitfall #423 in AGENTS.md) — der NENNER war bis zu diesem
+    Fix ``oos_gross_loss_mean_bps`` (ALLE Verlust-Trades, ungeschuetztes Mittel) geblieben, der
+    #1126-Fix hatte ihn explizit als "ausserhalb des Scopes" dokumentiert, OHNE die Schwelle mit
+    umzuziehen — zwei verschiedene Momente (Median-Zaehler / Mittel-Nenner) in einem Quotienten,
+    dessen Kalibrierungsnachweis (2,26x im Median, mean/mean gemessen) fuer die entstandene
+    Median/Mittel-Skala nicht mehr gilt. Fix: der Nenner ist jetzt ``gross_loss_median_bps``
+    (Median ALLER Verlust-Round-Trips, robustes Gegenstueck zu ``oos_gross_loss_mean_bps`` — siehe
+    ``backtest_runner.extract_metrics``) — Zaehler UND Nenner tragen seither dieselbe Statistik.
+    Die Schwelle (``trailing_stop_max_median_loss_ratio``, umbenannt von
+    ``trailing_stop_max_mean_loss_ratio``) ist der ALTE, unter mean/mean kalibrierte Zahlenwert,
+    NICHT neu kalibriert (Pitfall #423: das waere eine stille Aufweichung, keine Korrektur) — bis
+    ein Folgelauf sie auf der neuen Skala verifiziert.
 
     Issue #983/#1137 — solange dieser Check in 10/10 Läufen auf 100 % der Grundgesamtheit failt, ist
     seine Schwelle NICHT kalibriert: die #1126-Umstellung auf den robusten Zaehler ist die
     Vorbedingung fuer eine Neukalibrierung (nicht Teil dieses Fixes, siehe AGENTS.md).
 
     Issue #996/#1148 (Katalog #1170) — Root-Cause: Bedingung 2 wurde in 27 von 28 Studies **0×**
-    ausgewertet, weil ``if mean_loss_ts is not None and mean_loss_all:`` sie kommentarlos
+    ausgewertet, weil ``if median_loss_ts is not None and median_loss_all:`` sie kommentarlos
     UEBERSPRINGT, sobald der (seit #972/#1126 median-basierte) Zaehler fehlt — der Check failte
     in diesen Laeufen ausschliesslich ueber Bedingung 1, ohne dass ein Konsument das von "beide
     Bedingungen wurden geprueft, nur Bedingung 1 verletzt" unterscheiden konnte. Fix: jede Study
@@ -2776,14 +2805,16 @@ def check_trailing_stop_loss_share(
         violation = {}
         if loss_share > max_loss_share:
             violation["loss_share"] = round(loss_share, 4)
-        mean_loss_ts = r.get("gross_loss_median_bps_trailing_stop")
-        mean_loss_all = r.get("oos_gross_loss_mean_bps")
-        if mean_loss_ts is not None and mean_loss_all:
+        median_loss_ts = r.get("gross_loss_median_bps_trailing_stop")
+        # Issue #1024/#1173 — robuster Nenner (Median aller Verlust-Round-Trips), Gegenstueck zum
+        # bereits robusten Zaehler oben; ersetzt das ungeschuetzte oos_gross_loss_mean_bps.
+        median_loss_all = r.get("gross_loss_median_bps")
+        if median_loss_ts is not None and median_loss_all:
             n_condition2_evaluated += 1
-            conditions_evaluated.append("mean_loss_ratio")
-            mean_loss_ratio = mean_loss_ts / mean_loss_all
-            if mean_loss_ratio > max_mean_loss_ratio:
-                violation["mean_loss_ratio"] = round(mean_loss_ratio, 4)
+            conditions_evaluated.append("median_loss_ratio")
+            median_loss_ratio = median_loss_ts / median_loss_all
+            if median_loss_ratio > max_median_loss_ratio:
+                violation["median_loss_ratio"] = round(median_loss_ratio, 4)
         conditions_evaluated_by_study[label] = conditions_evaluated
         if violation:
             offenders[label] = {
@@ -2802,7 +2833,7 @@ def check_trailing_stop_loss_share(
         n_loss_share_only = sum(
             1 for o in offenders.values() if o["conditions_violated"] == ["loss_share"])
         detail = (
-            f"Bedingung 2 (mean_loss_ratio) ist in {n_candidates - n_condition2_evaluated} von "
+            f"Bedingung 2 (median_loss_ratio) ist in {n_candidates - n_condition2_evaluated} von "
             f"{n_candidates} Kandidaten-Studies nicht auswertbar (Zaehler fehlt) — "
             f"{n_loss_share_only} der {len(offenders)} Offender wurden AUSSCHLIESSLICH ueber "
             "Bedingung 1 (loss_share) ermittelt; das Gesamtergebnis ist evaluable=False statt "
@@ -2812,20 +2843,20 @@ def check_trailing_stop_loss_share(
     else:
         n_loss_share_only = sum(
             1 for o in offenders.values() if o["conditions_violated"] == ["loss_share"])
-        n_mean_loss_only = sum(
-            1 for o in offenders.values() if o["conditions_violated"] == ["mean_loss_ratio"])
-        n_both = len(offenders) - n_loss_share_only - n_mean_loss_only
+        n_median_loss_only = sum(
+            1 for o in offenders.values() if o["conditions_violated"] == ["median_loss_ratio"])
+        n_both = len(offenders) - n_loss_share_only - n_median_loss_only
         detail = (
             f"{len(offenders)} Study/Studies mit einer Trailing-Stop-Verlustquote/-groesse "
             "ausserhalb der Kalibrierungsschwelle (#1092/#1094-Fehlerklasse: der Stop ratscht "
             f"auf einem Docht statt eine Verlustobergrenze durchzusetzen) — davon {n_loss_share_only} "
-            f"ausschliesslich ueber Bedingung 1 (loss_share), {n_mean_loss_only} ausschliesslich "
-            f"ueber Bedingung 2 (mean_loss_ratio), {n_both} ueber beide Bedingungen.")
+            f"ausschliesslich ueber Bedingung 1 (loss_share), {n_median_loss_only} ausschliesslich "
+            f"ueber Bedingung 2 (median_loss_ratio), {n_both} ueber beide Bedingungen.")
     return InvariantResult(
         name="check_trailing_stop_loss_share",
         passed=(passed if evaluable else None),
         expected=(f"n_trailing_stop_losses/n_trailing_stop_exits <= {max_loss_share} UND "
-                  f"mean_loss_trailing_stop/mean_loss_all <= {max_mean_loss_ratio} je Study"),
+                  f"median_loss_trailing_stop/median_loss_all <= {max_median_loss_ratio} je Study"),
         actual=offenders or None,
         severity="blocking",
         detail=detail,
@@ -2834,7 +2865,7 @@ def check_trailing_stop_loss_share(
         evaluability={
             "evaluable": evaluable,
             "inconclusive_reason": (
-                None if evaluable else "condition2_mean_loss_ratio_numerator_missing_majority"),
+                None if evaluable else "condition2_median_loss_ratio_numerator_missing_majority"),
             "n_candidates": n_candidates, "n_measured": n_condition2_evaluated,
         },
         provenance={"conditions_evaluated_by_study": conditions_evaluated_by_study} if conditions_evaluated_by_study else None,
@@ -6487,6 +6518,59 @@ def check_live_exposure_budget(exposure_snapshots: list[dict], *,
                 f"{len(offenders)} Snapshot(s) überschreiten das Gesamt-Expositions-Budget "
                 f"({max_total_exposure_fraction}): {offenders} — Bug in der #999-Budget-Formel, "
                 "keine Dateneigenart."),
+    )
+
+
+def check_ineligible_cohort_partition_identity(study_counts: dict) -> InvariantResult:
+    """Issue #1025/#1174 (Katalog #866-2, Pitfall #424 in AGENTS.md) — die evaluierten Trials einer
+    Study (``n_evaluable``) zerlegen sich disjunkt und vollstaendig in drei Klassen: eligible
+    (``n_eligible``), ineligible mit einem echten, gemessenen Ablehnungsgrund
+    (``n_ineligible_measured``), und ineligible, weil ein Gate auf einer undefinierten Groesse lief
+    (``n_ineligible_unmeasurable``, ``REJECT_OOS_STATISTIC_UNAVAILABLE``).
+
+    Root-Cause #1025/#1174: ``n_ineligible_measured`` wurde vor diesem Fix als ``max(0, n_evaluable
+    - n_eligible - n_ineligible_unmeasurable)`` SUBTRAHIERT statt direkt gezaehlt — die beiden
+    Operanden liefen zeitweise ueber verschiedene Grundgesamtheiten (``n_evaluable`` PRUNED-
+    bereinigt, ``n_ineligible_unmeasurable`` nicht), wodurch die Differenz negativ werden konnte;
+    ``max(0, …)`` verbarg das als stille ``0`` statt eines sichtbaren Kohortenbruchs (SqueezeBreakout:
+    71 - 20 - 78 = -27, ausgewiesen als 0 statt der korrekten 51). Seit dem Fix wird
+    ``n_ineligible_measured`` direkt aus ``is_rejection_detail_counts`` gezaehlt — diese Invariante
+    ist der Regressionswaechter GEGEN eine erneute Divergenz der drei Zaehler, unabhaengig davon,
+    WIE eine kuenftige Aenderung sie einfuehren wuerde.
+
+    FAIL (severity ``high``), wenn ``n_eligible + n_ineligible_measured + n_ineligible_unmeasurable
+    + n_unevaluable != n_trials`` (``n_unevaluable := n_trials - n_evaluable``). Fehlt einer der
+    vier Zaehler ⇒ nicht anwendbar (PASS, fail-open auf fehlender Evidenz, analog
+    ``check_denominator_coherence``)."""
+    keys = ("n_trials", "n_evaluable", "n_eligible", "n_ineligible_measured",
+            "n_ineligible_unmeasurable")
+    values = {k: study_counts.get(k) for k in keys}
+    if any(v is None for v in values.values()):
+        return InvariantResult(
+            name="check_ineligible_cohort_partition_identity",
+            passed=True,
+            expected="n_eligible + n_ineligible_measured + n_ineligible_unmeasurable + "
+                     "n_unevaluable == n_trials",
+            actual=None,
+            severity="high",
+            detail="Zähler unbekannt — nicht anwendbar.",
+        )
+    n_unevaluable = values["n_trials"] - values["n_evaluable"]
+    total = (values["n_eligible"] + values["n_ineligible_measured"]
+             + values["n_ineligible_unmeasurable"] + n_unevaluable)
+    diff = values["n_trials"] - total
+    passed = diff == 0
+    return InvariantResult(
+        name="check_ineligible_cohort_partition_identity",
+        passed=passed,
+        expected="n_eligible + n_ineligible_measured + n_ineligible_unmeasurable + "
+                 "n_unevaluable == n_trials",
+        actual=None if passed else {**values, "n_unevaluable": n_unevaluable, "diff": diff},
+        severity="high",
+        detail=("OK" if passed else
+                f"Zerlegung ({total}) != n_trials ({values['n_trials']}), Differenz {diff}: "
+                f"{values} — die Kohorten-Zerlegung ist nicht disjunkt/vollstaendig "
+                "(#1025/#1174-Fehlerklasse, Pitfall #424)."),
     )
 
 

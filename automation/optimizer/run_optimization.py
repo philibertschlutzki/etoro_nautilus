@@ -83,7 +83,10 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_beta": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_f_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_median, #989/#1143)",
-    "oos_n_trailing_stop_exits_with_fill_lag_telemetry": "holdout-only (confirm.py-Re-Evaluation, siehe report.py causal_hypothesis_state, #976/#1130)",
+    # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
+    # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
+    # Nachbarfeldern) und von report._study_record aus trial_attrs summiert — die vorherige
+    # Begruendung war die Bruchstelle selbst, keine gueltige Ausnahme.
     # In-Prozess konsumiert, ohne Persistenzbedarf: der Wert wird SYNCHRON innerhalb derselben
     # Trial-Objective-Auswertung verbraucht (Reward-/Constraint-Berechnung, Rejection-Detail,
     # ``optimizer_trial_completed``-Log-Event) — es existiert kein nachgelagerter Report-Konsument,
@@ -3183,6 +3186,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_median_bars_held", metrics.oos_median_bars_held)
         if metrics.oos_gross_loss_mean_bps is not None:
             trial.set_user_attr("oos_gross_loss_mean_bps", metrics.oos_gross_loss_mean_bps)
+        # Issue #1024/#1173 — siehe TournamentMetrics-Docstring.
+        if metrics.oos_gross_loss_median_bps is not None:
+            trial.set_user_attr("oos_gross_loss_median_bps", metrics.oos_gross_loss_median_bps)
         # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
         if metrics.oos_gross_loss_mean_bps_trailing_stop is not None:
             trial.set_user_attr(
@@ -3250,6 +3256,17 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         if metrics.oos_stop_exit_slippage_bps_median is not None:
             trial.set_user_attr(
                 "oos_stop_exit_slippage_bps_median", metrics.oos_stop_exit_slippage_bps_median)
+        # Issue #1023/#1172 (Katalog #866-2) — exakt dieselbe Bruchstelle wie #994/#1146, eine
+        # Ebene tiefer: die beiden Nachbarzeilen oben stempeln ihre Groesse, aber der dazugehoerige
+        # STICHPROBENZAEHLER (wie viele TRAILING_STOP-Exits ueberhaupt Fill-Lag-Telemetrie tragen)
+        # blieb ungestempelt. Ohne ihn ist "0,0 Bars Latenz" von "nie gemessen" nicht
+        # unterscheidbar (die vormalige _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS-Begruendung
+        # "holdout-only" war falsch — report._study_record summiert dieses Feld nachweislich aus
+        # trial_attrs, nicht aus dem Holdout-Re-Evaluation-Pfad).
+        if metrics.oos_n_trailing_stop_exits_with_fill_lag_telemetry:
+            trial.set_user_attr(
+                "oos_n_trailing_stop_exits_with_fill_lag_telemetry",
+                metrics.oos_n_trailing_stop_exits_with_fill_lag_telemetry)
 
         _timebox_violated_this_trial = False
         if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:

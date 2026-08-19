@@ -4022,6 +4022,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     return {
         "exit_reason_histogram": histogram,
         "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
+        # Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — robustes Gegenstueck zu
+        # gross_loss_mean_bps (ALLE Verlust-Round-Trips, nicht nur TRAILING_STOP), Nenner fuer
+        # invariants.check_trailing_stop_loss_share Bedingung 2 seit diesem Fix (median/median
+        # statt median/mean).
+        "gross_loss_median_bps": statistics.median(losses_bps) if losses_bps else None,
         "gross_win_mean_bps": statistics.mean(wins_bps) if wins_bps else None,
         "atr_median_bps": statistics.median(atr_medians) if atr_medians else None,
         "atr_min_bps": statistics.median(atr_mins) if atr_mins else None,
@@ -4532,6 +4537,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "atr_min_bps": meta.get("atr_min_bps"),
                 # Issue #975/#1129 — der ROHE (ungefloorte) ATR-Median, siehe _parse_exit_order_tags.
                 "atr_raw_median_bps": meta.get("atr_raw_median_bps"),
+                # Issue #953/#1119/#1171 (Katalog #866-2) — Root-Cause: dieser Key wird korrekt
+                # GESETZT (_parse_exit_order_tags, "BAR_RANGE_MEDIAN_BPS") und korrekt GELESEN
+                # (die Aggregation weiter unten, ``if m.get("bar_range_median_bps") is not None``),
+                # kam aber in DIESEM Dict nie an — die Grundgesamtheit war strukturell leer, jeder
+                # nachgelagerte Median entsprechend ``None`` in 100 % der Studies (Pitfall #421).
+                "bar_range_median_bps": meta.get("bar_range_median_bps"),
                 "pnl_bps": pnl_bps,
                 # Issue #972/#1126 — das Round-Trip-Notional selbst als Telemetrie (Rohmaterial fuer
                 # rt_notional_p05/p50/p95, macht den bps-Nenner auditierbar).

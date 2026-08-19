@@ -44,6 +44,7 @@ from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint,
 from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution, _best_completed_value,
+    IS_REJECTION_NONE,
 )
 from automation.optimizer.sweep import (
     load_symbol_universe, read_symbol_bar_quality_cache, _family_members,
@@ -874,16 +875,46 @@ def _study_record(proposal: dict, study,
     # verwendet wurde (siehe check_guard_reference_coherence, eine reine Quellen-Invariante).
     n_selection_statistic_available = sum(
         1 for a in trial_attrs if a.get("oos_evaluated") is True and a.get("oos_psr") is not None)
+    # Issue #1025/#1174 (Katalog #866-2) — VORGEZOGEN (war urspruenglich weiter unten, neben den
+    # inference_diagnostics-Aggregaten): ``n_ineligible_measured`` unten baut direkt darauf auf,
+    # statt es ueber eine Subtraktion aus einer anderen Grundgesamtheit zu erschliessen (siehe dort).
+    # Issue #976 — je Study, wie oft jeder is_rejection_detail-Code über ALLE Trials auftrat.
+    # Rohmaterial für invariants.check_window_unreachable_rate.
+    is_rejection_detail_counts: dict[str, int] = {}
+    for a in trial_attrs:
+        detail = a.get("is_rejection_detail")
+        if detail:
+            is_rejection_detail_counts[detail] = is_rejection_detail_counts.get(detail, 0) + 1
     # Issue #917 Fix 4 — 'ineligible' in zwei disjunkte Klassen zerlegen: nur EINE davon ist eine
     # Aussage über die Strategie. ineligible_unmeasurable zählt REJECT_OOS_STATISTIC_UNAVAILABLE
     # (#917) — ein Gate lief auf einer undefinierten Grösse, keine Messung fand statt.
+    # Issue #1025/#1174 — denselben PRUNED-Ausschluss wie n_evaluable angewendet (zip mit trials):
+    # vorher lief dieser Zaehler ueber die volle trial_attrs-Grundgesamtheit, n_evaluable dagegen
+    # bereits ueber die PRUNED-bereinigte — zwei verschiedene Nenner unter demselben Namen.
     n_ineligible_unmeasurable = sum(
-        1 for a in trial_attrs
+        1 for t, a in zip(trials, trial_attrs)
         if a.get("oos_evaluated") is True and a.get("oos_eligible") is not True
-        and a.get("is_rejection_detail") == "REJECT_OOS_STATISTIC_UNAVAILABLE")
-    # ineligible_measured — evaluiert, nicht eligible, aber NICHT wegen einer undefinierten Grösse
-    # (ein echtes, wenn auch negatives, Messergebnis).
-    n_ineligible_measured = max(0, n_evaluable - n_eligible - n_ineligible_unmeasurable)
+        and a.get("is_rejection_detail") == "REJECT_OOS_STATISTIC_UNAVAILABLE"
+        and getattr(t, "state", None) != _pruned_state
+    )
+    # Issue #1025/#1174 (Katalog #866-2) — Root-Cause: ``n_evaluable`` (PRUNED-bereinigt) und die
+    # vormalige ``n_ineligible_unmeasurable``-Zaehlung (NICHT PRUNED-bereinigt) liefen ueber ZWEI
+    # verschiedene Grundgesamtheiten; ``max(0, n_evaluable - n_eligible - n_ineligible_
+    # unmeasurable)`` klemmte die daraus resultierende NEGATIVE Differenz still auf 0, statt den
+    # Kohortenbruch zu melden (SqueezeBreakout: 71 - 20 - 78 = -27, ausgewiesen als 0 statt der
+    # korrekten 51). Fix: ``n_ineligible_measured`` wird DIREKT aus ``is_rejection_detail_counts``
+    # gebildet (Summe aller Codes ausser den drei "keine Messung fand statt"-Sentinels) statt
+    # subtrahiert — eine Zaehlgroesse wird gezaehlt, nicht als Rest einer Subtraktion erschlossen
+    # (Pitfall #424 in AGENTS.md).
+    n_ineligible_measured = sum(
+        v for k, v in is_rejection_detail_counts.items()
+        if k not in (
+            IS_REJECTION_NONE,
+            "REJECT_OOS_STATISTIC_UNAVAILABLE",
+            "REJECT_OOS_NOT_EVALUATED",
+            "REJECT_OOS_WINDOW_UNREACHABLE",
+        )
+    )
     # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
     # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
     _n_periods_values = [
@@ -907,13 +938,8 @@ def _study_record(proposal: dict, study,
     session_coverage_fraction_median = (
         statistics.median(_session_coverage_values) if _session_coverage_values else None)
     coherence_violations = sum(1 for a in trial_attrs if a.get("oos_coherence_violation") is True)
-    # Issue #976 — je Study, wie oft jeder is_rejection_detail-Code über ALLE Trials auftrat.
-    # Rohmaterial für invariants.check_window_unreachable_rate.
-    is_rejection_detail_counts: dict[str, int] = {}
-    for a in trial_attrs:
-        detail = a.get("is_rejection_detail")
-        if detail:
-            is_rejection_detail_counts[detail] = is_rejection_detail_counts.get(detail, 0) + 1
+    # Issue #1025/#1174 — is_rejection_detail_counts wird jetzt WEITER OBEN berechnet (siehe dort,
+    # n_ineligible_measured baut direkt darauf auf).
     # Issue #804 — Aggregat je Study: wie oft jeder strukturierte Inferenzpfad-Diagnose-Code
     # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
     # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED/COHERENCE_INVARIANT_VIOLATION) über ALLE
@@ -1183,6 +1209,15 @@ def _study_record(proposal: dict, study,
         # Issue #1079 — n_evaluable (dieser Funktion lokaler, trial_attrs-basierter Zähler)
         # zusätzlich zu study_user_attrs übergeben, damit die zweite Identität geprüft werden kann.
         _inv.check_denominator_coherence({**study_user_attrs, "n_evaluable": n_evaluable}),
+        # Issue #1025/#1174 (Katalog #866-2, Pitfall #424 in AGENTS.md) — Regressionswaechter
+        # gegen eine erneute Divergenz von n_eligible/n_ineligible_measured/n_ineligible_
+        # unmeasurable/n_evaluable, seit ``n_ineligible_measured`` nicht mehr per Subtraktion
+        # erschlossen wird (siehe dortiger Feldkommentar).
+        _inv.check_ineligible_cohort_partition_identity({
+            "n_trials": n_trials, "n_evaluable": n_evaluable, "n_eligible": n_eligible,
+            "n_ineligible_measured": n_ineligible_measured,
+            "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
+        }),
     ]
 
     # Issue #949 (Katalog C) Fix 2 — reward_std_total (alle oos_evaluated Trials) vs.
@@ -1229,6 +1264,13 @@ def _study_record(proposal: dict, study,
     _deflation_n_family_frozen_raw = study_user_attrs.get("deflation_n_family_frozen")
     _family_membership_raw = study_user_attrs.get("family_membership")
 
+    # Issue #1023/#1172 (Katalog #866-2) — Stichprobengroesse VOR dem Median berechnet, damit
+    # ``stop_exit_fill_lag_bars`` auf ``None`` faellt, solange kein einziger Trial dieser Study
+    # nachweisliche Fill-Lag-Telemetrie traegt, statt eine ``0,0``-Latenz zu suggerieren, die von
+    # "nie gemessen" ununterscheidbar waere (Tri-State-Mechanik wie #995/#1147).
+    _n_ts_exits_with_fill_lag = sum(
+        int(a.get("oos_n_trailing_stop_exits_with_fill_lag_telemetry") or 0) for a in trial_attrs)
+
     record = {
         "symbol": proposal.get("symbol"),
         "strategy": proposal.get("strategy"),
@@ -1254,6 +1296,12 @@ def _study_record(proposal: dict, study,
         "wallclock_s": study_user_attrs.get("wallclock_s"),
         "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
         "n_eligible": n_eligible,
+        # Issue #1025/#1174 Akzeptanzkriterium 3 — der Rest, der bei einer korrekten Zerlegung 0
+        # sein MUSS (n_evaluable == n_eligible + n_ineligible_measured + n_ineligible_
+        # unmeasurable); vor diesem Fix von ``max(0, …)`` in ``n_ineligible_measured`` verschluckt.
+        # ``check_ineligible_cohort_partition_identity`` (invariants.py) prueft dieses Feld auf 0.
+        "n_ineligible_cohort_residual": (
+            n_evaluable - n_eligible - n_ineligible_measured - n_ineligible_unmeasurable),
         "p_eligible": p_eligible,
         # Issue #885 Fix Punkt 2 — n_trials_pruned/n_trials_unevaluable als GETRENNTE Telemetrie
         # (vorher kollabierten beide in "nicht evaluiert"); n_trials_informative ist der EINE Nenner
@@ -1430,6 +1478,11 @@ def _study_record(proposal: dict, study,
         # des realisierten Ø-Bruttoverlusts (bps) und der ATR-Telemetrie über die Trials dieser
         # Study (#899). None, wenn keine Exit-Telemetrie vorliegt (Pre-#899-JSON/kein Trade).
         "oos_gross_loss_mean_bps": _median_of_trial_field(trial_attrs, "oos_gross_loss_mean_bps"),
+        # Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — robustes Gegenstueck zu
+        # oos_gross_loss_mean_bps (ALLE Verlust-Round-Trips); Nenner fuer
+        # invariants.check_trailing_stop_loss_share Bedingung 2 seit diesem Fix (median/median
+        # statt median/mean, siehe dortiger Docstring).
+        "gross_loss_median_bps": _median_of_trial_field(trial_attrs, "oos_gross_loss_median_bps"),
         # Issue #1035 (Katalog #866) — dieselbe Groesse, aber NUR ueber nachweisliche TRAILING_
         # STOP-Exits, plus die zugrunde liegende Stichprobengroesse (Summe ueber alle Trials) —
         # Rohmaterial fuer invariants.check_effective_stop_distance (INCONCLUSIVE bei < 30 Stop-
@@ -1474,13 +1527,12 @@ def _study_record(proposal: dict, study,
         # Latenz (Bars) und Slippage (bps) über nachweisliche TRAILING_STOP-Exits. Zusammen mit
         # bar_range_median_bps/realized_stop_loss_ratio die Zerlegung "Verlust = Stopdistanz +
         # Überschiessen + Slippage" (#976 Akzeptanzkriterium).
-        "stop_exit_fill_lag_bars": _median_of_trial_field(
-            trial_attrs, "oos_stop_exit_fill_lag_bars_median"),
+        "stop_exit_fill_lag_bars": (
+            _median_of_trial_field(trial_attrs, "oos_stop_exit_fill_lag_bars_median")
+            if _n_ts_exits_with_fill_lag else None),
         "stop_exit_slippage_bps": _median_of_trial_field(
             trial_attrs, "oos_stop_exit_slippage_bps_median"),
-        "n_trailing_stop_exits_with_fill_lag_telemetry": sum(
-            int(a.get("oos_n_trailing_stop_exits_with_fill_lag_telemetry") or 0)
-            for a in trial_attrs),
+        "n_trailing_stop_exits_with_fill_lag_telemetry": _n_ts_exits_with_fill_lag,
         # Issue #1085 (Katalog #866-2), Quelle umgestellt #946/#1112 (Katalog #960) — über alle
         # Trials aufsummierte Dust-Round-Trips (Notional < 5% des Median-Notionals dieser Study,
         # Fliesskomma-Residuen eines Netto-Exposure-Nulldurchgangs) — Rohmaterial für
@@ -3195,7 +3247,11 @@ def _build_report(
     all_checks.append(("global", _inv.check_trailing_stop_loss_share(
         studies_out,
         max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
-        max_mean_loss_ratio=float(optimizer_cfg.get("trailing_stop_max_mean_loss_ratio", 1.25)))))
+        # Issue #1024/#1173 — umbenannt von 'trailing_stop_max_mean_loss_ratio': Zaehler UND
+        # Nenner sind seither dieselbe Statistik (Median), siehe check_trailing_stop_loss_share-
+        # Docstring.
+        max_median_loss_ratio=float(
+            optimizer_cfg.get("trailing_stop_max_median_loss_ratio", 1.25)))))
 
     # Issue #950/#1116 (Katalog #960) — die verbindliche SWEEP-WEITE Abnahmemessung fuer die
     # #1092/#1094-Hypothese (drei Kriterien: Spearman(k*ATR, realisierter Verlust) >= 0.3,
