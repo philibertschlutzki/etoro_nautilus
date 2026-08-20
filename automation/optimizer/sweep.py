@@ -573,6 +573,88 @@ def symbol_bar_quality_cache_status(work_dir: Path) -> dict[str, str | bool]:
     return {"cache_path": str(path), "cache_found": path.exists()}
 
 
+def _calibrated_slippage_cache_path(work_dir: Path) -> Path:
+    return Path(work_dir) / "calibrated_slippage.json"
+
+
+def write_calibrated_slippage_cache(
+    work_dir: Path, calibration_by_asset_class: dict[str, dict], *, run_id: str,
+) -> Path:
+    """Issue #1055/#1204 (Katalog #1196-1221, P0) — persistiert die aus der gemessenen Verteilung
+    des VORLAUFS kalibrierte Slippage (``backtest_runner.calibrate_slippage_bps_by_asset_class``),
+    analog ``write_symbol_bar_quality_cache``. Traegt zusaetzlich ``run_id`` und einen
+    ``calibrated_at_utc``-Zeitstempel, damit ein Leser (Report/Operator) nachvollziehen kann, AUS
+    welchem Lauf die Kalibrierung stammt — eine stille, nicht-datierte Kalibrierungsdatei waere
+    dieselbe #406/#1168-Fehlerklasse (ein Wert ohne Provenienz ist nicht von einem geratenen Wert
+    unterscheidbar)."""
+    path = _calibrated_slippage_cache_path(work_dir)
+    payload = {
+        "run_id": run_id,
+        "calibrated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "slippage_bps_by_asset_class": calibration_by_asset_class,
+    }
+    write_json_atomic(path, payload)
+    return path
+
+
+def read_calibrated_slippage_cache(work_dir: Path) -> dict:
+    """Gegenstück zu ``write_calibrated_slippage_cache``. Fehlt die Datei (frischer Store, noch
+    keine Vorlauf-Messung) ⇒ ``{}`` (fail-open — ``resolve_slippage_bps`` faellt dann auf die
+    statische ``backtest.json``-Konstante zurueck, bit-identisch zum Pre-#1204-Verhalten)."""
+    path = _calibrated_slippage_cache_path(work_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def calibrate_and_write_slippage_cache(
+    pairs, studies, *, work_dir: Path | None = None, run_id: str,
+) -> dict[str, dict]:
+    """Issue #1055/#1204 (Katalog #1196-1221, P0) — sammelt die GEMESSENE, seitenbereinigte
+    Fill-Slippage (``oos_stop_exit_slippage_bps_median``, je Trial bereits gestempelt, siehe
+    ``run_optimization``/``backtest_runner._finalize_round_trip``) STORE-WEIT (bewusst NICHT
+    run_id-gescoped wie #1197/#1049 — die Kalibrierung SOLL die volle historische Verteilung
+    nutzen, mehr Beobachtungen bedeuten ein praeziseres p50/p90; anders als eine Multiplizitaets-
+    Zaehlung ist eine Verteilungsschaetzung durch mehr Historie nicht verzerrt, nur praeziser), je
+    Asset-Klasse (``backtest_runner._resolve_asset_class_for_symbol``), und schreibt das Ergebnis
+    nach ``calibrated_slippage.json``. Reine Best-Effort-Telemetrie: ein einzelner Lesefehler
+    (nicht ladbare Study, unbekannte Asset-Klasse) darf den Sweep nie blockieren."""
+    try:
+        from automation.backtest_runner import (
+            calibrate_slippage_bps_by_asset_class, _resolve_asset_class_for_symbol)
+    except Exception:
+        return {}
+    observations_by_asset_class: dict[str, list[float]] = {}
+    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+        try:
+            asset_class = _resolve_asset_class_for_symbol(symbol)
+        except Exception:
+            continue
+        trials = getattr(study, "trials", None) or []
+        for t in trials:
+            val = (getattr(t, "user_attrs", None) or {}).get("oos_stop_exit_slippage_bps_median")
+            if val is None:
+                continue
+            # Issue #1029/#1178 — die gespeicherte Groesse ist bereits seitenbereinigt/vorzeichen-
+            # behaftet (+ = advers); die Kalibrierung braucht die ADVERSE MAGNITUDE (ein negativer
+            # Wert, ein guenstigerer Fill als der Stop-Level, ist keine Kostenposition).
+            adverse = max(0.0, float(val))
+            observations_by_asset_class.setdefault(asset_class, []).append(adverse)
+    calibration = calibrate_slippage_bps_by_asset_class(observations_by_asset_class)
+    if work_dir is None:
+        work_dir = WORK
+    try:
+        write_calibrated_slippage_cache(work_dir, calibration, run_id=run_id)
+    except OSError:
+        logging.getLogger("optimizer").debug(
+            "[#1204] calibrated_slippage.json-Schreiben fehlgeschlagen (non-fatal).", exc_info=True)
+    return calibration
+
+
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
     """Issue #455 — jüngster ``ts_event`` (Epoch-ns) je Symbol aus den Parquet-Row-Group-Statistiken.
 
@@ -1183,7 +1265,8 @@ def _family_n_from_proposals(proposals) -> dict[str, int]:
     return family_n
 
 
-def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None) -> dict[str, int]:
+def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                           run_id: str | None = None) -> dict[str, int]:
     """Issue #652 — familienweise Multiple-Testing-N je Symbol AUS DEN STUDY-OBJEKTEN SELBST
     (nicht aus den exportierten Proposals — die existieren an dieser Stelle noch nicht, siehe
     ``_family_n_from_proposals`` für die post-hoc-Variante der reinen Sweep-Telemetrie). Summe über
@@ -1241,7 +1324,7 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     Telemetrie-Funktion erhalten (u. a. für bestehende Tests und eine potenzielle
     ``promotion_family_scope='per_symbol_best'``-Stufe-2-Referenzgrösse)."""
     per_study, symbol_fingerprints = _family_n_per_study_from_studies(
-        pairs, studies, tournament_cfg=tournament_cfg)
+        pairs, studies, tournament_cfg=tournament_cfg, run_id=run_id)
     family_n: dict[str, int] = {}
     for (_strategy, symbol), n_evaluated in per_study.items():
         family_n[symbol] = family_n.get(symbol, 0) + n_evaluated
@@ -1258,6 +1341,7 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
 
 
 def _family_n_per_study_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                     run_id: str | None = None,
                                      ) -> tuple[dict[tuple[str, str], int], dict[str, set]]:
     """Issue #826 Fix Punkt 1 — gemeinsamer Zaehl-Kernel: liefert das #822-N JE EINZELNER Study
     (``{(strategy, symbol): n}``), OHNE es über die Strategien eines Symbols zu summieren, plus die
@@ -1265,7 +1349,19 @@ def _family_n_per_study_from_studies(pairs, studies, *, tournament_cfg: dict | N
     ``_family_n_from_studies`` (Rückwärtskompat: symbolweite Summe) als auch
     ``_family_n_stage1_from_studies``/``_family_n_stage2_from_studies`` (#826, die tatsächlich an
     ``confirm(...)`` durchgereichte Per-Strategie-Zahl) bauen auf DIESER EINEN Zählung auf — dieselbe
-    Trial-Iteration + dasselbe ``_dispose_storage``-Nachziehen (#747) darf nicht divergieren."""
+    Trial-Iteration + dasselbe ``_dispose_storage``-Nachziehen (#747) darf nicht divergieren.
+
+    Issue #1049/#1197 (Katalog #1196-1221, P0, Pitfall #429 in AGENTS.md) — Root-Cause:
+    ``study.trials`` ist STORE-SCOPED (die GESAMTE Study-Historie über ALLE ``run_id``s, die je auf
+    diesem warm-gestarteten Store liefen), waehrend die DSR-Multiplizitaetskorrektur eine Zahl
+    unterscheidbarer, TATSAECHLICH GEPRUEFTER Hypothesen DIESES Laufs braucht — nicht die
+    Kardinalitaet der ueber k Laeufe akkumulierten Trial-Tabelle. Ohne Filter skaliert
+    ``deflation_n_family_raw`` linear mit k (35/35 Datenpunkte exakt bei B-1: k-faches
+    ``n_statistic_available``), die DSR-Schwelle steigt entsprechend (18,3 % bei k=6). ``run_id``
+    (optional, Default ``None`` = bestehendes, store-scoped Verhalten fuer Legacy-Aufrufer/Tests
+    OHNE Kenntnis des aktuellen Laufs) filtert die Trial-Menge VOR der Zaehlung auf genau die
+    Trials, die DIESER Lauf tatsaechlich gezogen hat — dieselbe run_id-Stempel-Konvention wie
+    ``report._build_report``s Kohorten-Filter (#1086/#1021)."""
     # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
     # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
     # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
@@ -1275,6 +1371,8 @@ def _family_n_per_study_from_studies(pairs, studies, *, tournament_cfg: dict | N
     symbol_fingerprints: dict[str, set] = {}
     for (strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
+        if run_id is not None:
+            trials = [t for t in trials if getattr(t, "user_attrs", {}).get("run_id") == run_id]
         n_evaluated = sum(
             1 for t in trials
             if getattr(t, "user_attrs", {}).get("oos_selection_statistic_available") is True
@@ -1359,6 +1457,7 @@ def _family_members(family_membership: str | None) -> bool:
 
 
 def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                  run_id: str | None = None,
                                   ) -> dict[tuple[str, str], int]:
     """Issue #826 Fix Punkt 1/2 — N1: die Multiple-Testing-Multiplizität EINER EINZELNEN Study
     (Strategie, Symbol), NICHT symbolweit über alle Strategien summiert. Root-Cause #826:
@@ -1366,19 +1465,23 @@ def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None
     ``_family_n_from_studies`` lieferte bislang trotzdem eine Symbol-weite Summe über ALLE
     Strategien-Studies als Multiplizität für JEDE einzelne davon (Roster-/Budget-Kopplung, siehe
     Katalog #750 #826). Unter ``promotion_family_scope='per_strategy'`` (Default, siehe
-    ``_resolve_promotion_family_scope``) ist DIESES N1 die an ``confirm(...)`` durchgereichte Zahl."""
-    per_study, _fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    ``_resolve_promotion_family_scope``) ist DIESES N1 die an ``confirm(...)`` durchgereichte Zahl.
+    ``run_id`` siehe ``_family_n_per_study_from_studies``-Docstring (#1049/#1197)."""
+    per_study, _fingerprints = _family_n_per_study_from_studies(
+        pairs, studies, tournament_cfg=tournament_cfg, run_id=run_id)
     return per_study
 
 
-def _family_n_stage2_from_studies(pairs, studies, *, tournament_cfg: dict | None = None) -> dict[str, int]:
+def _family_n_stage2_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                  run_id: str | None = None) -> dict[str, int]:
     """Issue #826 Fix Punkt 1/2 — N2: je Symbol die Zahl der Strategien, die ÜBERHAUPT einen
     Kandidaten mit Selektions-Teststatistik geliefert haben (N1 > 0). Reine Telemetrie
     (``report.cross_study['n_family_stage2']``) für eine HYPOTHETISCHE zweite Korrekturstufe
     (``promotion_family_scope='per_symbol_best'``) — diese Stufe ist NICHT aktiv (siehe
     ``_resolve_promotion_family_scope``: fail-loud, mangels H0-Kalibrierung der Stufen-Komposition,
     Katalog #750 #826 Fix Punkt 4)."""
-    per_study, _fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    per_study, _fingerprints = _family_n_per_study_from_studies(
+        pairs, studies, tournament_cfg=tournament_cfg, run_id=run_id)
     stage2: dict[str, int] = {}
     for (_strategy, symbol), n in per_study.items():
         stage2.setdefault(symbol, 0)
@@ -1499,7 +1602,8 @@ def _family_n_excluded_breakdown_from_studies(pairs, studies) -> dict[str, dict[
     return {symbol: dict(counter) for symbol, counter in breakdown.items()}
 
 
-def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[float]]]:
+def _family_period_returns_from_studies(pairs, studies, *,
+                                        run_id: str | None = None) -> dict[str, list[list[float]]]:
     """Issue #695 — familienweite OOS-Perioden-Return-MATRIX je Symbol (nicht nur ein Zähler): je
     eligiblem Trial ALLER Strategien-Studies desselben Symbols dessen ``oos_period_returns``
     (dieselbe Quelle, die ``confirm._study_pbo`` bereits PER STUDY liest). ``confirm_per_symbol_
@@ -1542,10 +1646,19 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
     ``deflation_n_family_raw`` einfach auf die grössere Matrixzahl hochkorrigierte. Jetzt, wo #904
     diese Zeile entfernt hat, MUSS der Filter hier mit der Zählung übereinstimmen — sonst declustert
     ``confirm.py`` Konfigurationen, die nie Kandidat für die Selektion waren (und
-    ``deflation_cluster_coverage`` bleibt strukturell < 1)."""
+    ``deflation_cluster_coverage`` bleibt strukturell < 1).
+
+    Issue #1049/#1197 (Katalog #1196-1221, P0) — ``run_id`` (optional) filtert dieselbe
+    STORE-SCOPED ``study.trials``-Menge wie ``_family_n_per_study_from_studies`` (siehe dortiger
+    Docstring) — MUSS mit deren Filter uebereinstimmen (derselbe Kommentar wie oben gilt jetzt auch
+    fuer den Lauf-Scope, nicht nur fuer den Selektionsstatistik-Filter): sonst declustert
+    ``confirm.py`` eine Matrix, die MEHR/WENIGER Zeilen traegt als die Zahl, gegen die sie geprueft
+    wird (``deflation_n_family_raw``)."""
     family_returns: dict[str, list[list[float]]] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
+        if run_id is not None:
+            trials = [t for t in trials if getattr(t, "user_attrs", {}).get("run_id") == run_id]
         for t in trials:
             if getattr(t, "user_attrs", {}).get("oos_selection_statistic_available") is not True:
                 continue
@@ -2852,9 +2965,24 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # Issue #652 — familienweite Multiplizität NUR über die Studies DIESES Symbols (alle
             # Strategien dieses Symbols sind jetzt abgeschlossen); #695 liefert dieselbe Grundlage
             # als Return-Matrix für die Korrelations-Declusterung in confirm.py.
+            # Issue #1049/#1197 (Katalog #1196-1221, P0, Pitfall #429 in AGENTS.md) — ``run_id``
+            # durchgereicht: OHNE diesen Filter zaehlt/decorreliert diese Kette ueber die GESAMTE
+            # Store-Historie (alle warm gestarteten Vorlaeufe), nicht nur ueber DIESEN Lauf —
+            # deflation_n_family_raw skalierte dadurch linear mit der Zahl der Vorlaeufe (k).
             symbol_n_family = _family_n_from_studies(
-                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
-            symbol_family_returns = _family_period_returns_from_studies(symbol_pairs, symbol_studies)
+                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family,
+                run_id=run_id)
+            symbol_family_returns = _family_period_returns_from_studies(
+                symbol_pairs, symbol_studies, run_id=run_id)
+            # Issue #1055/#1204 (Katalog #1196-1221, P0) — kalibriert slippage_bps_by_asset_class
+            # aus der GEMESSENEN Verteilung (bewusst STORE-WEIT, nicht run_id-gescoped wie oben —
+            # eine Verteilungsschaetzung profitiert von mehr Historie, siehe dortiger Docstring).
+            # Best-effort/additiv: ein Kalibrierungsfehler darf den Sweep nie blockieren.
+            try:
+                calibrate_and_write_slippage_cache(symbol_pairs, symbol_studies, run_id=run_id)
+            except Exception:
+                logging.getLogger("optimizer").debug(
+                    "[#1204] Slippage-Kalibrierung fehlgeschlagen (non-fatal).", exc_info=True)
             # Issue #822 — Aufschlüsselung, wie viele oos_evaluated Trials je Symbol AUS der obigen
             # Zählung ausgeschlossen wurden (keine Selektions-Teststatistik), nach Grund.
             symbol_n_family_excluded = _family_n_excluded_breakdown_from_studies(
@@ -2862,7 +2990,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # Issue #826 Fix Punkt 1 — N1 JE STUDY (nicht symbolweit summiert): die tatsächlich an
             # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
             symbol_n_family_stage1 = _family_n_stage1_from_studies(
-                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family,
+                run_id=run_id)
             # Issue #981/#1135 (Katalog #986) — eine Study mit strukturell zu wenigen OOS-Perioden
             # (``oos_n_periods_median < min_oos_periods_for_family``) ist keine belastbare
             # Stichprobe (der bereits existierende ``STRUCTURAL_ZERO_ELIGIBLE``-Stop-Grund hatte
@@ -3678,6 +3807,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # einer Vorab-Berechnung; dieselbe write_json_atomic-Garantie wie der Erstschrieb.
         if run_status == "complete":
             run_status = _downgrade_run_status_for_blocking_invariants(report_path)
+        # Issue #1066/#1216 — siehe _stamp_report_artifact_metadata-Docstring: das Ergebnis von
+        # invariants.check_report_artifact_written (unten emittiert) kann strukturell nie im
+        # eigenen invariant_checks-Strom stehen; run.json traegt es stattdessen direkt.
+        _stamp_report_artifact_metadata(report_path)
         print(f"📄 Report: {report_path}")
         # Issue #773 — der Report war bislang rein informativ; der CLI-Entrypoint (__main__ unten)
         # liest diesen Pfad, um bei mindestens einem FAIL-Invarianten-Check einen Non-Zero-Exit-Code
@@ -3962,6 +4095,38 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
             "bleibt 'complete').", exc_info=True,
         )
         return "complete"
+
+
+def _stamp_report_artifact_metadata(report_path) -> dict | None:
+    """Issue #1066/#1216 (P2, Katalog #1196-1221) — dieselbe Read-Back-Patch-Technik wie
+    ``_downgrade_run_status_for_blocking_invariants`` (atomar, fail-open): ``invariants.check_
+    report_artifact_written`` kann sein eigenes Ergebnis strukturell NIE im ``invariant_checks``-
+    Strom DIESES Reports tragen (Selbstreferenz — die Frage "wurde diese Datei geschrieben" ist
+    erst NACH dem Schreiben beantwortbar, siehe ``report._DELIBERATELY_UNWIRED_INVARIANT_CHECKS``-
+    Eintrag). Diese Funktion macht das Ergebnis stattdessen im Artefakt selbst nachvollziehbar:
+    ``bytes``/``sha256`` werden auf dem gerade geschriebenen (ggf. bereits #1016-run_status-
+    gepatchten) Datei-Inhalt gebildet, BEVOR dieser Patch selbst angewandt wird — der gespeicherte
+    Hash beschreibt damit den tatsaechlichen Report-INHALT, nicht sich selbst rekursiv.
+
+    Rueckgabe: das gestempelte ``report_artifact``-Dict, oder ``None`` bei jedem Lese-/Schreibfehler
+    (non-fatal — ein defektes Report-Artefakt darf den Lauf nicht zusaetzlich verschlechtern,
+    dieselbe Konvention wie der #1016-Patch)."""
+    try:
+        import hashlib
+        raw_bytes = Path(report_path).read_bytes()
+        artifact_meta = {
+            "written": True, "path": str(report_path),
+            "bytes": len(raw_bytes), "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        }
+        written_report = json.loads(raw_bytes.decode("utf-8"))
+        written_report["report_artifact"] = artifact_meta
+        write_json_atomic(report_path, written_report)
+        return artifact_meta
+    except Exception:
+        logging.getLogger("optimizer").warning(
+            "[#1066/#1216] report_artifact-Stempelung fehlgeschlagen (non-fatal).", exc_info=True,
+        )
+        return None
 
 
 def _report_has_failing_invariant(report_path) -> bool:

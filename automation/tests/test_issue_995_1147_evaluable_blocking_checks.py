@@ -76,7 +76,11 @@ def test_check_trailing_stop_risk_calibration_acceptance_below_3_studies_is_not_
     assert result.passed is None
     assert result.evaluable is False
     assert result.severity == "high"
-    assert result.evaluability["n_measured"] == 1
+    # Issue #1056/#1205 — dieses Gate ist die (unveraenderte) >= 3-Studies-Evidenzschranke fuer
+    # Kriterien 2/3 (Ratio-Band/TRAILING_STOP-Anteil); die evaluability traegt seither
+    # "n_candidates" statt des vormaligen "n_measured" (das an ``k_atr_values``, die alte
+    # Study-Median-Spearman-Stichprobe, gebunden war und mit dieser entfallen ist).
+    assert result.evaluability["n_candidates"] == 1
 
 
 # --- InvariantResult.to_dict() surfaces the new field ---------------------------------------------

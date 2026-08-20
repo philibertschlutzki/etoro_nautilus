@@ -108,12 +108,15 @@ def test_cap_unit_test():
     # reward = base - div_pen - dd_excess*w + cov*w - turnover_pen - fold_disp_pen + ret_tie
     # dd_excess = 0, turnover = 0, ret = 0
     # reward = base - div_pen + 0.5 - fold_disp_pen
-    # Both div_pen and fold_disp_pen should have been capped at max_penalty_allowed
-    # So max possible penalty is 2 * max_penalty_allowed
+    # div_pen should have been capped at max_penalty_allowed.
+    # Issue #1068/#1218 (Katalog #1196-1221, supersedes #591s zweite Penalty-Quelle) —
+    # fold_dispersion ist seither code-seitig auf 0.0 gezwungen (reward.RETIRED_REWARD_TERMS),
+    # unabhaengig vom uebergebenen fold_dispersion_weight -- fold_disp_pen entfaellt aus der
+    # Rekonstruktion (nur noch EINE gecappte Strafquelle, nicht mehr zwei).
 
     dd_penalty = weights["penalty_dd_weight"] * ((m.oos_max_drawdown / 0.30) ** 2)
     expected_reward_if_capped = (
-        base - max_penalty_allowed + 0.5 - max_penalty_allowed - dd_penalty
+        base - max_penalty_allowed + 0.5 - dd_penalty
     )
 
     # Allow small float tolerances

@@ -25,6 +25,10 @@ _CONSUMED_INTO_DERIVED_FIELD = {
     # Issue #976/#1130 — fliesst als Referenzpreis in stop_exit_slippage_bps, nicht als eigener
     # Rohwert.
     "trailing_stop_price": "stop_exit_slippage_bps (Referenzpreis fuer die Slippage-Berechnung)",
+    # Issue #1054/#1203 — fliesst als gemeinsamer Nenner in trigger_to_fill_gap_bps UND
+    # realized_loss_bps, nicht als eigener Rohwert (siehe _finalize_round_trip-Kommentar).
+    "stop_trigger_anchor_price": "trigger_to_fill_gap_bps/realized_loss_bps (gemeinsamer Nenner "
+                                  "der Verlust-Zerlegung, #1203)",
 }
 
 

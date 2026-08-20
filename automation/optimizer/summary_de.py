@@ -612,8 +612,44 @@ def _section_2_monetary_result(report: dict) -> str:
             )
         lines.append("")
 
+    # Issue #1071/#1221 (Katalog #1196-1221) — Studies mit strukturell duenner Perioden-Basis
+    # (oos_n_periods_median < 1/6 des Medians ihres eigenen Symbols, typisch Squeeze) werden HIER
+    # separat ausgewiesen statt unmarkiert in derselben Vergleichstabelle wie ihre gut besetzten
+    # Symbol-Geschwister zu erscheinen — ihr annualisierter Sortino beruht auf einer duennen
+    # Beobachtungsbasis, unabhaengig davon, dass der Annualisierungsfaktor selbst seit diesem Fix
+    # symbolweit stabil ist (siehe backtest_runner._get_annualization_factor_with_source).
+    _annualization_excluded = (report.get("cross_study") or {}).get("annualization_excluded_studies") or []
+    if _annualization_excluded:
+        lines.append(
+            "**Von der Annualisierungs-/Sortino-Vergleichbarkeit ausgeschlossen** "
+            "(oos_n_periods_median < 1/6 des Symbol-Medians):"
+        )
+        lines.append("")
+        lines.append("| Strategie | Symbol | n_periods (Study) | n_periods-Median (Symbol) | Schwelle |")
+        lines.append("|---|---|---:|---:|---:|")
+        for e in _annualization_excluded:
+            lines.append(
+                f"| {e.get('strategy')} | {e.get('symbol')} | "
+                f"{_fmt_num(e.get('oos_n_periods_median'), digits=1)} | "
+                f"{_fmt_num(e.get('symbol_oos_n_periods_median'), digits=1)} | "
+                f"{_fmt_num(e.get('threshold'), digits=1)} |"
+            )
+        lines.append("")
+
     # 2.4 Kostenbasis
     lines.append("### 2.4 Kostenbasis")
+    lines.append("")
+    # Issue #1059/#1208 (Katalog #1196-1221) — Root-Cause: die Slippage-Tabelle unten war OOS-
+    # skopiert (Median ueber ALLE Sweep-Trials), stand aber OHNE Scope-Kennzeichnung direkt unter
+    # den Holdout-Ertragszahlen (Beweis: SqueezeBreakout/ASML trug 133,29 bps Slippage bei 0
+    # Holdout-Trades). Scope-Hinweis analog zu Sektion 4 (Katalog #832 Fix Punkt 1).
+    lines.append(
+        "**Scope-Hinweis:** die Slippage-Tabelle unten weist ZWEI getrennte Spalten aus — "
+        "`Slippage (OOS, Median)` (ueber ALLE OOS-evaluierten Sweep-Trials dieser Study) und "
+        "`Slippage (Holdout, Median)` (ausschliesslich aus dem promotierten Holdout-Re-"
+        "Evaluations-Pfad, `k. A.` ohne Holdout-Trades) — eine Study OHNE Holdout-Trades kann "
+        "einen OOS-Wert tragen, aber NIE einen Holdout-Wert."
+    )
     lines.append("")
     lines.append(
         "Alle oben genannten Zahlen sind **simulierte Backtest-Ergebnisse** über das Holdout-"
@@ -655,13 +691,46 @@ def _section_2_monetary_result(report: dict) -> str:
             "Stop-Level):"
         )
         lines.append("")
-        lines.append("| Strategie | Symbol | c_rt (bps) | Slippage (bps, Median, advers=+) |")
-        lines.append("|---|---|---:|---:|")
+        # Issue #1059/#1208 Fix — zwei getrennte Spalten statt einer einzelnen (scope-vermischten)
+        # Slippage-Spalte; die Holdout-Spalte ist ``k. A.``, solange holdout_total_trades 0/None
+        # ist (Akzeptanzkriterium: "Keine Study mit 0 Holdout-Trades trägt in der Holdout-Spalte
+        # einen Wert").
+        lines.append(
+            "| Strategie | Symbol | c_rt (bps) | Slippage (OOS, Median, bps, advers=+) | "
+            "Slippage (Holdout, Median, bps, advers=+) |")
+        lines.append("|---|---|---:|---:|---:|")
         for r in sorted(_slippage_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            _has_holdout_trades = bool(r.get("holdout_total_trades"))
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | "
                 f"{_fmt_num(r.get('round_trip_cost_bps'), digits=2)} | "
-                f"{_fmt_num(r.get('stop_exit_slippage_bps'), digits=2)} |"
+                f"{_fmt_num(r.get('stop_exit_slippage_bps'), digits=2)} | "
+                f"{_fmt_num(r.get('holdout_stop_exit_slippage_bps'), digits=2) if _has_holdout_trades else 'k. A.'} |"
+            )
+    # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung "realized_loss_bps =
+    # stop_distance_bps + trigger_to_fill_gap_bps" (drei Spalten statt einer einzelnen
+    # Verlustzahl), damit ein Leser sieht, welcher Anteil des Stop-Verlusts aus der konfigurierten
+    # Distanz (k · ATR) und welcher aus der Absetzen-zu-Fill-Latenz stammt (#1203-Root-Cause).
+    _decomp_rows = [r for r in studies if r.get("realized_loss_bps") is not None]
+    if _decomp_rows:
+        lines.append("")
+        lines.append(
+            "**Verlust-Zerlegung bei TRAILING_STOP-Exits** (Median je Study, bps, advers=+; "
+            "`realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps`, siehe "
+            "`invariants.check_stop_loss_decomposition_identity`):"
+        )
+        lines.append("")
+        lines.append(
+            "| Strategie | Symbol | Stopdistanz (bps) | Absetzen-zu-Fill-Gap (bps) | "
+            "Realisierter Verlust (bps) |"
+        )
+        lines.append("|---|---|---:|---:|---:|")
+        for r in sorted(_decomp_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('stop_distance_bps_measured'), digits=2)} | "
+                f"{_fmt_num(r.get('trigger_to_fill_gap_bps'), digits=2)} | "
+                f"{_fmt_num(r.get('realized_loss_bps'), digits=2)} |"
             )
     return "\n".join(lines)
 
@@ -722,13 +791,36 @@ def _section_3_duration(report: dict) -> str:
     lines.append("### 3.3 Gelaufene vs. budgetierte Trials")
     lines.append("")
     budget = (report.get("cross_study") or {}).get("budget_executed_fraction") or {}
+    # Issue #1065/#1215 (Katalog #1196-1221, P2) — Root-Cause: Median/p10 werden ueber STUDIES
+    # gebildet, das Defizit selbst ist eine Summe ueber TRIALS — einzelne Studies mit Ausfall
+    # verschwinden im Median, solange die Mehrheit ihr Budget voll ausfuehrt (Beweis: c429c992
+    # fehlten 5,4% der Trials bei p10=100,0%). ``min`` (das strengste Perzentil) ergaenzt seither
+    # Median/p10 — ein einziger vollstaendiger Ausfall macht sich dort UNBEDINGT bemerkbar.
     lines.append(
         f"- Median Budgetausführung: {_fmt_pct(budget.get('median'))} "
-        f"(p10: {_fmt_pct(budget.get('p10'))}, n={budget.get('n', 0)} Studies)"
+        f"(p10: {_fmt_pct(budget.get('p10'))}, min: {_fmt_pct(budget.get('min'))}, "
+        f"n={budget.get('n', 0)} Studies)"
     )
     total_completed = sum(r.get("n_trials_completed") or 0 for r in studies)
     total_budgeted = sum(r.get("n_trials_budgeted") or 0 for r in studies)
     lines.append(f"- Trials gesamt: {total_completed} von {total_budgeted} budgetiert")
+    # Issue #1065/#1215 Fix Punkt 2 — Akzeptanzkriterium: "Jeder Lauf mit Σ trials < Σ budget nennt
+    # die verantwortlichen Studies" (Study, ist, soll, Grund), statt die Luecke nur als Rate zu
+    # zeigen (in der ein einzelner Ausfall neben vielen vollstaendigen Studies untergeht).
+    if total_completed < total_budgeted:
+        _deficit_studies = (report.get("cross_study") or {}).get("budget_deficit_studies") or []
+        if _deficit_studies:
+            lines.append("")
+            lines.append(
+                f"  Σ trials ({total_completed}) < Σ budget ({total_budgeted}) — verantwortliche "
+                "Studies:"
+            )
+            for d in sorted(_deficit_studies, key=lambda d: (d.get("strategy") or "", d.get("symbol") or "")):
+                lines.append(
+                    f"  - {d.get('strategy')}/{d.get('symbol')}: "
+                    f"{d.get('n_trials_completed')} von {d.get('n_trials_budgeted')} "
+                    f"(Defizit {d.get('deficit')}, Grund: {d.get('stop_reason') or 'k. A.'})"
+                )
     lines.append("")
 
     # 3.4 Verlorene Zeit
@@ -987,7 +1079,11 @@ def _section_5_anomalies(report: dict) -> str:
                 lines.append(f"- … und {remaining} weitere")
             lines.append("")
 
-    n_guard_dominated = sum(1 for r in studies if r.get("study_guard_dominated"))
+    # Issue #1063/#1213 (Katalog #1196-1221) — vormals strukturell IMMER 0 (die Bruecke
+    # ``study_guard_dominated`` -> Study-Record fehlte, siehe report._study_record-Feldkommentar).
+    _guard_dominated_studies = [
+        f"{r.get('strategy')}/{r.get('symbol')}" for r in studies if r.get("study_guard_dominated")]
+    n_guard_dominated = len(_guard_dominated_studies)
     total_liquidated = sum(r.get("liquidated_trials") or 0 for r in studies)
     total_boundary = len((report.get("cross_study") or {}).get("boundary_solutions") or [])
     diagnosed = (report.get("cross_study") or {}).get("diagnosed_pairs") or []
@@ -997,6 +1093,10 @@ def _section_5_anomalies(report: dict) -> str:
     lines.append("### 5.3 Zusammenfassung")
     lines.append("")
     lines.append(f"- Guard-dominierte Studies (SORTINO_GUARD_TRIPPED-Mehrheit, #823): {n_guard_dominated}")
+    # Issue #1063/#1213 Fix — die LISTE der dominierten Studies, nicht nur die Zahl
+    # (Akzeptanzkriterium: "Für jede Study mit Zensur-Anteil > 50% erscheint sie in §5.3").
+    if _guard_dominated_studies:
+        lines.append(f"  - {', '.join(sorted(_guard_dominated_studies))}")
     lines.append(f"- Wirtschaftlich ruinierte Trials (EQUITY_NONPOSITIVE, #801/#825): {total_liquidated}")
     lines.append(f"- Randlösungen mit Bounds-Vorschlag (#831): {total_boundary}")
     lines.append(f"- Automatisch denylistete Paare (#829/#830): {n_denylisted}")
@@ -1020,21 +1120,38 @@ def _section_5_anomalies(report: dict) -> str:
     # denylistete Paare: 0" meldete — ein Leser konnte nicht erkennen, dass z. B. TrendPullback.
     # ema_period ueber [5, 25] statt der kuratierten Default-Bounds [50, 300] gesucht wurde. Eigener
     # Abschnitt, NUR wenn nicht leer (Fix-Vorgabe #1040) — kein leerer Abschnitt in jedem Report.
-    _active_overrides = (report.get("cross_study") or {}).get("active_bounds_overrides") or []
-    if _active_overrides:
-        lines.append("")
-        lines.append(f"### 5.4 Aktive Suchraum-Overrides ({len(_active_overrides)})")
-        lines.append("")
+    # Issue #1064/#1214 (Katalog #1196-1221, P2) — Root-Cause: die Sektion rendert vormals das
+    # GESAMTE kuratierte Inventar (``bounds.active_bounds_overrides()``, ALLE Strategie/Symbol-
+    # Paare mit einem Override, unabhaengig davon, ob dieser Lauf das Symbol ueberhaupt enthielt),
+    # statt der in DIESEM Lauf tatsaechlich angewandten Overrides — ein Leser eines NATGAS-Reports
+    # sah dieselben 18 TSLA-Zeilen wie ein TSLA-Report. Fix: auf ``symbol ∈`` die Symbole DIESES
+    # Laufs filtern (aus ``studies``, derselben Quelle wie jede andere Report-Zeile).
+    _run_symbols = {r.get("symbol") for r in studies if r.get("symbol")}
+    _active_overrides = [
+        o for o in ((report.get("cross_study") or {}).get("active_bounds_overrides") or [])
+        if o.get("symbol") in _run_symbols
+    ]
+    lines.append("")
+    lines.append(f"### 5.4 Aktive Suchraum-Overrides ({len(_active_overrides)})")
+    lines.append("")
+    if not _active_overrides:
+        lines.append("Keine aktiven Overrides für die Symbole dieses Laufs.")
+    else:
         lines.append("| Strategie | Symbol | Parameter | Aktiv | Default | Quelle | Lauf | Begründung |")
         lines.append("|---|---|---|---|---|---|---|---|")
         for o in sorted(_active_overrides, key=lambda o: (
                 o.get("strategy") or "", o.get("symbol") or "", o.get("parameter") or "")):
             active_b = o.get("active_bounds")
             default_b = o.get("default_bounds")
+            # Issue #1064/#1214 Fix — ``set_in_run_id`` ist fuer kuratierte Eintraege PER DESIGN
+            # ``None`` (ein statischer Config-Eintrag ist an keinen einzelnen Lauf gebunden, siehe
+            # bounds.active_bounds_overrides-Docstring) — das ist kein "unbekannt" (k. A.), sondern
+            # die explizite Herkunftsangabe "curated".
+            _lauf = "curated" if o.get("source") == "curated" else (o.get("set_in_run_id") or "k. A.")
             lines.append(
                 f"| {o.get('strategy')} | {o.get('symbol')} | {o.get('parameter')} | "
                 f"{active_b if active_b else 'k. A.'} | {default_b if default_b else 'k. A.'} | "
-                f"{o.get('source') or 'k. A.'} | {o.get('set_in_run_id') or 'k. A.'} | "
+                f"{o.get('source') or 'k. A.'} | {_lauf} | "
                 f"{o.get('rationale') or 'k. A.'} |"
             )
     return "\n".join(lines)

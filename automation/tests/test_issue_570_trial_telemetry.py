@@ -195,8 +195,6 @@ def test_reward_reconstructable_from_raw_metrics():
     )
 
     # Rekonstruktion NUR aus den emittierten Rohwerten:
-    import statistics
-
     c = weights["sortino_soft_scale"]
     base = c * math.asinh(raw["oos_sortino"] / c)
     is_sortino_val = c * math.asinh(raw["is_sortino_median"] / c)
@@ -206,14 +204,13 @@ def test_reward_reconstructable_from_raw_metrics():
         if diff >= 0
         else weights["overfit_oos_luck_weight"] * (-diff)
     )
-    # Issue #589 — Fold-Dispersion über die per-Fold-RETURNS (raw, KEINE asinh-Kompression;
-    # alle Folds valide ⇒ keine missing-fold-Strafe).
-    fold_disp = weights["fold_dispersion_weight"] * statistics.pstdev(raw["per_fold"])
+    # Issue #1068/#1218 (Katalog #1196-1221, supersedes #589s Fold-Dispersions-Rekonstruktion) —
+    # fold_dispersion ist seither code-seitig auf 0.0 gezwungen (reward.RETIRED_REWARD_TERMS),
+    # unabhaengig vom uebergebenen fold_dispersion_weight -- kein Term mehr in der Rekonstruktion.
     dd_penalty = weights["penalty_dd_weight"] * ((0.02 / 0.3) ** 2)
     reconstructed = (
         base
         - divergence
-        - fold_disp
         + weights["w_ret"] * raw["oos_total_return"]
         - dd_penalty
     )

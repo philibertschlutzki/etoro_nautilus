@@ -148,7 +148,12 @@ def test_optimize_symbol_seeds_sampler_with_seed_effective_not_raw_seed(monkeypa
             pass
         return _Dummy()
 
-    monkeypatch.setattr(ro.optuna.samplers, "TPESampler", mock_sampler)
+    # Issue #1067/#1217 (Katalog #1196-1221) — der Sweep-Pfad instanziiert seither
+    # ``_WindowedTPESampler`` (eine ``optuna.samplers.TPESampler``-Subklasse mit sliding-window
+    # Trial-Slice), nicht mehr ``optuna.samplers.TPESampler`` direkt -- die Subklasse bindet ihre
+    # Basisklasse zur DEFINITIONSZEIT, ein spaeteres Monkeypatchen von
+    # ``optuna.samplers.TPESampler`` faengt den Konstruktoraufruf daher nicht mehr ab.
+    monkeypatch.setattr(ro, "_WindowedTPESampler", mock_sampler)
 
     class DummyStudy:
         study_name = "test"

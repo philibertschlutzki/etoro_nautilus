@@ -70,7 +70,11 @@ def test_annualization_path_parity():
     expected_config_sortino = ((mean_ret - mar) / dd_dev) * math.sqrt(111.0)
     n_periods = len(mtm_series.pct_change(fill_method=None).dropna())
     total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
-    derived_factor = n_periods * 31_557_600.0 / total_span_seconds
+    # Issue #1071/#1221 (Katalog #1196-1221, supersedes #532s Jahreslaenge) — die empirische
+    # Formel rechnet seither mit einem 365-Tage- statt einem 365,25-Tage-Jahr (``bars_per_
+    # calendar_day · 365``, siehe _get_annualization_factor_with_source-Docstring) — derselbe
+    # Wechsel, der die symbolweite Persistierung begleitet.
+    derived_factor = n_periods * 31_536_000.0 / total_span_seconds
     expected_fallback_sortino = ((mean_ret - mar) / dd_dev) * math.sqrt(derived_factor)
 
     assert math.isclose(sortino_config, expected_config_sortino, rel_tol=1e-9)
@@ -90,7 +94,9 @@ def test_annualization_path_parity_strict():
 
     n_periods = len(mtm_series.pct_change(fill_method=None).dropna())
     total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
-    derived_factor = n_periods * 31_557_600.0 / total_span_seconds
+    # Issue #1071/#1221 — siehe Kommentar in test_annualization_path_parity oben (365- statt
+    # 365,25-Tage-Jahr).
+    derived_factor = n_periods * 31_536_000.0 / total_span_seconds
 
     with patch("automation.backtest_runner._read_annualization_periods", return_value=derived_factor):
         metrics_with_config = _calculate_stats(

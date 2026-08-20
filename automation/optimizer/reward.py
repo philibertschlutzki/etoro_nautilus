@@ -1259,6 +1259,40 @@ def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
     return max(0.0, min(1.0, val))
 
 
+# Issue #1068/#1218 (P1, Katalog #1196-1221) — Drei von sechs Reward-Termen sind in 14/14 Laeufen
+# inert. Symptom: ``invariants.check_reward_term_variance`` FAILt in ALLEN 14 Laeufen fuer 13-14
+# von 14 Studies, konstant genannt: ``param_pen``, ``turnover``, ``fold_dispersion``
+# (``reward_std`` 0,238-5,191). Root-Cause: die drei Terme sind gegen eine FRUEHERE Base-Skala
+# kalibriert (asinh-Sortino, vor #614/#630) und tragen nach den Base-Wechseln weniger als 1% der
+# Reward-Streuung — sie kosten Rechenzeit/Konfigurationsflaeche, ohne die Suche zu lenken.
+#
+# Fix (Option 2 aus #1218 — DEAKTIVIEREN, nicht reskalieren): ein neuer, UNGETESTETER
+# Reskalierungsfaktor waere ein Rateergebnis ohne echten Kalibrierlauf (AGENTS.md-Konvention:
+# kein Rateergebnis) — die drei Terme werden stattdessen EXPLIZIT auf 0.0 gezwungen, UNABHAENGIG
+# von ihren optimizer.json-Gewichten (die ebenfalls auf 0.0 gesetzt wurden, siehe
+# ``fold_dispersion_weight``/``lambda_reg``/``penalty_turnover_weight`` dort) — dieser
+# CODE-seitige Zwang ist die eigentliche Garantie (ein zukuenftiger Config-Edit kann die Terme
+# nicht versehentlich reaktivieren, ohne diese Konstante mitzuaendern). ``divergence`` (im Issue
+# nur fuer SqueezeBreakoutStrategy als zusaetzlich inert genannt) bleibt AKTIV — eine
+# strategie-spezifische Inertheit rechtfertigt keine globale Retirement-Entscheidung.
+#
+# reward_semantics_version 23→24 (siehe optimizer.json): Reward-Werte v23≠v24 fuer JEDEN Trial,
+# dessen sampled_params vormals ueber param_pen/turnover/fold_dispersion nicht-null bestraft
+# wurden — alte SQLite-Studies MUESSEN vor einem Re-Run mit dieser Version geloescht werden
+# (Semantics-Guard bricht sonst fail-loud mit REJECT_STALE_STUDY_SEMANTICS ab). Die Purge selbst
+# ist ein Deployment-/Ops-Schritt, kein Code-Change.
+RETIRED_REWARD_TERMS: dict[str, str] = {
+    "param_pen": "Issue #1068/#1218 — < 1% Reward-Streuungsbeitrag in 14/14 Laeufen (kalibriert "
+                 "gegen die asinh-Sortino-Base vor #614/#630); lambda_reg=0.0 seit v24.",
+    "turnover": "Issue #1068/#1218 — < 1% Reward-Streuungsbeitrag in 14/14 Laeufen; "
+                "penalty_turnover_weight=0.0 seit v24, UND der cost-basierte Fallback-Pfad "
+                "(round_trip_cost_bps) ist unten explizit auf 0.0 gezwungen (der Config-Wert "
+                "allein deaktiviert diesen Pfad NICHT, siehe Docstring an der Berechnung).",
+    "fold_dispersion": "Issue #1068/#1218 — < 1% Reward-Streuungsbeitrag in 14/14 Laeufen; "
+                       "fold_dispersion_weight=0.0 seit v24.",
+}
+
+
 def compute_reward(
     m: "TournamentMetrics",
     universe_size: int,
@@ -1587,12 +1621,11 @@ def compute_reward(
     # dieselbe Quelle wie das kostenrelative Expectancy-Gate) treibt die Strafe, sobald verfügbar —
     # ``penalty_turnover_weight`` wird zum FALLBACK für fehlende Kosten-Telemetrie (Zero-Hardcoding,
     # bit-identischer Legacy-Pfad, kein Verhaltensbruch für Trials ohne die Telemetrie).
-    c_rt_bps = getattr(m, "round_trip_cost_bps", None)
-    if c_rt_bps is not None:
-        turnover_penalty = (m.oos_total_trades * (float(c_rt_bps) / 10_000.0)
-                           * _penalty_scale_vs_base(weights))
-    else:
-        turnover_penalty = m.oos_total_trades * penalty_turnover_weight * _penalty_scale_vs_base(weights)
+    # Issue #1068/#1218 (reward_semantics_version 24) — RETIRIERT: der obige round_trip_cost_bps-
+    # Pfad ignorierte penalty_turnover_weight=0.0 (er ist ein FALLBACK, kein Gate) — ohne diesen
+    # expliziten Zwang bliebe turnover_penalty trotz genullter Config aktiv. Siehe
+    # RETIRED_REWARD_TERMS["turnover"] fuer die Begruendung.
+    turnover_penalty = 0.0
 
     # Issue #589/#590 — Fold-Dispersions-Strafe auf den per-Fold-RETURNS (die gut konditionierte
     # Größe; nach #589 NICHT mehr auf den Fold-Sortinos). #590 — normiert über ``oos_folds_total``,
@@ -1600,7 +1633,12 @@ def compute_reward(
     # (missing_fold_penalty_scale), keine Auslassung — sonst umgeht der Optimierer die Strafe, indem
     # er die Bewertung löscht (Fold-Degeneration). Im Holdout (Single-Fold) abgeschaltet.
     fold_dispersion_penalty = 0.0
-    w_disp = weights.get("fold_dispersion_weight")
+    # Issue #1068/#1218 (reward_semantics_version 24) — RETIRIERT: der Config-Wert allein
+    # (fold_dispersion_weight=0.0) reicht als CODE-seitige Garantie nicht aus (ein Aufrufer mit
+    # einem expliziten weights-Dict koennte den Key wieder auf != 0 setzen) — dieser Zwang macht
+    # die Retirierung unabhaengig vom uebergebenen weights-Dict. Siehe RETIRED_REWARD_TERMS
+    # ["fold_dispersion"].
+    w_disp = 0.0 if "fold_dispersion" in RETIRED_REWARD_TERMS else weights.get("fold_dispersion_weight")
     fold_returns = list(getattr(m, "oos_fold_returns", None) or [])
     n_total = int(getattr(m, "oos_folds_total", 0) or 0)
     if w_disp and not holdout and n_total >= 2:
@@ -1669,7 +1707,10 @@ def compute_reward(
     reward_mode = weights.get("reward_mode", "auto")
     if universe_size == 1 or reward_mode == "per_symbol":
         param_pen = 0.0
-        if sampled and global_params and strategy:
+        # Issue #1068/#1218 (reward_semantics_version 24) — RETIRIERT: derselbe CODE-seitige Zwang
+        # wie bei turnover/fold_dispersion, unabhaengig vom uebergebenen weights-Dict. Siehe
+        # RETIRED_REWARD_TERMS["param_pen"].
+        if sampled and global_params and strategy and "param_pen" not in RETIRED_REWARD_TERMS:
             from automation.optimizer import bounds
 
             b = bounds.extract_numeric_bounds(strategy)

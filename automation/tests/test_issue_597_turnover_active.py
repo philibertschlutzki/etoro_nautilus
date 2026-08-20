@@ -7,7 +7,6 @@
 (C) ``boundary_hit_fraction``-Telemetrie macht Randlösungen sichtbar (WARNING > 0.3).
 """
 import json
-import math
 from pathlib import Path
 
 from automation.optimizer.reward import compute_reward, _dd_penalty
@@ -18,13 +17,14 @@ CFG = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
 BACKTEST = json.loads(Path("automation/config/backtest.json").read_text("utf-8"))
 
 
-def test_penalty_turnover_weight_set_and_cost_derived():
-    """penalty_turnover_weight ist gesetzt und aus den Round-Trip-Kosten abgeleitet (c_rt = commission
-    + spread als Fraktion)."""
-    w = CFG["penalty_turnover_weight"]
-    assert w and w > 0.0, "penalty_turnover_weight muss gesetzt (> 0) sein"
-    c_rt = (BACKTEST["commission_bps"] + BACKTEST["spread_bps_by_symbol"]["TSLA.ETORO"]) / 10000.0
-    assert math.isclose(w, c_rt, rel_tol=0.34), f"w={w} sollte ~c_rt={c_rt} sein (Kostenherleitung)"
+def test_penalty_turnover_weight_is_deliberately_zero_since_1218():
+    """Issue #1068/#1218 (Katalog #1196-1221, supersedes #597/#774) — turnover_penalty trug in
+    14/14 Referenz-Laeufen < 1% der Reward-Streuung (kalibriert gegen die asinh-Sortino-Base vor
+    #614/#630, seither obsolet). ``penalty_turnover_weight`` ist seither 0.0 — turnover ist jetzt
+    (wie dd_penalty/time_box_penalty/tie_breaker) ein DOKUMENTIERT inerter/retirierter Term
+    (reward.RETIRED_REWARD_TERMS), kein aktiver Kostendruck-Term mehr. Die vormalige
+    Kostenherleitung (c_rt = commission + spread) bleibt NUR forensisch im reward.py-Docstring."""
+    assert CFG["penalty_turnover_weight"] == 0.0
 
 
 def _m(trades, oos_total_return=0.05, dd=0.02, oos_sortino=1.5):
@@ -34,11 +34,16 @@ def _m(trades, oos_total_return=0.05, dd=0.02, oos_sortino=1.5):
         fully_eligible_pairs=1, is_total_trades=100, oos_total_return=oos_total_return)
 
 
-def test_turnover_penalty_makes_fewer_trades_win():
-    """Zwei Trials, identischer Return; A mit 300 Trades, B mit 60 ⇒ reward_B > reward_A."""
-    a = compute_reward(_m(300), universe_size=1)   # weights=None ⇒ optimizer.json
-    b = compute_reward(_m(60), universe_size=1)
-    assert b > a, "mehr Trades (Cost-Drag) müssen bei gleichem Return schlechter bewertet werden"
+def test_turnover_penalty_no_longer_differentiates_trade_count_since_1218():
+    """Issue #1068/#1218 — seit der Retirierung ist turnover_penalty IMMER 0.0 (code-seitig
+    erzwungen, siehe reward.py), unabhaengig von oos_total_trades — zwei Trials mit identischem
+    Return, aber unterschiedlicher Trade-Zahl, erhalten seither DENSELBEN Reward (kein
+    Cost-Drag-Term mehr aktiv)."""
+    a, terms_a = compute_reward(_m(300), universe_size=1, return_terms=True)  # weights=None ⇒ optimizer.json
+    b, terms_b = compute_reward(_m(60), universe_size=1, return_terms=True)
+    assert terms_a["turnover"] == 0.0
+    assert terms_b["turnover"] == 0.0
+    assert a == b
 
 
 def test_dd_penalty_is_deliberately_inert_since_977():

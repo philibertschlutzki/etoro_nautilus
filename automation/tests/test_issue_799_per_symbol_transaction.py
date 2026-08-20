@@ -20,16 +20,23 @@ _GATE_CFG = {
 
 
 class _FakeTrial:
-    def __init__(self, oos_evaluated=True):
+    def __init__(self, oos_evaluated=True, run_id=None):
         # Issue #822 — _family_n_from_studies zaehlt seit dem Fix
         # oos_selection_statistic_available statt oos_evaluated.
         self.user_attrs = {"oos_evaluated": oos_evaluated,
                            "oos_selection_statistic_available": oos_evaluated}
+        if run_id is not None:
+            # Issue #1049/#1197 (Katalog #1196-1221) — _family_n_per_study_from_studies filtert
+            # Trials seither auf trial.user_attrs['run_id'] == run_id (Store- statt Run-Scope,
+            # Pitfall #429 in AGENTS.md); ein Fake-Trial ohne diesen Stempel wuerde bei einem
+            # NICHT-None run_id (siehe test_symbol_level_family_n_is_scoped_to_its_own_studies)
+            # faelschlich als "anderer Lauf" herausgefiltert.
+            self.user_attrs["run_id"] = run_id
 
 
 class _FakeStudy:
-    def __init__(self, n_trials=10):
-        self.trials = [_FakeTrial() for _ in range(n_trials)]
+    def __init__(self, n_trials=10, run_id=None):
+        self.trials = [_FakeTrial(run_id=run_id) for _ in range(n_trials)]
         self._attrs = {"n_trials_budget": n_trials}
         self.best_value = 1.0
         self.directions = ["maximize"]
@@ -87,9 +94,12 @@ def test_symbol_level_family_n_is_scoped_to_its_own_studies(monkeypatch, tmp_pat
     (``sweep._family_n_stage1_from_studies``)."""
     pairs = [("S1", "A.ETORO", "OK"), ("S2", "A.ETORO", "OK"), ("S3", "B.ETORO", "OK")]
     captured_family_n = {}
+    _run_id = "run-799"
 
     def fake_opt(strategy, symbol, **k):
-        return _FakeStudy(n_trials=10)
+        # Issue #1049/#1197 — die Fake-Trials tragen denselben run_id-Stempel, mit dem dieser Lauf
+        # unten aufgerufen wird (siehe _FakeTrial-Docstring oben).
+        return _FakeStudy(n_trials=10, run_id=_run_id)
 
     def fake_confirm(study, s, sym, gp, *, deflation_n_family=0, deflation_family_period_returns=None, **k):
         captured_family_n[(s, sym)] = deflation_n_family
@@ -98,7 +108,7 @@ def test_symbol_level_family_n_is_scoped_to_its_own_studies(monkeypatch, tmp_pat
     _patch_common(monkeypatch, tmp_path, pairs)
     sweep.run_per_symbol_sweep(
         ["S1", "S2", "S3"], ["A.ETORO", "B.ETORO"], tier="all", n_jobs=1,
-        optimize_symbol=fake_opt, confirm=fake_confirm,
+        optimize_symbol=fake_opt, confirm=fake_confirm, run_id=_run_id,
     )
     assert captured_family_n[("S1", "A.ETORO")] == 10  # NICHT 20 (S2s Trials zaehlen nicht mit)
     assert captured_family_n[("S2", "A.ETORO")] == 10  # NICHT 20 (S1s Trials zaehlen nicht mit)
