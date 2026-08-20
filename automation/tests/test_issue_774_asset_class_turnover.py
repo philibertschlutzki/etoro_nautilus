@@ -33,30 +33,31 @@ _WEIGHTS = {
 }
 
 
-def test_turnover_penalty_scales_exactly_with_round_trip_cost_ratio():
-    """Akzeptanzkriterium #774/1: identische Trial-Metriken, einmal mit round_trip_cost_bps=3,
-    einmal =16 ⇒ Turnover-Strafe skaliert exakt 16/3."""
+def test_turnover_penalty_is_retired_regardless_of_round_trip_cost_ratio():
+    """Issue #1068/#1218 (Katalog #1196-1221, supersedes #774) — turnover_penalty ist seit der
+    Retirierung IMMER 0.0 (code-seitig erzwungen, reward.py), UNABHAENGIG von round_trip_cost_bps:
+    der vormalige #774-Kostenskalierungspfad (der genau dieser Test hier pruefte) ist jetzt
+    unerreichbarer Code — drei identische Trial-Metriken mit unterschiedlichem round_trip_cost_bps
+    liefern seither DENSELBEN Reward."""
     m_low = _mk(round_trip_cost_bps=3.0)
     m_high = _mk(round_trip_cost_bps=16.0)
-    r_low = compute_reward(m_low, universe_size=1, weights=_WEIGHTS, holdout=True)
-    r_high = compute_reward(m_high, universe_size=1, weights=_WEIGHTS, holdout=True)
-    # Reward = base - turnover_penalty (u.a.) ⇒ die DIFFERENZ zur baseline (round_trip=0, kein Cost)
-    # skaliert linear mit c_rt. Vergleiche die Penalty-Differenz direkt statt des Gesamtrewards.
     m_zero = _mk(round_trip_cost_bps=0.0)
-    r_zero = compute_reward(m_zero, universe_size=1, weights=_WEIGHTS, holdout=True)
-    penalty_low = r_zero - r_low
-    penalty_high = r_zero - r_high
-    assert penalty_low == pytest.approx(50 * (3.0 / 10_000.0), rel=1e-9)
-    assert penalty_high == pytest.approx(50 * (16.0 / 10_000.0), rel=1e-9)
-    assert penalty_high == pytest.approx(penalty_low * (16.0 / 3.0), rel=1e-9)
+    r_low, t_low = compute_reward(m_low, universe_size=1, weights=_WEIGHTS, holdout=True, return_terms=True)
+    r_high, t_high = compute_reward(m_high, universe_size=1, weights=_WEIGHTS, holdout=True, return_terms=True)
+    r_zero, t_zero = compute_reward(m_zero, universe_size=1, weights=_WEIGHTS, holdout=True, return_terms=True)
+    assert t_low["turnover"] == t_high["turnover"] == t_zero["turnover"] == 0.0
+    assert r_low == r_high == r_zero
 
 
-def test_missing_round_trip_cost_bps_falls_back_to_bit_identical_legacy_value():
-    """Akzeptanzkriterium #774/2: fehlendes round_trip_cost_bps ⇒ Wert bit-identisch zu HEAD
-    (penalty_turnover_weight-Pfad)."""
+def test_missing_round_trip_cost_bps_is_also_unaffected_since_1218():
+    """Issue #1068/#1218 — der vormalige penalty_turnover_weight-Fallback-Pfad (Akzeptanzkriterium
+    #774/2) ist ebenfalls unerreichbar: fehlendes round_trip_cost_bps liefert denselben (Null-)
+    Reward-Beitrag wie jeder andere Wert."""
     m_missing = _mk(round_trip_cost_bps=None)
     m_zero = _mk(round_trip_cost_bps=0.0)
-    r_missing = compute_reward(m_missing, universe_size=1, weights=_WEIGHTS, holdout=True)
-    r_zero = compute_reward(m_zero, universe_size=1, weights=_WEIGHTS, holdout=True)
-    legacy_penalty = 50 * 0.0003 * 1.0  # oos_total_trades * penalty_turnover_weight * scale
-    assert (r_zero - r_missing) == pytest.approx(legacy_penalty, rel=1e-9)
+    r_missing, t_missing = compute_reward(
+        m_missing, universe_size=1, weights=_WEIGHTS, holdout=True, return_terms=True)
+    r_zero, t_zero = compute_reward(
+        m_zero, universe_size=1, weights=_WEIGHTS, holdout=True, return_terms=True)
+    assert t_missing["turnover"] == 0.0
+    assert r_missing == r_zero

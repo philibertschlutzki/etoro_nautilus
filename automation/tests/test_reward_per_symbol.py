@@ -70,7 +70,7 @@ def _cap():
     ]
 
 
-def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
+def test_per_symbol_drops_coverage_and_param_pen_is_retired_since_1218(tmp_path):
     cfg = _cfg()
     cap = _cap()
     p = _tournament(
@@ -112,7 +112,11 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
         strategy="SmaCrossoverStrategy",
     )
     assert got == pytest.approx(expected, rel=1e-9)
-    assert pen > 0.0  # divergent params actually incur a shrinkage penalty
+    # Issue #1068/#1218 (Katalog #1196-1221, supersedes #631) — param_pen trug in 14/14
+    # Referenz-Laeufen < 1% der Reward-Streuung und ist seither retiriert (lambda_reg=0.0,
+    # reward.RETIRED_REWARD_TERMS["param_pen"]); trotz divergenter sampled/global_params ist die
+    # Shrinkage-Strafe seither IMMER 0.0, statt einen positiven Wert zu tragen.
+    assert pen == 0.0
 
 
 def test_per_symbol_no_param_pen_when_missing_inputs(tmp_path):

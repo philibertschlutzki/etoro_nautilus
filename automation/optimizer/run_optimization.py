@@ -84,6 +84,7 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_alpha_n_periods": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #1038/#1187)",
     "oos_f_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_median, #989/#1143)",
+    "oos_f_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_max, #1060/#1209 check_sizing_cap_enforcement)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
     # Nachbarfeldern) und von report._study_record aus trial_attrs summiert — die vorherige
@@ -620,6 +621,19 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
         # Fallback for FakeStudy in tests
         completed = [t for t in study.trials
                      if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
+    # Issue #1050/#1199 (Katalog #1196-1221, Pitfall #430-Klasse) — ``completed`` (oben) ist
+    # STORE-SCOPED (``get_trials``/``study.trials`` lesen die GESAMTE Study-Historie, ueber ALLE
+    # ``run_id``s hinweg, die je auf diesem Store liefen — der Plateau-Stop-Mechanismus BRAUCHT
+    # diese volle Sicht bewusst fuer seine Abbruch-Entscheidung, siehe #925/#805-Kommentare oben).
+    # ``completed_run`` ist die dazu PARALLELE, RUN-SCOPED Teilmenge (nur Trials mit
+    # ``run_id``-Stempel == diesem Lauf) — AUSSCHLIESSLICH fuer die ``plateau_n_evaluated_run``/
+    # ``plateau_counter_breakdown_run``-Telemetrie unten, die scope-konsistent mit dem run-scoped
+    # ``n_trials``-Feld des Reports sein muss (Scope gehoert in den Feldnamen, ``_run``/``_store``).
+    # Kein ``run_id`` uebergeben (Legacy-Aufrufer) ⇒ ``completed_run`` faellt auf die volle Menge
+    # zurueck (bit-identisch zum Vorher-Verhalten, keine Regression fuer Aufrufer ohne run_id).
+    completed_run = (
+        [t for t in completed if getattr(t, "user_attrs", {}).get("run_id") == run_id]
+        if run_id is not None else completed)
     # Issue #805 — ERSETZT das entfernte ``floor_plateau_k`` (dritte Wiederkehr derselben
     # Fehlerklasse: #488 -> #753 -> #769 -> #805): eine dimensionsskalierte Mindestzahl MODELLIERTER
     # Trials statt einer flachen (und auf 0 stehen gebliebenen) Konstante — siehe
@@ -986,6 +1000,45 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     if r in ("REJECT_OOS_NOT_EVALUATED", "REJECT_OOS_INACTIVE")),
             }
             study.set_user_attr("plateau_counter_breakdown", plateau_counter_breakdown)
+
+            # Issue #1050/#1199 (Katalog #1196-1221) — dieselben beiden Zaehler, ABER ueber
+            # ``completed_run`` (RUN-SCOPED) statt ``completed`` (STORE-SCOPED) gebildet.
+            # invariants.check_counter_partition_consistency vergleicht gegen ``n_trials``
+            # (report._study_record, run-scoped) — ein Vergleich gegen die store-scoped Variante
+            # war strukturell unerfuellbar (176 vs. 36 bei einem 5-fach warm-gestarteten Store,
+            # #1198-Klasse: zwei Zaehler derselben Identitaet mit verschiedenem Scope). Die
+            # store-scoped Felder oben bleiben UNVERAENDERT (sie tragen die tatsaechliche
+            # Plateau-Stop-Entscheidung, siehe deren Kommentare) — diese hier sind rein additive
+            # Berichts-/Invarianten-Telemetrie.
+            _eligible_flags_of_evaluated_run = [
+                getattr(t, "user_attrs", {}).get("oos_eligible") for t in completed_run
+                if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+            ]
+            n_evaluated_run = len(_eligible_flags_of_evaluated_run)
+            study.set_user_attr("plateau_n_evaluated_run", n_evaluated_run)
+            _hit_cap_flags_run = [
+                getattr(t, "user_attrs", {}).get("hit_trade_cap") for t in completed_run
+                if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+            ]
+            n_hit_cap_run = sum(1 for f in _hit_cap_flags_run if f is True)
+            _all_rejection_details_run = [
+                getattr(t, "user_attrs", {}).get("is_rejection_detail") for t in completed_run
+            ]
+            plateau_counter_breakdown_run = {
+                "invalidated_timebox": sum(
+                    1 for r in _all_rejection_details_run if r == "REJECT_OOS_TIMEBOX_VIOLATION"),
+                "invalidated_trade_cap": n_hit_cap_run,
+                "discarded_is_gate": sum(
+                    1 for r in _all_rejection_details_run
+                    if r == "REJECT_OOS_DISCARDED_BY_IS_GATE"),
+                "window_unreachable": sum(
+                    1 for r in _all_rejection_details_run
+                    if r == "REJECT_OOS_WINDOW_UNREACHABLE"),
+                "not_evaluated": sum(
+                    1 for r in _all_rejection_details_run
+                    if r in ("REJECT_OOS_NOT_EVALUATED", "REJECT_OOS_INACTIVE")),
+            }
+            study.set_user_attr("plateau_counter_breakdown_run", plateau_counter_breakdown_run)
 
             # Issue #700 — per-16-Trial-Fenster p_eligible-Kurve (Diagnose-Akzeptanzkriterium):
             # unterscheidet TRANSIENTE (irgendwo zwischenzeitlich eligible Trials) von PERMANENTER
@@ -1614,6 +1667,99 @@ def make_objective(
         return reward
     return objective
 
+
+# Issue #1067/#1217 (P1, Katalog #1196-1221) — Default fuer ``tpe_history_window`` (siehe
+# ``_WindowedTPESampler``-Docstring); optimizer.json['tpe_history_window'] ueberschreibt.
+_TPE_HISTORY_WINDOW_DEFAULT = 600
+
+
+class _WindowedTPESampler(optuna.samplers.TPESampler):
+    """Issue #1067/#1217 — begrenzt den TPE-Surrogat-Fit auf ein GLEITENDES FENSTER der letzten
+    ``history_window`` Trials, statt auf die vollstaendige, monoton wachsende Trial-Historie eines
+    warm-gestarteten Stores.
+
+    Symptom (B-12): TSLA bei konstant 1940 NEUEN Trials — 0,95h / 1,26h / 1,78h / 2,23h Wallclock
+    bei 3863 / 5803 / 7743 / 9683 VORLAUF-Trials im selben Store (``cpu_utilisation_backtest``
+    9,8% → 4,8%, LINEAR fallend). Frische Laeufe: 0,46-0,54h bei 18,2-22,8%. Root-Cause: die Zeit
+    geht NICHT in Backtests — TPE fittet sein Surrogat-Modell bei JEDEM ``sample_relative``-Aufruf
+    ueber die GESAMTE, warm-gestartet wachsende Trial-Historie (``TPESampler._sample`` liest
+    ``study._get_trials(...)`` unbedingt, ohne Fenster).
+
+    Fix: ``_sample`` (Optunas privater, aber stabiler Sampling-Kern) wird hier NEU implementiert,
+    identisch zu Optuna 4.9's Fassung, MIT EINER ZUSAETZLICHEN ZEILE: ``trials`` wird auf die
+    LETZTEN ``history_window`` Eintraege (nach ``.number`` sortiert) beschraenkt, BEVOR der
+    Below/Above-Split und der Parzen-Estimator-Fit stattfinden. AELTERE Trials bleiben
+    UNVERAENDERT im Store (kein Datenverlust, keine Wirkung auf ``best_trial``/Reporting/
+    Family-N-Zaehlung — ausschliesslich der SURROGAT-FIT dieses einen Sampler-Aufrufs wird
+    verkleinert).
+
+    ACHTUNG (Wartungshinweis fuer kuenftige Agenten): ``_sample`` ist eine PRIVATE Optuna-Methode
+    ohne API-Stabilitaetsgarantie ueber Versionsgrenzen hinweg — dieser Override ist an Optuna
+    4.9.0 gebunden (siehe ``requirements.txt``/Pin). Ein Optuna-Upgrade MUSS ``_sample``s
+    Quelltext gegen diese Kopie diffen, bevor es uebernommen wird (sonst driftet dieser Override
+    stillschweigend von Optunas tatsaechlichem Sampling-Verhalten ab)."""
+
+    def __init__(self, *args, history_window: int = _TPE_HISTORY_WINDOW_DEFAULT, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._history_window = int(history_window)
+        # Issue #1067/#1217 Fix Punkt 3 — kumulierte Surrogat-Fit-Zeit dieser Sampler-Instanz
+        # (eine Instanz je Study), gelesen vom Aufrufer NACH study.optimize() und dort als
+        # study-user_attr gestempelt (siehe Aufrufstellen).
+        self._fit_seconds_total = 0.0
+
+    def _sample(self, study, trial, search_space):
+        _fit_t0 = time.perf_counter()
+        try:
+            return self._sample_windowed(study, trial, search_space)
+        finally:
+            self._fit_seconds_total += time.perf_counter() - _fit_t0
+
+    def _sample_windowed(self, study, trial, search_space):
+        from optuna.trial import TrialState as _TrialState
+        from optuna.samplers._tpe.sampler import _split_trials
+
+        if self._constant_liar:
+            states = [_TrialState.COMPLETE, _TrialState.PRUNED, _TrialState.RUNNING]
+        else:
+            states = [_TrialState.COMPLETE, _TrialState.PRUNED]
+        use_cache = not self._constant_liar
+        trials = study._get_trials(deepcopy=False, states=states, use_cache=use_cache)
+        if self._constant_liar:
+            trials = [t for t in trials if trial.number != t.number]
+
+        # Issue #1067/#1217 Fix — DAS gleitende Fenster: nur die zuletzt angelegten Trials gehen
+        # in den Surrogat-Fit ein (aeltere bleiben Teil des Stores, werden hier nur nicht mehr
+        # gefittet). ``sorted(..., key=.number)`` statt Store-Reihenfolge zu unterstellen.
+        if self._history_window > 0 and len(trials) > self._history_window:
+            trials = sorted(trials, key=lambda t: t.number)[-self._history_window:]
+
+        n = sum(t.state != _TrialState.RUNNING for t in trials)
+        below_trials, above_trials = _split_trials(
+            study, trials, self._gamma(n), self._constraints_func is not None)
+
+        mpe_below = self._build_parzen_estimator(study, search_space, below_trials, handle_below=True)
+        mpe_above = self._build_parzen_estimator(study, search_space, above_trials, handle_below=False)
+
+        samples_below = mpe_below.sample(self._rng.rng, self._n_ei_candidates)
+        acq_func_vals = self._compute_acquisition_func(samples_below, mpe_below, mpe_above)
+        ret = optuna.samplers.TPESampler._compare(samples_below, acq_func_vals)
+
+        for param_name, dist in search_space.items():
+            ret[param_name] = dist.to_external_repr(ret[param_name])
+        return ret
+
+
+def _resolve_tpe_history_window(opt_data: dict | None) -> int:
+    """Issue #1067/#1217 — ``optimizer.json['tpe_history_window']`` mit Default 600. Fail-open bei
+    fehlendem/ungueltigem Wert (kein Abbruch der Study-Erstellung fuer eine reine Performance-
+    Konfiguration)."""
+    try:
+        value = (opt_data or {}).get("tpe_history_window", _TPE_HISTORY_WINDOW_DEFAULT)
+        return int(value) if int(value) > 0 else _TPE_HISTORY_WINDOW_DEFAULT
+    except (TypeError, ValueError):
+        return _TPE_HISTORY_WINDOW_DEFAULT
+
+
 def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     WORK.mkdir(parents=True, exist_ok=True)
     cfg_dir = config_dir()
@@ -1673,12 +1819,13 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
         # ``study.best_trial`` UND das TPE-Sampling bevorzugen feasible strikt vor infeasible; unter den
         # infeasiblen wird nach Gesamtverletzung sortiert. Damit optimiert der Sampler EINE stetige
         # Grösse (die risikoadjustierte OOS-Performance, nach #614 die PSR) statt einer Stufenfunktion.
-        sampler = optuna.samplers.TPESampler(
+        sampler = _WindowedTPESampler(
             multivariate=True,
             group=True,
             n_startup_trials=n_startup_trials,
             seed=seed,
             constraints_func=_oos_constraints_func,
+            history_window=_resolve_tpe_history_window(opt_data),
         )
 
     study = _create_study_with_retry(
@@ -1721,6 +1868,11 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
         catch=(json.JSONDecodeError, OSError),
         callbacks=[floor_guard, retention_callback, disk_guard_cb, coherence_guard_cb]
     )
+    # Issue #1067/#1217 Fix Punkt 3 — TPE-Surrogat-Fit-Zeit dieses Laufs, konsumiert von
+    # invariants.check_search_overhead_share (nur gesetzt, wenn der Sampler _WindowedTPESampler
+    # ist — NSGAIISampler im 'pareto'-Reward-Modus traegt diese Telemetrie nicht).
+    if hasattr(sampler, "_fit_seconds_total"):
+        study.set_user_attr("tpe_fit_seconds", round(sampler._fit_seconds_total, 4))
     return study
 
 def _sanitize(symbol: str) -> str:
@@ -2420,18 +2572,12 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         )
 
     # Issue #823 Fix Punkt 4 — Guard-Trips sind eine Diagnose, kein stilles Verwerfen: übersteigt
-    # der Anteil der SORTINO_GUARD_TRIPPED-Trips (an ALLEN oos_evaluated Trials) eine konfigurierte
-    # Schwelle, ist die Suche faktisch zensiert (der Guard löscht systematisch das obere Ende der
-    # Zielverteilung) — das Ergebnis dieser Study ist dann NICHT als reguläres 0-/N-eligible-
-    # Resultat interpretierbar. STUDY_GUARD_DOMINATED macht diesen Zustand sichtbar, statt ihn als
-    # gewöhnliches Suchergebnis zu berichten (ändert KEINE Gate-/Reward-Entscheidung).
-    guard_tripped = sum(
-        1 for t in trials
-        if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
-        and any(d.get("code") == "SORTINO_GUARD_TRIPPED"
-               for d in (getattr(t, "user_attrs", {}).get("inference_diagnostics") or [])
-               if isinstance(d, dict))
-    )
+    # der Anteil zensierter Trips (an ALLEN informativen Trials) eine konfigurierte Schwelle, ist
+    # die Suche faktisch zensiert (der Guard löscht systematisch das obere Ende der Zielverteilung)
+    # — das Ergebnis dieser Study ist dann NICHT als reguläres 0-/N-eligible-Resultat
+    # interpretierbar. STUDY_GUARD_DOMINATED macht diesen Zustand sichtbar, statt ihn als
+    # gewöhnliches Suchergebnis zu berichten (ändert KEINE Gate-/Reward-Entscheidung). Der Zähler
+    # selbst ist weiter unten definiert (Issue #1063/#1213 — ``_inv._censored_trial_share``).
     guard_trip_fraction_warn = 0.10
     try:
         opt_path_guard = config_dir() / "optimizer.json"
@@ -2466,6 +2612,21 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         study.set_user_attr("n_trials_unevaluable", n_trials_unevaluable)
     except Exception:
         pass
+    # Issue #1063/#1213 (P1, Katalog #1196-1221) — Root-Cause B-9: Squeeze/NVDA 153/180 (85,0%) bzw.
+    # 152/180 (84,4%) zensierte Trials, summary_de.py §5.3 meldete in BEIDEN Laeufen "0". Zwei
+    # unabhaengige Defekte: (a) dieser Zaehler zaehlte vormals NUR SORTINO_GUARD_TRIPPED, waehrend
+    # ``check_inference_diagnostics_concentration`` einen breiteren Code-Satz zaehlte — behoben,
+    # indem beide dieselbe Zaehl-Funktion (``_inv._censored_trial_share``) mit den vom Issue
+    # EXPLIZIT benannten Kategorien (SORTINO_GUARD_TRIPPED ∪ SORTINO_INSUFFICIENT_DOWNSIDE)
+    # aufrufen; (b) ``report._study_record`` kopierte das hier gestempelte ``study_guard_dominated``-
+    # User-Attr NIE in den Study-Record (die eigentliche Ursache des "0"-Symptoms bei 84-85%
+    # Zensur, weit ueber JEDER sinnvollen Schwelle — dasselbe Bruecken-Fehlermuster wie #1022/#1171,
+    # Pitfall #421, siehe report.py-Fix). Die konfigurierbare Schwelle (``sortino_guard_trip_
+    # fraction_warn``, Default 0,10, Issue #823) bleibt UNVERAENDERT — sie ist bereits weit unter
+    # dem 50%-Bereich des Symptoms, eine Aenderung der Schwelle selbst war fuer B-9 nicht ursaechlich
+    # (siehe test_issue_823_study_guard_dominated.py fuer die bestehende Konfigurierbarkeits-Abdeckung).
+    guard_tripped = _inv._censored_trial_share(
+        [dict(getattr(t, "user_attrs", {}) or {}) for t in trials])
     study_guard_dominated = bool(
         n_trials_informative > 0
         and (guard_tripped / n_trials_informative) > guard_trip_fraction_warn)
@@ -2475,12 +2636,13 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         except Exception:
             pass
         logging.getLogger("optimizer").warning(
-            "[#823/#885] %s: STUDY_GUARD_DOMINATED — %d/%d informative Trials (%.1f%%) mit "
-            "SORTINO_GUARD_TRIPPED (> %.0f%%) — die Suche ist faktisch zensiert (der Guard löscht "
-            "systematisch das obere Ende der Zielverteilung); dieses Ergebnis ist NICHT als "
-            "reguläres Eligibility-Resultat interpretierbar.",
+            "[#823/#885/#1213] %s: STUDY_GUARD_DOMINATED — %d/%d informative Trials (%.1f%%) mit "
+            "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE (> %.0f%%) — die Suche ist "
+            "faktisch zensiert (der Guard löscht systematisch das obere Ende der Zielverteilung); "
+            "dieses Ergebnis ist NICHT als reguläres Eligibility-Resultat interpretierbar.",
             getattr(study, "study_name", "?"), guard_tripped, n_trials_informative,
-            100.0 * guard_tripped / n_trials_informative, 100.0 * guard_trip_fraction_warn,
+            100.0 * guard_tripped / n_trials_informative,
+            100.0 * guard_trip_fraction_warn,
         )
     # Issue #929 — best_value aus ALLEN abgeschlossenen Trials (Optuna-Semantik), nicht aus
     # Optunas eigenem constraint-gefilterten study.best_value (das unter oos_eligible=False für
@@ -3210,6 +3372,20 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
         if metrics.oos_bar_range_median_bps is not None:
             trial.set_user_attr("oos_bar_range_median_bps", metrics.oos_bar_range_median_bps)
+        # Issue #1054/#1203 (Katalog #1196-1221) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_stop_distance_bps_median is not None:
+            trial.set_user_attr(
+                "oos_stop_distance_bps_median", metrics.oos_stop_distance_bps_median)
+        if metrics.oos_trigger_to_fill_gap_bps_median is not None:
+            trial.set_user_attr(
+                "oos_trigger_to_fill_gap_bps_median", metrics.oos_trigger_to_fill_gap_bps_median)
+        if metrics.oos_realized_loss_bps_median is not None:
+            trial.set_user_attr(
+                "oos_realized_loss_bps_median", metrics.oos_realized_loss_bps_median)
+        trial.set_user_attr(
+            "oos_n_stop_loss_identity_checked", metrics.oos_n_stop_loss_identity_checked)
+        trial.set_user_attr(
+            "oos_n_stop_loss_identity_violations", metrics.oos_n_stop_loss_identity_violations)
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         trial.set_user_attr("oos_n_losses", metrics.oos_n_losses)
         # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als
@@ -3683,12 +3859,13 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     else:
         # Issue #612 — Feasibility in den Sampler (siehe optimize_symbol): constraints_func liest die
         # gestempelten OOS-Gate-Verletzungen; Optuna 4.9 bevorzugt feasible nativ vor infeasible.
-        sampler = optuna.samplers.TPESampler(
+        sampler = _WindowedTPESampler(
             multivariate=True,
             group=True,
             n_startup_trials=n_startup_trials,
             seed=seed_eff,
             constraints_func=_oos_constraints_func,
+            history_window=_resolve_tpe_history_window(opt_data),
         )
 
     # Issue #411 — serialisiert + DDL-Race-fest (table studies already exists). Ersetzt das nackte
@@ -3904,6 +4081,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             study.set_user_attr(
                 "study_ended_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
             study.set_user_attr("study_wallclock_s", round(time.perf_counter() - study_t0, 3))
+            # Issue #1067/#1217 Fix Punkt 3 — TPE-Surrogat-Fit-Zeit, konsumiert von
+            # invariants.check_search_overhead_share zusammen mit study_wallclock_s oben.
+            if hasattr(sampler, "_fit_seconds_total"):
+                study.set_user_attr("tpe_fit_seconds", round(sampler._fit_seconds_total, 4))
         except Exception:
             logging.getLogger("optimizer").warning(
                 "[#851] Study-Zeitstempel-Telemetrie für '%s' fehlgeschlagen (non-fatal).",

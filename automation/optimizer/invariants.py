@@ -1877,6 +1877,16 @@ def check_annualization_commensurability(
     Abweichung ist damit kein strukturelles Artefakt mehr, sondern ein echter Befund (die
     Hochstufung war an diesen Fix gebunden, analog #979/#1133).
 
+    Issue #1071/#1221 (Katalog #1196-1221) — #980/#1134s In-Prozess-Cache hielt in der PRAXIS
+    NIE (jeder Backtest laeuft in einem frischen ``ProcessPoolExecutor``-Worker) UND F wurde bis
+    dahin aus der #823-INFORMATIVEN (handelsfrequenz-abhaengigen) Beobachtungszahl abgeleitet,
+    nicht aus der Bar-ACHSE selbst — Symptom: sqrt(F)-Spannweite bis Faktor 5,7 zwischen Studies
+    desselben Symbols, 14/14 FAILs. Fix (siehe ``_get_annualization_factor_with_source``-
+    Docstring): F kommt jetzt aus ``bars_per_calendar_day · 365`` (handelsfrequenz-UNABHAENGIG)
+    UND wird zusaetzlich plattenpersistent je Symbol gecacht (ueberlebt Worker-/Lauf-Grenzen) — der
+    #823-informative Faktor bleibt separate Telemetrie, treibt ``sortino_annualized`` nicht mehr.
+    Dieser Check selbst ist UNVERAENDERT (er MISST das Ergebnis, verursacht es nicht).
+
     Prüft je Symbol mit >= 2 Studies mit definiertem sqrt(F): ``max(√F) / min(√F) <= max_ratio``.
     ``study_records``: Report-``studies[]``-artige Dicts mit ``symbol``/``holdout_sortino_period``/
     ``holdout_sortino_annualized`` (siehe ``report._study_record``)."""
@@ -1985,6 +1995,42 @@ _ADAPTIVE_DIAGNOSTIC_CODES = frozenset({"SORTINO_DOWNSIDE_SHRUNK"})
 # Rückwärtskompat-Alias: der volle Ausschluss-Satz für check_inference_diagnostics_absent (#886s
 # ursprüngliche Bedeutung — "kein Defekt", CENSORING UND ADAPTIVE gemeinsam).
 _REGULAR_THIRD_OUTCOME_CODES = _CENSORING_DIAGNOSTIC_CODES | _ADAPTIVE_DIAGNOSTIC_CODES
+
+# Issue #1063/#1213 (P1, Katalog #1196-1221) — die vom Issue EXPLIZIT benannte Zensur-Definition
+# fuer die #823-MEHRHEITS-Klassifikation (``study_guard_dominated``, siehe run_optimization.py) —
+# eine ENGERE Teilmenge von ``_REGULAR_THIRD_OUTCOME_CODES``, die ``check_inference_diagnostics_
+# concentration`` weiterhin fuer IHREN eigenen, breiteren Konzentrations-Check verwendet.
+_CENSORED_TRIAL_MAJORITY_CODES = frozenset({"SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE"})
+
+
+def _censored_trial_share(
+    trials: list[dict], *, codes: frozenset = _CENSORED_TRIAL_MAJORITY_CODES,
+) -> int:
+    """Issue #1063/#1213 — EINE Zaehl-Funktion fuer "wie viele Trials tragen einen Zensur-Diagnose-
+    Code", konsumiert SOWOHL von ``check_inference_diagnostics_concentration`` ALS AUCH vom
+    #823-``STUDY_GUARD_DOMINATED``-Zaehler (``run_optimization.py``) UND summary_de.py's §5.3
+    (ueber das dort gestempelte ``study_guard_dominated``-Study-Record-Feld).
+
+    Root-Cause B-9: Squeeze/NVDA 153/180 (85,0%) bzw. 152/180 (84,4%) zensierte Trials, §5.3
+    „Guard-dominierte Studies (#823): 0" in BEIDEN Laeufen — der #823-Zaehler und dieser Check
+    massen DIESELBE Groesse ueber verschiedene Nenner (``n_trials`` vs. ``n_trials_informative``)
+    ODER Zensur-Kategorien; UND ``report._study_record`` kopierte das von ``run_optimization.py``
+    gestempelte ``study_guard_dominated``-User-Attr nie in den Study-Record (die Bruecke fehlte
+    komplett, dasselbe Fehlermuster wie #1022/#1171 — Pitfall #421).
+
+    Der Nenner bleibt bewusst Aufgabe des JEWEILIGEN Aufrufers (``n_trials`` vs.
+    ``n_trials_informative`` sind fuer verschiedene Zwecke — Kommensurabilitaet #1078 vs. die
+    urspruengliche #823-Definition — weiterhin gerechtfertigt unterschiedlich); vereinheitlicht
+    wird NUR die ZAEHL-Logik selbst (welche Codes zaehlen als "zensiert"), das war die tatsaechliche
+    Divergenzquelle."""
+    affected = 0
+    for t in trials:
+        for diag in t.get("inference_diagnostics") or ():
+            code = diag.get("code") if isinstance(diag, dict) else None
+            if code in codes:
+                affected += 1
+                break
+    return affected
 
 
 def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
@@ -2127,13 +2173,10 @@ def check_inference_diagnostics_concentration(
             detail="Weder n_trials noch n_trials_informative bekannt (Pre-#885-Report) — nicht "
                    "anwendbar.",
         )
-    affected = 0
-    for t in trials:
-        for diag in t.get("inference_diagnostics") or ():
-            code = diag.get("code") if isinstance(diag, dict) else None
-            if code in _REGULAR_THIRD_OUTCOME_CODES:
-                affected += 1
-                break
+    # Issue #1063/#1213 — dieselbe Zaehl-Funktion wie die #823-STUDY_GUARD_DOMINATED-Klassifikation
+    # (``run_optimization.py``), hier mit dem BREITEREN, etablierten Code-Satz dieses Checks
+    # aufgerufen (unveraendertes Verhalten dieses bestehenden, seit #886 laufenden Checks).
+    affected = _censored_trial_share(trials, codes=_REGULAR_THIRD_OUTCOME_CODES)
     fraction = (affected / denominator) if denominator > 0 else 0.0
     # Issue #1033 (Katalog #866, Pitfall #356) — Sicherheitsnetz für den Legacy-Nenner-Fallback
     # (``n_trials`` nicht übergeben): ``fraction > 1.0`` beweist eine Zaehler/Nenner-
@@ -2448,7 +2491,13 @@ def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
     ``eligible_var_contrib`` ergaenzen die engere eligible Teilmenge, wenn sie nicht leer ist
     (``None`` sonst).
 
-    Leere Liste bei < 2 evaluierten Trials mit ``reward_terms``."""
+    Leere Liste bei < 2 evaluierten Trials mit ``reward_terms``.
+
+    Issue #1068/#1218 — ``configured_inactive`` ist seither ``True`` auch fuer die drei
+    RETIRIERTEN Terme (``reward.RETIRED_REWARD_TERMS``), nicht mehr nur fuer
+    ``_CONFIGURED_INACTIVE_REWARD_TERMS`` — beide Kategorien sind fuer diese Tabellen-Spalte
+    dieselbe Aussage ("Gewicht 0.0 ist der dokumentierte Normalzustand")."""
+    from automation.optimizer.reward import RETIRED_REWARD_TERMS
     evaluated_terms = _evaluated_reward_terms(trials)
     if len(evaluated_terms) < 2:
         return []
@@ -2475,7 +2524,7 @@ def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
             "std": round(variances[k] ** 0.5, 6),
             "var_contrib": round(var_contrib, 6),
             "in_target_corridor": bool(lo <= var_contrib <= hi),
-            "configured_inactive": k in _CONFIGURED_INACTIVE_REWARD_TERMS,
+            "configured_inactive": k in _CONFIGURED_INACTIVE_REWARD_TERMS or k in RETIRED_REWARD_TERMS,
             "eligible_std": None,
             "eligible_var_contrib": None,
         }
@@ -3101,7 +3150,10 @@ def check_trailing_stop_loss_share(
 
 
 def check_family_n_stability(
-    frozen_by_symbol: dict[str, int], observed_by_symbol: dict[str, int],
+    frozen_by_symbol: dict[str, int], observed_by_symbol: dict[str, int], *,
+    frozen_stage1: dict[str, dict[str, int]] | None = None,
+    observed_stage1: dict[str, dict[str, int]] | None = None,
+    sweep_completed: bool | None = None,
 ) -> InvariantResult:
     """Issue #1091 (Katalog #924) — vergleicht die EINGEFRORENE (budget-basierte,
     ``sweep._family_n_frozen_from_studies``) gegen die zur BERICHTSZEIT beobachtete
@@ -3130,15 +3182,44 @@ def check_family_n_stability(
     _family_members``/``report._family_n_stages`` dieselbe Ausschluss-Semantik teilen (#1158-Fix),
     ist ``frozen == observed`` tautologisch garantiert — jede Abweichung, gleich wie klein, ist ein
     echter Befund (Zwischenreport ODER eine erneute Filter-Divergenz), kein Rundungsartefakt mehr.
-    FAIL (severity ``blocking``) bei JEDER Differenz != 0, keine Toleranzschwelle mehr."""
+    FAIL (severity ``blocking``) bei JEDER Differenz != 0, keine Toleranzschwelle mehr.
+
+    Issue #1052/#1201 (Katalog #1196-1221, P1) — Root-Cause: der Detailtext nannte bislang nur die
+    ANZAHL betroffener Symbole ("1 Symbol(e) mit Abweichung..."), NIE ``frozen``, ``observed``, das
+    Delta oder die konkret betroffene Study — ein blockierender Check muss die Zahl liefern, die er
+    beanstandet. Fix:
+    1. ``frozen_stage1``/``observed_stage1`` (optional, symbol -> strategy -> n1, dieselbe Form wie
+       ``report._family_n_stages``/die per-Strategie eingefrorene Zerlegung) loesen fuer jedes
+       offending Symbol auf, WELCHE Study(s) tatsaechlich divergieren — ``offenders[symbol]``
+       traegt seither zusaetzlich ``by_study: {strategy: {frozen, observed, delta}}`` (nur die
+       Strategien MIT einer Differenz, nicht alle). Ohne diese Parameter (Legacy-Aufrufer/-Tests)
+       bleibt ``by_study`` leer — die bestehenden Symbol-Ebene-Felder (``frozen``,
+       ``observed_at_report_time``, ``difference``) sind UNVERAENDERT, keine Regression.
+    2. ``sweep_completed`` (optional) ist der Diskriminator zwischen den beiden Hypothesen: ``True``
+       (ein ``sweep_completed``-Ereignis liegt vor / ``run_status`` ist ein terminaler Zustand) macht
+       die Abweichung zu einer ECHTEN #1158-Filter-Divergenz; ``False`` (ein Zwischenreport, mitten
+       im laufenden Sweep gelesen) erklaert sie als erwartbaren Momentaufnahme-Artefakt. ``None``
+       (unbekannt) laesst die Aussage offen, statt eine Hypothese zu erraten."""
     offenders: dict[str, dict] = {}
     for symbol, frozen in frozen_by_symbol.items():
         observed = observed_by_symbol.get(symbol)
         if observed is None:
             continue
         if frozen != observed:
+            by_study: dict[str, dict] = {}
+            if frozen_stage1 is not None or observed_stage1 is not None:
+                _frozen_strats = (frozen_stage1 or {}).get(symbol, {})
+                _observed_strats = (observed_stage1 or {}).get(symbol, {})
+                for strategy in sorted(set(_frozen_strats) | set(_observed_strats)):
+                    _f = _frozen_strats.get(strategy, 0)
+                    _o = _observed_strats.get(strategy, 0)
+                    if _f != _o:
+                        by_study[strategy] = {"frozen": _f, "observed": _o, "delta": _o - _f}
             offenders[symbol] = {"frozen": frozen, "observed_at_report_time": observed,
-                                 "difference": observed - frozen}
+                                 "difference": observed - frozen, "by_study": by_study,
+                                 "discriminator": ("REAL_FILTER_DIVERGENCE" if sweep_completed
+                                                   else "INTERMEDIATE_REPORT" if sweep_completed is False
+                                                   else "UNKNOWN_SWEEP_COMPLETION_STATE")}
     passed = not offenders
     return InvariantResult(
         name="check_family_n_stability",
@@ -3147,9 +3228,13 @@ def check_family_n_stability(
         actual=offenders or None,
         severity="blocking",
         detail=("OK" if passed else
-                f"{len(offenders)} Symbol(e) mit Abweichung zwischen eingefrorener und "
-                "beobachteter Familien-Multiplizitaet — Zwischenreport oder erneute #1158-"
-                "Filter-Divergenz."),
+                f"{len(offenders)} Symbol(e) mit Abweichung zwischen eingefrorener und beobachteter "
+                "Familien-Multiplizitaet: " + "; ".join(
+                    f"{sym}(frozen={o['frozen']}, observed={o['observed_at_report_time']}, "
+                    f"delta={o['difference']}, studies={o['by_study'] or 'unbekannt'}, "
+                    f"grund={o['discriminator']})"
+                    for sym, o in offenders.items()
+                ) + " — Zwischenreport oder erneute #1158-Filter-Divergenz, siehe 'discriminator'."),
     )
 
 
@@ -3778,6 +3863,7 @@ def check_summary_row_completeness(
 
 def check_cost_stress_distinctness(
     study_records: list[dict], *, min_affected_fraction: float = 0.9,
+    min_delta_coefficient: float = 0.5,
 ) -> InvariantResult:
     """Issue #1010/#1162 (Katalog #1170, P0) — die ``'full_realism'``-Kostenstufe ist auf
     ``backtest.json['overnight_financing_bps_per_day_by_asset_class']``/``['slippage_bps_by_
@@ -3798,7 +3884,20 @@ def check_cost_stress_distinctness(
 
     Nur Studies mit ``holdout_total_trades >= 1`` UND beiden Feldern definiert werden gezaehlt (0
     Trades ⇒ die Stufe ist trivial identisch zur Basis, kein Symptom des No-Ops); keine solche
-    Study ⇒ nicht anwendbar (PASS)."""
+    Study ⇒ nicht anwendbar (PASS).
+
+    Issue #1055/#1204 (Katalog #1196-1221, P0) Fix Punkt 4 — VERSCHAERFUNG: "nicht bit-identisch"
+    allein laesst eine trivial kleine, oekonomisch bedeutungslose Differenz durchgehen (z. B. eine
+    Rundungsdifferenz oder eine nur fuer EINE Asset-Klasse kalibrierte Slippage). Fuer jede Study
+    mit einer kalibrierten p50-Slippage (``slippage_p50_bps_calibrated``, ``report.py`` aus
+    ``calibrated_slippage.json``) UND ``oos_n_trailing_stop_losses`` UND ``holdout_total_trades``
+    MUSS die Differenz mindestens
+    ``min_delta_coefficient · slippage_p50_bps/10000 · n_trailing_stop_exits / holdout_total_trades``
+    betragen — die erwartete Kostenwirkung, SKALIERT auf den Anteil der Round-Trips, an denen
+    ueberhaupt eine TRAILING_STOP-Slippage gemessen wurde (``holdout_total_trades`` ersetzt hier die
+    im Issue genannte ``n_bars`` — eine reine Bars-Zahl ist auf Study-Ebene nicht als Feld verfuegbar;
+    die Round-Trip-Zahl skaliert dieselbe Grundidee, "Slippage wirkt nur auf einen ANTEIL der
+    Grundgesamtheit", ohne eine neue, ungeprüfte Kennzahl zu erfinden)."""
     with_trades = [
         r for r in study_records
         if (r.get("holdout_total_trades") or 0) >= 1
@@ -3822,19 +3921,52 @@ def check_cost_stress_distinctness(
     ]
     fraction = len(identical) / len(with_trades)
     passed = fraction <= min_affected_fraction
+    # Issue #1055/#1204 Fix Punkt 4 — Mindestdelta-Kriterium, unabhaengig vom obigen Bit-Identitaets-
+    # Anteil geprueft (beide Kriterien MUESSEN gelten).
+    delta_offenders: dict[str, dict] = {}
+    for r in with_trades:
+        slippage_p50 = r.get("slippage_p50_bps_calibrated")
+        n_ts_exits = r.get("oos_n_trailing_stop_losses")
+        n_total = r.get("holdout_total_trades")
+        if not slippage_p50 or not n_ts_exits or not n_total:
+            continue
+        min_expected_delta = (
+            min_delta_coefficient * (float(slippage_p50) / 10000.0)
+            * (float(n_ts_exits) / float(n_total)))
+        actual_delta = (float(r["holdout_expectancy_capital_weighted"])
+                        - float(r["holdout_expectancy_cost_stress_full_realism"]))
+        if actual_delta < min_expected_delta:
+            delta_offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "actual_delta": round(actual_delta, 6),
+                "min_expected_delta": round(min_expected_delta, 6),
+                "slippage_p50_bps_calibrated": slippage_p50,
+            }
+    if delta_offenders:
+        passed = False
     return InvariantResult(
         name="check_cost_stress_distinctness",
         passed=passed,
-        expected=f"<= {min_affected_fraction:.0%} der Studies mit >= 1 Trade identisch zur Basis",
+        expected=(f"<= {min_affected_fraction:.0%} der Studies mit >= 1 Trade identisch zur Basis "
+                 f"UND Delta >= {min_delta_coefficient} · slippage_p50/10000 · "
+                 "n_trailing_stop_exits/holdout_total_trades, wo kalibriert"),
         actual=round(fraction, 4),
         severity="high",
         detail=("OK" if passed else
-                f"{len(identical)}/{len(with_trades)} Studies mit >= 1 Trade: "
-                "holdout_expectancy_cost_stress_full_realism == holdout_expectancy_capital_"
-                "weighted bit-exakt — die 'full_realism'-Kostenstufe ist ein No-Op (financing_bps/"
-                "slippage_bps sind in backtest.json fuer alle Asset-Klassen 0.0, #1010/#1162)."),
-        provenance=({"n_identical": len(identical), "n_with_trades": len(with_trades)}
-                    if not passed else None),
+                (f"{len(identical)}/{len(with_trades)} Studies mit >= 1 Trade: "
+                 "holdout_expectancy_cost_stress_full_realism == holdout_expectancy_capital_"
+                 "weighted bit-exakt — die 'full_realism'-Kostenstufe ist ein No-Op (financing_bps/"
+                 "slippage_bps sind in backtest.json fuer alle Asset-Klassen 0.0, #1010/#1162). "
+                 if fraction > min_affected_fraction else "") +
+                (f"{len(delta_offenders)} Study/Studies unterschreiten das Mindestdelta trotz "
+                 f"kalibrierter Slippage: {delta_offenders} (#1204)."
+                 if delta_offenders else "")),
+        provenance={
+            k: v for k, v in {
+                "n_identical": len(identical) if fraction > min_affected_fraction else None,
+                "n_with_trades": len(with_trades) if fraction > min_affected_fraction else None,
+                "delta_offenders": delta_offenders or None,
+            }.items() if v is not None
+        } or None,
     )
 
 
@@ -4184,6 +4316,72 @@ def check_sizing_identity_coherence(
     )
 
 
+def check_sizing_cap_enforcement(
+    study_records: list[dict], *, max_overshoot_factor: float = 1.05,
+) -> InvariantResult:
+    """Issue #1060/#1209 (Katalog #1196-1221, P0) — Sizing-Cap nicht hart gedeckelt.
+
+    Symptom (B-10): ``f_realized`` (``rt_notional / equity_at_entry`` DIREKT je Round-Trip
+    gemessen, siehe ``backtest_runner._finalize_round_trip``) erreichte bis zu 1,66x das
+    konfigurierte ``trade_amount_pct`` — Aufstockung (Scale-in) innerhalb eines Round-Trips liess
+    das realisierte Notional ueber den konfigurierten Anteil hinaus anwachsen, OHNE dass
+    ``hourly_strategy_base._compute_quantity`` das Aggregat-Exposure je Instrument gegen einen
+    Deckel prueft — jeder Sizing-Schritt betrachtete nur seine EIGENE Ordergroesse, nie die bereits
+    offene Position.
+
+    Root-Cause behoben in ``_compute_quantity`` (harte Obergrenze: das aggregierte Netto-Exposure
+    einer Strategie auf einem Instrument darf ``trade_amount_pct · equity`` nie ueberschreiten,
+    ueberschiessende Anforderungen werden auf den verbleibenden Spielraum gekappt und als
+    ``SIZING_CAP_HIT`` geloggt). Dieser Check ist die ABNAHMEMESSUNG dafuer: das GEMESSENE Maximum
+    (``holdout_f_realized_max``, dieselbe direkt gemessene Serie wie ``check_sizing_identity_
+    coherence``s Median-Kriterium, hier aber das WORST-CASE-Ereignis statt des Medians — ein
+    einzelner Cap-Verstoss wird von einem Median strukturell verwaescht) darf
+    ``max_overshoot_factor`` (Default 1,05, Toleranz fuer Rundung/Slippage zwischen Order und Fill)
+    mal ``trade_amount_pct`` nie uebersteigen.
+
+    FAIL (severity ``blocking`` — dieselbe Kategorie wie ``check_sizing_identity_coherence``, ein
+    Sizing-Cap-Verstoss ist ein Risikomanagement-Defekt, kein Diagnose-Befund). Studies ohne
+    ``holdout_f_realized_max`` (aeltere Report-JSONs, oder kein Holdout-Trade) sind nicht
+    auswertbar und werden uebersprungen (kein FAIL auf fehlender Evidenz)."""
+    with_data = [
+        r for r in study_records
+        if r.get("holdout_f_realized_max") is not None and r.get("trade_amount_pct")
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_sizing_cap_enforcement",
+            passed=True,
+            expected=f"f_realized_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
+            actual=None,
+            severity="blocking",
+            detail="Keine Studies mit holdout_f_realized_max/trade_amount_pct — nicht anwendbar.",
+        )
+    offenders: dict[str, dict] = {}
+    for r in with_data:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        trade_amount_pct = float(r["trade_amount_pct"])
+        f_realized_max_pct = float(r["holdout_f_realized_max"]) * 100.0
+        limit = max_overshoot_factor * trade_amount_pct
+        if f_realized_max_pct > limit:
+            offenders[key] = {
+                "f_realized_max_pct": round(f_realized_max_pct, 4),
+                "trade_amount_pct": trade_amount_pct,
+                "overshoot_factor": round(f_realized_max_pct / trade_amount_pct, 4),
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_sizing_cap_enforcement",
+        passed=passed,
+        expected=f"f_realized_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit einem gemessenen Sizing-Maximum ueber "
+                f"{max_overshoot_factor}x des konfigurierten trade_amount_pct: {offenders} — der "
+                "Aggregat-Exposure-Deckel in _compute_quantity wurde nicht wirksam (#1209)."),
+    )
+
+
 def check_atr_scale_homogeneity(
     study_records: list[dict], *, max_ratio: float = 6.0,
     atr_floor_bps_by_symbol: dict[str, float] | None = None,
@@ -4344,6 +4542,114 @@ def check_atr_scale_homogeneity(
     )
 
 
+def check_atr_floor_enforcement(
+    study_records: list[dict], *,
+    atr_floor_bps_by_symbol: dict[str, float] | None = None,
+    min_stop_to_cost_ratio: float = 3.0,
+    floor_tolerance: float = 1e-6,
+) -> InvariantResult:
+    """Issue #1058/#1207 (Katalog #1196-1221, P1) — ATR-Floor gebunden und Stop-Kosten-Verhältnis
+    widersprechen sich.
+
+    Symptom: eine Study stand in Report §5.3 unter den ATR-Floor-gebundenen Studies
+    (``check_atr_scale_homogeneity``s ``atr_floor_binding_studies``-Provenance, oben), UND
+    ``check_stop_cost_ratio`` meldete für DIESELBE Study ein Stop/Kosten-Verhältnis < 3.0 — obwohl
+    der kostengekoppelte Floor (``backtest_runner.cost_coupled_atr_floor_bps``, #1096 Fix Punkt 1)
+    konstruktiv genau dieses Verhältnis >= ``min_stop_to_cost_ratio`` garantiert, WENN der Floor
+    tatsächlich bindet.
+
+    Root-Cause (zu verifizieren je Study, nicht pauschal behauptet): entweder wird der Floor auf
+    ``atr_raw_median_bps`` angewendet, während der SIMULIERTE, effektive Stop (``atr_median_bps ·
+    atr_trailing_multiplier_median``, dasselbe ``stop_distance_bps``-Feld, das ``check_stop_cost_
+    ratio`` konsumiert) eine VOR dem Floor bestimmte Distanz trägt, oder das ``k`` in
+    ``atr_floor_bps_derived · k`` unterscheidet sich vom ``k`` der Ausführung, oder die
+    Floor-Bindungs-Erkennung (``check_atr_scale_homogeneity``) und ``check_stop_cost_ratio`` bilden
+    ihre Kohorten unterschiedlich. Dieser Check macht den Widerspruch selbst zu einem benannten
+    Befund, mit allen vier Zahlen (``atr_floor_bps_derived``, ``k``, ``effective_stop_distance_bps``,
+    ``c_rt``) in EINEM Offender-Eintrag, statt ihn nur indirekt aus zwei getrennten Checks
+    erschliessen zu müssen.
+
+    Verwendet DIESELBE Floor-Bindungs-Erkennung wie ``check_atr_scale_homogeneity`` (bevorzugt
+    ``atr_raw_median_bps < effective_floor - floor_tolerance``, sonst der Legacy-Gleichheits-
+    Vergleich des effektiven ATR gegen den Floor) — eine Study bindet, wenn EINES der beiden
+    Kriterien zutrifft.
+
+    FAIL (severity ``high`` — diagnostisch wie ``check_stop_cost_ratio``, dessen Widerspruch dieser
+    Check aufloest), wenn fuer irgendeine floor-gebundene Study
+    ``effective_stop_distance_bps < min_stop_to_cost_ratio · c_rt - 1e-6`` gilt. INCONCLUSIVE, wenn
+    keine Study ueberhaupt als floor-gebunden UND mit vollstaendiger Kostenbasis identifizierbar
+    ist."""
+    offenders: dict[str, dict] = {}
+    n_binding_measured = 0
+    for r in study_records:
+        symbol, strategy = r.get("symbol"), r.get("strategy")
+        if not symbol or not strategy:
+            continue
+        derived_floor = r.get("atr_floor_bps_derived")
+        sym_floor = (atr_floor_bps_by_symbol or {}).get(symbol)
+        effective_floor = derived_floor if derived_floor is not None else sym_floor
+        if effective_floor is None:
+            continue
+        raw = r.get("atr_raw_median_bps")
+        eff = r.get("atr_median_bps")
+        if raw is not None:
+            floor_binding = float(raw) < float(effective_floor) - floor_tolerance
+        elif eff is not None:
+            floor_binding = abs(float(eff) - float(effective_floor)) <= floor_tolerance
+        else:
+            continue
+        if not floor_binding:
+            continue
+        k = r.get("atr_trailing_multiplier_median")
+        effective_stop_distance_bps = r.get("stop_distance_bps")
+        c_rt = r.get("round_trip_cost_bps")
+        if k is None or effective_stop_distance_bps is None or c_rt is None or c_rt <= 0:
+            continue
+        n_binding_measured += 1
+        min_required = min_stop_to_cost_ratio * float(c_rt)
+        if float(effective_stop_distance_bps) < min_required - 1e-6:
+            key = f"{strategy}/{symbol}"
+            offenders[key] = {
+                "atr_floor_bps_derived": round(float(effective_floor), 4),
+                "k": round(float(k), 4),
+                "effective_stop_distance_bps": round(float(effective_stop_distance_bps), 4),
+                "c_rt": round(float(c_rt), 4),
+            }
+    expected = (f"floor_binding == True ⇒ effective_stop_distance_bps >= "
+                f"{min_stop_to_cost_ratio} · c_rt - 1e-6")
+    if n_binding_measured == 0:
+        return InvariantResult(
+            name="check_atr_floor_enforcement",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                          "inconclusive_reason": "no_floor_binding_study_with_cost_basis",
+                          "n_studies_measured": 0},
+            detail="Keine floor-gebundene Study mit vollstaendiger Kostenbasis (k, "
+                   "effective_stop_distance_bps, c_rt) — nicht auswertbar (INCONCLUSIVE).",
+        )
+    passed = not offenders
+    return InvariantResult(
+        name="check_atr_floor_enforcement",
+        passed=passed,
+        expected=expected,
+        actual=offenders if offenders else None,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": n_binding_measured},
+        detail=("OK" if passed else
+                f"{len(offenders)} floor-gebundene Study/Studies unterschreiten trotzdem "
+                f"{min_stop_to_cost_ratio}x der Round-Trip-Kosten: {offenders} — der kostengekoppelte "
+                "Floor garantiert dieses Verhaeltnis nur, wenn dieselbe Distanz/derselbe "
+                "Multiplikator auch tatsaechlich SIMULIERT wurde (#1207)."),
+    )
+
+
 def check_sizing_parity_backtest_vs_allocator(
     trade_amount_pct_by_strategy: dict[str, float], *,
     max_symbol_exposure_fraction: float | None, tolerance: float = 0.01,
@@ -4470,8 +4776,16 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
     #927 Fix 2 — Gewicht 0.0 ist ihr dokumentierter Normalzustand) werden von der Alarm-Liste
     ausgenommen, auch wenn ihre Streuung technisch unter der Schwelle liegt.
 
+    Issue #1068/#1218 (P1, Katalog #1196-1221) — die drei in ALLEN 14 Referenz-Laeufen konstant
+    inerten Terme (``param_pen``, ``turnover``, ``fold_dispersion``, < 1% Reward-Streuungsbeitrag)
+    sind seither RETIRIERT (``reward.RETIRED_REWARD_TERMS``, code-seitig auf 0.0 gezwungen,
+    ``reward_semantics_version`` 24) — sie werden hier wie ``_CONFIGURED_INACTIVE_REWARD_TERMS``
+    von der Alarm-Liste ausgenommen (Akzeptanzkriterium: der Check passiert oder nennt
+    ausschliesslich retirierte Terme; mit dieser Ausnahme passiert er unbedingt).
+
     ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (je Trial ``oos_evaluated`` +
     ``reward_terms``), NICHT Optuna-``Trial``-Objekte — pure Funktion, synthetisch testbar."""
+    from automation.optimizer.reward import RETIRED_REWARD_TERMS
     evaluated_terms = _evaluated_reward_terms(trials)
     if len(evaluated_terms) < 2:
         return InvariantResult(
@@ -4490,7 +4804,7 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
     rew_std = statistics.pstdev(rew_vals)
     inert_terms = []
     for k in _REWARD_TERM_NUMERIC_KEYS:
-        if k in _CONFIGURED_INACTIVE_REWARD_TERMS:
+        if k in _CONFIGURED_INACTIVE_REWARD_TERMS or k in RETIRED_REWARD_TERMS:
             continue
         vals = [float(t.get(k, 0.0)) for t in evaluated_terms]
         if all(v == 0.0 for v in vals):
@@ -5199,8 +5513,8 @@ def check_holding_time_cap(study_records: list[dict], *,
 
 def check_counter_partition_consistency(study_records: list[dict]) -> InvariantResult:
     """Issue #972 (Katalog B, Pitfall #304 in AGENTS.md) — Regressionswächter gegen den Zero-
-    Eligible-Plateau-Zähler-Widerspruch: der Plateau-Zähler (``plateau_counter_breakdown``,
-    ``run_optimization._optimize_symbol_impl``) meldet, wie sich ``n_trials`` in
+    Eligible-Plateau-Zähler-Widerspruch: der Plateau-Zähler (``plateau_counter_breakdown_run``,
+    ``run_optimization.floor_plateau_callback``) meldet, wie sich ``n_trials`` in
     ``n_evaluated`` (Überlebende) und eine Zerlegung der ENTFERNTEN Trials
     (``invalidated_timebox``/``invalidated_trade_cap``/``discarded_is_gate``/
     ``window_unreachable``/``not_evaluated``) aufteilt. Für JEDES Study-Paar, dessen Zähler
@@ -5208,52 +5522,107 @@ def check_counter_partition_consistency(study_records: list[dict]) -> InvariantR
     ``n_evaluated + sum(breakdown.values()) == n_trials`` — sonst zielt mindestens einer der
     beiden Zähler NICHT auf dieselbe Grundgesamtheit (Root-Cause #972: der alte Plateau-Zähler
     lief über die bereits vorgefilterten Überlebenden statt über ``n_trials``, wodurch
-    "0/N trafen die Grenze" strukturell nicht widerlegbar war)."""
-    with_data = [r for r in study_records if r.get("plateau_counter_breakdown") is not None]
+    "0/N trafen die Grenze" strukturell nicht widerlegbar war).
+
+    Issue #1050/#1199 (Katalog #1196-1221, Pitfall #430 in AGENTS.md) — ZWEITE Root-Cause-Klasse,
+    verschieden von #972: dieser Check konsumierte bislang ``plateau_n_evaluated``/
+    ``plateau_counter_breakdown`` — STORE-SCOPED Felder (``run_optimization``s Plateau-Stop-
+    Entscheidung braucht bewusst die volle Store-Historie), waehrend ``n_trials`` RUN-SCOPED ist
+    (``report._study_record``). Bei einem k-fach warm-gestarteten Store war die Identitaet dadurch
+    STRUKTURELL unerfuellbar (``n_evaluated`` bis zu k-mal so gross wie ``n_trials``, unabhaengig
+    vom Suchraum). Fix: konsumiert jetzt ausschliesslich die RUN-SCOPED Gegenstuecke
+    ``plateau_n_evaluated_run``/``plateau_counter_breakdown_run`` — beide scope-konsistent mit
+    ``n_trials``.
+
+    Issue #1050/#1199 Fix Punkt 2 — eine ZWEITE, unterscheidbare Ursache: ``breakdown_sum == 0``
+    bei gefuelltem ``reconstructed_total`` (``n_evaluated > 0``) heisst NICHT "die Zerlegung ist
+    inkohaerent", sondern "keine der fuenf Kategorien wurde je befuellt" — ein anderer Defekt
+    (die ``is_rejection_detail``-Kategorien erreichen die Trials nicht) als eine echte
+    Zaehler-Divergenz. Dieser Fall traegt seither den eigenen Grund ``BREAKDOWN_NOT_POPULATED``
+    statt in der generischen Partitionsverletzung unterzugehen."""
+    with_data = [r for r in study_records if r.get("plateau_counter_breakdown_run") is not None]
     if not with_data:
         return InvariantResult(
             name="check_counter_partition_consistency",
             passed=True,
-            expected="n_evaluated + sum(plateau_counter_breakdown.values()) == n_trials je Study",
+            expected="n_evaluated + sum(plateau_counter_breakdown_run.values()) == n_trials je Study",
             actual=None,
-            detail="Keine Studies mit Plateau-Zerlegung (kein Zero-Eligible-Plateau in diesem Lauf "
-                   "oder Pre-#972-Report) — nicht anwendbar.",
+            detail="Keine Studies mit run-scoped Plateau-Zerlegung (kein Zero-Eligible-Plateau in "
+                   "diesem Lauf oder Pre-#1199-Report) — nicht anwendbar.",
             severity="high",
         )
-    offenders: dict[str, dict[str, int]] = {}
+    offenders: dict[str, dict] = {}
     for r in with_data:
         n_trials = r.get("n_trials")
-        n_eval = r.get("plateau_n_evaluated")
-        breakdown = r.get("plateau_counter_breakdown") or {}
+        n_eval = r.get("plateau_n_evaluated_run")
+        breakdown = r.get("plateau_counter_breakdown_run") or {}
         if n_trials is None or n_eval is None:
             continue
-        total = int(n_eval) + sum(int(v) for v in breakdown.values())
+        breakdown_sum = sum(int(v) for v in breakdown.values())
+        total = int(n_eval) + breakdown_sum
         if total != int(n_trials):
-            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            # Issue #1050/#1199 Fix Punkt 2 — BREAKDOWN_NOT_POPULATED: die Zerlegung selbst ist
+            # leer (jede Kategorie 0), obwohl ueberhaupt Trials ENTFERNT wurden (n_trials > n_eval)
+            # — die Kategorien wurden nie befuellt, statt dass Zaehler/Nenner divergieren.
+            reason = (
+                "BREAKDOWN_NOT_POPULATED"
+                if breakdown_sum == 0 and int(n_trials) > int(n_eval)
+                else "PARTITION_MISMATCH")
+            offenders[key] = {
                 "n_trials": int(n_trials), "n_evaluated": int(n_eval),
-                "breakdown_sum": total - int(n_eval), "reconstructed_total": total,
+                "breakdown_sum": breakdown_sum, "reconstructed_total": total,
+                "reason": reason,
             }
     passed = not offenders
     return InvariantResult(
         name="check_counter_partition_consistency",
         passed=passed,
-        expected="n_evaluated + sum(plateau_counter_breakdown.values()) == n_trials je Study",
+        expected="n_evaluated + sum(plateau_counter_breakdown_run.values()) == n_trials je Study",
         actual=offenders if offenders else None,
         severity="high",
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies: der Plateau-Zähler und n_trials zerlegen die "
-                f"Trial-Menge NICHT disjunkt/vollständig: {offenders} — mindestens einer der "
-                "beteiligten Zähler zielt nicht auf dieselbe Grundgesamtheit (Pitfall #304)."),
+                f"Trial-Menge NICHT disjunkt/vollständig: {offenders} — 'reason' unterscheidet eine "
+                "unbefuellte Zerlegung (BREAKDOWN_NOT_POPULATED) von einer echten Zaehler-Divergenz "
+                "(PARTITION_MISMATCH); mindestens einer der beteiligten Zähler zielt nicht auf "
+                "dieselbe Grundgesamtheit (Pitfall #304)."),
     )
 
 
 def check_effective_stop_distance(study_records: list[dict], *,
                                   min_ratio: float = 0.4,
                                   max_ratio: float = 10.0,
-                                  min_trailing_stop_exits: int = 30) -> InvariantResult:
+                                  min_trailing_stop_exits: int = 30,
+                                  min_cohort_trials: int = 5) -> InvariantResult:
     """Issue #897 Fix 3 — je Study wird der Median des realisierten Ø-Bruttoverlusts gegen den
     konfigurierten Stop-Abstand ``k_median · ATR_median`` (``atr_trailing_multiplier_median`` ×
     ``atr_median_bps``) geprüft.
+
+    Issue #1053/#1202 (P1) — Symptom (B-7): über vier TSLA-Läufe auf identischer Datenlage FAILte
+    dieser Check mal, mal nicht, mit wechselnden Offendern und Werten 10,2049-13,3619. Root-Cause:
+    der Quotient wurde aus ZWEI UNABHÄNGIG über die GESAMTE Study gemittelten Grössen gebildet
+    (Nenner: ``atr_trailing_multiplier_median · atr_median_bps`` über ALLE Trials unbedingt;
+    Zähler: ``gross_loss_median_bps_trailing_stop`` NUR über Trials MIT mindestens einem Stop-Exit)
+    — Zähler- und Nenner-Median liefen über INKONSISTENTE Trial-Teilmengen, UND Optunas TPE-Sampler
+    exploriert in jedem Re-Run unterschiedliche Punkte im Multiplikator-Raum (empirisch bestätigt:
+    ``atr_trailing_multiplier_median`` driftete zwischen vier identisch konfigurierten TSLA-Läufen
+    von 0,84 bis 1,42 bei GLEICHER Trial-Zahl) — der Quotient driftete dadurch RUN-ZU-RUN, obwohl
+    sich die Datenlage nicht änderte.
+
+    Fix: dieser Check konsumiert seither PRIMÄR ``effective_stop_ratio_cohort_median``/
+    ``effective_stop_ratio_cohort_n`` (``report._effective_stop_ratio_cohort`` — Median EINES
+    PER-TRIAL gebildeten Quotienten über die "eligible Kohorte", Zähler und Nenner IMMER auf
+    demselben Trial) statt des vormaligen Quotienten aus zwei getrennten Aggregaten — das Verdikt
+    ist damit eine STUDY-Eigenschaft (dieselbe Kohorte, deterministisch aus denselben Trials
+    hergeleitet), nicht mehr sensibel gegenüber der Sampler-Explorationsvarianz. Der GEWINNER-Wert
+    (bestbewerteter Trial) bleibt separat unter ``winner_effective_stop_ratio`` telemetriert
+    (Akzeptanzkriterium aus #1202), fliesst aber NICHT mehr in das Verdikt ein — ``passed`` ist
+    seither eine Eigenschaft der Study-Kohorte, nicht des jeweils gewählten Gewinner-Trials.
+    ``min_cohort_trials`` (Default 5) ist die Mindestzahl an eligiblen Trials (je >= 3 nachweisliche
+    TRAILING_STOP-Exits IN DIESEM Trial, siehe ``report._effective_stop_ratio_cohort``) für ein
+    Urteil; ``min_trailing_stop_exits`` bleibt als Fallback-Schwelle für Studies OHNE die neuen
+    #1202-Kohorten-Felder (Legacy-Reports/Test-Fixtures) erhalten, siehe unten.
 
     Issue #1035 (Katalog #866) — Root-Cause: der Zähler mass bislang über ALLE Verlust-Trades
     (``oos_gross_loss_mean_bps``), nicht nur über nachweisliche Stop-Exits. Bei überwiegend
@@ -5315,10 +5684,11 @@ def check_effective_stop_distance(study_records: list[dict], *,
     erneutes Auseinanderlaufen."""
     candidates = [
         r for r in study_records
-        if r.get("atr_median_bps")
-        and r.get("atr_trailing_multiplier_median") is not None
-        and (r.get("gross_loss_median_bps_trailing_stop") is not None
-             or r.get("oos_gross_loss_mean_bps_pooled") is not None)
+        if r.get("effective_stop_ratio_cohort_median") is not None
+        or (r.get("atr_median_bps")
+            and r.get("atr_trailing_multiplier_median") is not None
+            and (r.get("gross_loss_median_bps_trailing_stop") is not None
+                 or r.get("oos_gross_loss_mean_bps_pooled") is not None))
     ]
     if not candidates:
         # Issue #995/#1147 (Pitfall #413) — ``passed=None``/``evaluable=False`` statt ``passed=
@@ -5345,12 +5715,40 @@ def check_effective_stop_distance(study_records: list[dict], *,
     with_data: list[dict] = []
     for r in candidates:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
+        _cohort_median = r.get("effective_stop_ratio_cohort_median")
+        _cohort_n = int(r.get("effective_stop_ratio_cohort_n") or 0)
+        _winner_ratio = r.get("winner_effective_stop_ratio")
+        if _cohort_median is not None:
+            # Issue #1053/#1202 Fix — PRIMAERER Pfad: die #1202-Kohorten-Felder aus
+            # report._effective_stop_ratio_cohort (siehe Docstring oben). Zaehler und Nenner wurden
+            # dort IMMER auf demselben Trial gebildet, kein Populations-Mismatch mehr.
+            if _cohort_n < min_cohort_trials:
+                inconclusive_studies[key] = _cohort_n
+                continue
+            with_data.append(r)
+            ratio = round(float(_cohort_median), 4)
+            all_ratios[key] = {
+                "ratio_median": ratio, "effective_stop_ratio_cohort_n": _cohort_n,
+                "winner_effective_stop_ratio": (
+                    round(float(_winner_ratio), 4) if _winner_ratio is not None else None)}
+            if ratio < min_ratio:
+                offenders_low[key] = ratio
+            elif ratio > max_ratio:
+                offenders_high[key] = ratio
+            continue
+        # Issue #1053/#1202 — FALLBACK fuer Studies OHNE die neuen Kohorten-Felder (Legacy-Reports,
+        # Test-Fixtures vor diesem Fix): unveraendertes Vor-#1202-Verhalten, kein zweiter,
+        # abweichender Berechnungspfad fuer echte Report-Daten (die IMMER die Kohorten-Felder
+        # tragen, sobald report._study_record sie berechnet hat).
         n_stop_exits = int(r.get("oos_n_trailing_stop_losses") or 0)
         loss_bps = r.get("gross_loss_median_bps_trailing_stop")
         if loss_bps is None or n_stop_exits < min_trailing_stop_exits:
             # Issue #1035 — auch OHNE #1034/#1035-Telemetrie (Legacy-Report, nur das ungefilterte
             # oos_gross_loss_mean_bps) ist die Grundgesamtheit unbekannt/unbelegt: INCONCLUSIVE
             # statt eines FAILs auf einer nicht nachweislich richtigen Zahl.
+            inconclusive_studies[key] = n_stop_exits
+            continue
+        if r.get("atr_median_bps") is None or r.get("atr_trailing_multiplier_median") is None:
             inconclusive_studies[key] = n_stop_exits
             continue
         with_data.append(r)
@@ -5386,9 +5784,10 @@ def check_effective_stop_distance(study_records: list[dict], *,
                      f"<= {max_ratio} je Study",
             actual=inconclusive_studies if inconclusive_studies else None,
             severity="blocking",
-            detail=f"Keine Study mit >= {min_trailing_stop_exits} nachweislichen TRAILING_STOP-"
-                   "Exits (#1034 Voraussetzung) — INCONCLUSIVE statt eines Urteils auf zu kleiner "
-                   f"Stichprobe (n_candidates={len(candidates)}, n_measured=0).",
+            detail=f"Keine Study mit >= {min_cohort_trials} eligiblen Kohorten-Trials (bzw. Legacy: "
+                   f">= {min_trailing_stop_exits} nachweislichen TRAILING_STOP-Exits, #1034 "
+                   "Voraussetzung) — INCONCLUSIVE statt eines Urteils auf zu kleiner Stichprobe "
+                   f"(n_candidates={len(candidates)}, n_measured=0).",
             inconclusive=True,
             evaluable=False,
             evaluability={"evaluable": False, "inconclusive_reason": "insufficient_trailing_stop_exits",
@@ -5618,6 +6017,7 @@ def check_trailing_stop_risk_calibration_acceptance(
     max_trailing_stop_exit_share: float = 0.35,
     min_trailing_stop_exits: int = 30,
     anchor_control_run_available: bool = False,
+    min_stop_calibration_pairs: int = 8,
 ) -> InvariantResult:
     """Issue #950/#1116 (Katalog #960) — die verbindliche ABNAHMEMESSUNG für die #1092/#1094-
     Hypothese (Anker/Auslöser-Auflösung + monotone Ratsche): B-11 (39 saubere Studies vor dem Fix)
@@ -5628,11 +6028,8 @@ def check_trailing_stop_risk_calibration_acceptance(
 
     DREI Kriterien, ALLE müssen bestehen (auszuwerten NACH ``simulation_semantics_version`` 4→5 +
     Pflicht-Purge + einem echten Re-Run auf denselben Symbolen, siehe Issue #952/#1118):
-    1. ``Spearman(k_median·ATR_median, oos_gross_loss_mean_bps_trailing_stop_pooled)`` >=
-       ``min_spearman`` (Default 0,3) über alle Studies mit >= ``min_trailing_stop_exits`` (Default
-       30) nachweislichen TRAILING_STOP-Exits — der realisierte Verlust muss POSITIV mit der
-       konfigurierten Distanz korrelieren (ein grösserer Multiplikator ⇒ ein grösserer realisierter
-       Verlust), statt der vorherigen INVERSEN Korrelation.
+    1. ``Spearman(atr_trailing_multiplier, gemessene stop_distance_bps)`` >= ``max(min_spearman,
+       2·SE(n))`` — siehe Issue #1056/#1205-Fix unten für die genaue Berechnung.
     2. ``realized_stop_loss_ratio`` (``report._study_record``, derselbe Quotient wie
        ``check_effective_stop_distance``) liegt für >= ``min_ratio_in_band_fraction`` (Default 80 %)
        der Studies im Band ``ratio_band`` (Default ``[0.8, 3.0]``) — eine ENGERE, für diese
@@ -5642,6 +6039,34 @@ def check_trailing_stop_risk_calibration_acceptance(
        gemittelt — dieselbe Grundgesamtheit wie B-11s 825 064 Round-Trips) liegt unter
        ``max_trailing_stop_exit_share`` (Default 35 %).
 
+    Issue #1056/#1205 (P1) — Kriterium 1 rechnete zuvor Spearman über 13-14 STUDY-MEDIANE (ein
+    Punkt je Study: ``k_median·ATR_median`` gegen ``gross_loss_median_bps_trailing_stop``) gegen
+    eine FESTE 0,30-Schwelle. SE(ρ) ≈ 1/√(n−1) ≈ 0,289 bei n=13 — die Schwelle lag nur 1,04 SE von
+    null entfernt (dieselbe Fehlerklasse wie das GATE-BEI-0,30-SE-Muster bei kleinen Stichproben).
+    Zusätzlich ist die AGGREGATIONSEBENE falsch: über Studies gemittelt ist ρ durch die
+    Strategie-Komposition konfundiert (Haltedauer, Session-Verankerung, ATR-Floor-Bindung
+    unterscheiden sich je Strategie/Symbol) — nicht durch die Stop-Kalibrierung selbst.
+
+    Fix:
+    a) ρ wird jetzt INNERHALB jeder Study über deren Trials gerechnet (Paare aus je-Trial
+       gesampeltem ``atr_trailing_multiplier`` und gemessener ``oos_stop_distance_bps_median``, aus
+       #1054/#1203 — siehe ``report._within_study_stop_calibration_spearman``), das hält
+       Strategie/Symbol/Session-Verankerung/ATR-Floor-Bindung FEST und entfernt den Konfund. Die
+       je-Study-ρ-Werte werden n-gewichtet über alle Studies mit >= 3 Paaren aggregiert
+       (``combined_spearman = Σ(ρ_i·n_i) / Σn_i``).
+    b) Die Schwelle ist N-ABHÄNGIG: ``max(min_spearman, 2·SE(n))`` mit ``SE(n) = 1/√(n−1)`` und
+       ``n = Σn_i`` (die GESAMTE gepoolte Paarzahl über alle beitragenden Studies) — bei kleinem n
+       wird die Schwelle automatisch strenger als 0,30, statt eine konstant-laxe Grenze zu benutzen.
+    c) ``passed=None`` (nicht ``False``) bei ``n < min_stop_calibration_pairs`` (Default 8) —
+       dasselbe #995/#1147-Tri-State-Muster (Pitfall #413): zu wenig Evidenz ist KEIN Urteil.
+    d) Ist ρ nicht berechenbar, wird der Grund im ``actual``-Dict EXPLIZIT gestempelt
+       (``stop_calibration_unavailable_reason``), statt das Feld stillschweigend weg- oder auf
+       ``None`` ohne Begründung zu lassen — ``actual["spearman_k_atr_vs_loss"]`` (bzw. seit diesem
+       Fix ``stop_calibration_spearman``) trägt IMMER entweder eine Zahl oder einen benannten Grund,
+       nie ein unbegründetes ``None``.
+    Konfidenzintervall (``combined_spearman ± 2·SE(n)``) und die Schwelle selbst stehen im
+    Detailtext (Akzeptanzkriterium aus #1205).
+
     Issue #974/#1128 (Pitfall #403 in AGENTS.md) — dieser Check MISST drei Akzeptanzkriterien; er
     hat KEINEN Eingang für die Ursache eines Scheiterns. Der Meldungstext benennt seit diesem Fix
     ausschliesslich das Gemessene ("Kalibrierung nicht erreicht"); die Ursachenzuweisung
@@ -5649,18 +6074,12 @@ def check_trailing_stop_risk_calibration_acceptance(
     steht separat im Feld ``causal_hypothesis_state`` (siehe ``_resolve_causal_hypothesis_state``),
     dessen Wert aus TATSAECHLICH gemessenen Feldern hergeleitet wird, nicht als Konstante behauptet.
 
-    Issue #972/#1126 (Pitfall #405 in AGENTS.md) — Kriterium 1 (Spearman) konsumiert seit diesem Fix
-    ``gross_loss_median_bps_trailing_stop`` (robuster Median-der-Trial-Mediane) statt des
-    ungeschuetzten gepoolten Mittels ``oos_gross_loss_mean_bps_trailing_stop_pooled``; Kriterium 2
-    (``realized_stop_loss_ratio``) ist bereits ueber ``report._study_record`` median-basiert (siehe
-    dortigen Fix).
-
-    ``INCONCLUSIVE`` (statt eines Urteils), wenn weniger als 3 Studies mit ausreichender
-    Stop-Exit-Evidenz für BEIDE Eingangsgrössen der Spearman-Korrelation vorliegen — dieselbe
-    Untergrenze wie ``reward._spearman_rank_correlation`` (Rangkorrelation ist unter 3 Punkten nicht
-    definierbar)."""
-    from automation.optimizer.reward import _spearman_rank_correlation
-
+    Kriterium 2 (``realized_stop_loss_ratio``) bleibt STUDY-MEDIAN-basiert (kein Konfundierungs-
+    Risiko wie bei Kriterium 1, da hier keine Korrelation über heterogene Studies gebildet wird,
+    sondern je Study unabhängig gegen ein festes Band geprüft wird) — Kandidaten-Gate unverändert
+    (>= 3 Studies mit >= ``min_trailing_stop_exits`` nachweislichen TRAILING_STOP-Exits, sonst
+    ``INCONCLUSIVE`` für den GESAMTEN Check, da Kriterien 2 und 3 nicht unabhängig von Kriterium 1
+    beurteilt werden können, siehe Pitfall #413)."""
     candidates = [
         r for r in study_records
         if r.get("atr_median_bps")
@@ -5668,32 +6087,52 @@ def check_trailing_stop_risk_calibration_acceptance(
         and r.get("gross_loss_median_bps_trailing_stop") is not None
         and int(r.get("oos_n_trailing_stop_losses") or 0) >= min_trailing_stop_exits
     ]
-    k_atr_values: list[float] = []
-    loss_values: list[float] = []
     ratio_by_study: dict[str, float] = {}
     for r in candidates:
         k_atr = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
         if k_atr <= 0:
             continue
         loss = float(r["gross_loss_median_bps_trailing_stop"])
-        k_atr_values.append(k_atr)
-        loss_values.append(loss)
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         ratio_by_study[key] = round(loss / k_atr, 4)
 
+    # Issue #1056/#1205 Fix Punkt a) — WITHIN-STUDY-Paare (aus report._study_record vorberechnet),
+    # NICHT mehr die STUDY-MEDIANE aus `candidates` oben (dort weiterhin fuer Kriterium 2 verwendet).
+    per_study_calibration = [
+        (float(r["stop_calibration_spearman_within_study"]), int(r["stop_calibration_n_pairs_within_study"]),
+         f"{r.get('strategy')}/{r.get('symbol')}")
+        for r in study_records
+        if r.get("stop_calibration_spearman_within_study") is not None
+        and int(r.get("stop_calibration_n_pairs_within_study") or 0) >= 3
+    ]
+    n_stop_calibration_pairs = sum(n for _, n, _ in per_study_calibration)
+    combined_spearman = (
+        sum(rho * n for rho, n, _ in per_study_calibration) / n_stop_calibration_pairs
+        if n_stop_calibration_pairs > 0 else None)
+
     total_trailing_stop = sum(
         int((r.get("exit_reason_histogram") or {}).get("TRAILING_STOP", 0)) for r in study_records)
+    # Issue #1062/#1211 (Katalog #1196-1221) — ``oos_total_trades_with_exit_telemetry`` ist SEIT
+    # #946/#1112 bereits der BEREINIGTE Nenner (Dust-Round-Trips an der Quelle verworfen, siehe
+    # backtest_runner._filter_dust_round_trips-Docstring); dieser Check konsumierte ihn schon vor
+    # diesem Fix korrekt. Damit die Bereinigung selbst NACHVOLLZIEHBAR bleibt (statt stillschweigend
+    # vorausgesetzt zu werden), stellt der Detailtext seither den Anteil VOR (roh, inkl. Dust) UND
+    # NACH der Bereinigung nebeneinander, plus die Zahl der ausgeschlossenen Round-Trips.
+    total_dust_excluded = sum(int(r.get("dust_round_trips_filtered") or 0) for r in study_records)
     total_exits = sum(int(r.get("oos_total_trades_with_exit_telemetry") or 0) for r in study_records)
     trailing_stop_share = (total_trailing_stop / total_exits) if total_exits > 0 else None
+    total_exits_raw = total_exits + total_dust_excluded
+    trailing_stop_share_raw = (
+        (total_trailing_stop / total_exits_raw) if total_exits_raw > 0 else None)
 
-    expected = (f"Spearman(k·ATR, realisierter Verlust) >= {min_spearman} UND "
-                f"realized_stop_loss_ratio in {list(ratio_band)} für >= "
-                f"{min_ratio_in_band_fraction:.0%} der Studies UND TRAILING_STOP-Anteil < "
+    expected = (f"Spearman(atr_trailing_multiplier, gemessene stop_distance_bps, within-study) >= "
+                f"max({min_spearman}, 2·SE(n)) UND realized_stop_loss_ratio in {list(ratio_band)} für "
+                f">= {min_ratio_in_band_fraction:.0%} der Studies UND TRAILING_STOP-Anteil < "
                 f"{max_trailing_stop_exit_share:.0%}")
 
     causal_hypothesis_state = _resolve_causal_hypothesis_state(
         candidates, anchor_control_run_available=anchor_control_run_available)
-    if len(k_atr_values) < 3:
+    if len(candidates) < 3:
         # Issue #995/#1147 (Pitfall #413) — ``passed=None``/``evaluable=False``: eine zu kleine
         # Stichprobe ist kein PASS, auch nicht bei severity='high' (nur die BLOCKING-Konsequenz in
         # ``_compute_decision_admissible``/``confirm.py`` ist auf severity='blocking' beschraenkt,
@@ -5709,30 +6148,75 @@ def check_trailing_stop_risk_calibration_acceptance(
             inconclusive=True,
             evaluable=False,
             evaluability={"evaluable": False, "inconclusive_reason": "fewer_than_3_studies_with_evidence",
-                          "n_candidates": len(candidates), "n_measured": len(k_atr_values)},
-            detail=f"Nur {len(k_atr_values)} Study/Studies mit >= {min_trailing_stop_exits} "
-                   "nachweislichen TRAILING_STOP-Exits (< 3) — Spearman-Rangkorrelation nicht "
-                   "definierbar, INCONCLUSIVE statt eines Urteils.",
+                          "n_candidates": len(candidates)},
+            detail=f"Nur {len(candidates)} Study/Studies mit >= {min_trailing_stop_exits} "
+                   "nachweislichen TRAILING_STOP-Exits (< 3) — Kriterien 2/3 (Ratio-Band, "
+                   "TRAILING_STOP-Anteil) nicht robust auswertbar, INCONCLUSIVE statt eines Urteils.",
         )
 
-    spearman = _spearman_rank_correlation(k_atr_values, loss_values)
+    # Issue #1056/#1205 Fix Punkt c) — ``passed=None`` (nicht ``False``) bei n < 8 gepoolten
+    # WITHIN-STUDY-Paaren, unabhaengig vom (>= 3 Studies)-Gate oben fuer Kriterien 2/3.
+    if n_stop_calibration_pairs < min_stop_calibration_pairs:
+        return InvariantResult(
+            name="check_trailing_stop_risk_calibration_acceptance",
+            passed=None,
+            expected=expected,
+            actual={
+                "trailing_stop_exit_share": round(trailing_stop_share, 4)
+                    if trailing_stop_share is not None else None,
+                "stop_calibration_spearman": None,
+                # Issue #1056/#1205 Fix Punkt d) — der Grund wird EXPLIZIT gestempelt, nicht nur
+                # implizit aus einem weggelassenen Feld erschlossen.
+                "stop_calibration_unavailable_reason": "SPEARMAN_UNAVAILABLE_INSUFFICIENT_PAIRS",
+                "stop_calibration_n_pairs": n_stop_calibration_pairs,
+                "stop_calibration_n_studies_with_pairs": len(per_study_calibration),
+                "causal_hypothesis_state": causal_hypothesis_state,
+            },
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={
+                "evaluable": False, "inconclusive_reason": "fewer_than_8_stop_calibration_pairs",
+                "n_stop_calibration_pairs": n_stop_calibration_pairs,
+                "n_studies_with_pairs": len(per_study_calibration),
+            },
+            detail=f"Nur {n_stop_calibration_pairs} WITHIN-STUDY-Paar(e) (atr_trailing_multiplier, "
+                   f"gemessene stop_distance_bps) über {len(per_study_calibration)} Study/Studies mit "
+                   f"Evidenz (< {min_stop_calibration_pairs}) — Spearman-Rangkorrelation nicht robust "
+                   "bestimmbar, INCONCLUSIVE statt eines Urteils.",
+        )
+
+    # Issue #1056/#1205 Fix Punkt b) — N-ABHAENGIGE Schwelle statt einer konstanten 0,30-Grenze.
+    se = 1.0 / math.sqrt(n_stop_calibration_pairs - 1)
+    spearman_threshold = max(min_spearman, 2.0 * se)
+    ci_low = round(combined_spearman - 2.0 * se, 4)
+    ci_high = round(combined_spearman + 2.0 * se, 4)
+
     ratios = list(ratio_by_study.values())
     n_in_band = sum(1 for r in ratios if ratio_band[0] <= r <= ratio_band[1])
-    fraction_in_band = round(n_in_band / len(ratios), 4)
+    fraction_in_band = round(n_in_band / len(ratios), 4) if ratios else None
 
     reasons = []
-    if spearman is None or spearman < min_spearman:
-        spearman_display = f"{spearman:.4g}" if spearman is not None else "undefiniert"
+    if combined_spearman < spearman_threshold:
         reasons.append(
-            f"Spearman(k·ATR, Verlust)={spearman_display} < {min_spearman} — der realisierte "
-            "Stop-Verlust reagiert nicht (hinreichend) positiv auf seinen eigenen Multiplikator.")
-    if fraction_in_band < min_ratio_in_band_fraction:
+            f"Spearman(atr_trailing_multiplier, gemessene stop_distance_bps, within-study, "
+            f"n={n_stop_calibration_pairs})={combined_spearman:.4g} < "
+            f"{spearman_threshold:.4g} (= max({min_spearman}, 2·SE({n_stop_calibration_pairs})="
+            f"{2.0 * se:.4g})), 95%-KI≈[{ci_low}, {ci_high}] — der realisierte Stop-Verlust "
+            "reagiert nicht (hinreichend) positiv auf seinen eigenen Multiplikator.")
+    if fraction_in_band is None or fraction_in_band < min_ratio_in_band_fraction:
+        frac_display = f"{fraction_in_band:.1%}" if fraction_in_band is not None else "undefiniert"
         reasons.append(
-            f"nur {fraction_in_band:.1%} der Studies (statt >= {min_ratio_in_band_fraction:.0%}) "
+            f"nur {frac_display} der Studies (statt >= {min_ratio_in_band_fraction:.0%}) "
             f"liegen mit realized_stop_loss_ratio in {list(ratio_band)}.")
     if trailing_stop_share is None or trailing_stop_share >= max_trailing_stop_exit_share:
         share_display = f"{trailing_stop_share:.2%}" if trailing_stop_share is not None else "undefiniert"
-        reasons.append(f"TRAILING_STOP-Anteil={share_display} >= {max_trailing_stop_exit_share:.0%}.")
+        raw_display = (f"{trailing_stop_share_raw:.2%}" if trailing_stop_share_raw is not None
+                       else "undefiniert")
+        reasons.append(
+            f"TRAILING_STOP-Anteil={share_display} >= {max_trailing_stop_exit_share:.0%} "
+            f"(bereinigter Nenner, {total_exits} Round-Trips; vor Dust-Bereinigung: {raw_display} "
+            f"auf {total_exits_raw} Round-Trips, {total_dust_excluded} ausgeschlossen).")
 
     passed = not reasons
     return InvariantResult(
@@ -5740,11 +6224,24 @@ def check_trailing_stop_risk_calibration_acceptance(
         passed=passed,
         expected=expected,
         actual={
-            "spearman_k_atr_vs_loss": round(spearman, 4) if spearman is not None else None,
+            # Issue #1056/#1205 — WITHIN-STUDY, n-gewichtet aggregiert (siehe Docstring), samt
+            # Stichprobengroesse, Schwelle und Konfidenzintervall (Akzeptanzkriterium aus #1205).
+            "stop_calibration_spearman": round(combined_spearman, 4),
+            "stop_calibration_n_pairs": n_stop_calibration_pairs,
+            "stop_calibration_n_studies_with_pairs": len(per_study_calibration),
+            "stop_calibration_threshold": round(spearman_threshold, 4),
+            "stop_calibration_se": round(se, 4),
+            "stop_calibration_ci": [ci_low, ci_high],
             "fraction_studies_ratio_in_band": fraction_in_band,
             "trailing_stop_exit_share": round(trailing_stop_share, 4)
                 if trailing_stop_share is not None else None,
-            "n_studies_measured": len(k_atr_values),
+            # Issue #1062/#1211 — dieselbe Zahl VOR der Dust-Bereinigung (siehe Kommentar an der
+            # Berechnung oben), plus die ausgeschlossene Round-Trip-Zahl, damit die Bereinigung
+            # selbst im Artefakt nachvollziehbar bleibt statt stillschweigend vorausgesetzt zu sein.
+            "trailing_stop_exit_share_raw_before_dust_cleanup": (
+                round(trailing_stop_share_raw, 4) if trailing_stop_share_raw is not None else None),
+            "n_dust_round_trips_excluded": total_dust_excluded,
+            "n_studies_measured": len(candidates),
             # Issue #974/#1128 — die Ursachenzuweisung steht HIER, getrennt vom Meldungstext, und
             # wird aus gemessenen Feldern hergeleitet (siehe _resolve_causal_hypothesis_state).
             "causal_hypothesis_state": causal_hypothesis_state,
@@ -5752,12 +6249,18 @@ def check_trailing_stop_risk_calibration_acceptance(
         severity="high",
         # Issue #974/#1128 (Pitfall #403 in AGENTS.md) — der Text nennt nur das GEMESSENE, keine
         # Kausalaussage, fuer die dieser Check keinen Eingang hat.
-        detail=("OK — die drei Abnahmekriterien sind erfuellt." if passed else
+        detail=("OK — die drei Abnahmekriterien sind erfuellt "
+                f"(Spearman={combined_spearman:.4g}, n={n_stop_calibration_pairs}, "
+                f"Schwelle={spearman_threshold:.4g}, 95%-KI≈[{ci_low}, {ci_high}])." if passed else
                 "Kalibrierung nicht erreicht: " + " ".join(reasons)),
-        provenance={"ratio_by_study": ratio_by_study} if ratio_by_study else None,
+        provenance={
+            "ratio_by_study": ratio_by_study,
+            "stop_calibration_spearman_by_study": {
+                key: {"spearman": round(rho, 4), "n_pairs": n} for rho, n, key in per_study_calibration},
+        } if ratio_by_study or per_study_calibration else None,
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None,
-                      "n_candidates": len(candidates), "n_measured": len(k_atr_values)},
+                      "n_candidates": len(candidates), "n_stop_calibration_pairs": n_stop_calibration_pairs},
     )
 
 
@@ -5808,9 +6311,16 @@ def check_stop_loss_vs_bar_range(
     NEUE ``check_exit_telemetry_completeness`` (severity ``high``) ist der Wächter, der den
     112/112-``null``-Fall selbst aktiv erkennt und meldet (dieser Check hier kann das strukturell
     nicht — er hat keinen Eingang, WARUM die Evidenz fehlt)."""
+    # Issue #1057/#1206 (Katalog #1196-1221) — Root-Cause: dieses Filter-Praedikat pruefte
+    # ``r.get("bar_range_median_bps")`` auf Wahrheitswert statt auf Nichtvorhandensein. Ein
+    # ECHTER, GEMESSENER Wert von genau 0.0 (falsy in Python, aber ein valider Messwert — anders
+    # als ``None``/fehlend) fiel dadurch aus der Kandidatenmenge, obwohl die Emissionskette
+    # (``rt_exit_meta.append`` → ``parsing`` → ``set_user_attr``, siehe #1022/#1171) den Wert
+    # bereits korrekt bis zum Study-Record durchreicht (Pitfall #430-Klasse: eine Bedingung, die
+    # einen validen Messwert mit einem fehlenden Messwert verwechselt).
     candidates = [
         r for r in study_records
-        if r.get("bar_range_median_bps")
+        if r.get("bar_range_median_bps") is not None
         and r.get("oos_gross_loss_mean_bps_trailing_stop_pooled") is not None
         and r.get("realized_stop_loss_ratio") is not None
         and int(r.get("oos_n_trailing_stop_losses") or 0) >= min_trailing_stop_exits
@@ -5845,10 +6355,15 @@ def check_stop_loss_vs_bar_range(
         )
     offenders: dict[str, dict] = {}
     all_ratios: dict[str, dict] = {}
+    n_zero_or_negative_bar_range = 0
     for r in candidates:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         bar_range = float(r["bar_range_median_bps"])
         if bar_range <= 0:
+            # Ein Bar-Spannen-Median <= 0 macht ``loss / bar_range`` als Verhaeltnis undefiniert
+            # (Divsion durch Null oder Vorzeichenumkehr) — dieser Kandidat kann NICHT zu einem
+            # Urteil beitragen, zaehlt aber (anders als vorher) sichtbar mit, siehe unten.
+            n_zero_or_negative_bar_range += 1
             continue
         loss = float(r["oos_gross_loss_mean_bps_trailing_stop_pooled"])
         latency_ratio = round(loss / bar_range, 4)
@@ -5857,6 +6372,35 @@ def check_stop_loss_vs_bar_range(
         if (bar_range_ratio_band[0] <= latency_ratio <= bar_range_ratio_band[1]
                 and stop_ratio > min_realized_stop_loss_ratio):
             offenders[key] = all_ratios[key]
+    # Issue #1057/#1206 — Pitfall #404 ("ein blocking-Check darf auf leerer Grundgesamtheit nie
+    # passed=True liefern"): mit der Truthiness-Korrektur oben ist ``candidates`` jetzt i. d. R.
+    # nicht mehr leer, aber wenn ALLE Kandidaten einen nicht-positiven Bar-Spannen-Median tragen,
+    # bleibt ``all_ratios`` trotzdem leer — ohne diesen Zweig wuerde ``passed = not offenders``
+    # stillschweigend True liefern, obwohl kein einziges Verhaeltnis GEMESSEN wurde. Das Issue
+    # verlangt genau fuer diesen Fall explizit ``passed=False`` mit einem benannten Grund statt
+    # INCONCLUSIVE ODER eines stillen PASS.
+    if candidates and not all_ratios:
+        return InvariantResult(
+            name="check_stop_loss_vs_bar_range",
+            passed=False,
+            expected=expected,
+            actual={"n_candidates": len(candidates),
+                    "n_zero_or_negative_bar_range": n_zero_or_negative_bar_range},
+            severity="blocking",
+            evaluable=True,
+            evaluability={
+                "evaluable": True,
+                "inconclusive_reason": "POPULATION_UNAVAILABLE_AFTER_FIX",
+                "n_studies_measured": len(candidates),
+                "n_candidates": len(candidates), "n_measured": 0,
+            },
+            detail=(f"{len(candidates)} Study/Studies hatten hinreichend TRAILING_STOP-Exits UND "
+                    "definierte bar_range_median_bps-Telemetrie, aber ALLE mit bar_range_median_bps "
+                    "<= 0 — kein einziges Verhaeltnis war bildbar (POPULATION_UNAVAILABLE_AFTER_FIX). "
+                    "Das ist selbst ein FAIL, kein INCONCLUSIVE: die Emissionskette liefert Werte, "
+                    "die keine Bar-Spanne repraesentieren koennen — Bar-Achse/Datenquelle pruefen."),
+            provenance=None,
+        )
     passed = not offenders
     return InvariantResult(
         name="check_stop_loss_vs_bar_range",
@@ -5867,7 +6411,7 @@ def check_stop_loss_vs_bar_range(
         evaluable=True,
         evaluability={
             "evaluable": True, "inconclusive_reason": None, "n_studies_measured": len(candidates),
-            "n_candidates": len(candidates), "n_measured": len(candidates),
+            "n_candidates": len(candidates), "n_measured": len(all_ratios),
         },
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies: der Stop-Verlust liegt in der Grössenordnung "
@@ -5934,6 +6478,76 @@ def check_exit_telemetry_completeness(
                 f"{offenders} — die Emissionskette ist im HEAD verdrahtet, kommt aber im Lauf nicht "
                 "an (Pitfall #406 in AGENTS.md: null ueber die gesamte Grundgesamtheit ist ein "
                 "Befund, kein Messwert)."),
+    )
+
+
+def check_stop_loss_decomposition_identity(
+    study_records: list[dict], *, max_violation_fraction: float = 0.001,
+) -> InvariantResult:
+    """Issue #1054/#1203 (Katalog #1196-1221, P0) — Der realisierte Stop-Verlust ist nicht in
+    Stopdistanz und Gap zerlegt.
+
+    ``backtest_runner._finalize_round_trip`` stempelt seit diesem Fix je TRAILING_STOP-Round-Trip
+    drei unabhaengig gemessene Groessen mit DEMSELBEN Nenner (dem Ausloese-Anker): die konfigurierte
+    ``stop_distance_bps`` (k · ATR_eff zum Ausloese-Zeitpunkt), die Absetzen-zu-Fill-``trigger_to_
+    fill_gap_bps`` und den tatsaechlich realisierten ``realized_loss_bps``. Die Identitaet
+    ``realized_loss_bps == stop_distance_bps + trigger_to_fill_gap_bps`` MUSS (bis auf
+    Fliesskomma-/Tag-Rundung) exakt gelten — sie ist algebraisch garantiert, solange alle drei
+    Groessen denselben Nenner tragen (siehe dortiger Kommentar). Ein FAIL hier bedeutet: entweder
+    ist der Nenner NICHT konsistent (ein Regressions-Symptom, das die naechste Schwester-Aenderung
+    an dieser Stelle reproduzieren wuerde), oder die Zerlegung wurde nur teilweise ausgerollt.
+
+    Zaehlt (nicht nur behauptet) je Study ueber ``n_stop_loss_identity_checked``/``_violations``
+    (aus ``backtest_runner._aggregate_exit_telemetry``, ueber ALLE Trials dieser Study aufsummiert).
+    FAIL (severity ``blocking`` — dieselbe Kategorie wie ``check_stop_loss_vs_bar_range``, weil eine
+    verletzte Identitaet jede nachgelagerte Verlust-Zerlegung, insbesondere #1204/#1205, entwertet),
+    wenn der Verletzungsanteil > ``max_violation_fraction`` (Default 0,1 %, Akzeptanzkriterium
+    ">= 99,9 % der Round-Trips"). INCONCLUSIVE, wenn keine Study auch nur einen einzigen
+    TRAILING_STOP-Round-Trip mit vollstaendiger Zerlegungs-Telemetrie hat (z. B. vor diesem Fix,
+    oder ein Lauf ganz ohne TRAILING_STOP-Exits)."""
+    checked_total = sum(int(r.get("n_stop_loss_identity_checked") or 0) for r in study_records)
+    if checked_total == 0:
+        return InvariantResult(
+            name="check_stop_loss_decomposition_identity",
+            passed=True,
+            expected=f"Verletzungsanteil <= {max_violation_fraction} je Study",
+            actual=None,
+            severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                          "inconclusive_reason": "no_trailing_stop_round_trips_with_decomposition",
+                          "n_studies_measured": 0},
+            detail="Keine Study mit TRAILING_STOP-Round-Trips UND vollstaendiger Stopdistanz-/"
+                   "Gap-Telemetrie — nicht auswertbar (INCONCLUSIVE).",
+        )
+    offenders: dict[str, dict] = {}
+    for r in study_records:
+        checked = int(r.get("n_stop_loss_identity_checked") or 0)
+        if checked == 0:
+            continue
+        violations = int(r.get("n_stop_loss_identity_violations") or 0)
+        fraction = round(violations / checked, 6)
+        if fraction > max_violation_fraction:
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = {"n_checked": checked, "n_violations": violations,
+                               "violation_fraction": fraction}
+    passed = not offenders
+    return InvariantResult(
+        name="check_stop_loss_decomposition_identity",
+        passed=passed,
+        expected=f"Verletzungsanteil <= {max_violation_fraction} je Study",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": sum(
+                         1 for r in study_records if r.get("n_stop_loss_identity_checked"))},
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies verletzen realized_loss_bps == stop_distance_bps + "
+                f"trigger_to_fill_gap_bps ueber der {max_violation_fraction:.1%}-Schwelle: "
+                f"{offenders} — der gemeinsame Nenner (Ausloese-Anker) ist nicht konsistent "
+                "durchgezogen (#1203)."),
     )
 
 
@@ -7056,6 +7670,88 @@ def check_stop_exit_slippage_materiality(
                 f"Stop-Verlust ({round(median_loss, 2)} bps, Schwelle {round(threshold, 2)} bps) — "
                 "die gemessene Fill-Slippage ist eine materielle, bislang im Kostenmodell "
                 "unberücksichtigte Ertragsposition (#1029/#1178)."),
+    )
+
+
+def check_search_overhead_share(
+    study_records: list[dict], *, store_scan_seconds: float | None = None,
+    max_overhead_fraction: float = 0.5,
+) -> InvariantResult:
+    """Issue #1067/#1217 (P1, Katalog #1196-1221) — Warm-Start-Wallclock-Steuer, linear und
+    unbegrenzt.
+
+    Symptom (B-12): TSLA bei konstant 1940 NEUEN Trials — 0,95h/1,26h/1,78h/2,23h Wallclock bei
+    3863/5803/7743/9683 VORLAUF-Trials im selben, warm-gestarteten Store (``cpu_utilisation_
+    backtest`` 9,8% → 4,8%, LINEAR fallend). Root-Cause: die Zeit geht NICHT in Backtests — der
+    TPE-Sampler fittet sein Surrogat über die vollstaendige, monoton wachsende Trial-Historie
+    (behoben durch ``run_optimization._WindowedTPESampler``), und der Store-Scan laeuft über alle
+    Proposals (``report.py``s Scan-Schleife).
+
+    Dieser Check MISST das Verhaeltnis ``(Σ tpe_fit_seconds + store_scan_seconds) / Σ
+    study_wallclock_s`` über ALLE Studies dieses Laufs (ein GLOBALER, keine je-Study-Quotient —
+    ``store_scan_seconds`` ist architektonisch eine EINMALIGE, lauf-weite Groesse, keine je-Study-
+    Messung, siehe ``report.py``s Scan-Schleife) — FAIL, wenn dieser Anteil
+    ``max_overhead_fraction`` (Default 0,5) überschreitet: die Suche verbringt dann MEHR als die
+    Haelfte ihrer Wanduhrzeit mit Sampler-/Store-Overhead statt mit tatsaechlichen Backtests.
+
+    ``INCONCLUSIVE`` (``passed=None``), wenn keine Study ``tpe_fit_seconds`` traegt (z. B. ein
+    Report vor #1217, oder ein reiner ``NSGAIISampler``-Lauf im 'pareto'-Reward-Modus, der diese
+    Telemetrie strukturell nicht setzt) — kein FAIL auf einer nicht gemessenen Groesse."""
+    _fit_values = [
+        r.get("tpe_fit_seconds") for r in study_records if r.get("tpe_fit_seconds") is not None]
+    _wallclock_values = [
+        r.get("study_wallclock_s") for r in study_records if r.get("study_wallclock_s") is not None]
+    expected = (f"(Σ tpe_fit_seconds + store_scan_seconds) / Σ study_wallclock_s <= "
+                f"{max_overhead_fraction:.0%}")
+    if not _fit_values:
+        return InvariantResult(
+            name="check_search_overhead_share",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_tpe_fit_seconds_telemetry",
+                          "n_studies": len(study_records)},
+            detail="Keine Study mit tpe_fit_seconds-Telemetrie (Pre-#1217-Report oder "
+                   "NSGAIISampler-Lauf) — nicht auswertbar.",
+        )
+    total_fit = sum(_fit_values)
+    total_wallclock = sum(_wallclock_values)
+    total_store_scan = float(store_scan_seconds) if store_scan_seconds is not None else 0.0
+    if total_wallclock <= 0:
+        return InvariantResult(
+            name="check_search_overhead_share",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "zero_total_wallclock",
+                          "n_studies": len(study_records)},
+            detail="Σ study_wallclock_s == 0 — nicht auswertbar.",
+        )
+    fraction = round((total_fit + total_store_scan) / total_wallclock, 4)
+    passed = fraction <= max_overhead_fraction
+    return InvariantResult(
+        name="check_search_overhead_share",
+        passed=passed,
+        expected=expected,
+        actual={
+            "overhead_fraction": fraction, "total_tpe_fit_seconds": round(total_fit, 4),
+            "total_store_scan_seconds": round(total_store_scan, 4),
+            "total_wallclock_s": round(total_wallclock, 4), "n_studies_measured": len(_fit_values),
+        },
+        severity="high",
+        detail=("OK" if passed else
+                f"Overhead-Anteil {fraction:.1%} > {max_overhead_fraction:.0%} — die Suche "
+                f"verbringt {total_fit:.1f}s TPE-Fit + {total_store_scan:.1f}s Store-Scan gegen "
+                f"{total_wallclock:.1f}s Gesamt-Wallclock (mehr als die Haelfte Overhead, keine "
+                "Backtest-Zeit, #1067/#1217)."),
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies": len(study_records)},
     )
 
 

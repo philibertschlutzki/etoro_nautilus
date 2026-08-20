@@ -351,6 +351,11 @@ class HourlyStrategyBase(Strategy):
         # Verlust kann dadurch strukturell an die Bar-Spanne gebunden sein, unabhaengig von der
         # konfigurierten Stopdistanz. Diese Serie macht das MESSBAR statt vermutet.
         self._position_bar_range_bps_readings: list[float] = []
+        # Issue #1054/#1203 (Katalog #1196-1221) — Ankerpreis und Stopdistanz (bps) zum Zeitpunkt
+        # der Ausloesung eines TRAILING_STOP-Exits, siehe _check_exits_and_update-Kommentar an der
+        # Setzstelle. None ausserhalb einer laufenden TRAILING_STOP-Ausloesung.
+        self._trigger_anchor_price: float | None = None
+        self._trigger_stop_distance_bps: float | None = None
 
         self._profit_target_pct = getattr(config, "profit_target_pct", None)
         self._daily_trades: int = 0
@@ -857,6 +862,21 @@ class HourlyStrategyBase(Strategy):
 
         exit_kind = ExitReason.TRAILING_STOP if exit_reason is not None else None
 
+        if exit_kind == ExitReason.TRAILING_STOP:
+            # Issue #1054/#1203 (Katalog #1196-1221) — Ankerpreis UND Stopdistanz ZUM AUSLOESE-
+            # ZEITPUNKT (vor jeder Fill-Latenz), damit backtest_runner._finalize_round_trip die
+            # Verlust-Zerlegung stop_distance_bps + trigger_to_fill_gap_bps == realized_loss_bps
+            # mit DEMSELBEN Nenner (dieser Anker, nicht der spaeter u. U. abweichende Stop-Level-
+            # Nenner von resolve_stop_exit_slippage_bps) bilden kann — nur ein gemeinsamer Nenner
+            # macht die Identitaet EXAKT statt bloss naeherungsweise (Akzeptanzkriterium <1e-6).
+            _anchor = (self._position_extreme if self._trailing_stop_anchor == "price_extreme"
+                       else close)
+            if _anchor and _anchor > 0:
+                self._trigger_anchor_price = _anchor
+                _sign = 1.0 if self._trailing_stop_side == "SHORT" else -1.0
+                self._trigger_stop_distance_bps = (
+                    _sign * (self._trailing_stop_price - _anchor) / _anchor * 10_000.0)
+
         # Exit condition 2: Time-based exit (24 bars, GR-01/#714)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
             exit_reason = f"Time-exit after {self._bars_in_position} bars"
@@ -1001,6 +1021,14 @@ class HourlyStrategyBase(Strategy):
                     and self._trailing_stop_price is not None):
                 tag_list.append(f"ORDER_SUBMIT_TS_NS:{self.clock.timestamp_ns()}")
                 tag_list.append(f"TRAILING_STOP_PRICE:{self._trailing_stop_price:.8f}")
+                # Issue #1054/#1203 — Ankerpreis + Stopdistanz zum Ausloese-Zeitpunkt, siehe
+                # _check_exits_and_update-Kommentar an der Setzstelle. Nur gesetzt, wenn der
+                # Ausloese-Zweig tatsaechlich lief (kein watchdog-erzwungener Close ohne frischen
+                # Trigger-Bar).
+                if (self._trigger_stop_distance_bps is not None
+                        and self._trigger_anchor_price is not None):
+                    tag_list.append(f"STOP_DISTANCE_BPS:{self._trigger_stop_distance_bps:.8f}")
+                    tag_list.append(f"STOP_TRIGGER_ANCHOR_PRICE:{self._trigger_anchor_price:.8f}")
             tags = tag_list
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -1311,6 +1339,42 @@ class HourlyStrategyBase(Strategy):
             )
             trade_amount_usd = max_notional
 
+        # Issue #1060/#1209 (Katalog #1196-1221, P0) — harte Obergrenze: das AGGREGIERTE Netto-
+        # Exposure dieser Strategie auf diesem Instrument darf trade_amount_pct * equity zu KEINEM
+        # Zeitpunkt ueberschreiten, unabhaengig davon, welcher Sizing-Pfad (A-E oben)
+        # trade_amount_usd bestimmt hat. Root-Cause: OHNE diesen Deckel kann Aufstockung (Scale-in)
+        # innerhalb eines Round-Trips das realisierte Notional ueber den konfigurierten Anteil
+        # hinaus anwachsen lassen — gemessen: max(f_realized_pct) bis zu 1,66x trade_amount_pct
+        # (KRYS, kein Metrik-Artefakt, siehe backtest_runner._finalize_round_trip's f_realized,
+        # #989/#1143). Nur wirksam, wenn trade_amount_pct KONFIGURIERT ist (derselbe Bezugspunkt,
+        # gegen den B-10 gemessen hat) — die USD-/Allocator-Pfade (B/D/E, A) bleiben unveraendert,
+        # wenn kein trade_amount_pct gesetzt ist (kein impliziter Deckel ohne konfigurierte Basis).
+        if trade_amount_pct is not None and trade_amount_pct > 0:
+            _equity = self._get_current_balance()
+            if _equity and _equity > 0:
+                _cap_notional = _equity * (trade_amount_pct / 100.0)
+                _existing_notional = sum(
+                    abs(float(p.quantity)) * price
+                    for p in self.cache.positions_open(instrument_id=self.instrument_id)
+                )
+                _headroom = _cap_notional - _existing_notional
+                if _headroom <= 0.0:
+                    self._log.warning(
+                        f"[{self.instrument_id}] SIZING_CAP_HIT: bestehendes Exposure "
+                        f"{_existing_notional:.2f} USD bereits >= Deckel {_cap_notional:.2f} USD "
+                        f"({trade_amount_pct}% von {_equity:.2f} USD Equity) — kein weiterer Entry "
+                        "(#1209)."
+                    )
+                    return None
+                if trade_amount_usd > _headroom:
+                    self._log.warning(
+                        f"[{self.instrument_id}] SIZING_CAP_HIT: angefordert "
+                        f"{trade_amount_usd:.2f} USD, verbleibender Spielraum nur "
+                        f"{_headroom:.2f} USD (bestehendes Exposure {_existing_notional:.2f} USD, "
+                        f"Deckel {_cap_notional:.2f} USD) — auf Spielraum gekappt (#1209)."
+                    )
+                    trade_amount_usd = _headroom
+
         MIN_TRADE_USD = 11.0
         if trade_amount_usd < MIN_TRADE_USD:
             self._log.debug(f"[{self.instrument_id}] Trade amount {trade_amount_usd:.2f} USD < MIN_TRADE_USD ({MIN_TRADE_USD:.2f}). Skipping.")
@@ -1360,6 +1424,10 @@ class HourlyStrategyBase(Strategy):
         # Issue #953/#1119 (Katalog #960) — Bar-Spannen-Telemetrie-Puffer beginnt leer fuer jede
         # neue Position, analog dem ATR-Puffer oben.
         self._position_bar_range_bps_readings = []
+        # Issue #1054/#1203 — analog den Puffern oben, beginnt jede neue Position ohne einen
+        # Ausloese-Anker/-Distanz einer vorherigen Position.
+        self._trigger_anchor_price = None
+        self._trigger_stop_distance_bps = None
         # Issue #836 — eine neue Position beginnt garantiert ohne einen laufenden Exit-Versuch.
         self._exit_pending = None
         self._exit_pending_kind = None

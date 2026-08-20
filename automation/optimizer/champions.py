@@ -81,6 +81,30 @@ Katalog B) — behebt bereits die Trunkierungs-Ursache; ob die verbleibende
 ``corroboration_count>=2``-Hürde nach einem vollen Abdeckungszyklus noch strukturell unerreichbar
 ist, sollte an ECHTEN Zwei-Zyklen-Daten neu beurteilt werden, bevor die Datenmodell-Umstellung
 riskiert wird.
+
+Issue #1070/#1220 (P2, Katalog #1196-1221) — Root-Cause: 14 Versuche, 0 Writebacks (13×
+``NO_ENTRY_FOR_PAIR``, 1× ``NOT_CORROBORATED_OR_WINDOW_NOT_ADVANCED``), ``max(corroboration_count)
+= 1``. Umgesetzt: ``champion_is_admissible`` lässt ``REJECT_DEFLATION_HETEROGENEOUS``/
+``REJECT_PROMOTION_FAMILY_UNRESOLVABLE`` jetzt BEDINGT zu (``holdout_return > 0`` UND bestandenes
+``oos_min_psr``-Gate, siehe ``_CONDITIONALLY_ADMISSIBLE_DEFLATION_REJECT_DETAILS``) — deutlich mehr
+der pro Lauf konfirmierten Paare erreichen dadurch überhaupt einen admissiblen Store-Eintrag, was
+die ``corroboration_count``-Akkumulation über aufeinanderfolgende Rotationsbesuche direkt
+beschleunigt. ``_DEFAULT_ADMISSIBLE_HOLDOUT_REJECT_DETAILS`` selbst bleibt (Issue-Vorgabe)
+unverändert.
+
+BEWUSST NICHT umgesetzt (Scope-Cut): eine eigenständige "Rotationsabstand"-Kopplung von
+``champion_min_advance_days`` (aktuell ``backtest.json.walk_forward.oos_window_days`` als Default-
+Fallback, in der ausgelieferten Config explizit 45.0). Der Issue-Text nennt dies als Teil des Fixes,
+aber KEINES der beiden Akzeptanzkriterien (``max(corroboration_count) >= 2``,
+``check_champion_seed_coverage < 90%``) hängt an ``advance_days`` — ``champion_corroboration_mode``
+steht in der ausgelieferten Config bereits auf ``'either'`` (Issue #910), unter dem
+``corroboration_count >= champion_promote_after_runs`` ALLEIN bereits genügt (die
+``independent_search``-Route deckt ``window_advanced=False`` vollständig ab, siehe
+``maybe_write_back``-Docstring) — der feste Tagewert ist unter dem Standard-Modus bereits KEIN
+Blocker mehr. Eine echte Kopplung an den TATSÄCHLICHEN Rotationsabstand bräuchte eine neue, bislang
+nirgends vorhandene Kalender-Zeit-pro-Lauf-Schätzung (``symbol_coverage.py`` zählt Läufe, keine
+Tage) — ohne einen realen Mehrläufe-Datensatz zur Kalibrierung wäre jede Formel dafür erfunden statt
+hergeleitet, dieselbe Vorsicht wie beim ``corroborating_snapshots``-Cut oben.
 """
 import json
 import logging
@@ -110,6 +134,31 @@ _INADMISSIBLE_STATUS = frozenset({"NO_VIABLE_TRIAL"})
 _DEFAULT_ADMISSIBLE_HOLDOUT_REJECT_DETAILS = frozenset({
     "REJECT_HOLDOUT_DSR_DROP",
     "REJECT_HOLDOUT_BOOTSTRAP_CI",
+})
+
+# Issue #1070/#1220 (P2, Katalog #1196-1221) — die BEIDEN restlichen "REJECTED_ON_DEFLATION"-
+# Detailcodes (``confirm._holdout_rejection_classification``: Holdout SELBST bestanden, NUR die
+# nachgelagerte Multiplizitäts-/Heterogenitätsprüfung lehnte ab), die NICHT in der obigen flachen
+# Whitelist stehen. Root-Cause #1220: mit 0 Promotionen und einer Symbol-Rotation, die bis zu acht
+# Läufe zwischen zwei Besuchen desselben Paares braucht, blieb ``corroboration_count`` strukturell
+# bei 1 — ``store_champion`` wird zwar bereits UNBEDINGT für JEDEN Confirm-Ausgang aufgerufen
+# (integritätsneutral, siehe Moduldocstring), aber die Kandidatenmenge, die tatsächlich admissible
+# wurde, war zu schmal, um genug Wiederholungen zu sehen.
+#
+# Fix (bewusst NICHT: die obige Whitelist selbst erweitern — das Issue verlangt sie ausdrücklich
+# UNVERAENDERT, PBO/BOUNDARY bleiben ausgeschlossen): ``champion_is_admissible`` lässt einen
+# Kandidaten mit einem dieser beiden Codes ZUSAETZLICH zu, aber NUR bedingt — ``holdout_return > 0``
+# (``provenance.holdout_return``, aus ``metrics_symbol['oos_total_return']``) UND das ``oos_min_psr``-
+# Gate selbst bestanden (``holdout_gate_deltas['oos_min_psr'] >= 0``) — derselbe Nachweis, den das
+# Issue explizit verlangt, dass der Kandidat NICHT wegen mangelnder eigener Qualität ablehnte,
+# sondern ausschliesslich wegen der NACHGELAGERTEN Multiplizitätskorrektur (ein Statistik-Artefakt
+# der Mehrfachtest-Korrektur, keine Aussage über den Parametervektor selbst). Ein Operator, der
+# einen dieser Codes EXPLIZIT in ``optimizer.json['champion_admissible_reject_details']`` einträgt,
+# bekommt weiterhin die unbedingte (ungegatete) Zulassung — diese Konstante wirkt nur als DEFAULT-
+# Erweiterung, nicht als Override der deklarativen Config-Governance (#817).
+_CONDITIONALLY_ADMISSIBLE_DEFLATION_REJECT_DETAILS = frozenset({
+    "REJECT_DEFLATION_HETEROGENEOUS",
+    "REJECT_PROMOTION_FAMILY_UNRESOLVABLE",
 })
 
 # Issue #817 — Rückübersetzung eines ``holdout_gate_deltas``-Schlüssels (siehe ``confirm.py``/
@@ -422,7 +471,12 @@ def champion_is_admissible(entry: dict, opt_data: dict,
          Eintrag ``holdout_binding_gate``/``holdout_gate_deltas`` (#786) trägt UND die relative
          Unterschreitung des bindenden Gates innerhalb ``champion_max_holdout_gate_shortfall``
          liegt (Default 0.0 ⇒ effektiv geschlossen, bis ein Operator explizit eine Marge
-         freigibt). Jede ANDERE ``holdout_reject_detail`` muss in der deklarativen Allowlist
+         freigibt). Issue #1070/#1220 — ``holdout_reject_detail`` in
+         ``_CONDITIONALLY_ADMISSIBLE_DEFLATION_REJECT_DETAILS`` (Holdout SELBST bestanden, nur die
+         Multiplizitätskorrektur lehnte ab): zulässig NUR mit ``holdout_return > 0`` UND
+         bestandenem ``oos_min_psr``-Gate (siehe dortiger Konstanten-Docstring), sofern der Code
+         nicht bereits explizit in ``champion_admissible_reject_details`` konfiguriert ist. Jede
+         ANDERE ``holdout_reject_detail`` muss in der deklarativen Allowlist
          (``_configured_admissible_reject_details``) stehen.
       6. ``R_symbol >= champion_min_R_symbol`` (absoluter Qualitäts-Floor, Default 0.0).
       7. Issue #820 — ``R_symbol > R_global + champion_min_tuning_edge`` (relatives
@@ -459,6 +513,21 @@ def champion_is_admissible(entry: dict, opt_data: dict,
         max_shortfall = float(opt_data.get("champion_max_holdout_gate_shortfall", 0.0))
         if shortfall > max_shortfall:
             return False, "HOLDOUT_GATE_SHORTFALL_TOO_LARGE"
+    elif (reject_detail in _CONDITIONALLY_ADMISSIBLE_DEFLATION_REJECT_DETAILS
+          and reject_detail not in _configured_admissible_reject_details(opt_data)):
+        # Issue #1070/#1220 — siehe Docstring von
+        # ``_CONDITIONALLY_ADMISSIBLE_DEFLATION_REJECT_DETAILS``: der Holdout selbst wurde
+        # bestanden (nur die Multiplizitätskorrektur lehnte ab) — zulässig NUR mit einem
+        # eigenständigen Qualitätsnachweis, nicht pauschal wie die flache Whitelist oben.
+        holdout_return = provenance.get("holdout_return")
+        gate_deltas = provenance.get("holdout_gate_deltas") or {}
+        psr_delta = gate_deltas.get("oos_min_psr")
+        qualifies = (
+            holdout_return is not None and holdout_return > 0.0
+            and psr_delta is not None and psr_delta >= 0.0
+        )
+        if not qualifies:
+            return False, "DEFLATION_REJECTION_NOT_QUALIFIED"
     elif reject_detail is not None and reject_detail not in _configured_admissible_reject_details(opt_data):
         return False, "REJECTION_NOT_ALLOWLISTED"
 
@@ -544,6 +613,11 @@ def _build_entry_from_promotion(study, strategy: str, symbol: str, promotion: di
             # Shortfall-Marge für REJECT_HOLDOUT_GATE-Kandidaten.
             "holdout_binding_gate": metrics_symbol.get("holdout_binding_gate"),
             "holdout_gate_deltas": dict(metrics_symbol.get("holdout_gate_deltas") or {}),
+            # Issue #1070/#1220 — Grundlage der bedingten Zulassung von
+            # ``_CONDITIONALLY_ADMISSIBLE_DEFLATION_REJECT_DETAILS`` (siehe dortiger Kommentar):
+            # der tatsächliche Holdout-Return dieses Kandidaten, unabhängig davon, ob die
+            # nachgelagerte Deflation ihn ablehnte.
+            "holdout_return": metrics_symbol.get("oos_total_return"),
         },
         "integrity": {
             "reward_semantics_version": opt_data.get("reward_semantics_version"),

@@ -1243,6 +1243,31 @@ def resolve_slippage_bps(inst_id_str: str,
     return float(slippage_bps_by_asset_class[asset_class_key])
 
 
+def merge_calibrated_slippage_into_config(
+    static_slippage_bps_by_asset_class: dict | None,
+    calibrated_slippage_by_asset_class: dict | None,
+    *, percentile: str = "p90",
+) -> dict:
+    """Issue #1055/#1204 (Katalog #1196-1221, P0) Fix Punkt 2 — 'full_realism' konsumiert die
+    KALIBRIERTE ``p90`` (Worst-Case-Slippage) statt des dokumentiert unkalibrierten 0.0-Platzhalters
+    in ``backtest.json``.
+
+    Eine Asset-Klasse mit einer EXPLIZIT vom Operator konfigurierten, NICHT-NULL Konstante behaelt
+    diese (der Operator hat bewusst einen Wert gesetzt — die Kalibrierung uebersteuert eine
+    explizite Konfiguration nie, nur den dokumentierten 0.0-Platzhalter). Eine Asset-Klasse, die im
+    kalibrierten Cache fehlt (kein Vorlauf mit gemessener Slippage auf diesem Store), behaelt ihren
+    statischen Wert unveraendert (fail-open — kein geratener Wert)."""
+    merged = dict(static_slippage_bps_by_asset_class or {})
+    for asset_class, calibration in (calibrated_slippage_by_asset_class or {}).items():
+        if not isinstance(calibration, dict) or percentile not in calibration:
+            continue
+        _static_val = merged.get(asset_class)
+        if _static_val is not None and float(_static_val) != 0.0:
+            continue
+        merged[asset_class] = float(calibration[percentile])
+    return merged
+
+
 def resolve_stop_exit_slippage_bps(closing_price: float | None, trailing_stop_price: float | None,
                                    *, is_short_close: bool) -> float | None:
     """Issue #1029/#1178 (Katalog #866-2, Pitfall #422 in AGENTS.md) — seitenbereinigte, als
@@ -2775,7 +2800,94 @@ def _read_annualization_periods() -> float | None:
 # Issue #980/#1134 (Katalog #986, Pitfall #399-Klasse) — F je Symbol EINMAL bestimmen, nicht je
 # Study neu aus deren jeweils eigenem (unterschiedlich vielen Positions-Perioden umfassenden)
 # mtm_series-Fenster. Prozessweiter Cache, siehe _get_annualization_factor_with_source-Docstring.
+#
+# Issue #1071/#1221 (Katalog #1196-1221, P2) — dieser IN-PROZESS-Cache allein stabilisiert F NICHT:
+# jeder einzelne Backtest laeuft ueber einen ``ProcessPoolExecutor``-Worker (teils
+# ``max_tasks_per_child=1`` — ein FRISCHER Interpreter je Job, siehe Modul-Docstring-Abschnitt zu
+# ``run_backtests_parallel``), sodass dieses Dict beim naechsten Trial/der naechsten Study/dem
+# naechsten Lauf schlicht WIEDER leer ist. Root-Cause #1221: genau deshalb driftete sqrt(F)
+# zwischen Studies DESSELBEN Symbols um Faktor 5,7 UND ueber vier separate Laeufe hinweg (TSLA
+# 2,028 -> 3,866) — der #1134-Cache haelt nur innerhalb eines einzelnen, langlebigen Prozesses (in
+# der Praxis: nie). ``_annualization_factor_cache_path``/``_read_persisted_annualization_factor``/
+# ``_write_persisted_annualization_factor`` unten ergaenzen einen PLATTEN, WORK-gescopten Cache
+# (analog ``sweep.calibrated_slippage.json``) — derselbe symbolweite Wert ueberlebt damit sowohl
+# Worker- als auch Lauf-Grenzen.
 _annualization_factor_by_symbol_cache: dict[str, tuple[float, str]] = {}
+
+
+def _bars_per_calendar_day_from_mtm_series(mtm_series) -> float | None:
+    """Issue #1071/#1221 — gemeinsamer Kern fuer ``_bar_calendar_telemetry`` UND
+    ``_get_annualization_factor_with_source`` (siehe dortige Docstrings): Bars je REALEM
+    Kalendertag der ``mtm_series``-Zeitspanne, aus dem Zeit-INDEX selbst (nicht aus ``n_periods``,
+    das je nach Aufrufer die volle ODER die #823-informative Teilmenge sein kann — die Bar-DICHTE
+    ist eine Eigenschaft der Marktdaten-/Aggregations-Pipeline, unabhaengig davon, wie viele dieser
+    Bars ein bestimmter Trial informativ nutzt). ``None`` ohne verwertbaren DatetimeIndex oder bei
+    einer Zeitspanne <= 0 (Direkt-Unit-Calls mit RangeIndex, ein Einzelbar-Fenster)."""
+    if mtm_series is None or len(mtm_series) < 2 or not isinstance(mtm_series.index, pd.DatetimeIndex):
+        return None
+    n_bars = len(mtm_series) - 1
+    total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
+    if total_span_seconds <= 0:
+        return None
+    return n_bars * 86400.0 / total_span_seconds
+
+
+def _annualization_factor_cache_path(work_dir: "Path | None" = None) -> "Path":
+    if work_dir is None:
+        from automation.optimizer.manifest import WORK as work_dir
+    return Path(work_dir) / "annualization_factor_by_symbol.json"
+
+
+def _read_persisted_annualization_factor(
+    symbol: str, work_dir: "Path | None" = None,
+) -> "tuple[float, str] | None":
+    """Issue #1071/#1221 — Gegenstück zu ``_write_persisted_annualization_factor``. Fail-open
+    (``None`` bei fehlender/kaputter Datei oder fehlendem Symbol-Eintrag) — derselbe Vertrag wie
+    ``sweep.read_calibrated_slippage_cache``: ein frischer/beschädigter Store darf die
+    Annualisierung nie blockieren, nur auf den empirischen Pfad zurückfallen lassen."""
+    try:
+        path = _annualization_factor_cache_path(work_dir)
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text("utf-8")) or {}
+        entry = (data.get("factor_by_symbol") or {}).get(symbol)
+        if not entry:
+            return None
+        factor = entry.get("factor")
+        source = entry.get("source")
+        if not isinstance(factor, (int, float)) or isinstance(factor, bool) or not source:
+            return None
+        return float(factor), str(source)
+    except Exception:
+        return None
+
+
+def _write_persisted_annualization_factor(
+    symbol: str, factor: float, source: str, work_dir: "Path | None" = None,
+) -> None:
+    """Issue #1071/#1221 — schreibt den symbolweiten Faktor NACH dem ERSTEN Bestimmen (in JEDEM
+    Worker/Lauf, der ihn noch nicht im persistenten Store vorfindet) — read-through/write-through,
+    kein separater Vorlauf-Schritt (anders als ``sweep.calibrate_and_write_slippage_cache``, das
+    braucht IS-Trials aus dem gesamten Store; die Bar-Dichte ist dagegen aus JEDEM einzelnen Trial
+    mit einer verwertbaren mtm_series bereits vollständig bestimmbar). Fail-open: ein Schreibfehler
+    darf den Backtest nie crashen, der IN-PROZESS-Cache bleibt in jedem Fall wirksam für den Rest
+    dieses einen Aufrufs. Race zwischen gleichzeitigen Workern DESSELBEN Symbols: letzter Schreiber
+    gewinnt — unkritisch, da alle Schreiber (dieselbe Bar-Achse/Pipeline) strukturell denselben Wert
+    berechnen, keine widersprüchliche Information wie bei einer Korroborations-Zählung."""
+    try:
+        from automation.optimizer.manifest import write_json_atomic
+        path = _annualization_factor_cache_path(work_dir)
+        try:
+            data = json.loads(path.read_text("utf-8")) if path.exists() else {}
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        by_symbol = data.setdefault("factor_by_symbol", {})
+        by_symbol[symbol] = {"factor": float(factor), "source": str(source)}
+        write_json_atomic(path, data)
+    except Exception:
+        pass
 
 
 def _get_annualization_factor(mtm_series=None, *, symbol: str | None = None) -> float:
@@ -2789,10 +2901,11 @@ def _get_annualization_factor(mtm_series=None, *, symbol: str | None = None) -> 
     1h-Returns unterschätzt den annualisierten Sortino systematisch (Equity-Marktstunden ⇒ Faktor
     ≫ 252).
 
-    Issue #595 — Die empirische Frequenz wird nun aus der realen Zeitspanne abgeleitet:
-    (n_periods · 31_557_600 / total_span_seconds).
-    Das liefert für RTH-Instrumente (z. B. Equity) automatisch die Handelszeiten (TSLA ≈ 1638)
-    und für 24/7-Krypto (≈ 8766) korrekt skaliert.
+    Issue #595 — Die empirische Frequenz wurde ursprünglich aus der realen Zeitspanne abgeleitet:
+    (n_periods · 31_557_600 / total_span_seconds). Issue #1071/#1221 — seit diesem Fix ist die
+    Formel ``bars_per_calendar_day · 365`` (aus der BAR-ACHSE, nicht mehr aus einer je Aufrufer
+    unterschiedlichen Beobachtungszahl, siehe ``_get_annualization_factor_with_source``-Docstring)
+    — für die aktuelle, durchgehend 24/7-aufgefüllte 1h-Bar-Achse ≈ 8766 für JEDES Symbol.
 
     Issue #980/#1134 — dünner Wrapper um ``_get_annualization_factor_with_source`` (Rückwärtskompat:
     reiner Float-Rückgabewert für die zahlreichen bestehenden Aufrufer, die die Quelle nicht
@@ -2802,50 +2915,65 @@ def _get_annualization_factor(mtm_series=None, *, symbol: str | None = None) -> 
 
 
 def _get_annualization_factor_with_source(mtm_series=None, *, symbol: str | None = None,
-                                          ) -> tuple[float, str]:
-    """Issue #980/#1134 (Katalog #986) — Root-Cause: Studies DESSELBEN Symbols sehen dieselben
-    Marktdaten, aber (je nach Walk-Forward-/OOS-Fenster-Konfiguration der jeweiligen Strategie)
-    unterschiedlich viele *Positions*-Perioden im ``mtm_series``-Fenster — F wurde bislang JE STUDY
-    aus deren EIGENEM Fenster abgeleitet, wodurch √F zwischen Studies desselben Symbols um Faktor
-    2,2–5,7 streute und die annualisierten Sortinos NICHT kommensurabel waren (Report-Ranking,
-    Champion-Ranking, symbolweite Deflations-Familie vergleichen aber genau diese Grösse).
+                                          work_dir=None) -> tuple[float, str]:
+    """Issue #980/#1134 (Katalog #986), neu hergeleitet #1071/#1221 (Katalog #1196-1221) — Root-
+    Cause der Vorfassung: F wurde aus ``n_periods`` (der ANZAHL Beobachtungen im jeweils
+    aufrufenden Fenster) abgeleitet — bei ``_informative_annualization_factor`` (dem Faktor, der
+    ``sortino_annualized`` TATSAECHLICH trieb, vor diesem Fix) ist das die #823-INFORMATIVE
+    Teilmenge (Bars MIT tatsaechlicher Rendite) — eine Groesse, die mit der HANDELSFREQUENZ der
+    jeweiligen Strategie variiert, nicht mit der Marktdaten-Bar-DICHTE selbst. Symptom #1221:
+    sqrt(F)-Spannweite bis Faktor 5,7 zwischen Studies DESSELBEN Symbols (unterschiedliche
+    Handelsfrequenz auf identischer 24/7-Bar-Achse), TSLA driftete zusaetzlich ueber vier
+    SEPARATE Laeufe (2,028 -> 3,866) — der #1134-Cache (rein in-process) haelt praktisch nie, weil
+    jeder Backtest in einem frischen ``ProcessPoolExecutor``-Worker laeuft (siehe Kommentar am
+    Cache-Dict oben).
 
-    Ist ``symbol`` angegeben: F wird beim ERSTEN Aufruf fuer dieses Symbol in diesem Prozess
-    bestimmt (Config-Override ODER empirisch aus dessen mtm_series-Zeitindex) und fuer JEDEN
-    weiteren Aufruf desselben Symbols WIEDERVERWENDET, unabhaengig vom mtm_series-Fenster der
-    jeweils aufrufenden Study — √F-Spannweite je Symbol wird dadurch exakt 1.0 (Akzeptanzkriterium
-    #1134: <= 1.05). Fehlt ``symbol`` (Legacy-/Direkt-Unit-Aufrufer), bleibt das Verhalten wie vor
-    #1134 (je Aufruf empirisch aus dem uebergebenen ``mtm_series``).
+    Fix: F wird jetzt AUSSCHLIESSLICH aus der BAR-ACHSE selbst abgeleitet
+    (``bars_per_calendar_day · 365`` — dieselbe Formel wie ``_bar_calendar_telemetry``s
+    Zusatz-Telemetrie, jetzt aber die tatsaechlich fuer die Annualisierung massgebliche Groesse),
+    NICHT mehr aus der (handelsfrequenz-abhaengigen) Beobachtungszahl — dieselbe Bar-Dichte gilt
+    fuer JEDE Study desselben Symbols, unabhaengig von deren eigener Handelsaktivitaet. Der
+    #823-informative Faktor (``_informative_annualization_factor``) bleibt als EIGENSTAENDIGE,
+    separat gestempelte Telemetrie erhalten (``oos_annualization_factor_study_specific``,
+    ``_calculate_stats``), treibt aber seit diesem Fix NICHT mehr ``sortino_annualized``.
 
-    Eine echte, handelskalenderbasierte Herleitung (RTH-Handelsstunden vs. 24/7, siehe Artefakt A-4
-    im #986-Katalog) bleibt ein offener Folgeschritt — dieser Fix macht F innerhalb eines Prozesses
-    STABIL je Symbol, ohne die Kalenderfrage selbst zu beantworten.
+    Ist ``symbol`` angegeben: F wird beim ERSTEN Bestimmen (Config-Override ODER empirisch aus der
+    Bar-Achse) sowohl im IN-PROZESS-Cache ALS AUCH im WORK-gescopten, plattenpersistenten Cache
+    (``_write_persisted_annualization_factor``) abgelegt und fuer JEDEN weiteren Aufruf desselben
+    Symbols — ueber Worker- UND Lauf-Grenzen hinweg — WIEDERVERWENDET. Fehlt ``symbol`` (Legacy-/
+    Direkt-Unit-Aufrufer), bleibt das Verhalten unveraendert je Aufruf empirisch.
 
-    Rückgabe: ``(factor, source)`` mit ``source ∈ {'config_override', 'empirical_first_study_time_
-    index', 'neutral_fallback'}``."""
+    Rückgabe: ``(factor, source)`` mit ``source ∈ {'config_override', 'bar_axis_symbol_wide_cached',
+    'bar_axis_symbol_wide_fresh', 'neutral_fallback'}``."""
     # 1) Expliziter Config-Override: schlägt die Empirik nur, wenn ausdrücklich (non-null) gesetzt.
     config_factor = _read_annualization_periods()
     if config_factor is not None:
         return float(config_factor), "config_override"
 
-    # 2) Bereits fuer dieses Symbol bestimmt (siehe Docstring) — WIEDERVERWENDEN statt neu leiten.
+    # 2) Bereits fuer dieses Symbol bestimmt (in diesem Prozess) — WIEDERVERWENDEN statt neu leiten.
     if symbol is not None and symbol in _annualization_factor_by_symbol_cache:
         return _annualization_factor_by_symbol_cache[symbol]
 
-    # 3) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532/#595).
-    #    Ein nicht-zeitlicher Index (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats)
-    #    hat keine ableitbare Bar-Frequenz und fällt sauber auf den neutralen Pfad zurück.
-    if (mtm_series is not None and len(mtm_series) > 1
-            and isinstance(mtm_series.index, pd.DatetimeIndex)):
-        # Off-by-One Alignment: Die Anzahl der Rendite-Perioden ist len(mtm_series) - 1
-        n_periods = len(mtm_series) - 1
-        total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
-        if total_span_seconds > 0:
-            result = (n_periods * 31_557_600.0 / total_span_seconds,
-                     "empirical_first_study_time_index")
-            if symbol is not None:
-                _annualization_factor_by_symbol_cache[symbol] = result
+    # 2b) Issue #1071/#1221 — plattenpersistenter, WORK-gescopter Cache: ueberlebt Worker-/Lauf-
+    #     Grenzen, die der reine In-Prozess-Cache (Schritt 2) nicht ueberstehen kann.
+    if symbol is not None:
+        persisted = _read_persisted_annualization_factor(symbol, work_dir)
+        if persisted is not None:
+            factor, _source = persisted
+            result = (factor, "bar_axis_symbol_wide_cached")
+            _annualization_factor_by_symbol_cache[symbol] = result
             return result
+
+    # 3) Empirisch aus der BAR-ACHSE (bevorzugt, Issue #1071/#1221 — siehe Docstring oben). Ein
+    #    nicht-zeitlicher Index (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats) hat
+    #    keine ableitbare Bar-Frequenz und fällt sauber auf den neutralen Pfad zurück.
+    bars_per_calendar_day = _bars_per_calendar_day_from_mtm_series(mtm_series)
+    if bars_per_calendar_day is not None:
+        result = (bars_per_calendar_day * 365.0, "bar_axis_symbol_wide_fresh")
+        if symbol is not None:
+            _annualization_factor_by_symbol_cache[symbol] = result
+            _write_persisted_annualization_factor(symbol, result[0], result[1], work_dir)
+        return result
 
     # 4) Kein verwertbarer Zeit-Index: neutral (1.0).
     return 1.0, "neutral_fallback"
@@ -2880,13 +3008,9 @@ def _bar_calendar_telemetry(mtm_series: "pd.Series | None") -> dict:
 
     ``None``/``None`` ohne verwertbaren Zeit-Index (z. B. Direkt-Unit-Calls mit RangeIndex,
     dieselbe Rueckfallbedingung wie ``_get_annualization_factor_with_source``)."""
-    if mtm_series is None or len(mtm_series) < 2 or not isinstance(mtm_series.index, pd.DatetimeIndex):
+    bars_per_calendar_day = _bars_per_calendar_day_from_mtm_series(mtm_series)
+    if bars_per_calendar_day is None:
         return {"bars_per_calendar_day": None, "session_coverage_fraction": None}
-    n_bars = len(mtm_series) - 1
-    total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
-    if total_span_seconds <= 0:
-        return {"bars_per_calendar_day": None, "session_coverage_fraction": None}
-    bars_per_calendar_day = n_bars * 86400.0 / total_span_seconds
     idx = mtm_series.index
     hour = idx.hour
     is_weekday = idx.weekday < 5
@@ -3252,10 +3376,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     total_return, period_rets, diagnostics=_inference_diagnostics)
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
-        # Issue #980/#1134 — ``symbol`` macht F stabil je Symbol (siehe _get_annualization_factor_
-        # with_source-Docstring). Diese Groesse selbst fliesst in KEIN Rueckgabe-Feld (Legacy,
-        # bereits vor #1134 unbenutzt) — annualization_factor_source (Rueckgabe-Dict) stammt aus
-        # dem tatsaechlich sortino_annualized-treibenden ``_informative_annualization_factor``.
+        # Issue #980/#1134, #1071/#1221 — ``symbol`` macht F stabil je Symbol (siehe
+        # _get_annualization_factor_with_source-Docstring). Diese Groesse selbst fliesst in KEIN
+        # Rueckgabe-Feld (Legacy, bereits vor #1134 unbenutzt) — annualization_factor_source
+        # (Rueckgabe-Dict) stammt aus demselben ``_get_annualization_factor_with_source``-Aufruf,
+        # den ``_compute_sortino()`` unten fuer effective_annualization_factor SEPARAT taetigt
+        # (derselbe Cache, kein zweifach berechneter Wert unter normaler Ausfuehrung).
         annualization_factor = _get_annualization_factor(mtm_series, symbol=symbol)
         min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
         mar = _read_sortino_mar()
@@ -3285,6 +3411,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Rueckgabestellen) nicht anzufassen. Default deckt jeden fruehen Return-Pfad ab (dort ist
         # sortino_annualized ohnehin None — die Quelle ist dann irrelevant, aber IMMER definiert).
         _annualization_factor_source_holder = {"value": "neutral_fallback"}
+        # Issue #1071/#1221 — derselbe Closure-Mutable-Trick fuer den #823-INFORMATIVEN Faktor
+        # (handelsfrequenz-abhaengig): er treibt ``sortino_annualized`` seit diesem Fix NICHT mehr
+        # (siehe ``_get_annualization_factor_with_source``-Docstring), bleibt aber als eigene,
+        # separat gestempelte Telemetrie erhalten (``oos_annualization_factor_study_specific``
+        # unten) — genau der "studyspezifische Faktor nur als Telemetrie", den das Issue verlangt.
+        _study_specific_annualization_factor_holder = {"value": None}
 
         def _compute_sortino():
             """Issue #823 — als lokale Funktion gekapselt (statt tief verschachtelter
@@ -3395,7 +3527,15 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             downside_floor = _read_sortino_downside_floor()
             dd_dev = max(dd_dev, downside_floor)
             mean_ret = informative_rets.mean(skipna=False)
+            # Issue #1071/#1221 (Katalog #1196-1221, supersedes #980/#1134 als
+            # sortino_annualized-treibende Groesse) — der BAR-ACHSEN-basierte, symbolweit
+            # plattenpersistente Faktor (siehe _get_annualization_factor_with_source-Docstring)
+            # treibt die Annualisierung jetzt; der #823-informative (handelsfrequenz-abhaengige)
+            # Faktor bleibt separat als Telemetrie erhalten (naechste Zeile), fliesst aber nicht
+            # mehr in sortino_annualized_v ein.
             effective_annualization_factor, _annualization_factor_source_holder["value"] = (
+                _get_annualization_factor_with_source(mtm_series, symbol=symbol))
+            _study_specific_annualization_factor_holder["value"], _ = (
                 _informative_annualization_factor_with_source(mtm_series, n_periods, symbol=symbol))
             # Issue #614 — der PER-PERIODEN-Sortino ist die statistisch tragende Grösse (fliesst
             # in die PSR); der annualisierte Wert ist reine Telemetrie (sortino_ratio/annualized).
@@ -3516,6 +3656,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Issue #980/#1134 — die Quelle, die effective_annualization_factor TATSAECHLICH lieferte
         # (siehe _annualization_factor_source_holder-Docstring oben).
         annualization_factor_source = _annualization_factor_source_holder["value"]
+        # Issue #1071/#1221 — der #823-informative (handelsfrequenz-abhaengige) Faktor, NUR noch
+        # Telemetrie (siehe _study_specific_annualization_factor_holder-Docstring oben).
+        annualization_factor_study_specific = _study_specific_annualization_factor_holder["value"]
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
@@ -3537,6 +3680,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Call the unified helper to maintain structural symmetry (Issue #510 requirement)
         annualization_factor = _get_annualization_factor(None)
         annualization_factor_source = "neutral_fallback"
+        annualization_factor_study_specific = None
 
     # Floor max_dd at DENOMINATOR_FLOOR to protect against division-by-zero when computing calmar.
     if max_dd <= 0.0:
@@ -3692,11 +3836,21 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "psr_inference_method": "stationary_bootstrap" if oos_psr_z is not None else None,
         "sortino_period":     float(sortino_period) if sortino_period is not None else None,
         "sortino_annualized": float(sortino_annualized) if sortino_annualized is not None else None,
-        # Issue #980/#1134 (Katalog #986) — woher effective_annualization_factor (der
-        # sortino_annualized treibende Faktor) tatsaechlich kam: 'config_override' |
-        # 'empirical_first_study_time_index' (je Symbol EINMAL bestimmt, siehe
-        # _get_annualization_factor_with_source-Docstring) | 'neutral_fallback'.
+        # Issue #980/#1134 (Katalog #986), neu hergeleitet #1071/#1221 — woher
+        # effective_annualization_factor (der sortino_annualized treibende Faktor) tatsaechlich
+        # kam: 'config_override' | 'bar_axis_symbol_wide_cached' (aus dem plattenpersistenten,
+        # symbolweiten Cache wiederverwendet) | 'bar_axis_symbol_wide_fresh' (dieser Aufruf hat ihn
+        # als ERSTER fuer dieses Symbol bestimmt und persistiert) | 'neutral_fallback' (siehe
+        # _get_annualization_factor_with_source-Docstring).
         "annualization_factor_source": annualization_factor_source,
+        # Issue #1071/#1221 (Katalog #1196-1221) — der #823-INFORMATIVE (handelsfrequenz-
+        # abhaengige) Annualisierungsfaktor DIESER Study, der VOR diesem Fix sortino_annualized
+        # trieb und jetzt NUR NOCH forensische Telemetrie ist (siehe Issue-Text: "den
+        # studyspezifischen Faktor nur als Telemetrie behalten"). ``None`` ohne verwertbaren
+        # Zeit-Index (derselbe Rueckfall wie effective_annualization_factor selbst).
+        "annualization_factor_study_specific": (
+            float(annualization_factor_study_specific)
+            if annualization_factor_study_specific is not None else None),
         # Issue #1011/#1163 (Katalog #1170) — siehe ``_bar_calendar_telemetry``-Docstring; aus der
         # VOLLEN (ggf. 24/7-aufgefuellten) mtm_series-Bar-Achse, nicht der #823-informativen
         # Teilmenge unten (die Root-Cause betrifft die BAR-ERZEUGUNG selbst, nicht die
@@ -3865,6 +4019,18 @@ def _parse_exit_order_tags(tags) -> dict:
                 # Referenzpreis fuer stop_exit_slippage_bps = (fill_px - trailing_stop_price) /
                 # trailing_stop_price * 10000 (vorzeichenbehaftet).
                 meta["trailing_stop_price"] = float(value)
+            elif key == "STOP_DISTANCE_BPS":
+                # Issue #1054/#1203 (Katalog #1196-1221) — konfigurierte Stopdistanz (k · ATR_eff,
+                # nach Floor) zum Ausloese-Zeitpunkt, vorzeichenbehaftet (advers positiv), gegen
+                # STOP_TRIGGER_ANCHOR_PRICE als Nenner gebildet (hourly_strategy_base._check_exits_
+                # and_update-Kommentar an der Setzstelle). Erster Summand der Verlust-Zerlegung
+                # realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps.
+                meta["stop_distance_bps"] = float(value)
+            elif key == "STOP_TRIGGER_ANCHOR_PRICE":
+                # Issue #1054/#1203 — der Nenner, gegen den STOP_DISTANCE_BPS gebildet wurde;
+                # backtest_runner._finalize_round_trip bildet trigger_to_fill_gap_bps UND
+                # realized_loss_bps mit DEMSELBEN Nenner, damit die Identitaet exakt ist.
+                meta["stop_trigger_anchor_price"] = float(value)
         except (TypeError, ValueError):
             continue
     return meta
@@ -3900,6 +4066,36 @@ def _pctl(sorted_vals: list[float], p: float) -> float:
     n = len(sorted_vals)
     idx = max(0, min(n - 1, round(p * (n - 1))))
     return sorted_vals[idx]
+
+
+def calibrate_slippage_bps_by_asset_class(
+    observations_by_asset_class: dict[str, list[float]],
+) -> dict[str, dict]:
+    """Issue #1055/#1204 (Katalog #1196-1221, P0) — kalibriert ``slippage_bps_by_asset_class`` aus
+    der GEMESSENEN Verteilung (statt des dokumentiert unkalibrierten 0.0-Platzhalters, #987/#1141
+    Pitfall #419 in AGENTS.md): Median-Slippage (21-79 bps) uebersteigt jeden beobachteten
+    Holdout-Edge um Groessenordnungen, aber ``slippage_bps_by_asset_class`` bleibt fuer JEDE
+    Asset-Klasse 0.0 — die 'full_realism'-Kostenstress-Stufe ist dadurch ein No-Op.
+
+    Reine Funktion: ``observations_by_asset_class`` ist ``{asset_class: [stop_exit_slippage_bps, ...]}``
+    (die bereits gemessene, seitenbereinigte Serie, siehe ``resolve_stop_exit_slippage_bps``) —
+    typischerweise aus den ``oos_stop_exit_slippage_bps_median``-Trial-User-Attrs eines VORLAUFS auf
+    demselben Store gesammelt (der Aufrufer, ``sweep.calibrate_and_write_slippage_cache``, uebernimmt
+    das Einsammeln). Liefert je Asset-Klasse ``p50``/``p90`` (Nearest-Rank, ``_pctl``) und
+    ``n_observations``; eine Asset-Klasse ohne (positive) Beobachtungen fehlt im Ergebnis (kein
+    geratener Wert). ``p90`` (nicht ``p50``) ist die fuer ``full_realism`` vorgesehene Grösse — ein
+    Kostenstress-Szenario soll die WORST-CASE-Slippage abbilden, nicht die typische."""
+    result: dict[str, dict] = {}
+    for asset_class, values in (observations_by_asset_class or {}).items():
+        vals = sorted(float(v) for v in values if v is not None)
+        if not vals:
+            continue
+        result[asset_class] = {
+            "p50": round(_pctl(vals, 0.5), 4),
+            "p90": round(_pctl(vals, 0.9), 4),
+            "n_observations": len(vals),
+        }
+    return result
 
 
 # Issue #986/#1140 (Katalog #986) — sauberes, endliches Sentinel fuer eine (nahezu) rauschfreie
@@ -4008,6 +4204,14 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe _finalize_round_trip).
     stop_exit_fill_lag_ns_values: list[float] = []
     stop_exit_slippage_bps_values: list[float] = []
+    # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung, NUR bei nachweislichen
+    # TRAILING_STOP-Exits mit vollstaendiger Anker-/Stop-Level-Telemetrie (siehe
+    # _finalize_round_trip-Kommentar zum gemeinsamen Nenner).
+    stop_distance_bps_values: list[float] = []
+    trigger_to_fill_gap_bps_values: list[float] = []
+    realized_loss_bps_values: list[float] = []
+    n_stop_loss_identity_checked = 0
+    n_stop_loss_identity_violations = 0
     # Issue #1035 (Katalog #866) — Root-Cause: der Zaehler unten (``losses_bps``) mittelt ueber
     # ALLE Verlust-Trades, waehrend ``invariants.check_effective_stop_distance`` unterstellt, dass
     # jeder Verlust ein Stop-Exit war. Bei ueberwiegend UNKNOWN-/TIME_BOX-Exits (vor #1034 haeufig
@@ -4056,6 +4260,23 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             stop_exit_fill_lag_ns_values.append(float(m["stop_exit_fill_lag_ns"]))
         if reason == "TRAILING_STOP" and m.get("stop_exit_slippage_bps") is not None:
             stop_exit_slippage_bps_values.append(float(m["stop_exit_slippage_bps"]))
+        if reason == "TRAILING_STOP" and m.get("stop_distance_bps") is not None:
+            stop_distance_bps_values.append(float(m["stop_distance_bps"]))
+        if reason == "TRAILING_STOP" and m.get("trigger_to_fill_gap_bps") is not None:
+            trigger_to_fill_gap_bps_values.append(float(m["trigger_to_fill_gap_bps"]))
+        if reason == "TRAILING_STOP" and m.get("realized_loss_bps") is not None:
+            realized_loss_bps_values.append(float(m["realized_loss_bps"]))
+        # Issue #1054/#1203 Akzeptanzkriterium 1 — Identitaet |realized_loss_bps −
+        # (stop_distance_bps + trigger_to_fill_gap_bps)| < 1e-6 je Round-Trip, gezaehlt (nicht nur
+        # angenommen): >= 99,9 % der TRAILING_STOP-Round-Trips muessen sie erfuellen.
+        if (reason == "TRAILING_STOP" and m.get("stop_distance_bps") is not None
+                and m.get("trigger_to_fill_gap_bps") is not None
+                and m.get("realized_loss_bps") is not None):
+            n_stop_loss_identity_checked += 1
+            _identity_lhs = float(m["realized_loss_bps"])
+            _identity_rhs = float(m["stop_distance_bps"]) + float(m["trigger_to_fill_gap_bps"])
+            if abs(_identity_lhs - _identity_rhs) >= 1e-6:
+                n_stop_loss_identity_violations += 1
         if m.get("bar_range_median_bps") is not None:
             bar_range_medians.append(float(m["bar_range_median_bps"]))
         if m.get("f_realized") is not None:
@@ -4105,6 +4326,19 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             statistics.median(stop_exit_slippage_bps_values)
             if stop_exit_slippage_bps_values else None),
         "n_trailing_stop_exits_with_fill_lag_telemetry": len(stop_exit_fill_lag_ns_values),
+        # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung "realized_loss_bps =
+        # stop_distance_bps + trigger_to_fill_gap_bps", je Ebene medianisiert; siehe
+        # _finalize_round_trip fuer die Herleitung mit gemeinsamem Nenner (Akzeptanzkriterium 1
+        # dieses Issues: Identitaet <1e-6 fuer >=99,9% der TRAILING_STOP-Round-Trips).
+        "stop_distance_bps_median": (
+            statistics.median(stop_distance_bps_values) if stop_distance_bps_values else None),
+        "trigger_to_fill_gap_bps_median": (
+            statistics.median(trigger_to_fill_gap_bps_values)
+            if trigger_to_fill_gap_bps_values else None),
+        "realized_loss_bps_median": (
+            statistics.median(realized_loss_bps_values) if realized_loss_bps_values else None),
+        "n_stop_loss_identity_checked": n_stop_loss_identity_checked,
+        "n_stop_loss_identity_violations": n_stop_loss_identity_violations,
         # Issue #1097 (Katalog #930) — die Stichprobengroesse HINTER gross_loss_mean_bps (ALLE
         # Verlust-Trades, nicht nur Stop-Exits): ohne diesen Zaehler kann report.py keinen
         # trade-gewichteten (statt medianbasierten) Study-Mittelwert bilden, siehe
@@ -4131,6 +4365,12 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # AUSSCHLIESSLICH algebraisch implizierte Groesse als primaeres Entscheidungskriterium).
         "f_realized_median": (
             statistics.median(f_realized_values) if f_realized_values else None),
+        # Issue #1060/#1209 (Katalog #1196-1221) — das MAXIMUM (nicht nur der Median) ueber
+        # dieselbe Serie: ein Sizing-Cap-Verstoss ist ein WORST-CASE-Ereignis (eine einzelne
+        # Aufstockung ueber den Deckel), das ein Median-basierter Check strukturell verwaesert —
+        # Rohmaterial fuer invariants.check_sizing_cap_enforcement.
+        "f_realized_max": (
+            max(f_realized_values) if f_realized_values else None),
     }
 
 
@@ -4402,7 +4642,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -4576,6 +4816,23 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # resolve_stop_exit_slippage_bps-Docstring.
             stop_exit_slippage_bps = resolve_stop_exit_slippage_bps(
                 closing_price, _stop_px, is_short_close=is_short_close)
+            # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung "realized_loss_bps =
+            # stop_distance_bps + trigger_to_fill_gap_bps". stop_distance_bps kommt vorgerechnet
+            # vom Strategie-Tag (STOP_DISTANCE_BPS); trigger_to_fill_gap_bps UND realized_loss_bps
+            # werden HIER mit DEMSELBEN Nenner (STOP_TRIGGER_ANCHOR_PRICE, nicht _stop_px) gebildet
+            # wie stop_distance_bps — nur ein gemeinsamer Nenner macht die Summenidentitaet EXAKT
+            # (< 1e-6, Akzeptanzkriterium), nicht bloss naeherungsweise wie bei einer Mischung aus
+            # stop_exit_slippage_bps (Nenner _stop_px) und stop_distance_bps (Nenner Anker). Beide
+            # bleiben None ausserhalb eines echten TRAILING_STOP-Exits mit vollstaendiger Tag-
+            # Telemetrie (is_data_end_fallback oder fehlender Anker/Stop-Level).
+            _anchor_px = None if is_data_end_fallback else meta.get("stop_trigger_anchor_price")
+            _stop_distance_bps = None if is_data_end_fallback else meta.get("stop_distance_bps")
+            trigger_to_fill_gap_bps = None
+            realized_loss_bps = None
+            if _anchor_px and closing_price is not None and _stop_px is not None:
+                _sign = 1.0 if is_short_close else -1.0
+                trigger_to_fill_gap_bps = _sign * (closing_price - _stop_px) / _anchor_px * 10_000.0
+                realized_loss_bps = _sign * (closing_price - _anchor_px) / _anchor_px * 10_000.0
             rt_exit_meta.append({
                 "exit_reason": "DATA_END" if is_data_end_fallback else meta.get("exit_reason"),
                 "atr_median_bps": meta.get("atr_median_bps"),
@@ -4598,6 +4855,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     None if is_data_end_fallback else meta.get("stop_exit_lag_bars")),
                 "stop_exit_fill_lag_ns": stop_exit_fill_lag_ns,
                 "stop_exit_slippage_bps": stop_exit_slippage_bps,
+                # Issue #1054/#1203 — Verlust-Zerlegung, siehe Kommentar an der Berechnung oben.
+                "stop_distance_bps": _stop_distance_bps,
+                "trigger_to_fill_gap_bps": trigger_to_fill_gap_bps,
+                "realized_loss_bps": realized_loss_bps,
                 # Issue #987/#1141 — siehe Kommentar an der Berechnung oben.
                 "rt_financing_bps": rt_financing_bps,
                 # Issue #989/#1143 — siehe Kommentar an der Berechnung oben.
@@ -5094,8 +5355,17 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # ``expectancy_capital_weighted`` (#1031) — ein einzelner Mikro-Trade darf die
         # kapitalgewichtete Kennzahl nicht dominieren. Berechnung in der standalone, direkt
         # testbaren ``_expectancy_cost_stress`` (analog #1032s ``_round_trip_notional_peak``).
+        # Issue #1055/#1204 (Katalog #1196-1221) Fix Punkt 3 — die gemessene Fill-Slippage (p50,
+        # WENN kalibriert, siehe extract_metrics-Signatur) ist selbst eine reale Round-Trip-Kosten-
+        # position, die c_rt (Spread+Kommission) strukturell fehlt (bis zu 19,6x c_rt allein, siehe
+        # Report §2.4). Ein Kostenstress-Multiplikator auf c_rt ALLEIN stresst damit den KLEINEREN
+        # Teil der tatsaechlichen Ausfuehrungskosten — die erweiterte Basis (c_rt + slippage_p50)
+        # macht den Stress-Hebel auf die DOMINANTE Kostenkomponente wirksam (Pitfall #433 in
+        # AGENTS.md). slippage_bps_p50=0.0 (keine Kalibrierung verfuegbar) ⇒ bit-identisch zum
+        # Pre-#1204-Verhalten.
         _round_trip_cost_bps_for_stress = (
-            round_trip_cost_bps if round_trip_cost_bps is not None else commission_bps)
+            round_trip_cost_bps if round_trip_cost_bps is not None else commission_bps
+        ) + slippage_bps_p50
         _is_pnl_notional, _oos_pnl_notional = [], []
         for _rt_idx, (_pnl, _ts, _ht, _rt_qty) in enumerate(rt_pnls_with_ts):
             _nz = rt_notionals_with_ts[_rt_idx][0] if _rt_idx < len(rt_notionals_with_ts) else None
@@ -6066,6 +6336,11 @@ def run_single_backtest_worker(
     # primaeren total_return/sortino-Berechnung — siehe AGENTS.md-Eintrag zu diesem Fix.
     overnight_financing_bps_per_day_by_asset_class: dict | None = None,
     slippage_bps_by_asset_class: dict | None = None,
+    # Issue #1055/#1204 (Katalog #1196-1221) Fix Punkt 3 — die TYPISCHE (p50, nicht p90) Slippage,
+    # separat gehalten: die Kostenstress-Faktoren 1,5x/2x brauchen c_rt + slippage_p50 als
+    # erweiterte Kostenbasis, waehrend 'full_realism' die Worst-Case-Slippage (p90, oben) zieht —
+    # dieselbe Kalibrierung, zwei verschiedene Konsumenten (siehe extract_metrics-Aufruf unten).
+    slippage_bps_p50_by_asset_class: dict | None = None,
     # Issue #1096 (Katalog #929) Fix Punkt 1 — tournament.json['min_stop_to_cost_ratio'] (Default
     # 3.0, derselbe Wert wie invariants.check_stop_cost_ratio), vom Orchestrator (run_backtest())
     # EINMAL geladen und an jeden isolierten Worker-Prozess durchgereicht (dieselbe Konvention wie
@@ -6151,6 +6426,9 @@ def run_single_backtest_worker(
                 inst_id_str, overnight_financing_bps_per_day_by_asset_class, asset_class_key)
             slippage_bps_resolved = resolve_slippage_bps(
                 inst_id_str, slippage_bps_by_asset_class, asset_class_key)
+            # Issue #1055/#1204 — siehe Signatur-Kommentar (p50, getrennt von der p90 oben).
+            slippage_bps_p50_resolved = resolve_slippage_bps(
+                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key)
             # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe cost_coupled_atr_floor_bps-Docstring.
             atr_floor_bps_resolved = cost_coupled_atr_floor_bps(
                 atr_floor_bps_resolved,
@@ -6377,7 +6655,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -6610,6 +6888,28 @@ def run_backtest() -> None:
     overnight_financing_bps_per_day_by_asset_class = backtest_global_cfg.get(
         "overnight_financing_bps_per_day_by_asset_class", {})
     slippage_bps_by_asset_class = backtest_global_cfg.get("slippage_bps_by_asset_class", {})
+    # Issue #1055/#1204 (Katalog #1196-1221, P0) — die statische Konstante (typischerweise 0.0,
+    # dokumentierte Kalibrierungsluecke, #1010/#1162) wird durch die aus einem VORLAUF kalibrierte
+    # p90-Slippage ergaenzt, WENN eine Kalibrierung vorliegt (sweep.calibrate_and_write_slippage_
+    # cache schreibt sie waehrend eines Sweeps; ein Aufrufer ausserhalb eines Sweeps, oder ein
+    # frischer Store ohne Vorlauf, hat keine Datei — fail-open, bit-identisches Pre-#1204-
+    # Verhalten). Eine explizit vom Operator gesetzte Nicht-Null-Konstante bleibt unangetastet.
+    # Issue #1055/#1204 Fix Punkt 3 — die Kostenstress-Faktoren 1,5x/2x brauchen die TYPISCHE
+    # (p50), nicht die Worst-Case-Slippage (p90, oben) als Nenner-Erweiterung — beide werden aus
+    # DERSELBEN Kalibrierung aufgeloest, aber getrennt gehalten (siehe extract_metrics-Aufruf unten).
+    slippage_bps_p50_by_asset_class: dict = {}
+    try:
+        from automation.optimizer.sweep import read_calibrated_slippage_cache
+        from automation.optimizer.manifest import WORK as _optimizer_work_dir
+        _calibrated = (read_calibrated_slippage_cache(_optimizer_work_dir) or {}).get(
+            "slippage_bps_by_asset_class") or {}
+        if _calibrated:
+            slippage_bps_by_asset_class = merge_calibrated_slippage_into_config(
+                slippage_bps_by_asset_class, _calibrated, percentile="p90")
+            slippage_bps_p50_by_asset_class = merge_calibrated_slippage_into_config(
+                {}, _calibrated, percentile="p50")
+    except Exception:
+        pass
     # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde für OpeningRangeBreakoutStrategy
     # (resolve_opening_range_session_open_hour).
     opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
@@ -6962,6 +7262,7 @@ def run_backtest() -> None:
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
+                        slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
@@ -6979,6 +7280,7 @@ def run_backtest() -> None:
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
+                        slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
@@ -7021,6 +7323,7 @@ def run_backtest() -> None:
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
+                        slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
@@ -7113,6 +7416,8 @@ def _run_remaining_sequentially(
     # Issue #987/#1141 (Katalog #986) — siehe run_single_backtest_worker-Docstring.
     overnight_financing_bps_per_day_by_asset_class: dict | None = None,
     slippage_bps_by_asset_class: dict | None = None,
+    # Issue #1055/#1204 (Katalog #1196-1221) — siehe run_single_backtest_worker-Docstring.
+    slippage_bps_p50_by_asset_class: dict | None = None,
     # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe run_single_backtest_worker-Docstring.
     min_stop_to_cost_ratio: float = 3.0,
 ) -> None:
@@ -7138,6 +7443,7 @@ def _run_remaining_sequentially(
             overnight_financing_bps_per_day_by_asset_class=(
                 overnight_financing_bps_per_day_by_asset_class),
             slippage_bps_by_asset_class=slippage_bps_by_asset_class,
+            slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
             min_stop_to_cost_ratio=min_stop_to_cost_ratio,
         )
         _flush_worker_log(rem_log)

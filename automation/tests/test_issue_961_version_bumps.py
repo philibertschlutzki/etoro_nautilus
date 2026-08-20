@@ -15,9 +15,15 @@ def _load_optimizer_cfg() -> dict:
 
 def test_reward_semantics_version_is_23():
     """Issue #991 (Katalog E, GitHub-Issue #789) — bumped 22 -> 23 (Ausloeser #977/#966, siehe
-    test_issue_991_version_bumps.py fuer die vollstaendige v23-Verifikation)."""
+    test_issue_991_version_bumps.py fuer die vollstaendige v23-Verifikation).
+
+    Issue #1068/#1218 (Katalog #1196-1221) bumpte weiter auf 24 (siehe
+    test_issue_1068_1218_retired_reward_terms.py fuer die vollstaendige v24-Verifikation) — dieser
+    Test prueft, analog zu test_simulation_semantics_version_is_4 unten, weiterhin nur, dass v23
+    NICHT UNTERSCHRITTEN wird (die #991-Bump-Historie bleibt gueltig), nicht mehr die exakte
+    Gleichheit."""
     cfg = _load_optimizer_cfg()
-    assert cfg["reward_semantics_version"] == 23
+    assert cfg["reward_semantics_version"] >= 23
 
 
 def test_simulation_semantics_version_is_4():

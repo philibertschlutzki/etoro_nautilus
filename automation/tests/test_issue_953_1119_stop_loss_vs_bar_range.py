@@ -104,8 +104,13 @@ def test_inconclusive_without_enough_trailing_stop_evidence():
         _study("A", "X.ETORO", loss_pooled=10.0, bar_range=10.0, stop_loss_ratio=6.0,
                n_ts_losses=5),
     ])
-    assert result.passed is True
+    # Issue #995/#1147 (Pitfall #413) — seit diesem Fix ist ``passed=None`` (nicht ``True``) bei
+    # fehlender Evidenz das kanonische Signal (top-level ``evaluable=False`` statt nur verschachtelt
+    # in ``evaluability``); diese Assertion war seither stale (dieser Test wurde bei #995/#1147
+    # nicht mitgezogen).
+    assert result.passed is None
     assert result.inconclusive is True
+    assert result.evaluable is False
     assert result.severity == "blocking"
 
 

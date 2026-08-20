@@ -621,6 +621,34 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
             action = "search_space_override"
         else:
             action = "none"
+    elif cause == "search_stagnation":
+        # Issue #1069/#1219 (P2, Katalog #1196-1221) — Suchstagnation (``invariants.check_search_
+        # made_progress``-FAIL: constraint_improvement_rate <= 0 UND p_eligible == 0 trotz
+        # ausreichend modellierter Trials; ODER stop_reason == 'STRUCTURAL_ZERO_ELIGIBLE' ohne
+        # jede diagnosed_pairs-Zuordnung) wird EIGENSTAENDIG eskaliert, mit einer vom Issue
+        # EXPLIZIT benannten, von den uebrigen Ursachen UNABHAENGIGEN Schwelle (2 dann 4 Laeufe,
+        # nicht die konfigurierbare ``max_consecutive_structural_runs`` der signal_quality/
+        # signal_absent-Faelle). Root-Cause #1219: "Diagnose ohne Konsequenz" (#1194 unveraendert)
+        # — dieser Zweig ist die erste tatsaechliche Konsequenz.
+        #
+        # Schwelle bewusst >= 1 (nicht >= 2) fuer 'deprioritized': ``n_runs_confirmed`` zaehlt
+        # Bestaetigungen VOR diesem Lauf (0 beim allerersten Sichten) — >= 1 als Eingabe bedeutet
+        # bereits "dies ist der ZWEITE aufeinanderfolgende Lauf mit demselben Befund", erfuellt
+        # also "nach zwei Laeufen" bereits beim Uebergang. Zusaetzlich (Pitfall-Klasse): sobald der
+        # Uebergang 'none' -> 'deprioritized' feuert, setzt ``record_diagnosed_pair`` (gleiche
+        # Aktion+Ursache wie zuvor? nein -> neue Serie) den persistierten ``n_runs_confirmed`` auf 1
+        # zurueck (Serienneustart bei jedem Aktionswechsel, siehe dortiger Docstring) — eine Schwelle
+        # von >= 2 fuer 'deprioritized' wuerde direkt NACH dem Erreichen durch genau diesen Reset
+        # wieder unter die Schwelle fallen und in einer 'none'/'deprioritized'-Oszillation ohne
+        # jemals 'denylist' zu erreichen enden. Die Schwelle >= 1 ist deckungsgleich mit der
+        # Reset-Landestelle (1) und daher selbstverstaerkend (dieselbe Konstruktion wie der
+        # 'signal_quality'-Zweig oben, ``elif n_runs_confirmed >= 1: action = 'deprioritized'``).
+        if n_runs_confirmed >= 4:
+            action = "denylist"
+        elif n_runs_confirmed >= 1:
+            action = "deprioritized"
+        else:
+            action = "none"
     else:
         action = "none"
     result = {

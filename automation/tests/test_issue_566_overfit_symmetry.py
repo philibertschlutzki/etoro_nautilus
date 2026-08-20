@@ -70,10 +70,21 @@ def test_symmetric_divergence_penalizes_both_directions():
 
 # ── Fold-Dispersion: konsistente Folds > glückliche Folds ────────────────────────────────────
 def test_fold_dispersion_penalizes_lucky_spread():
-    """Gleicher Median-OOS-Sortino (5), aber unterschiedliche Fold-Streuung ⇒ konsistent gewinnt."""
+    """Vormals (Akzeptanzkriterium #565): gleicher Median-OOS-Sortino (5), aber unterschiedliche
+    Fold-Streuung ⇒ konsistent gewinnt.
+
+    Issue #1068/#1218 (Katalog #1196-1221, supersedes #565s Fold-Dispersions-Hälfte) —
+    ``fold_dispersion`` trug auf der seit #614/#630 geltenden psr_z-Base < 1% der Reward-Streuung
+    in 14/14 Referenz-Läufen und ist seither retiriert (code-seitig auf 0.0 gezwungen,
+    ``reward.RETIRED_REWARD_TERMS``) — konsistente und glückliche Fold-Muster sind seither
+    ununterscheidbar. Die symmetrische Divergenz-Strafe (#565s ANDERE Hälfte, siehe
+    ``test_oos_luck_penalized_vs_aligned``/``test_symmetric_divergence_penalizes_both_directions``
+    oben) bleibt davon unberührt aktiv."""
     consistent = _reward(_m(5.0, 5.0, fold_sortinos=[5.0, 5.0, 5.0, 5.0]))   # pstdev 0
     lucky = _reward(_m(5.0, 5.0, fold_sortinos=[1.0, 3.0, 7.0, 9.0]))         # Median 5, hohe Streuung
-    assert consistent > lucky, "Niedrigere Fold-Streuung (konsistent) muss höheren Reward liefern."
+    assert consistent == pytest.approx(lucky), (
+        "Seit #1068/#1218 ist fold_dispersion retiriert -- die Fold-Streuung darf den Reward "
+        "nicht mehr unterscheiden.")
 
 
 def test_fold_dispersion_requires_two_folds():
@@ -98,6 +109,8 @@ def test_legacy_one_sided_rewards_oos_luck_higher_the_defect():
 
 
 def test_production_config_enables_symmetry_and_dispersion():
+    """Issue #1068/#1218 — fold_dispersion_weight ist seither bewusst 0.0 (Term retiriert); die
+    symmetrische Divergenz-Strafe (die andere #565-Hälfte) bleibt unveraendert aktiv."""
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
     assert cfg.get("overfit_divergence_mode") == "symmetric"
-    assert cfg.get("fold_dispersion_weight", 0) > 0
+    assert cfg.get("fold_dispersion_weight") == 0.0

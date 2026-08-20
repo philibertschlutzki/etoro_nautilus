@@ -102,11 +102,17 @@ def test_golden_trades_over_the_box_trip_the_guard_when_material():
     assert above_tolerance.actual["S/X"] > 0.0
 
 
-# ── check_counter_partition_consistency (#972) ────────────────────────────────────────────────────
+# ── check_counter_partition_consistency (#972, Scope-Fix #1050/#1199) ─────────────────────────────
+# Issue #1050/#1199 — der Check konsumiert seit diesem Fix die RUN-SCOPED Felder
+# ``plateau_n_evaluated_run``/``plateau_counter_breakdown_run`` (scope-konsistent mit ``n_trials``),
+# nicht mehr die STORE-SCOPED ``plateau_n_evaluated``/``plateau_counter_breakdown`` (die weiterhin
+# existieren, aber ausschliesslich die Plateau-Stop-ENTSCHEIDUNG tragen). Diese Tests wurden auf die
+# ``_run``-Feldnamen umgestellt; ein dedizierter Scope-Regressionstest liegt in
+# ``test_issue_1050_1199_counter_partition_run_scope.py``.
 def test_check_counter_partition_consistency_passes_when_breakdown_sums_to_n_trials():
     result = inv.check_counter_partition_consistency([{
-        "strategy": "S", "symbol": "X", "n_trials": 67, "plateau_n_evaluated": 47,
-        "plateau_counter_breakdown": {
+        "strategy": "S", "symbol": "X", "n_trials": 67, "plateau_n_evaluated_run": 47,
+        "plateau_counter_breakdown_run": {
             "invalidated_timebox": 20, "invalidated_trade_cap": 0, "discarded_is_gate": 0,
             "window_unreachable": 0, "not_evaluated": 0,
         },
@@ -119,14 +125,17 @@ def test_check_counter_partition_consistency_fails_when_survivors_and_breakdown_
     Zähler) summiert sich NICHT auf n_trials=67 — der Widerspruch wird jetzt maschinell erkannt."""
     result = inv.check_counter_partition_consistency([{
         "strategy": "DynamicBreakoutStrategy", "symbol": "GSAT.ETORO", "n_trials": 67,
-        "plateau_n_evaluated": 47,
-        "plateau_counter_breakdown": {
+        "plateau_n_evaluated_run": 47,
+        "plateau_counter_breakdown_run": {
             "invalidated_timebox": 0, "invalidated_trade_cap": 0, "discarded_is_gate": 0,
             "window_unreachable": 0, "not_evaluated": 0,
         },
     }])
     assert result.passed is False
     assert "DynamicBreakoutStrategy/GSAT.ETORO" in result.actual
+    # Issue #1050/#1199 Fix Punkt 2 — 0-Zerlegung bei n_trials > n_evaluated ist BREAKDOWN_NOT_
+    # POPULATED (die Kategorien wurden nie befuellt), keine generische PARTITION_MISMATCH.
+    assert result.actual["DynamicBreakoutStrategy/GSAT.ETORO"]["reason"] == "BREAKDOWN_NOT_POPULATED"
 
 
 def test_check_counter_partition_consistency_noop_without_plateau_telemetry():

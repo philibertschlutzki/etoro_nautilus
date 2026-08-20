@@ -726,6 +726,14 @@ _DELIBERATELY_UNWIRED_INVARIANT_CHECKS: tuple[str, ...] = (
     "check_data_span",
     "check_deployment_gate_completeness",
     "check_invariant_coverage",
+    # Issue #1066/#1216 (Katalog #1196-1221, P2) — SELBSTREFERENZ: dieser Check prueft, ob DIESES
+    # Report-Artefakt geschrieben wurde (``sweep.py`` ruft ihn NACH dem Schreibversuch auf, siehe
+    # dortige Aufrufstelle) — er kann strukturell NIE im eigenen ``invariant_checks``-Strom stehen,
+    # weil die Frage "wurde DIESE Datei geschrieben" erst beantwortbar ist, nachdem der Report
+    # (inklusive seines eigenen Invarianten-Stroms) bereits serialisiert wurde. Sein Ergebnis steht
+    # stattdessen in ``run.json['report_artifact']`` (written/path/bytes/sha256, siehe
+    # sweep.py-Stempelstelle) UND im ``INVARIANT_STREAM_RESULT``-Log-Event.
+    "check_report_artifact_written",
 )
 
 
@@ -873,6 +881,95 @@ def _median_of_sampled_param(
     if default_value is not None:
         return float(default_value), "strategy_default"
     return None, "unavailable"
+
+
+def _within_study_stop_calibration_pairs(trial_attrs: list[dict]) -> tuple[list[float], list[float]]:
+    """Issue #1056/#1205 — je-Trial-Paare (gesampelter ``atr_trailing_multiplier``, gemessene
+    ``oos_stop_distance_bps_median`` aus #1054/#1203) EINER Study, für die WITHIN-STUDY-
+    Spearman-Korrelation in ``invariants.check_trailing_stop_risk_calibration_acceptance``.
+
+    Root-Cause #1056: die vormalige Korrelation rechnete über 13-14 STUDY-MEDIANE (ein Punkt je
+    Study) — über Studies hinweg ist diese Grösse durch die Strategie-Komposition konfundiert
+    (Haltedauer, Session-Verankerung, ATR-Floor-Bindung unterscheiden sich je Strategie/Symbol).
+    Innerhalb EINER Study (fixe Strategie, fixes Symbol) variiert nur der gesampelte Multiplikator
+    selbst — die hier gelieferten Paare sind die datenseitige Grundlage für eine unkonfundierte
+    Korrelation."""
+    k_values: list[float] = []
+    d_values: list[float] = []
+    for a in trial_attrs or []:
+        k = (a.get("sampled_params") or {}).get("atr_trailing_multiplier")
+        d = a.get("oos_stop_distance_bps_median")
+        if k is None or d is None or k <= 0:
+            continue
+        k_values.append(float(k))
+        d_values.append(float(d))
+    return k_values, d_values
+
+
+def _within_study_stop_calibration_spearman(trial_attrs: list[dict]) -> tuple[float | None, int]:
+    """Issue #1056/#1205 Fix Punkt 1 — Spearman(atr_trailing_multiplier, gemessene stop_distance_bps)
+    INNERHALB einer Study (siehe ``_within_study_stop_calibration_pairs``-Docstring). Rueckgabe
+    ``(rho, n_pairs)``; ``rho=None`` bei ``n_pairs < 3`` (Rangkorrelation unter 3 Punkten nicht
+    definierbar, dieselbe Untergrenze wie ``reward._spearman_rank_correlation``) — der Aufrufer
+    (``invariants.check_trailing_stop_risk_calibration_acceptance``) aggregiert die je-Study-Werte
+    n-gewichtet über alle Studies, statt hier bereits ein Study-lokales Urteil zu fällen."""
+    k_values, d_values = _within_study_stop_calibration_pairs(trial_attrs)
+    if len(k_values) < 3:
+        return None, len(k_values)
+    return _reward._spearman_rank_correlation(k_values, d_values), len(k_values)
+
+
+def _effective_stop_ratio_for_trial(trial_attrs_entry: dict) -> float | None:
+    """Issue #1053/#1202 — ``realized_stop_loss_ratio`` aus DEMSELBEN Trial (kein Quotient aus zwei
+    UNABHAENGIG über verschiedene Trial-Teilmengen gebildeten Aggregaten): (dieses Trials gemessener
+    mittlerer Stop-Verlust) / ((dieses Trials gesampelter ``atr_trailing_multiplier``) × (dieses
+    Trials gemessenes ``atr_median_bps``))."""
+    k = (trial_attrs_entry.get("sampled_params") or {}).get("atr_trailing_multiplier")
+    atr = trial_attrs_entry.get("oos_atr_median_bps")
+    loss = trial_attrs_entry.get("oos_gross_loss_mean_bps_trailing_stop")
+    if k is None or atr is None or loss is None:
+        return None
+    denom = float(k) * float(atr)
+    if denom <= 0:
+        return None
+    return float(loss) / denom
+
+
+def _effective_stop_ratio_cohort(
+    trial_attrs: list[dict], *, min_trailing_stop_exits_per_trial: int = 3,
+) -> tuple[float | None, int]:
+    """Issue #1053/#1202 (P1) — Median des PER-TRIAL ``_effective_stop_ratio_for_trial`` über die
+    "eligible Kohorte" (Trials mit >= ``min_trailing_stop_exits_per_trial`` nachweislichen
+    TRAILING_STOP-Exits IN DIESEM EINEN TRIAL), konsumiert von
+    ``invariants.check_effective_stop_distance``.
+
+    Symptom (B-7): über vier TSLA-Läufe auf identischer Datenlage FAILte
+    ``check_effective_stop_distance`` mal, mal nicht, mit Werten 10,2049-13,3619.
+
+    Root-Cause: die vormalige Berechnung bildete den Quotienten aus ZWEI UNABHÄNGIG über die
+    GESAMTE Study gemittelten Grössen (Nenner: ``atr_trailing_multiplier_median · atr_median_bps``
+    über ALLE Trials unbedingt; Zähler: ``gross_loss_median_bps_trailing_stop`` NUR über Trials MIT
+    mindestens einem Stop-Exit) — Zähler- und Nenner-Median liefen über INKONSISTENTE
+    Trial-Teilmengen. Zusätzlich exploriert Optunas TPE-Sampler in jedem Re-Run unterschiedliche
+    Punkte im Multiplikator-Raum (empirisch bestätigt: ``atr_trailing_multiplier_median`` driftete
+    zwischen vier identisch konfigurierten TSLA-Läufen von 0,84 bis 1,42 bei GLEICHER Trial-Zahl,
+    120/100) — der resultierende Quotient driftete dadurch RUN-ZU-RUN, ohne dass sich die
+    zugrundeliegende Datenlage änderte (die konkreten Report-Werte 10,2049/13,3619 aus dem
+    #1202-Symptom sind in dieser Sandbox über echte Lauf-Artefakte reproduzierbar).
+
+    Fix: Zähler UND Nenner werden IMMER auf demselben Trial gebildet (``_effective_stop_ratio_for_
+    trial``); der Median über diese Kohorte ist eine STUDY-EIGENSCHAFT (nicht die Eigenschaft des
+    jeweils gewählten Gewinner-Trials, siehe ``winner_effective_stop_ratio`` für dessen separate
+    Telemetrie) und robuster gegen die Sampler-Explorationsvarianz als der Quotient zweier getrennt
+    gebildeter Aggregate."""
+    ratios = [
+        ratio for a in (trial_attrs or [])
+        if int(a.get("oos_n_trailing_stop_losses") or 0) >= min_trailing_stop_exits_per_trial
+        and (ratio := _effective_stop_ratio_for_trial(a)) is not None
+    ]
+    if not ratios:
+        return None, 0
+    return statistics.median(ratios), len(ratios)
 
 
 def _study_record(proposal: dict, study,
@@ -1347,6 +1444,22 @@ def _study_record(proposal: dict, study,
             trial_attrs, "atr_trailing_multiplier", default_from=_strategy_defaults_entry))
     _max_bars_in_trade_median, _max_bars_in_trade_median_source = _median_of_sampled_param(
         trial_attrs, "max_bars_in_trade", default_from=_strategy_defaults_entry)
+    # Issue #1056/#1205 — WITHIN-STUDY-Kalibrierungs-Rohmaterial (siehe
+    # _within_study_stop_calibration_spearman-Docstring); konsumiert von
+    # invariants.check_trailing_stop_risk_calibration_acceptance Kriterium 1.
+    _stop_calibration_spearman, _stop_calibration_n_pairs = _within_study_stop_calibration_spearman(
+        trial_attrs)
+    # Issue #1053/#1202 — Kohorten-Median (siehe _effective_stop_ratio_cohort-Docstring), konsumiert
+    # von invariants.check_effective_stop_distance als PRIMAERE Grundlage (ersetzt den vormaligen
+    # Quotienten aus zwei getrennt gebildeten Aggregaten).
+    _effective_stop_ratio_cohort_median, _effective_stop_ratio_cohort_n = _effective_stop_ratio_cohort(
+        trial_attrs)
+    # Issue #1053/#1202 Fix — der GEWINNER-Wert (bestbewerteter Trial) bleibt SEPARAT telemetriert,
+    # fliesst aber NICHT mehr in das blockierende Verdikt ein (das ist jetzt eine Study-, keine
+    # Trial-Eigenschaft). ``scored``/``best_trial`` wurden weiter oben bereits fuer #1067 berechnet.
+    _winner_effective_stop_ratio = (
+        _effective_stop_ratio_for_trial(dict(getattr(best_trial, "user_attrs", {}) or {}))
+        if scored else None)
 
     # Issue #1007/#1159 (Katalog #1170) — siehe ``deflation_n_family_frozen``-Feldkommentar unten:
     # eine rohe ``0`` wird beim Export auf ``None`` + Skip-Grund abgebildet, nie als Zahl exportiert.
@@ -1399,6 +1512,13 @@ def _study_record(proposal: dict, study,
         "n_trials_pruned": study_user_attrs.get("n_trials_pruned"),
         "n_trials_unevaluable": study_user_attrs.get("n_trials_unevaluable"),
         "n_trials_failed": study_user_attrs.get("n_trials_failed"),
+        # Issue #1063/#1213 (Katalog #1196-1221) — Root-Cause des B-9-"0"-Symptoms (§5.3 zeigte
+        # "Guard-dominierte Studies: 0" bei 84-85% Zensur): dieses von run_optimization._emit_
+        # study_summary gestempelte User-Attr (Issue #823 Fix Punkt 4) erreichte den Study-Record
+        # NIE — die Bruecke fehlte komplett (dasselbe Fehlermuster wie #1022/#1171, Pitfall #421).
+        # ``bool(...)`` statt eines rohen ``.get()``, weil das Attr nur bei ``True`` ueberhaupt
+        # gestempelt wird (fehlt sonst) — ``False`` ist hier die korrekte, explizite Norm.
+        "study_guard_dominated": bool(study_user_attrs.get("study_guard_dominated")),
         # Issue #812 — SHA-256 ueber die effektiv wirksame Gate-Konfiguration dieser Study
         # (reward.selection_rule_fingerprint, gestempelt in run_optimization._emit_study_summary).
         # ``None`` fuer Studies aus einem Lauf vor #812 (rueckwaertskompatibel, analog seed_effective).
@@ -1446,6 +1566,9 @@ def _study_record(proposal: dict, study,
         "study_started_at_utc": study_user_attrs.get("study_started_at_utc"),
         "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
         "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
+        # Issue #1067/#1217 — TPE-Surrogat-Fit-Zeit dieser Study (siehe run_optimization.
+        # _WindowedTPESampler-Docstring), Rohmaterial fuer invariants.check_search_overhead_share.
+        "tpe_fit_seconds": study_user_attrs.get("tpe_fit_seconds"),
         "worker_id": study_user_attrs.get("worker_id"),
         # Issue #1104 (Katalog #937) — der Commit, auf dem DIESE Study tatsaechlich simuliert
         # wurde (gestempelt vor dem ersten Trial, siehe run_optimization.py), unabhaengig vom
@@ -1560,6 +1683,12 @@ def _study_record(proposal: dict, study,
         # ._optimize_symbol_impl).
         "plateau_n_evaluated": study_user_attrs.get("plateau_n_evaluated"),
         "plateau_counter_breakdown": study_user_attrs.get("plateau_counter_breakdown"),
+        # Issue #1050/#1199 (Katalog #1196-1221) — RUN-SCOPED Gegenstuecke der beiden Felder oben
+        # (run_optimization.floor_plateau_callback, ``completed_run`` statt ``completed``); scope-
+        # konsistent mit dem run-scoped ``n_trials`` unten. invariants.check_counter_partition_
+        # consistency konsumiert seither AUSSCHLIESSLICH diese Variante.
+        "plateau_n_evaluated_run": study_user_attrs.get("plateau_n_evaluated_run"),
+        "plateau_counter_breakdown_run": study_user_attrs.get("plateau_counter_breakdown_run"),
         # Issue #861 — Verteilung der Deckel-Referenzquelle (sampled/default/global) über die
         # ausgewerteten Trials dieser Study.
         "timebox_cap_source_counts": timebox["timebox_cap_source_counts"],
@@ -1621,6 +1750,15 @@ def _study_record(proposal: dict, study,
             if _n_ts_exits_with_fill_lag else None),
         "stop_exit_slippage_bps": _median_of_trial_field(
             trial_attrs, "oos_stop_exit_slippage_bps_median"),
+        # Issue #1059/#1208 — dieselbe Groesse, aber HOLDOUT-skopiert (aus dem promotierten
+        # Holdout-Re-Evaluations-Pfad, siehe holdout_total_trades-Feldkommentar unten und
+        # _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS["oos_f_realized_median"] fuer dasselbe Muster).
+        # Root-Cause #1208: das obige Feld ist OOS-skopiert (Median ueber ALLE Sweep-Trials dieser
+        # Study), stand aber in summary_de.py OHNE Scope-Kennzeichnung direkt unter den
+        # Holdout-Ertragszahlen — eine Study mit 0 Holdout-Trades (z. B. verworfen/nicht promotiert)
+        # trug dort trotzdem einen (OOS-)Wert. Die Holdout-Spalte in summary_de.py bleibt ``k. A.``,
+        # solange ``holdout_total_trades`` 0/None ist.
+        "holdout_stop_exit_slippage_bps": holdout_metrics.get("oos_stop_exit_slippage_bps_median"),
         "n_trailing_stop_exits_with_fill_lag_telemetry": _n_ts_exits_with_fill_lag,
         # Issue #1085 (Katalog #866-2), Quelle umgestellt #946/#1112 (Katalog #960) — über alle
         # Trials aufsummierte Dust-Round-Trips (Notional < 5% des Median-Notionals dieser Study,
@@ -1644,6 +1782,25 @@ def _study_record(proposal: dict, study,
         # Stopdistanz + Überschiessen — Root-Cause-Hypothese #1119).
         "bar_range_median_bps": _median_of_trial_field(
             trial_attrs, "oos_bar_range_median_bps"),
+        # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung "realized_loss_bps =
+        # stop_distance_bps_measured + trigger_to_fill_gap_bps" auf Study-Ebene (Median ueber die
+        # Trial-Mediane, analog bar_range_median_bps); Rohmaterial fuer Report §2.4 und
+        # invariants.check_stop_loss_decomposition_identity. Suffix ``_measured`` bewusst UNGLEICH
+        # dem bestehenden ``stop_distance_bps`` (weiter unten in dieser Funktion, algebraisch aus
+        # atr_trailing_multiplier_median · atr_median_bps IMPLIZIERT) — dieselbe #989/#1143-
+        # Unterscheidung (DIREKT gemessen vs. algebraisch impliziert, Pitfall #412 in AGENTS.md);
+        # eine Namenskollision haette hier STILLSCHWEIGEND das direkt gemessene Feld durch das
+        # implizierte ueberschrieben (Reihenfolge-Falle, siehe die spaetere Zuweisung).
+        "stop_distance_bps_measured": _median_of_trial_field(
+            trial_attrs, "oos_stop_distance_bps_median"),
+        "trigger_to_fill_gap_bps": _median_of_trial_field(
+            trial_attrs, "oos_trigger_to_fill_gap_bps_median"),
+        "realized_loss_bps": _median_of_trial_field(
+            trial_attrs, "oos_realized_loss_bps_median"),
+        "n_stop_loss_identity_checked": sum(
+            int(a.get("oos_n_stop_loss_identity_checked") or 0) for a in trial_attrs),
+        "n_stop_loss_identity_violations": sum(
+            int(a.get("oos_n_stop_loss_identity_violations") or 0) for a in trial_attrs),
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
         # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. Issue #1046/#1195 — fehlt der
@@ -1681,6 +1838,24 @@ def _study_record(proposal: dict, study,
         # einem echten, gesampelten Median, statt beide unter demselben Feld zu verstecken.
         "atr_trailing_multiplier_median": _atr_trailing_multiplier_median,
         "atr_trailing_multiplier_median_source": _atr_trailing_multiplier_median_source,
+        # Issue #1056/#1205 — je-Study WITHIN-STUDY-Spearman(atr_trailing_multiplier, gemessene
+        # stop_distance_bps) + Paarzahl, Rohmaterial fuer die n-gewichtete Studies-Aggregation in
+        # invariants.check_trailing_stop_risk_calibration_acceptance.
+        "stop_calibration_spearman_within_study": (
+            round(_stop_calibration_spearman, 4) if _stop_calibration_spearman is not None else None),
+        "stop_calibration_n_pairs_within_study": _stop_calibration_n_pairs,
+        # Issue #1053/#1202 — Kohorten-Median (siehe _effective_stop_ratio_cohort-Docstring), die
+        # NEUE Grundlage fuer invariants.check_effective_stop_distance (ersetzt den vormaligen
+        # Quotienten aus zwei getrennt gebildeten Aggregaten, der RUN-ZU-RUN driftete, obwohl sich
+        # die Datenlage nicht aenderte). ``winner_effective_stop_ratio`` bleibt SEPARAT telemetriert
+        # (Akzeptanzkriterium aus #1202), fliesst aber NICHT in das blockierende Verdikt ein.
+        "effective_stop_ratio_cohort_median": (
+            round(_effective_stop_ratio_cohort_median, 4)
+            if _effective_stop_ratio_cohort_median is not None else None),
+        "effective_stop_ratio_cohort_n": _effective_stop_ratio_cohort_n,
+        "winner_effective_stop_ratio": (
+            round(_winner_effective_stop_ratio, 4)
+            if _winner_effective_stop_ratio is not None else None),
         # Issue #997/#1149 Fix Punkt 2 — dasselbe Muster fuer max_bars_in_trade (die Zeitbox greift
         # ebenfalls unabhaengig davon, ob die Strategie sie sampelt).
         "max_bars_in_trade_median": _max_bars_in_trade_median,
@@ -1785,6 +1960,11 @@ def _study_record(proposal: dict, study,
         # (holdout_total_return, holdout_expectancy_notional_weighted, holdout_total_trades)
         # algebraisch implizierten Wert als primaeres Entscheidungskriterium, sofern verfuegbar.
         "holdout_f_realized_median": holdout_metrics.get("oos_f_realized_median"),
+        # Issue #1060/#1209 (Katalog #1196-1221) — das MAXIMUM derselben direkt gemessenen Serie
+        # (rt_notional / equity_at_entry je Round-Trip); Rohmaterial fuer invariants.check_sizing_
+        # cap_enforcement (ein Sizing-Cap-Verstoss ist ein Worst-Case-Ereignis, das der Median
+        # strukturell verwaescht).
+        "holdout_f_realized_max": holdout_metrics.get("oos_f_realized_max"),
         # Issue #945/#1111 — die KANONISCHE Grösse: dieselbe Basis, aus der die Kostenstress-Werte
         # abgeleitet werden UND die seither berichtet/sortiert wird (summary_de.py Abschnitt 2.1).
         "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),
@@ -1998,17 +2178,103 @@ def _study_record(proposal: dict, study,
 
 def _budget_execution_summary(studies_out: list[dict[str, Any]]) -> dict[str, Any]:
     """Issue #770 — Median + p10 von ``budget_executed_fraction`` ueber alle Studies eines Laufs
-    (Sweep-Ebenen-Aggregation, Akzeptanzkriterium #770). ``None``-Felder bei leerer Kohorte."""
+    (Sweep-Ebenen-Aggregation, Akzeptanzkriterium #770). ``None``-Felder bei leerer Kohorte.
+
+    Issue #1065/#1215 (P2, Katalog #1196-1221) — Root-Cause: Median UND p10 werden ueber STUDIES
+    gebildet, waehrend das eigentliche Defizit eine SUMME ueber TRIALS ist — einzelne Studies mit
+    Ausfall (z. B. ein abgebrochener Wallclock-Preflight, siehe ``stop_reason``) verschwinden im
+    Median/p10, solange die MEHRHEIT der Studies ihr Budget voll ausfuehrt (Beweis: ``c429c992``
+    fehlten 5,4% der Trials — 104 von 1940 — bei ``p10=100,0%``, KEIN Perzentil zeigte das an).
+    ``min`` (das striktere, garantiert monoton fallende Minimum ueber ALLE Studies) ergaenzt
+    Median/p10 seit diesem Fix — ein einziger vollstaendiger Ausfall macht ``min=0,0%`` sichtbar,
+    unabhaengig von der Gesamtzahl der Studies."""
     import statistics as _stats
     fractions = sorted(
         r["budget_executed_fraction"] for r in studies_out
         if r.get("budget_executed_fraction") is not None
     )
     if not fractions:
-        return {"median": None, "p10": None, "n": 0}
+        return {"median": None, "p10": None, "min": None, "n": 0}
     median = _stats.median(fractions)
     p10_idx = max(0, min(len(fractions) - 1, int(round(0.10 * (len(fractions) - 1)))))
-    return {"median": round(median, 4), "p10": round(fractions[p10_idx], 4), "n": len(fractions)}
+    return {
+        "median": round(median, 4), "p10": round(fractions[p10_idx], 4),
+        "min": round(fractions[0], 4), "n": len(fractions),
+    }
+
+
+def _budget_deficit_studies(studies_out: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Issue #1065/#1215 Fix Punkt 2 — die NAMENTLICHE Liste der Studies, deren
+    ``n_trials_completed`` unter ihrem eigenen ``n_trials_budgeted`` liegt (Ist/Soll/Grund), statt
+    nur einer aggregierten Rate.
+    Konsumiert von summary_de.py, wenn ``Σ n_trials < Σ n_trials_budget`` (Akzeptanzkriterium:
+    "Jeder Lauf mit Σ trials < Σ budget nennt die verantwortlichen Studies").
+
+    ``reason`` (vom Issue als ``abort_reason`` bezeichnet) ist ``record['stop_reason']`` — dasselbe
+    Feld, das ``compute_budget_execution`` bereits je Study liefert (kein zweites, paralleles
+    Vokabular fuer denselben Sachverhalt)."""
+    out = []
+    for r in studies_out:
+        # Issue #1065/#1215 — dieselben Feldnamen wie die "Trials gesamt: X von Y budgetiert"-Zeile
+        # (summary_de.py §3.3), NICHT das rohe ``n_trials`` (das zaehlt JEDEN Optuna-TrialState,
+        # ``n_trials_completed``/``n_trials_budgeted`` sind die ``compute_budget_execution``-Groessen,
+        # gegen die die Σ-Bedingung des Akzeptanzkriteriums tatsaechlich gebildet wird).
+        n_completed = r.get("n_trials_completed")
+        n_budgeted = r.get("n_trials_budgeted")
+        if n_completed is None or n_budgeted is None or n_completed >= n_budgeted:
+            continue
+        out.append({
+            "strategy": r.get("strategy"), "symbol": r.get("symbol"),
+            "n_trials_completed": n_completed, "n_trials_budgeted": n_budgeted,
+            "deficit": n_budgeted - n_completed, "stop_reason": r.get("stop_reason"),
+        })
+    return out
+
+
+# Issue #1071/#1221 (Katalog #1196-1221, P2) — dieselbe relative Schwelle, die der Issue-Text
+# explizit nennt ("n_periods unter 1/6 des Symbol-Medians, typisch Squeeze, n_periods 5,0"). Bewusst
+# EIGENSTAENDIG von ``sweep._study_oos_n_periods_median``/``min_oos_periods_for_family`` (der
+# DSR-Multiplizitaets-Ausschluss, ein ABSOLUTER Konfig-Schwellenwert fuer einen ANDEREN Zweck,
+# siehe dortiger Docstring) — hier geht es um die Kommensurabilitaet der symbolweiten Rangliste
+# (relativ zum jeweils EIGENEN Symbol-Median), nicht um eine belastbare DSR-Stichprobengroesse.
+_ANNUALIZATION_RANKING_MIN_N_PERIODS_FRACTION = 1.0 / 6.0
+
+
+def _annualization_excluded_studies(studies_out: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Issue #1071/#1221 — die NAMENTLICHE Liste der Studies, deren ``oos_n_periods_median`` unter
+    ``1/6`` des MEDIANS ihres EIGENEN Symbols liegt (typischer Fall laut Issue-Text: Squeeze mit
+    ``n_periods≈5,0``, während andere Strategien desselben Symbols deutlich mehr informative
+    Perioden sehen). Diese Studies werden von summary_de.py §2.3 separat ausgewiesen statt
+    stillschweigend in dieselbe Vergleichstabelle wie ihre gut besetzten Symbol-Geschwister
+    gemischt zu werden — ihr annualisierter Sortino beruht auf einer strukturell duennen
+    Beobachtungsbasis, unabhängig davon, wie stabil der (seit diesem Fix bar-achsen-basierte,
+    symbolweite) Annualisierungsfaktor selbst ist.
+
+    Nur Symbole mit >= 2 Studies mit definiertem ``oos_n_periods_median`` haben ueberhaupt einen
+    Median, gegen den eine relative Schwelle sinnvoll ist (ein Einzel-Study-Symbol hat keinen
+    Vergleichspartner)."""
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for r in studies_out:
+        symbol = r.get("symbol")
+        median = r.get("oos_n_periods_median")
+        if symbol is None or median is None:
+            continue
+        by_symbol.setdefault(symbol, []).append(r)
+    out: list[dict[str, Any]] = []
+    for symbol, records in by_symbol.items():
+        if len(records) < 2:
+            continue
+        symbol_median = statistics.median(r["oos_n_periods_median"] for r in records)
+        threshold = symbol_median * _ANNUALIZATION_RANKING_MIN_N_PERIODS_FRACTION
+        for r in records:
+            if r["oos_n_periods_median"] < threshold:
+                out.append({
+                    "strategy": r.get("strategy"), "symbol": symbol,
+                    "oos_n_periods_median": r["oos_n_periods_median"],
+                    "symbol_oos_n_periods_median": round(symbol_median, 2),
+                    "threshold": round(threshold, 2),
+                })
+    return sorted(out, key=lambda e: (str(e["symbol"]), str(e["strategy"])))
 
 
 def _diagnosed_pairs_all() -> list[dict[str, Any]]:
@@ -2092,6 +2358,71 @@ def _diagnosed_pairs_section(studies_out: list[dict[str, Any]] | None = None) ->
             "source": "diagnosis_cache",
         }
     return sorted(by_key.values(), key=lambda e: (str(e.get("strategy")), str(e.get("symbol"))))
+
+
+def _writeback_search_stagnation_diagnoses(
+    search_made_progress_offenders: dict[str, float] | None,
+    structural_zero_eligible_missing: list[str] | None,
+    *, run_id: str, work_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Issue #1069/#1219 (P2, Katalog #1196-1221) — "Diagnose ohne Konsequenz": ``check_search_
+    made_progress``-FAIL und ``check_structural_zero_eligible_has_diagnosis``-FAIL werden BEIDE
+    gemeldet (seit #1194 im Report sichtbar), aber KEINER der beiden Befunde erreicht bisher den
+    #681/#761-Diagnose-Rückschrieb — dieselben stagnierenden (strategy, symbol)-Paare werden bei
+    JEDEM Lauf neu enumeriert, ohne dass der wiederholte Befund je eine Konsequenz hat (Root-Cause
+    #1219, dieselbe Fehlerklasse wie #681 vor seinem eigenen Fix).
+
+    Fix: beide Befundmengen werden hier zu (strategy, symbol)-Paaren vereinigt und über die
+    bestehende ``sweep_diagnostics.recommend_diagnosis_action``/``record_diagnosed_pair``-Pipeline
+    (denselben Cache wie jeder andere Diagnose-Pfad, ``diagnostic_writeback_enabled`` gilt
+    unverändert) zurückgeschrieben — mit einer eigenständigen ``binding_cause`` (``'search_
+    stagnation'``, siehe dortiger ``recommend_diagnosis_action``-Zweig), NICHT vermischt mit den
+    Trade-Frequenz-Ursachen der PER-STUDY-Rückschriebe in ``run_optimization.py``. ``n_runs_
+    confirmed`` wird hier — wie bei jedem anderen Aufrufer (siehe dortige Vorbild-Stellen) — aus
+    dem VORHERIGEN Cache-Eintrag gelesen (nur, wenn dessen ``binding_cause`` bereits ``'search_
+    stagnation'`` war), NICHT neu erfunden.
+
+    Fail-open je Paar: ein einzelner defekter Eintrag darf den restlichen Report nicht zum Absturz
+    bringen (dieselbe Absicherung wie die ``try/except`` um jeden anderen Rückschrieb-Aufruf in
+    ``run_optimization.py``). Rückgabe: die Liste der tatsächlich erzeugten Empfehlungen (für
+    Tests/Telemetrie), leer, wenn nichts zu tun war."""
+    from automation.optimizer.sweep_diagnostics import (
+        recommend_diagnosis_action, record_diagnosed_pair, load_diagnosed_pairs_cache,
+    )
+    pairs: set[tuple[str, str]] = set()
+    for key in (search_made_progress_offenders or {}):
+        strat, _, sym = str(key).partition("/")
+        if strat and sym:
+            pairs.add((strat, sym))
+    for key in (structural_zero_eligible_missing or []):
+        strat, _, sym = str(key).partition("/")
+        if strat and sym:
+            pairs.add((strat, sym))
+    if not pairs:
+        return []
+    try:
+        cache = load_diagnosed_pairs_cache(work_dir)
+    except Exception:
+        cache = {}
+    recommendations: list[dict[str, Any]] = []
+    for strategy, symbol in sorted(pairs):
+        try:
+            prior = cache.get((strategy, symbol))
+            n_runs_confirmed = (
+                int(prior.get("n_runs_confirmed", 0))
+                if prior and prior.get("binding_cause") == "search_stagnation" else 0
+            )
+            rec = recommend_diagnosis_action(
+                strategy, symbol, {"binding_cause": "search_stagnation"},
+                n_runs_confirmed=n_runs_confirmed,
+            )
+            record_diagnosed_pair(rec, work_dir=work_dir, run_id=run_id)
+            recommendations.append(rec)
+        except Exception:
+            _log.debug(
+                "Issue #1069/#1219: search_stagnation-Rueckschrieb fuer %s/%s fehlgeschlagen "
+                "(non-fatal).", strategy, symbol, exc_info=True)
+    return recommendations
 
 
 # Issue #1039/#1188 (Katalog #1188) — dieselbe Schwelle wie confirm.py's ``boundary_overfit``
@@ -3178,9 +3509,32 @@ def _build_report(
     # Store-Scan als EIGEN einstuft, aber der Aufrufer nicht kannte, ist eine Aufrufer-
     # Unvollstaendigkeit ausserhalb des Scopes dieses Fixes und wird uebersprungen (kein stiller
     # Study-Zuwachs ausserhalb der vom Aufrufer kontrollierten Kohorte).
-    _already_seen_pairs = {
+    #
+    # Issue #1051/#1200 (Katalog #1196-1221, P1) — Root-Cause: dieses Set wurde bisher aus dem
+    # ROHEN ``proposals``-Parameter gebildet (JEDER vom Aufrufer uebergebene Eintrag, auch wenn er
+    # weiter oben als Fremdlauf erkannt und mit ``continue`` von ``studies_out``/
+    # ``filtered_proposals`` ausgeschlossen wurde). Bei einem warm-gestarteten Lauf enthaelt
+    # ``proposals`` haeufig (strategy, symbol)-Paare AELTERER Laeufe desselben Stores — jedes
+    # ``proposal_*.json`` auf der Platte mit einem PASSENDEN Paar-Namen zaehlte dadurch ueber den
+    # Fast-Path unten SOFORT als ``n_own``, UNABHAENGIG davon, welcher run_id seine Trials
+    # tatsaechlich trugen (der eigentliche Nachweis-Zweig weiter unten wurde nie erreicht). Das
+    # erklaert die beobachtete Signatur exakt: ``n_own`` als Vielfaches von ``n_studies`` (56, 70,
+    # 98, 112 bei 14 Studies je Lauf — je ein Vielfaches der Anzahl warm gestarteter Vorlaeufe).
+    # Fix: NUR ``filtered_proposals`` (die Teilmenge, die den run_id-Eigentumsnachweis oben
+    # TATSAECHLICH bestanden hat) zaehlt ueber den Fast-Path unten als per-Konstruktion-eigen.
+    # ``_main_loop_foreign_pairs`` sind Paare, die der Aufrufer zwar uebergeben hat, die der
+    # Haupt-Loop oben aber bereits POSITIV als Fremdlauf erkannt und in
+    # ``studies_excluded_foreign_run`` eingetragen hat — sie zaehlen unten zu ``n_foreign``, ohne
+    # ein REDUNDANTES zweites ``studies_excluded_foreign_run``-Listenelement zu erzeugen. Jedes
+    # andere Proposal auf der Platte (dem Aufrufer nie uebergeben) durchlaeuft den vollen,
+    # trial-scoped Nachweis unten.
+    _already_seen_own_pairs = {
+        (p.get("strategy"), p.get("symbol")) for p in filtered_proposals if isinstance(p, dict)
+    }
+    _all_caller_pairs = {
         (p.get("strategy"), p.get("symbol")) for p in proposals if isinstance(p, dict)
     }
+    _main_loop_foreign_pairs = _all_caller_pairs - _already_seen_own_pairs
     try:
         _store_scan_paths = sorted(
             p for p in Path(WORK).glob("proposal_*.json") if (_load_json(p) or {}).get("symbol"))
@@ -3199,11 +3553,30 @@ def _build_report(
     _n_store_scan_own = 0
     _n_store_scan_foreign = 0
     _n_store_scan_unclassifiable = 0
+    # Issue #1051/#1200 — Akkumulator NUR fuer Paare, die DIESER Scan-Loop selbst bereits
+    # klassifiziert hat (mehrere ``proposal_*.json`` fuer dasselbe Paar auf der Platte); getrennt
+    # von ``_already_seen_own_pairs``/``_main_loop_foreign_pairs`` (die den Haupt-Loop oben
+    # widerspiegeln), damit keine der drei Quellen die andere ueberschreibt.
+    _already_seen_pairs: set[tuple] = set()
+    # Issue #1067/#1217 Fix Punkt 3 — Wallclock dieses Scans, konsumiert von invariants.check_
+    # search_overhead_share (zusammen mit tpe_fit_seconds aus run_optimization.py).
+    import time as _time
+    _store_scan_t0 = _time.perf_counter()
     for _scan_path in _store_scan_paths:
         _scan_proposal = _load_json(_scan_path) or {}
         _scan_key = (_scan_proposal.get("strategy"), _scan_proposal.get("symbol"))
-        if _scan_key in _already_seen_pairs:
+        if _scan_key in _already_seen_own_pairs:
             _n_store_scan_own += 1
+            continue
+        if _scan_key in _main_loop_foreign_pairs:
+            # Issue #1051/#1200 — der Haupt-Loop oben hat dieses Paar BEREITS positiv als
+            # Fremdlauf erkannt und in ``studies_excluded_foreign_run`` eingetragen; hier NUR die
+            # Zahl fortschreiben, kein redundanter zweiter Listeneintrag.
+            _n_store_scan_foreign += 1
+            continue
+        if _scan_key in _already_seen_pairs:
+            # Ein weiteres proposal_*.json fuer ein Paar, das DIESER Scan-Loop bereits (weiter
+            # oben in derselben Iteration) klassifiziert hat — nicht doppelt zaehlen.
             continue
         _scan_study = _load_study_for_proposal(_scan_proposal)
         _scan_trials = (
@@ -3251,8 +3624,13 @@ def _build_report(
         # Issue #1004/#1156 — dritte, eigene Zahl statt eines stillen Rueckfalls auf n_own.
         "n_unclassifiable": _n_store_scan_unclassifiable,
         "scan_source": "proposal_glob",
+        # Issue #1067/#1217 — Wallclock DIESES Scans (siehe Docstring an der Zeitmessung oben).
+        "store_scan_seconds": round(_time.perf_counter() - _store_scan_t0, 4),
     }
     all_checks.append(("global", _inv.check_store_scan_coherence(store_scan, len(studies_out))))
+    # Issue #1067/#1217 Fix Punkt 3 — verwendet DENSELBEN store_scan_seconds-Wert wie oben.
+    all_checks.append(("global", _inv.check_search_overhead_share(
+        studies_out, store_scan_seconds=store_scan.get("store_scan_seconds"))))
 
     # Issue #1023 Akzeptanzkriterium 2 — ist die gefilterte Menge leer, WAEHREND der Store nicht
     # leer war (jedes Proposal wurde als fremder Lauf ausgeschlossen), ist das kein leerer, sondern
@@ -3338,8 +3716,16 @@ def _build_report(
     # Issue #1091 (Katalog #924) — neue Invariante: weicht die eingefrorene von der zur
     # Berichtszeit beobachteten Zahl um mehr als 5 % ab, ist die Berichtskohorte unvollstaendig
     # (ein Zwischenreport, oder eine erneute #1086-Kontamination).
+    # Issue #1052/#1201 (Katalog #1196-1221) — per-Strategie-Zerlegungen (bereits oben fuer die
+    # Symbol-Summen berechnet) plus der Zwischenreport-Diskriminator: ``run_status == "in_progress"``
+    # ist dieselbe Unterscheidung wie "kein sweep_completed-Ereignis liegt vor" (beide Zustaende
+    # bedeuten: dieser Report wurde MITTEN im laufenden Sweep gelesen, bevor alle Studies exportiert
+    # waren) — ohne einen zweiten Event-Log-Lesezugriff einzufuehren.
     all_checks.append((
-        "global", _inv.check_family_n_stability(_n_family_frozen_by_symbol, _n_family_by_symbol)))
+        "global", _inv.check_family_n_stability(
+            _n_family_frozen_by_symbol, _n_family_by_symbol,
+            frozen_stage1=_n_family_frozen_stage1, observed_stage1=n_family_stage1,
+            sweep_completed=(run_status != "in_progress") if run_status is not None else None)))
 
     # Issue #984/#1138 (Katalog #986, Pitfall #409 in AGENTS.md) — #904-Regressionswaechter: bei
     # promotion_family_scope='per_strategy' muessen zwei Studies DESSELBEN Symbols mit
@@ -3490,6 +3876,10 @@ def _build_report(
     # Issue #1028 (Katalog #866) — Sizing-Identität + ATR-Skalenhomogenität (Datenintegritäts-
     # Wächter gegen die TSLA-Signatur des Katalogs; siehe jeweiliger Docstring).
     all_checks.append(("global", _inv.check_sizing_identity_coherence(studies_out)))
+    # Issue #1060/#1209 (Katalog #1196-1221) — Abnahmemessung fuer den harten Aggregat-Exposure-
+    # Deckel in hourly_strategy_base._compute_quantity: das GEMESSENE Maximum (nicht der Median)
+    # darf trade_amount_pct nur um die Rundungs-/Slippage-Toleranz uebersteigen.
+    all_checks.append(("global", _inv.check_sizing_cap_enforcement(studies_out)))
     # Issue #1071 — die per-Symbol ATR-Floor-Auflösung macht den Mechanismus (Floor-Bindung vs.
     # echte Sprungstelle) messbar, statt eine Ursache zu behaupten (siehe Docstring dort).
     _cost_basis_symbols = sorted({r.get("symbol") for r in studies_out if r.get("symbol")})
@@ -3540,6 +3930,29 @@ def _build_report(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
         round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
         min_stop_to_cost_ratio=_min_stop_to_cost_ratio)
+    # Issue #1055/#1204 (Katalog #1196-1221) Fix Punkt 4 — die kalibrierte p50-Slippage je Study
+    # (ueber die Asset-Klasse ihres Symbols aufgeloest), Rohmaterial fuer die verschaerfte
+    # invariants.check_cost_stress_distinctness-Mindestdelta-Pruefung unten. Fail-open: kein
+    # Kalibrierungs-Cache (frischer Store) ⇒ jede Study traegt None (bit-identisch zum Pre-#1204-
+    # Verhalten, die verschaerfte Kriterium wird dann uebersprungen statt zu erraten).
+    try:
+        from automation.optimizer.sweep import read_calibrated_slippage_cache
+        _slippage_calibration = (read_calibrated_slippage_cache(WORK) or {}).get(
+            "slippage_bps_by_asset_class") or {}
+    except Exception:
+        _slippage_calibration = {}
+    if _slippage_calibration:
+        from automation.backtest_runner import _resolve_asset_class_for_symbol
+        for _r in studies_out:
+            try:
+                _ac = _resolve_asset_class_for_symbol(_r.get("symbol"))
+                _r["slippage_p50_bps_calibrated"] = (
+                    _slippage_calibration.get(_ac) or {}).get("p50")
+            except Exception:
+                _r["slippage_p50_bps_calibrated"] = None
+    else:
+        for _r in studies_out:
+            _r["slippage_p50_bps_calibrated"] = None
     atr_scale_homogeneity_check = _inv.check_atr_scale_homogeneity(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol)
     all_checks.append(("global", atr_scale_homogeneity_check))
@@ -3588,6 +4001,15 @@ def _build_report(
         studies_out, round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
         min_stop_to_cost_ratio=_min_stop_to_cost_ratio)))
 
+    # Issue #1058/#1207 (Katalog #1196-1221) — loest den Widerspruch auf, den
+    # check_atr_scale_homogeneity (Floor-Bindung, §5.3) und check_stop_cost_ratio (Verhaeltnis <
+    # 3.0 fuer dieselbe Study) unabhaengig voneinander melden koennen: eine floor-gebundene Study
+    # MUSS das konfigurierte Kostenverhaeltnis einhalten, sonst ist der Floor nicht wirksam
+    # simuliert worden. Dieselben aufgeloesten Werte wie oben wiederverwendet.
+    all_checks.append(("global", _inv.check_atr_floor_enforcement(
+        studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
+        min_stop_to_cost_ratio=_min_stop_to_cost_ratio)))
+
     # Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer #1092/#1094: der Trailing-Stop darf
     # nicht der haeufigste, verlustreichste UND teuerste Ausgang einer Study sein.
     all_checks.append(("global", _inv.check_trailing_stop_loss_share(
@@ -3612,6 +4034,12 @@ def _build_report(
     # derselben Groessenordnung wie EINE Bar-Spanne, UND gleichzeitig ein grosses Vielfaches der
     # konfigurierten Stopdistanz), ist jede Stop-Parametrisierung wirkungslos.
     all_checks.append(("global", _inv.check_stop_loss_vs_bar_range(studies_out)))
+
+    # Issue #1054/#1203 (Katalog #1196-1221) — die algebraisch garantierte Verlust-Zerlegung
+    # realized_loss_bps == stop_distance_bps + trigger_to_fill_gap_bps muss fuer >= 99,9% der
+    # TRAILING_STOP-Round-Trips halten; ein FAIL hier entwertet #1204/#1205 (Kostenkalibrierung),
+    # die auf denselben Feldern aufbauen.
+    all_checks.append(("global", _inv.check_stop_loss_decomposition_identity(studies_out)))
 
     # Issue #973/#1127 (Pitfall #406 in AGENTS.md) — alarmiert VON SICH AUS, wenn ein Telemetriefeld
     # ueber die gesamte Grundgesamtheit konstant null ist (z. B. der 112/112-bar_range_median_bps-
@@ -3714,8 +4142,9 @@ def _build_report(
     # diagnosed_pairs-Eintrag hinterlassen (siehe check_structural_zero_eligible_has_diagnosis-
     # Docstring). Geprüft gegen dieselbe, gemergte Liste, die der Report unter cross_study.
     # diagnosed_pairs zeigt (_diagnosed_pairs_section, jetzt cache- UND live-derivation-gespeist).
-    all_checks.append(("global", _inv.check_structural_zero_eligible_has_diagnosis(
-        studies_out, _diagnosed_pairs_section(studies_out))))
+    structural_zero_eligible_diagnosis_check = _inv.check_structural_zero_eligible_has_diagnosis(
+        studies_out, _diagnosed_pairs_section(studies_out))
+    all_checks.append(("global", structural_zero_eligible_diagnosis_check))
 
     # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
     # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen
@@ -3796,6 +4225,22 @@ def _build_report(
     # dass der TPE-Sampler keinen Gradienten gefunden hat.
     search_made_progress_check = _inv.check_search_made_progress(studies_out)
     all_checks.append(("global", search_made_progress_check))
+
+    # Issue #1069/#1219 (P2, Katalog #1196-1221) — "Diagnose ohne Konsequenz": beide FAIL-Befunde
+    # oben (Suchstagnation UND STRUCTURAL_ZERO_ELIGIBLE ohne Diagnose) werden jetzt zusätzlich in
+    # den #681/#761-Rückschrieb-Cache geschrieben (siehe _writeback_search_stagnation_diagnoses-
+    # Docstring) — nach 2 Läufen mit demselben Befund für dasselbe Paar 'deprioritized', nach 4
+    # 'denylist'. Fail-open (die Funktion selbst fängt Fehler je Paar ab); ein Fehlschlag hier darf
+    # den Report nicht verhindern.
+    try:
+        _writeback_search_stagnation_diagnoses(
+            search_made_progress_check.actual,
+            (structural_zero_eligible_diagnosis_check.actual or {}).get("missing_diagnosis_for"),
+            run_id=run_id,
+        )
+    except Exception:
+        _log.debug("Issue #1069/#1219: search_stagnation-Rueckschrieb-Batch fehlgeschlagen "
+                   "(non-fatal).", exc_info=True)
 
     # Issue #919 Fix 4 — jede Lücke zwischen dem je-Study aufsummierten Exit-Reason-Histogramm
     # und der tatsächlichen Round-Trip-Zahl bedeutet einen Exit-Pfad ohne Order-Tag-Attribution.
@@ -4135,6 +4580,15 @@ def _build_report(
             # im Katalog gefordert: die 44,2%/52,6%-Luecken dieses Katalogs waren nur ueber externe
             # Log-Rekonstruktion sichtbar).
             "budget_executed_fraction": _budget_execution_summary(studies_out),
+            # Issue #1065/#1215 — die namentliche Liste der Studies mit Trial-Defizit (siehe
+            # _budget_deficit_studies-Docstring), damit summary_de.py "Σ trials < Σ budget" nicht
+            # nur als aggregierte Rate, sondern mit den VERANTWORTLICHEN Studies zeigen kann.
+            "budget_deficit_studies": _budget_deficit_studies(studies_out),
+            # Issue #1071/#1221 — die namentliche Liste der Studies, deren oos_n_periods_median
+            # unter 1/6 des Medians ihres eigenen Symbols liegt (siehe
+            # _annualization_excluded_studies-Docstring) — von summary_de.py §2.3 separat
+            # ausgewiesen statt in dieselbe Vergleichstabelle gemischt.
+            "annualization_excluded_studies": _annualization_excluded_studies(studies_out),
             # Issue #783 (Akzeptanzkriterium #5) — READY_FOR_PR und PROMOTE_GLOBAL_DEFAULT GETRENNT
             # gezaehlt: beide teilten vorher denselben String, ununterscheidbar in jeder
             # nachgelagerten Automatisierung, die auf "READY_FOR_PR" filtert.

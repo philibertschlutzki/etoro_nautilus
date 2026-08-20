@@ -88,7 +88,8 @@ def test_report_exports_active_bounds_overrides_in_cross_study(tmp_path, monkeyp
     assert ("TrendPullbackStrategy", "ema_period") in names
 
 
-# ── summary_de.py: eigener Abschnitt, nur wenn nicht leer ────────────────────────────────────────
+# ── summary_de.py: Issue #1064/#1214 -- auf run.symbols gefiltert, IMMER gerendert (leer mit
+# erklaerendem Text statt weggelassen, siehe dortiger Fix-Kommentar) ─────────────────────────────
 def _minimal_report(**overrides):
     base = {
         "run_id": "run-1", "run_status": "complete",
@@ -106,23 +107,52 @@ def _minimal_report(**overrides):
     return base
 
 
-def test_section_5_4_shown_when_overrides_present():
-    report = _minimal_report(cross_study={
-        "promotion_outcome_counts": {}, "budget_executed_fraction": {"median": None, "p10": None, "n": 0},
-        "longest_holding_studies": [], "boundary_solutions": [], "diagnosed_pairs": [],
-        "active_bounds_overrides": [{
-            "strategy": "TrendPullbackStrategy", "symbol": "TSLA.ETORO", "parameter": "ema_period",
-            "active_bounds": [5, 25], "default_bounds": [50, 300], "source": "curated",
-            "set_in_run_id": None, "rationale": "Kalibrierlauf X",
-        }],
-    })
+def test_section_5_4_shown_when_overrides_present_for_a_run_symbol():
+    # Issue #1064/#1214 — der Override erscheint nur, wenn sein Symbol unter den STUDIES dieses
+    # Laufs auftaucht (statt des gesamten kuratierten Inventars unabhaengig vom Lauf).
+    report = _minimal_report(
+        studies=[{"strategy": "TrendPullbackStrategy", "symbol": "TSLA.ETORO"}],
+        cross_study={
+            "promotion_outcome_counts": {}, "budget_executed_fraction": {"median": None, "p10": None, "n": 0},
+            "longest_holding_studies": [], "boundary_solutions": [], "diagnosed_pairs": [],
+            "active_bounds_overrides": [{
+                "strategy": "TrendPullbackStrategy", "symbol": "TSLA.ETORO", "parameter": "ema_period",
+                "active_bounds": [5, 25], "default_bounds": [50, 300], "source": "curated",
+                "set_in_run_id": None, "rationale": "Kalibrierlauf X",
+            }],
+        })
     text = summary_de.generate_german_summary(report)
     assert "### 5.4 Aktive Suchraum-Overrides (1)" in text
     assert "TrendPullbackStrategy" in text
     assert "ema_period" in text
+    # Issue #1064/#1214 Fix — set_in_run_id ist fuer 'curated' PER DESIGN None; die Lauf-Spalte
+    # zeigt "curated", kein unbegruendetes "k. A.".
+    assert "| curated |" in text
 
 
-def test_section_5_4_omitted_when_empty():
+def test_section_5_4_filters_out_overrides_for_symbols_not_in_this_run():
+    """Akzeptanzkriterium #1064/#1214: ein NATGAS-Lauf zeigt 0 Zeilen fuer einen TSLA-Override."""
+    report = _minimal_report(
+        studies=[{"strategy": "MeanReversionStrategy", "symbol": "NATGAS.ETORO"}],
+        cross_study={
+            "promotion_outcome_counts": {}, "budget_executed_fraction": {"median": None, "p10": None, "n": 0},
+            "longest_holding_studies": [], "boundary_solutions": [], "diagnosed_pairs": [],
+            "active_bounds_overrides": [{
+                "strategy": "TrendPullbackStrategy", "symbol": "TSLA.ETORO", "parameter": "ema_period",
+                "active_bounds": [5, 25], "default_bounds": [50, 300], "source": "curated",
+                "set_in_run_id": None, "rationale": "Kalibrierlauf X",
+            }],
+        })
+    text = summary_de.generate_german_summary(report)
+    assert "### 5.4 Aktive Suchraum-Overrides (0)" in text
+    assert "TrendPullbackStrategy" not in text
+    assert "keine aktiven Overrides für die Symbole dieses Laufs".lower() in text.lower()
+
+
+def test_section_5_4_always_rendered_with_explanatory_text_when_empty():
+    # Issue #1064/#1214 Fix — Vorher: kein Abschnitt bei leerer Liste (#1040-Vorgabe). Jetzt: der
+    # Abschnitt erscheint IMMER, mit erklaerendem Text statt stillschweigend zu fehlen.
     report = _minimal_report()
     text = summary_de.generate_german_summary(report)
-    assert "5.4 Aktive Suchraum-Overrides" not in text
+    assert "### 5.4 Aktive Suchraum-Overrides (0)" in text
+    assert "keine aktiven Overrides für die Symbole dieses Laufs".lower() in text.lower()

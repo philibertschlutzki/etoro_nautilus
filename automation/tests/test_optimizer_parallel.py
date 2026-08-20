@@ -53,7 +53,12 @@ def test_optimize_reads_sampler_config(monkeypatch, tmp_path):
         sampler_calls.append(kwargs)
         return DummySampler()
 
-    monkeypatch.setattr(ro.optuna.samplers, "TPESampler", mock_sampler)
+    # Issue #1067/#1217 (Katalog #1196-1221) — der Sweep-Pfad instanziiert seither
+    # ``_WindowedTPESampler`` (eine ``optuna.samplers.TPESampler``-Subklasse mit sliding-window
+    # Trial-Slice), nicht mehr ``optuna.samplers.TPESampler`` direkt -- die Subklasse bindet ihre
+    # Basisklasse zur DEFINITIONSZEIT, ein spaeteres Monkeypatchen von
+    # ``optuna.samplers.TPESampler`` faengt den Konstruktoraufruf daher nicht mehr ab.
+    monkeypatch.setattr(ro, "_WindowedTPESampler", mock_sampler)
 
     class DummyStudy:
         study_name = "test"

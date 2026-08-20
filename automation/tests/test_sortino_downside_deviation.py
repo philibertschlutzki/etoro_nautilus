@@ -60,8 +60,14 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
     mean_ret = period_rets1.mean()
     annualization_factor = 252 # Da freq nicht ableitbar ist, faellt es in der Regel auf 252 zurueck, falls nicht gesetzt. Wir ueberschreiben es intern.
 
-    # We must patch _get_annualization_factor to ensure a deterministic factor for comparison
-    with patch("automation.backtest_runner._get_annualization_factor", return_value=252):
+    # We must patch the annualization factor to ensure a deterministic value for comparison.
+    # Issue #1071/#1221 (Katalog #1196-1221) — effective_annualization_factor kommt seit diesem
+    # Fix direkt aus _get_annualization_factor_with_source (bar-achsen-basiert, symbolweit
+    # gecacht), nicht mehr aus dem duennen _get_annualization_factor-Wrapper (der weiterhin
+    # existiert, aber am tatsaechlichen sortino_annualized-Berechnungspfad nicht mehr beteiligt
+    # ist) -- der Patch muss daher an der Stelle greifen, die _compute_sortino() wirklich aufruft.
+    with patch("automation.backtest_runner._get_annualization_factor_with_source",
+              return_value=(252, "config_override")):
         stats1_fixed_ann = _calculate_stats(
             pnl_list=[-1.0]*10 + [1.0],
             hold_list=[(1, 1.0)]*11,
@@ -130,14 +136,19 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
 
     # Issue #614 — der Guard ist von 1e6 auf 25.0 gesenkt. Ein annualisierter Sortino ZWISCHEN der alten
     # Clip-Grenze (15) und dem Guard (25) bleibt ungeklemmt; hier Faktor 400 ⇒ sortino_period≈−1 ⇒ ann≈−20.
-    with patch("automation.backtest_runner._get_annualization_factor", return_value=400.0):
+    # Issue #1071/#1221 — siehe Kommentar bei Test 2 oben: der Patch muss an
+    # _get_annualization_factor_with_source greifen (die Stelle, die _compute_sortino() seit
+    # diesem Fix tatsaechlich aufruft), nicht am duennen, nicht mehr beteiligten Wrapper.
+    with patch("automation.backtest_runner._get_annualization_factor_with_source",
+              return_value=(400.0, "config_override")):
         stats_neg = _calculate_stats(pnl_list=[-1.0]*10, hold_list=[(1,1.0)]*10, starting_capital=1.0, mtm_series=mtm_series_neg, min_trades_for_sortino=2)
     s_neg = stats_neg.get("sortino_ratio")
     assert s_neg is not None and math.isfinite(s_neg)
     assert s_neg < -15.0, "kein Hard-Clip mehr: ein Sortino unterhalb der alten Grenze (15) bleibt ungeklemmt"
     assert abs(s_neg) <= guard  # #614 — unterhalb des Datenfehler-Guards (25)
 
-    with patch("automation.backtest_runner._get_annualization_factor", return_value=10_000_000_000):
+    with patch("automation.backtest_runner._get_annualization_factor_with_source",
+              return_value=(10_000_000_000, "config_override")):
         # Riesiger Faktor × near-zero Downside ⇒ |sortino_raw| jenseits des Guards ⇒ Datenfehler.
         stats_pos = _calculate_stats(pnl_list=[-1.0]+[1.0]*10, hold_list=[(1,1.0)]*11, starting_capital=1.0, mtm_series=mtm_series_pos, min_trades_for_sortino=2)
     assert stats_pos.get("sortino_ratio") is None, "Wert jenseits des Numerik-Guards ⇒ None (kein still-Clip)"

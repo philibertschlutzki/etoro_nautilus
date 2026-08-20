@@ -263,6 +263,9 @@ class TournamentMetrics:
     # invariants.check_sizing_identity_coherence (siehe backtest_runner._aggregate_exit_telemetry-
     # Docstring). None ohne mtm_series/fehlende Bars vor dem Entry (fail-open, additive Telemetrie).
     oos_f_realized_median: float | None = None
+    # Issue #1060/#1209 (Katalog #1196-1221) — das MAXIMUM derselben Serie, siehe backtest_runner.
+    # _aggregate_exit_telemetry-Docstring; Rohmaterial fuer invariants.check_sizing_cap_enforcement.
+    oos_f_realized_max: float | None = None
     # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (Bars) und Slippage (bps), NUR ueber nachweisliche
     # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe backtest_runner.
     # _aggregate_exit_telemetry-Docstring).
@@ -278,6 +281,16 @@ class TournamentMetrics:
     # invariants.check_stop_loss_vs_bar_range (Verlust = adverse Bewegung EINER Bar, nicht
     # Stopdistanz + Ueberschiessen). None ohne eine einzige Position mit Bar-Spannen-Telemetrie.
     oos_bar_range_median_bps: float | None = None
+    # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung, NUR ueber nachweisliche
+    # TRAILING_STOP-Exits mit vollstaendiger Anker-/Stop-Level-Telemetrie (siehe backtest_runner.
+    # _aggregate_exit_telemetry-Docstring). realized_loss_bps == stop_distance_bps +
+    # trigger_to_fill_gap_bps (Identitaet, je Round-Trip in n_stop_loss_identity_violations
+    # geprueft).
+    oos_stop_distance_bps_median: float | None = None
+    oos_trigger_to_fill_gap_bps_median: float | None = None
+    oos_realized_loss_bps_median: float | None = None
+    oos_n_stop_loss_identity_checked: int = 0
+    oos_n_stop_loss_identity_violations: int = 0
     # Issue #1097 (Katalog #930) — Stichprobengroesse HINTER oos_gross_loss_mean_bps (ALLE
     # Verlust-Trades dieses Trials, nicht nur Stop-Exits); Grundlage fuer den trade-gewichteten
     # (statt medianbasierten) Study-Pool-Mittelwert, siehe report._pooled_mean_of_trial_field.
@@ -431,11 +444,19 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_atr_raw_median_bps = oos_metrics.get("atr_raw_median_bps")
     # Issue #989/#1143 — siehe TournamentMetrics-Docstring.
     oos_f_realized_median = oos_metrics.get("f_realized_median")
+    # Issue #1060/#1209 — siehe TournamentMetrics-Docstring.
+    oos_f_realized_max = oos_metrics.get("f_realized_max")
     # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
     oos_stop_exit_fill_lag_bars_median = oos_metrics.get("stop_exit_fill_lag_bars_median")
     oos_stop_exit_slippage_bps_median = oos_metrics.get("stop_exit_slippage_bps_median")
     oos_n_trailing_stop_exits_with_fill_lag_telemetry = oos_metrics.get(
         "n_trailing_stop_exits_with_fill_lag_telemetry")
+    # Issue #1054/#1203 — siehe TournamentMetrics-Docstring.
+    oos_stop_distance_bps_median = oos_metrics.get("stop_distance_bps_median")
+    oos_trigger_to_fill_gap_bps_median = oos_metrics.get("trigger_to_fill_gap_bps_median")
+    oos_realized_loss_bps_median = oos_metrics.get("realized_loss_bps_median")
+    oos_n_stop_loss_identity_checked = oos_metrics.get("n_stop_loss_identity_checked") or 0
+    oos_n_stop_loss_identity_violations = oos_metrics.get("n_stop_loss_identity_violations") or 0
     # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
     oos_stop_exit_lag_bars_median = oos_metrics.get("stop_exit_lag_bars_median")
     # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
@@ -682,6 +703,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #989/#1143 — siehe TournamentMetrics-Docstring.
         oos_f_realized_median=(
             float(oos_f_realized_median) if oos_f_realized_median is not None else None),
+        # Issue #1060/#1209 — siehe TournamentMetrics-Docstring.
+        oos_f_realized_max=(
+            float(oos_f_realized_max) if oos_f_realized_max is not None else None),
         # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
         oos_stop_exit_fill_lag_bars_median=(
             float(oos_stop_exit_fill_lag_bars_median)
@@ -699,6 +723,18 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
         oos_bar_range_median_bps=(
             float(oos_bar_range_median_bps) if oos_bar_range_median_bps is not None else None),
+        # Issue #1054/#1203 — siehe TournamentMetrics-Docstring.
+        oos_stop_distance_bps_median=(
+            float(oos_stop_distance_bps_median)
+            if oos_stop_distance_bps_median is not None else None),
+        oos_trigger_to_fill_gap_bps_median=(
+            float(oos_trigger_to_fill_gap_bps_median)
+            if oos_trigger_to_fill_gap_bps_median is not None else None),
+        oos_realized_loss_bps_median=(
+            float(oos_realized_loss_bps_median)
+            if oos_realized_loss_bps_median is not None else None),
+        oos_n_stop_loss_identity_checked=int(oos_n_stop_loss_identity_checked or 0),
+        oos_n_stop_loss_identity_violations=int(oos_n_stop_loss_identity_violations or 0),
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         oos_n_losses=int(oos_n_losses) if oos_n_losses is not None else 0,
         oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
