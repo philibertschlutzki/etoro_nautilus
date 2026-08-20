@@ -1310,6 +1310,7 @@ class HourlyStrategyBase(Strategy):
             )
             return None
 
+        _sizing_via_pct = False
         if self.allocator is not None:
             # A: Live-Allocator hat höchste Prio
             balance = self._get_current_balance()
@@ -1321,6 +1322,7 @@ class HourlyStrategyBase(Strategy):
             # C: Prozentuales Sizing
             balance = self._get_current_balance()
             trade_amount_usd = balance * (trade_amount_pct / 100.0)
+            _sizing_via_pct = True
         elif trade_amount_usd_cfg is not None and trade_amount_usd_cfg > 0:
             # D: Explizit gesetzter Default USD-Betrag
             trade_amount_usd = trade_amount_usd_cfg
@@ -1341,16 +1343,18 @@ class HourlyStrategyBase(Strategy):
 
         # Issue #1060/#1209 (Katalog #1196-1221, P0) — harte Obergrenze: das AGGREGIERTE Netto-
         # Exposure dieser Strategie auf diesem Instrument darf trade_amount_pct * equity zu KEINEM
-        # Zeitpunkt ueberschreiten, unabhaengig davon, welcher Sizing-Pfad (A-E oben)
-        # trade_amount_usd bestimmt hat. Root-Cause: OHNE diesen Deckel kann Aufstockung (Scale-in)
-        # innerhalb eines Round-Trips das realisierte Notional ueber den konfigurierten Anteil
-        # hinaus anwachsen lassen — gemessen: max(f_realized_pct) bis zu 1,66x trade_amount_pct
-        # (KRYS, kein Metrik-Artefakt, siehe backtest_runner._finalize_round_trip's f_realized,
-        # #989/#1143). Nur wirksam, wenn trade_amount_pct KONFIGURIERT ist (derselbe Bezugspunkt,
-        # gegen den B-10 gemessen hat) — die USD-/Allocator-Pfade (B/D/E, A) bleiben unveraendert,
-        # wenn kein trade_amount_pct gesetzt ist (kein impliziter Deckel ohne konfigurierte Basis).
-        if trade_amount_pct is not None and trade_amount_pct > 0:
-            _equity = self._get_current_balance()
+        # Zeitpunkt ueberschreiten, WENN Pfad C (Prozentuales Sizing, oben) diesen Trade tatsaech-
+        # lich bestimmt hat. Root-Cause: OHNE diesen Deckel kann Aufstockung (Scale-in) innerhalb
+        # eines Round-Trips das realisierte Notional ueber den konfigurierten Anteil hinaus an-
+        # wachsen lassen — gemessen: max(f_realized_pct) bis zu 1,66x trade_amount_pct (KRYS, kein
+        # Metrik-Artefakt, siehe backtest_runner._finalize_round_trip's f_realized, #989/#1143).
+        # Auf die USD-/Allocator-Pfade (A/B/D/E) NICHT angewendet: dort ist trade_amount_pct nicht
+        # die Bemessungsgrundlage dieses Trades, ein pct-basierter Deckel waere dort sachfremd (und
+        # wuerde die etablierte Praezedenz aus Issue #182 verletzen — test_sizing_precedence.py
+        # erwartet dort exakt 0/1 _get_current_balance()-Aufrufe). ``balance`` wird aus Pfad C
+        # wiederverwendet statt erneut abgerufen (kein zweiter, potenziell drift-behafteter Call).
+        if _sizing_via_pct:
+            _equity = balance
             if _equity and _equity > 0:
                 _cap_notional = _equity * (trade_amount_pct / 100.0)
                 _existing_notional = sum(
