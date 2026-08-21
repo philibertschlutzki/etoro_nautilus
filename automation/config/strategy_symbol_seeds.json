@@ -27,6 +27,25 @@
         "dyn_tp_enabled": true,
         "dyn_tp_lambda": 0.6078198572135123,
         "dyn_tp_gamma": 1.1427166637698436
+      },
+      "GOOGL.ETORO": {
+        "macd_signal_period": 5,
+        "macd_fast": 4,
+        "macd_slow": 30,
+        "sma_period": 86,
+        "bb_period": 39,
+        "bb_std_dev": 1.6758246097587015,
+        "atr_period": 14,
+        "atr_multiplier": 0.15637777197517133,
+        "vwap_period": 11,
+        "trend_tolerance_pct": 0.00375061399102386,
+        "bb_touch_window": 76,
+        "require_vwap_confirmation": false,
+        "require_bb_touch": true,
+        "cooldown_bars": 21,
+        "atr_trailing_multiplier": 2.193999461554801,
+        "max_bars_in_trade": 24,
+        "dyn_tp_enabled": false
       }
     },
     "FlashCrashReversalStrategy": {
@@ -67,6 +86,35 @@
         "dyn_tp_enabled": true,
         "dyn_tp_lambda": 0.3257339720058995,
         "dyn_tp_gamma": 3.9280370966067037
+      }
+    },
+    "Rsi2ReversionStrategy": {
+      "GOOGL.ETORO": {
+        "rsi_period": 4,
+        "rsi_oversold": 8.321019158840453,
+        "rsi_overbought": 75.26816160894852,
+        "ema_period": 55,
+        "cooldown_bars": 2,
+        "atr_period": 14,
+        "atr_trailing_multiplier": 1.4429802553727165,
+        "max_bars_in_trade": 22,
+        "dyn_tp_enabled": false
+      }
+    },
+    "DynamicBreakoutStrategy": {
+      "GOOGL.ETORO": {
+        "price_breakout_period": 24,
+        "cooldown_bars": 36,
+        "atr_trailing_multiplier": 0.6228167944614257,
+        "max_bars_in_trade": 23,
+        "dyn_tp_enabled": false
+      },
+      "TSLA.ETORO": {
+        "price_breakout_period": 8,
+        "cooldown_bars": 17,
+        "atr_trailing_multiplier": 1.294088878798243,
+        "max_bars_in_trade": 20,
+        "dyn_tp_enabled": false
       }
     }
   }
