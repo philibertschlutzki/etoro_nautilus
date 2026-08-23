@@ -3372,6 +3372,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
         if metrics.oos_bar_range_median_bps is not None:
             trial.set_user_attr("oos_bar_range_median_bps", metrics.oos_bar_range_median_bps)
+        # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_bar_range_p75_bps is not None:
+            trial.set_user_attr("oos_bar_range_p75_bps", metrics.oos_bar_range_p75_bps)
+        if metrics.oos_zero_range_bar_fraction is not None:
+            trial.set_user_attr(
+                "oos_zero_range_bar_fraction", metrics.oos_zero_range_bar_fraction)
         # Issue #1054/#1203 (Katalog #1196-1221) — siehe TournamentMetrics-Docstring.
         if metrics.oos_stop_distance_bps_median is not None:
             trial.set_user_attr(

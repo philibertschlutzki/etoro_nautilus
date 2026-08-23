@@ -1782,6 +1782,14 @@ def _study_record(proposal: dict, study,
         # Stopdistanz + Überschiessen — Root-Cause-Hypothese #1119).
         "bar_range_median_bps": _median_of_trial_field(
             trial_attrs, "oos_bar_range_median_bps"),
+        # Issue #1079/#1227 (Katalog #1247+, P0) — P75 derselben (um Nullspannen-Bars bereinigten)
+        # Population wie bar_range_median_bps, und der Anteil der Nullspannen-Bars (``high == low``)
+        # an ALLEN Bars, ueber die eine Position lief; Rohmaterial fuer
+        # invariants.check_zero_range_bar_share.
+        "bar_range_p75_bps": _median_of_trial_field(
+            trial_attrs, "oos_bar_range_p75_bps"),
+        "zero_range_bar_fraction": _median_of_trial_field(
+            trial_attrs, "oos_zero_range_bar_fraction"),
         # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung "realized_loss_bps =
         # stop_distance_bps_measured + trigger_to_fill_gap_bps" auf Study-Ebene (Median ueber die
         # Trial-Mediane, analog bar_range_median_bps); Rohmaterial fuer Report §2.4 und
@@ -4050,6 +4058,11 @@ def _build_report(
     # derselben Groessenordnung wie EINE Bar-Spanne, UND gleichzeitig ein grosses Vielfaches der
     # konfigurierten Stopdistanz), ist jede Stop-Parametrisierung wirkungslos.
     all_checks.append(("global", _inv.check_stop_loss_vs_bar_range(studies_out)))
+
+    # Issue #1079/#1227 (Katalog #1247+, P0) — die messbare Fassung des Kalenderproblems hinter
+    # bar_range_median_bps == 0: FAIL, wenn Nullspannen-Bars in mehr als 20% der Studies die
+    # Mehrheit der Bar-Population dieser Position ausmachen.
+    all_checks.append(("global", _inv.check_zero_range_bar_share(studies_out)))
 
     # Issue #1054/#1203 (Katalog #1196-1221) — die algebraisch garantierte Verlust-Zerlegung
     # realized_loss_bps == stop_distance_bps + trigger_to_fill_gap_bps muss fuer >= 99,9% der

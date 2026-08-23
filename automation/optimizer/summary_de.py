@@ -893,16 +893,22 @@ def _section_3_duration(report: dict) -> str:
             "`bars_per_calendar_day` > 8 auf EQUITY/COMMODITY ist die Signatur einer 24/7-"
             "aufgefüllten Bar-Achse (24,0 = kein Handelszeiten-Filter); "
             "`session_coverage_fraction` ist der Anteil der Bars innerhalb der erwarteten Session "
-            "(siehe `invariants.check_session_calendar_coherence`, #1011/#1163/#1027/#1176)."
+            "(siehe `invariants.check_session_calendar_coherence`, #1011/#1163/#1027/#1176). "
+            "`zero_range_bar_fraction` (#1079/#1227) ist der Anteil der Bars mit `high == low` "
+            "waehrend einer Position — ein hoher Wert ist die messbare Fassung desselben "
+            "Kalenderproblems: der Stop kann auf einer solchen Bar nicht ausloesen (siehe "
+            "`invariants.check_zero_range_bar_share`)."
         )
         lines.append("")
-        lines.append("| Strategie | Symbol | Bars/Kalendertag | Session-Abdeckung |")
-        lines.append("|---|---|---:|---:|")
+        lines.append(
+            "| Strategie | Symbol | Bars/Kalendertag | Session-Abdeckung | Nullspannen-Bar-Anteil |")
+        lines.append("|---|---|---:|---:|---:|")
         for r in sorted(_bar_axis_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | "
                 f"{_fmt_num(r.get('bars_per_calendar_day'), digits=2)} | "
-                f"{_fmt_pct(r.get('session_coverage_fraction'))} |"
+                f"{_fmt_pct(r.get('session_coverage_fraction'))} | "
+                f"{_fmt_pct(r.get('zero_range_bar_fraction'))} |"
             )
     return "\n".join(lines)
 

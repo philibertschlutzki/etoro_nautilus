@@ -281,6 +281,11 @@ class TournamentMetrics:
     # invariants.check_stop_loss_vs_bar_range (Verlust = adverse Bewegung EINER Bar, nicht
     # Stopdistanz + Ueberschiessen). None ohne eine einzige Position mit Bar-Spannen-Telemetrie.
     oos_bar_range_median_bps: float | None = None
+    # Issue #1079/#1227 (Katalog #1247+, P0) — P75 derselben (um Nullspannen-Bars bereinigten)
+    # Population wie oos_bar_range_median_bps, und der Anteil der Nullspannen-Bars (``high == low``)
+    # an ALLEN Bars, ueber die eine Position lief (Median ueber die Round-Trips dieses Trials).
+    oos_bar_range_p75_bps: float | None = None
+    oos_zero_range_bar_fraction: float | None = None
     # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung, NUR ueber nachweisliche
     # TRAILING_STOP-Exits mit vollstaendiger Anker-/Stop-Level-Telemetrie (siehe backtest_runner.
     # _aggregate_exit_telemetry-Docstring). realized_loss_bps == stop_distance_bps +
@@ -461,6 +466,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_stop_exit_lag_bars_median = oos_metrics.get("stop_exit_lag_bars_median")
     # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
     oos_bar_range_median_bps = oos_metrics.get("bar_range_median_bps")
+    # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
+    oos_bar_range_p75_bps = oos_metrics.get("bar_range_p75_bps")
+    oos_zero_range_bar_fraction = oos_metrics.get("zero_range_bar_fraction")
     # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
     oos_n_losses = oos_metrics.get("n_losses")
     oos_holding_times_s = oos_metrics.get("holding_times_s")
@@ -723,6 +731,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
         oos_bar_range_median_bps=(
             float(oos_bar_range_median_bps) if oos_bar_range_median_bps is not None else None),
+        # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
+        oos_bar_range_p75_bps=(
+            float(oos_bar_range_p75_bps) if oos_bar_range_p75_bps is not None else None),
+        oos_zero_range_bar_fraction=(
+            float(oos_zero_range_bar_fraction) if oos_zero_range_bar_fraction is not None else None),
         # Issue #1054/#1203 — siehe TournamentMetrics-Docstring.
         oos_stop_distance_bps_median=(
             float(oos_stop_distance_bps_median)

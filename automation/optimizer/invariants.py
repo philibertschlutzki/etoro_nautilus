@@ -6463,6 +6463,14 @@ def check_stop_loss_vs_bar_range(
             provenance=None,
         )
     passed = not offenders
+    # Issue #1079/#1227 (Katalog #1247+, P0) Fix Punkt 3 — ``zero_range_bar_fraction`` als KONTEXT
+    # neben den Verhaeltnissen (nicht als eigene Bedingung dieses Checks — das ist Aufgabe der
+    # separaten ``check_zero_range_bar_share``): macht sichtbar, wie stark die zugrundeliegende
+    # ``bar_range_median_bps``-Messung bereits selbst von Nullspannen-Bars entlastet war.
+    for r in candidates:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        if key in all_ratios and r.get("zero_range_bar_fraction") is not None:
+            all_ratios[key]["zero_range_bar_fraction"] = round(float(r["zero_range_bar_fraction"]), 4)
     return InvariantResult(
         name="check_stop_loss_vs_bar_range",
         passed=passed,
@@ -6480,6 +6488,68 @@ def check_stop_loss_vs_bar_range(
                 f"Stopdistanz: {offenders} — der Verlust ist latenz-, nicht stopgetrieben (#1119); "
                 "jede Stop-Parametrisierung ist unter dieser Bedingung wirkungslos, siehe #1092B."),
         provenance={"ratios_by_study": all_ratios} if all_ratios else None,
+    )
+
+
+def check_zero_range_bar_share(
+    study_records: list[dict], *,
+    max_high_share_fraction: float = 0.2,
+    high_share_threshold: float = 0.5,
+) -> InvariantResult:
+    """Issue #1079/#1227 (Katalog #1247+, P0, Pitfall #446-Klasse in AGENTS.md) Fix Punkt 4 — die
+    messbare Fassung des Kalenderproblems hinter ``bar_range_median_bps == 0`` (#1176 Schritt 2
+    braucht dieses Feld als Vorbedingung): eine synthetische 24/7-Bar-Erzeugung fuer Symbole ausserhalb
+    RTH-Handelszeiten (#1011/#1163) fuellt Kalenderluecken mit Bars, deren ``high == low`` ist
+    (``ZERO_RANGE_BAR_FRACTION``-Tag, ``hourly_strategy_base._execute_market_close``). Ein hoher
+    Anteil solcher Bars bedeutet: die Mehrheit der Bars, durch die eine Position lebt, enthaelt keine
+    Bewegung — ein Stop kann dort strukturell nicht ausloesen; loest er dennoch aus, traegt die
+    naechste REALE Bar die ganze Bewegung (Erklaerung fuer die #1119-Latenzsignatur).
+
+    FAIL (severity ``high``), wenn ``zero_range_bar_fraction`` in MEHR ALS
+    ``max_high_share_fraction`` (Default 20 %) der Studies ueber ``high_share_threshold`` (Default
+    0,5) liegt. Nur Studies mit definiertem ``zero_range_bar_fraction`` werden gezaehlt; keine
+    solche Study ⇒ nicht anwendbar (PASS, evaluable=False — kein Urteil ohne Telemetrie, dieselbe
+    Konvention wie andere Checks dieses Katalogs)."""
+    with_data = [r for r in study_records if r.get("zero_range_bar_fraction") is not None]
+    if not with_data:
+        return InvariantResult(
+            name="check_zero_range_bar_share",
+            passed=None,
+            expected=f"<= {max_high_share_fraction:.0%} der Studies mit zero_range_bar_fraction > "
+                     f"{high_share_threshold}",
+            actual=None,
+            severity="high",
+            evaluable=False,
+            evaluability={
+                "evaluable": False,
+                "inconclusive_reason": "NO_ZERO_RANGE_BAR_FRACTION_TELEMETRY",
+                "n_studies_measured": 0,
+            },
+            detail="Keine Study mit zero_range_bar_fraction-Telemetrie — nicht auswertbar.",
+        )
+    offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": round(float(r["zero_range_bar_fraction"]), 4)
+        for r in with_data if float(r["zero_range_bar_fraction"]) > high_share_threshold
+    }
+    fraction = len(offenders) / len(with_data)
+    passed = fraction <= max_high_share_fraction
+    return InvariantResult(
+        name="check_zero_range_bar_share",
+        passed=passed,
+        expected=f"<= {max_high_share_fraction:.0%} der Studies mit zero_range_bar_fraction > "
+                 f"{high_share_threshold}",
+        actual=round(fraction, 4),
+        severity="high",
+        evaluable=True,
+        evaluability={
+            "evaluable": True, "inconclusive_reason": None, "n_studies_measured": len(with_data),
+        },
+        detail=("OK" if passed else
+                f"{len(offenders)}/{len(with_data)} Studies mit zero_range_bar_fraction > "
+                f"{high_share_threshold}: {offenders} — die Mehrheit der Bars, durch die diese "
+                "Positionen liefen, enthielt keine Bewegung (#1176 Schritt 2 addressiert die "
+                "Wurzel: RTH-Bar-Achse statt 24/7-Kalender)."),
+        provenance={"offenders": offenders} if offenders else None,
     )
 
 

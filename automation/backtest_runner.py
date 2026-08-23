@@ -3996,8 +3996,20 @@ def _parse_exit_order_tags(tags) -> dict:
                 # Issue #953/#1119 (Katalog #960) — Median der Bar-Spanne ((high-low)/close, bps)
                 # waehrend der Position offen war (siehe hourly_strategy_base._execute_market_close-
                 # Docstring); Referenzgroesse fuer invariants.check_stop_loss_vs_bar_range (Latenz-
-                # vs. Stop-getriebener Verlust).
+                # vs. Stop-getriebener Verlust). Seit #1079/#1227 ueber der um Nullspannen-Bars
+                # (``high == low``) BEREINIGTEN Population — die Strategie selbst filtert bereits vor
+                # der Median-Bildung, siehe dortiger Docstring.
                 meta["bar_range_median_bps"] = float(value)
+            elif key == "BAR_RANGE_P75_BPS":
+                # Issue #1079/#1227 — P75 derselben bereinigten Population wie BAR_RANGE_MEDIAN_BPS.
+                meta["bar_range_p75_bps"] = float(value)
+            elif key == "ZERO_RANGE_BAR_FRACTION":
+                # Issue #1079/#1227 (Katalog #1247+, P0, Pitfall #446-Klasse) — Anteil der
+                # Nullspannen-Bars (``high == low``) an ALLEN Bars dieser Position; Rohmaterial fuer
+                # invariants.check_zero_range_bar_share. Macht messbar, wie stark eine synthetische
+                # 24/7-Bar-Erzeugung (#1011/#1163) den Median der Bar-Spanne strukturell nach unten
+                # zieht, statt es nur zu vermuten.
+                meta["zero_range_bar_fraction"] = float(value)
             elif key == "ATR_RAW_MEDIAN_BPS":
                 # Issue #975/#1129 — der ROHE (nicht via _effective_atr_value/_ratchet_floored_
                 # atr_value gefloorte) ATR-Median, parallel zu ATR_MEDIAN_BPS. Macht die #1129-
@@ -4229,6 +4241,9 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     # Groesse — invariants.check_stop_loss_vs_bar_range vergleicht sie gegen den Stop-Verlust
     # GENAU DESHALB als unabhaengige Referenz.
     bar_range_medians: list[float] = []
+    # Issue #1079/#1227 — dieselbe Population wie bar_range_medians, siehe dortiger Kommentar.
+    bar_range_p75s: list[float] = []
+    zero_range_bar_fractions: list[float] = []
     # Issue #989/#1143 (Katalog #986) — UNBEDINGT (nicht auf TRAILING_STOP beschraenkt): der
     # DIREKT gemessene Sizing-Anteil je Round-Trip (siehe _finalize_round_trip-Kommentar).
     f_realized_values: list[float] = []
@@ -4279,6 +4294,10 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
                 n_stop_loss_identity_violations += 1
         if m.get("bar_range_median_bps") is not None:
             bar_range_medians.append(float(m["bar_range_median_bps"]))
+        if m.get("bar_range_p75_bps") is not None:
+            bar_range_p75s.append(float(m["bar_range_p75_bps"]))
+        if m.get("zero_range_bar_fraction") is not None:
+            zero_range_bar_fractions.append(float(m["zero_range_bar_fraction"]))
         if m.get("f_realized") is not None:
             f_realized_values.append(float(m["f_realized"]))
     _rt_notionals_sorted = sorted(rt_notionals)
@@ -4359,6 +4378,15 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # Verlust = Stopdistanz + Ueberschiessen).
         "bar_range_median_bps": (
             statistics.median(bar_range_medians) if bar_range_medians else None),
+        # Issue #1079/#1227 (Katalog #1247+, P0) Fix Punkt 2 — P75 derselben bereinigten Population
+        # (macht die Rechtsschiefe zusaetzlich zum Median sichtbar) und der Anteil der Nullspannen-
+        # Bars an der VOLLEN Population (Median ueber die Round-Trips dieses Trials, dieselbe
+        # Aggregationskonvention wie bar_range_median_bps) — Rohmaterial fuer
+        # invariants.check_zero_range_bar_share.
+        "bar_range_p75_bps": (
+            statistics.median(bar_range_p75s) if bar_range_p75s else None),
+        "zero_range_bar_fraction": (
+            statistics.median(zero_range_bar_fractions) if zero_range_bar_fractions else None),
         # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-
         # Anteil (rt_notional / equity_at_entry, Median ueber alle Round-Trips dieser Ebene),
         # Rohmaterial fuer invariants.check_sizing_identity_coherence (ersetzt dort die bisher
@@ -4845,6 +4873,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 # kam aber in DIESEM Dict nie an — die Grundgesamtheit war strukturell leer, jeder
                 # nachgelagerte Median entsprechend ``None`` in 100 % der Studies (Pitfall #421).
                 "bar_range_median_bps": meta.get("bar_range_median_bps"),
+                # Issue #1079/#1227 — dieselbe Durchreiche-Konvention wie bar_range_median_bps oben.
+                "bar_range_p75_bps": meta.get("bar_range_p75_bps"),
+                "zero_range_bar_fraction": meta.get("zero_range_bar_fraction"),
                 "pnl_bps": pnl_bps,
                 # Issue #972/#1126 — das Round-Trip-Notional selbst als Telemetrie (Rohmaterial fuer
                 # rt_notional_p05/p50/p95, macht den bps-Nenner auditierbar).
