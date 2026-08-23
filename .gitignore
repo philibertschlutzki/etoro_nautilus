@@ -27,4 +27,4 @@ automation/.env
 # Repository Data Exclusions & Champions Exception
 /data/*
 /data/optimizer/
-!/data/optimizer/champions/
+!/data/optimizer/champions/.claude/
