@@ -601,6 +601,10 @@ def _metrics_dict(m) -> dict:
         # actual=None`` (Pitfall #421-Klasse: eine je Feld einzeln kuratierte Teilmenge ist eine
         # eigene Datenschranke).
         "oos_f_realized_max": getattr(m, "oos_f_realized_max", None),
+        # Issue #1075/#1223 (Katalog #1247+, P0) — siehe parsing.TournamentMetrics-Docstring;
+        # Rohmaterial fuer invariants.check_applied_cost_components_resolved.
+        "oos_applied_financing_bps_per_day": getattr(m, "oos_applied_financing_bps_per_day", None),
+        "oos_applied_slippage_bps": getattr(m, "oos_applied_slippage_bps", None),
         "oos_cvar_95": getattr(m, "oos_cvar_95", None),
         "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),

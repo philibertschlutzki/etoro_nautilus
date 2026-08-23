@@ -5450,6 +5450,14 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 _level_pnl_notional_holding,
                 financing_bps_per_day=financing_bps_per_day, slippage_bps=slippage_bps)
             _level_metrics["expectancy_round_trip_cost_stress_full_realism"] = _stress_full_realism
+            # Issue #1075/#1223 (Katalog #1247+, P0) Fix Punkt 2 — die tatsaechlich ANGEWANDTEN
+            # Kostenkomponenten (nicht die konfigurierten), je Level gestempelt. Beide Werte kommen
+            # unveraendert aus den Funktionsparametern dieser Funktion (vom Aufrufer bereits ueber
+            # den korrigierten Symbol-Override-Pfad aufgeloest, siehe dortiger Fix) — dieselben
+            # Werte, die soeben in _full_realism_expectancy eingeflossen sind (eine Quelle, kein
+            # zweiter Auflösungspfad).
+            _level_metrics["applied_financing_bps_per_day"] = financing_bps_per_day
+            _level_metrics["applied_slippage_bps"] = slippage_bps
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -6425,10 +6433,25 @@ def run_single_backtest_worker(
             # overnight_financing_bps_per_day_by_asset_class/slippage_bps_by_asset_class
             # konfiguriert ist (ein Spread-Symbol-Override allein entbindet diese Auflösungen
             # nicht — dafür gibt es keinen Symbol-Override).
+            # Issue #1075/#1223 (Katalog #1247+, P0, Pitfall #440-Klasse in AGENTS.md) — Root-Cause:
+            # die urspruengliche Bedingung war ``... and not has_symbol_override`` — ein Symbol mit
+            # NUR einem ``spread_bps_by_symbol``-Override (z. B. TSLA.ETORO) uebersprang die
+            # Asset-Class-Aufloesung KOMPLETT, obwohl ``financing_bps_per_day``/``slippage_bps``
+            # (unten) KEINEN eigenen Symbol-Override-Mechanismus haben und ausschliesslich ueber
+            # ``asset_class_key`` aufgeloest werden. ``asset_class_key`` blieb dadurch "DEFAULT"
+            # statt TSLAs echter Asset-Class — die kalibrierte Slippage (#1204) und Finanzierung
+            # wurden fuer JEDES Symbol mit Spread-Override lautlos auf die DEFAULT-Kostenbasis
+            # abgebildet (0,0 bps in ``backtest.json``), waehrend ``full_realism`` bei ALLEN
+            # anderen Symbolen (kein Spread-Override) korrekt die reale Asset-Class traf. Ein
+            # Symbol-Override darf NUR die von ihm genannten Felder ersetzen (hier: Spread) — nicht
+            # stillschweigend das gesamte Kostenobjekt. Aufloesung jetzt unabhaengig von
+            # ``has_symbol_override``, sobald IRGENDEINE asset-class-basierte Kostenkarte
+            # konfiguriert ist (inkl. der zuvor hier fehlenden ``slippage_bps_p50_by_asset_class``,
+            # #1055/#1204 — dieselbe Luecke, eine Instanz mehr).
             if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class
                     or opening_range_session_open_hour_by_asset_class
                     or overnight_financing_bps_per_day_by_asset_class
-                    or slippage_bps_by_asset_class) and not has_symbol_override:
+                    or slippage_bps_by_asset_class or slippage_bps_p50_by_asset_class):
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
 

@@ -266,6 +266,12 @@ class TournamentMetrics:
     # Issue #1060/#1209 (Katalog #1196-1221) — das MAXIMUM derselben Serie, siehe backtest_runner.
     # _aggregate_exit_telemetry-Docstring; Rohmaterial fuer invariants.check_sizing_cap_enforcement.
     oos_f_realized_max: float | None = None
+    # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
+    # konfigurierten) Kostenkomponenten dieses Levels, siehe backtest_runner.extract_metrics
+    # (Stempelstelle direkt neben expectancy_round_trip_cost_stress_full_realism). Rohmaterial fuer
+    # invariants.check_applied_cost_components_resolved.
+    oos_applied_financing_bps_per_day: float | None = None
+    oos_applied_slippage_bps: float | None = None
     # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (Bars) und Slippage (bps), NUR ueber nachweisliche
     # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe backtest_runner.
     # _aggregate_exit_telemetry-Docstring).
@@ -451,6 +457,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_f_realized_median = oos_metrics.get("f_realized_median")
     # Issue #1060/#1209 — siehe TournamentMetrics-Docstring.
     oos_f_realized_max = oos_metrics.get("f_realized_max")
+    # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
+    oos_applied_financing_bps_per_day = oos_metrics.get("applied_financing_bps_per_day")
+    oos_applied_slippage_bps = oos_metrics.get("applied_slippage_bps")
     # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
     oos_stop_exit_fill_lag_bars_median = oos_metrics.get("stop_exit_fill_lag_bars_median")
     oos_stop_exit_slippage_bps_median = oos_metrics.get("stop_exit_slippage_bps_median")
@@ -714,6 +723,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #1060/#1209 — siehe TournamentMetrics-Docstring.
         oos_f_realized_max=(
             float(oos_f_realized_max) if oos_f_realized_max is not None else None),
+        # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
+        oos_applied_financing_bps_per_day=(
+            float(oos_applied_financing_bps_per_day)
+            if oos_applied_financing_bps_per_day is not None else None),
+        oos_applied_slippage_bps=(
+            float(oos_applied_slippage_bps) if oos_applied_slippage_bps is not None else None),
         # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
         oos_stop_exit_fill_lag_bars_median=(
             float(oos_stop_exit_fill_lag_bars_median)

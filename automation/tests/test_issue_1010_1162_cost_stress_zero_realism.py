@@ -44,16 +44,19 @@ def test_passes_once_full_realism_diverges_in_at_least_90_percent_of_studies():
 
     Issue #1074/#1222 Fix — das Bit-Identitaets-Kriterium allein (ohne kalibrierte Slippage) ist
     seit diesem Fix INCONCLUSIVE, nicht mehr ``passed=True`` (siehe
-    ``test_bit_identity_pass_without_any_calibration_is_inconclusive_not_true`` unten). Diese
-    Grenzfall-Fixture traegt deshalb jetzt zusaetzlich kalibrierte Slippage + den holdout-skopierten
-    Zaehler, sodass beide Kriterien (Bit-Identitaet UND Mindestdelta) tatsaechlich auswertbar sind."""
+    ``test_bit_identity_pass_without_any_calibration_is_inconclusive_not_true`` unten). Die 9
+    divergierenden Studies tragen deshalb jetzt zusaetzlich kalibrierte Slippage + den holdout-
+    skopierten Zaehler (Delta 0,05 uebersteigt das Mindestdelta 0,001 deutlich — kein Offender).
+    Die EINE bit-identische Study bleibt bewusst UNKALIBRIERT: mit echter Kalibrierung waere ein
+    Delta von exakt 0 dort ein GENUINER #1204-Befund (das Mindestdelta-Kriterium wuerde zurecht
+    failen) — dieser Grenzfalltest prueft ausschliesslich das Bit-Identitaets-Kriterium selbst."""
     def _calibrated_record(exp, full_realism, trades=10):
         r = _record(exp, full_realism, trades=trades)
         r["slippage_p50_bps_calibrated"] = 20.0
         r["holdout_n_trailing_stop_exits"] = trades
         return r
     records = ([_calibrated_record(-20.0, -20.05) for _ in range(9)]
-               + [_calibrated_record(-20.0, -20.0)])
+               + [_record(-20.0, -20.0)])
     result = inv.check_cost_stress_distinctness(records)
     assert result.passed is True
     assert result.evaluable is True

@@ -1983,6 +1983,15 @@ def _study_record(proposal: dict, study,
         # cap_enforcement (ein Sizing-Cap-Verstoss ist ein Worst-Case-Ereignis, das der Median
         # strukturell verwaescht).
         "holdout_f_realized_max": holdout_metrics.get("oos_f_realized_max"),
+        # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
+        # konfigurierten) Kostenkomponenten dieser Study; Rohmaterial fuer
+        # invariants.check_applied_cost_components_resolved. Root-Cause des Vorzustands: ein
+        # Symbol mit NUR einem Spread-Symbol-Override (z. B. TSLA.ETORO) uebersprang die Asset-
+        # Class-Aufloesung fuer Finanzierung/Slippage komplett (siehe backtest_runner-Fix,
+        # ``has_symbol_override``-Guard) — die kalibrierte Slippage (#1204) erreichte solche
+        # Symbole dadurch nie, ohne dass das im Report je sichtbar war.
+        "applied_financing_bps_per_day": holdout_metrics.get("oos_applied_financing_bps_per_day"),
+        "applied_slippage_bps": holdout_metrics.get("oos_applied_slippage_bps"),
         # Issue #945/#1111 — die KANONISCHE Grösse: dieselbe Basis, aus der die Kostenstress-Werte
         # abgeleitet werden UND die seither berichtet/sortiert wird (summary_de.py Abschnitt 2.1).
         "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),
@@ -3987,6 +3996,9 @@ def _build_report(
     # der ``slippage_p50_bps_calibrated``-Stempelung direkt oberhalb (vorher lief er vor der
     # Stempelung, siehe Kommentar bei ``check_cost_stress_monotonicity`` weiter oben).
     all_checks.append(("global", _inv.check_cost_stress_distinctness(studies_out)))
+    # Issue #1075/#1223 (Katalog #1247+, P0) — ebenfalls NACH der Kalibrierungs-Stempelung (braucht
+    # slippage_p50_bps_calibrated fuer die Konsistenzpruefung gegen applied_slippage_bps).
+    all_checks.append(("global", _inv.check_applied_cost_components_resolved(studies_out)))
     atr_scale_homogeneity_check = _inv.check_atr_scale_homogeneity(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol)
     all_checks.append(("global", atr_scale_homogeneity_check))

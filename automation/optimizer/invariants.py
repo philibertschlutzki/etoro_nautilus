@@ -3861,6 +3861,76 @@ def check_summary_row_completeness(
     )
 
 
+def check_applied_cost_components_resolved(study_records: list[dict]) -> InvariantResult:
+    """Issue #1075/#1223 (Katalog #1247+, P0) — der symbolspezifische Kosten-Auflösungspfad liess
+    Finanzierung/Slippage lautlos auf die DEFAULT-Kostenbasis fallen, wenn ein Symbol NUR einen
+    Spread-Override (``spread_bps_by_symbol``) trug — die kalibrierte Slippage (#1204) erreichte
+    ein solches Symbol dadurch NIE, ohne dass das im Report je sichtbar war (Symptom: TSLA, das
+    einzige Symbol mit Spread-Override, war das einzige Symbol mit
+    ``capital_weighted − full_realism == 0,000 bps`` in 42/42 Studies).
+
+    FAIL (severity ``blocking``) je Study mit ``holdout_total_trades >= 1``, wenn EINE der beiden
+    Bedingungen gilt:
+    1. ``applied_slippage_bps`` ist ``None`` — die Kostenauflösung hat den Study-Record strukturell
+       nicht erreicht (dieselbe Bruecken-Fehlerklasse wie #1084).
+    2. Ein Kalibrierungs-Cache existiert fuer diese Study (``slippage_p50_bps_calibrated`` ist
+       definiert UND ``> 0``), aber ``applied_slippage_bps == 0.0`` — das ist EXAKT die #1223-
+       Signatur: eine kalibrierte Slippage existiert fuer die Asset-Klasse dieses Symbols, erreicht
+       den tatsaechlich angewandten Kostenwert aber nicht. Keine Wert-GLEICHHEIT verlangt (``applied_
+       slippage_bps`` ist die volle Round-Trip-Slippage aus ``slippage_bps_by_asset_class``,
+       ``slippage_p50_bps_calibrated`` das P50 EINER unabhaengigen Kalibrierungsgroesse aus
+       demselben Cache — beide sind unterschiedliche Perzentile derselben Verteilung UND per
+       Konstruktion nicht identisch; Konsistenz heisst hier "kalibriert UND angewandt sind
+       gleichzeitig 0 oder gleichzeitig ungleich 0", nicht Wertgleichheit).
+
+    Symbole mit Symbol-Override (Spread) sind ausdruecklich NICHT ausgenommen — das war die
+    Root-Cause. Studies ohne ``holdout_total_trades >= 1`` werden nicht geprueft."""
+    with_trades = [r for r in study_records if (r.get("holdout_total_trades") or 0) >= 1]
+    if not with_trades:
+        return InvariantResult(
+            name="check_applied_cost_components_resolved",
+            passed=True,
+            expected="applied_slippage_bps nicht-null; 0 nur, wenn keine Kalibrierung existiert",
+            actual=None,
+            severity="blocking",
+            detail="Keine Studies mit >= 1 Holdout-Trade — nicht anwendbar.",
+        )
+    missing: list[str] = []
+    zero_despite_calibration: dict[str, dict] = {}
+    for r in with_trades:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        applied = r.get("applied_slippage_bps")
+        if applied is None:
+            missing.append(key)
+            continue
+        calibrated = r.get("slippage_p50_bps_calibrated")
+        if calibrated and float(calibrated) > 0 and float(applied) == 0.0:
+            zero_despite_calibration[key] = {
+                "applied_slippage_bps": float(applied),
+                "slippage_p50_bps_calibrated": float(calibrated),
+            }
+    passed = not missing and not zero_despite_calibration
+    return InvariantResult(
+        name="check_applied_cost_components_resolved",
+        passed=passed,
+        expected="applied_slippage_bps nicht-null; 0 nur, wenn keine Kalibrierung existiert",
+        actual={"n_missing": len(missing), "n_zero_despite_calibration": len(zero_despite_calibration)},
+        severity="blocking",
+        detail=("OK" if passed else
+                (f"{len(missing)} Study/Studies ohne applied_slippage_bps: {missing}. "
+                 if missing else "") +
+                (f"{len(zero_despite_calibration)} Study/Studies mit kalibrierter Slippage, aber "
+                 f"applied_slippage_bps == 0.0 (#1223 Symbol-Override-Signatur): "
+                 f"{zero_despite_calibration}." if zero_despite_calibration else "")),
+        provenance={
+            k: v for k, v in {
+                "missing": missing or None,
+                "zero_despite_calibration": zero_despite_calibration or None,
+            }.items() if v is not None
+        } or None,
+    )
+
+
 def check_cost_stress_distinctness(
     study_records: list[dict], *, min_affected_fraction: float = 0.9,
     min_delta_coefficient: float = 0.5,
