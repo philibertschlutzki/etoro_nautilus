@@ -2060,6 +2060,16 @@ def _study_record(proposal: dict, study,
             if holdout_metrics.get("oos_alpha") is not None else None
         ),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
+        # Issue #1074/#1222 (Katalog #1247+) Fix Punkt 2 — HOLDOUT-skopierte Zaehlung nachweislicher
+        # TRAILING_STOP-Exits, aus DEMSELBEN Holdout-Pfad wie ``holdout_total_trades`` (beide aus
+        # ``holdout_metrics``, der geparsten Holdout-Re-Evaluation, NICHT aus ``trial_attrs`` ueber
+        # alle Sweep-Trials). Root-Cause des Vorzustands: ``invariants.check_cost_stress_
+        # distinctness`` bildete seinen Skalierungsterm bislang gegen ``oos_n_trailing_stop_losses``
+        # auf Study-Ebene (report.py weiter oben, eine SWEEP-WEITE Summe ueber ALLE Trials) im Nenner
+        # von ``holdout_total_trades`` (ein EINZELNER Holdout) — zwei verschiedene Grundgesamtheiten
+        # unter einer Formel (Quotient bis zu 159,5 statt <= 1). Dieses Feld ist der korrekte,
+        # holdout-skopierte Zaehler fuer ``holdout_trailing_stop_exit_share``.
+        "holdout_n_trailing_stop_exits": holdout_metrics.get("oos_n_trailing_stop_losses"),
         # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — WELCHER Parameter (und in welche
         # Richtung) die Randlösung dominiert, siehe confirm.confirm_per_symbol_promotion. ``None``
         # ohne jede Randlösung dieser Study (dieselbe Konvention wie boundary_hit_fraction).
@@ -3847,10 +3857,12 @@ def _build_report(
     # (abgeleitet aus holdout_expectancy_capital_weighted) muss monoton fallend und gleich gestuft
     # gegenueber DERSELBEN Basis sein, gegen die sie berichtet wird.
     all_checks.append(("global", _inv.check_cost_stress_monotonicity(studies_out)))
-    # Issue #1010/#1162 (Katalog #1170) — macht sichtbar, wenn die 'full_realism'-Kostenstufe durch
-    # ueberall 0.0 konfigurierte financing_bps/slippage_bps (backtest.json, #987/#1141) faktisch ein
-    # No-Op ist, statt es stillschweigend als "keine Wirkung" zu akzeptieren.
-    all_checks.append(("global", _inv.check_cost_stress_distinctness(studies_out)))
+    # Issue #1074/#1222 (Katalog #1247+) Fix Punkt 1 — ``check_cost_stress_distinctness`` ist HIER
+    # NICHT mehr aufgerufen. Root-Cause des Vorzustands: der Aufruf lief an dieser Stelle VOR der
+    # ``slippage_p50_bps_calibrated``-Stempelung weiter unten (damals :3934-3953) — die Invariante
+    # sah ``slippage_p50_bps_calibrated`` dadurch nie (``if not slippage_p50: continue`` griff fuer
+    # JEDEN Record, das Mindestdelta-Kriterium war strukturell wirkungslos). Der Aufruf steht jetzt
+    # NACH dieser Stempelung (siehe unten, vor ``atr_scale_homogeneity_check``).
     # Issue #1013/#1165 (Katalog #1170) — macht sichtbar, wenn Abschnitt 2.3 der Zusammenfassung
     # eine Study spurlos verliert (z. B. ein nicht ausgewerteter Holdout ohne eigenen Bucket).
     all_checks.append(("global", _inv.check_summary_row_completeness(studies_out)))
@@ -3953,6 +3965,10 @@ def _build_report(
     else:
         for _r in studies_out:
             _r["slippage_p50_bps_calibrated"] = None
+    # Issue #1074/#1222 (Katalog #1247+) Fix Punkt 1 — dieser Aufruf steht ABSICHTLICH HIER, NACH
+    # der ``slippage_p50_bps_calibrated``-Stempelung direkt oberhalb (vorher lief er vor der
+    # Stempelung, siehe Kommentar bei ``check_cost_stress_monotonicity`` weiter oben).
+    all_checks.append(("global", _inv.check_cost_stress_distinctness(studies_out)))
     atr_scale_homogeneity_check = _inv.check_atr_scale_homogeneity(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol)
     all_checks.append(("global", atr_scale_homogeneity_check))

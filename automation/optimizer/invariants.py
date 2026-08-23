@@ -3890,14 +3890,37 @@ def check_cost_stress_distinctness(
     allein laesst eine trivial kleine, oekonomisch bedeutungslose Differenz durchgehen (z. B. eine
     Rundungsdifferenz oder eine nur fuer EINE Asset-Klasse kalibrierte Slippage). Fuer jede Study
     mit einer kalibrierten p50-Slippage (``slippage_p50_bps_calibrated``, ``report.py`` aus
-    ``calibrated_slippage.json``) UND ``oos_n_trailing_stop_losses`` UND ``holdout_total_trades``
+    ``calibrated_slippage.json``) UND ``holdout_n_trailing_stop_exits`` UND ``holdout_total_trades``
     MUSS die Differenz mindestens
-    ``min_delta_coefficient · slippage_p50_bps/10000 · n_trailing_stop_exits / holdout_total_trades``
+    ``min_delta_coefficient · slippage_p50_bps/10000 · holdout_n_trailing_stop_exits / holdout_total_trades``
     betragen — die erwartete Kostenwirkung, SKALIERT auf den Anteil der Round-Trips, an denen
-    ueberhaupt eine TRAILING_STOP-Slippage gemessen wurde (``holdout_total_trades`` ersetzt hier die
-    im Issue genannte ``n_bars`` — eine reine Bars-Zahl ist auf Study-Ebene nicht als Feld verfuegbar;
-    die Round-Trip-Zahl skaliert dieselbe Grundidee, "Slippage wirkt nur auf einen ANTEIL der
-    Grundgesamtheit", ohne eine neue, ungeprüfte Kennzahl zu erfinden)."""
+    ueberhaupt eine TRAILING_STOP-Slippage gemessen wurde.
+
+    Issue #1074/#1222 (Katalog #1247+, P0) Fix — zwei weitere Root-Causes behoben:
+    1. **Reihenfolge** (kein Effekt auf diese Funktion selbst, siehe ``report.py``): der Aufruf
+       dieser Invariante lief bisher VOR der ``slippage_p50_bps_calibrated``-Stempelung im selben
+       Report-Aufbau — die Funktion sah das Feld dadurch NIE (``if not slippage_p50: continue``
+       griff fuer JEDEN Record, das Mindestdelta-Kriterium war strukturell inert, 11/11 Laeufe
+       ``passed=True``).
+    2. **Skalierung**: der Zaehler ``n_trailing_stop_exits`` war ``oos_n_trailing_stop_losses`` —
+       eine SWEEP-WEITE Zaehlung ueber ALLE Trials der Study (``report._study_record`` summiert
+       ueber ``trial_attrs``, Groessenordnung 10.000+), der Nenner ``holdout_total_trades`` ein
+       EINZELNER Holdout-Backtest (Groessenordnung 100). Median-Quotient 159,5 statt <= 1. Ersetzt
+       durch ``holdout_n_trailing_stop_exits`` (``report.py``, aus ``holdout_metrics`` — DEMSELBEN
+       Holdout-Pfad wie ``holdout_total_trades``, siehe dortiger Feld-Kommentar) — beide Groessen
+       jetzt aus EINEM Bezugsrahmen (Pitfall-Klasse #441 in AGENTS.md: Median/Anteil/Quotient nur
+       innerhalb derselben Grundgesamtheit bilden).
+
+    Ein leerer Kalibrierungs-Cache (KEINE Study mit >= 1 Holdout-Trade traegt eine kalibrierte
+    Slippage) macht das Mindestdelta-Kriterium unauswertbar. Besteht in diesem Fall das
+    Bit-Identitaets-Kriterium (``fraction <= min_affected_fraction``), ist das Gesamtergebnis
+    ``evaluable=False``/``passed=None`` (INCONCLUSIVE) — NICHT ``passed=True``: eine fehlende
+    Eingabe darf nicht wie ein sauberer Befund aussehen (kein Fail-open mit einem sweep-weiten
+    Ersatz). Verletzt dagegen bereits das Bit-Identitaets-Kriterium, bleibt das ein echtes FAIL,
+    unabhaengig von der Kalibrierungsverfuegbarkeit — das ist ein eigenstaendiger Befund
+    (#1010/#1162), der keine Slippage-Kalibrierung braucht. ``n_studies_with_calibration`` steht in
+    jedem Ergebnis unter ``evaluability`` bzw. ``provenance``, damit ein leerer Cache im Artefakt
+    sichtbar bleibt statt lautlos durchzulaufen."""
     with_trades = [
         r for r in study_records
         if (r.get("holdout_total_trades") or 0) >= 1
@@ -3920,15 +3943,46 @@ def check_cost_stress_distinctness(
         == float(r["holdout_expectancy_capital_weighted"])
     ]
     fraction = len(identical) / len(with_trades)
-    passed = fraction <= min_affected_fraction
+    bit_identity_passed = fraction <= min_affected_fraction
+    n_studies_with_calibration = sum(
+        1 for r in with_trades if r.get("slippage_p50_bps_calibrated"))
+    if bit_identity_passed and n_studies_with_calibration == 0:
+        return InvariantResult(
+            name="check_cost_stress_distinctness",
+            passed=None,
+            expected=(f"<= {min_affected_fraction:.0%} der Studies mit >= 1 Trade identisch zur Basis "
+                     f"UND Delta >= {min_delta_coefficient} · slippage_p50/10000 · "
+                     "holdout_n_trailing_stop_exits/holdout_total_trades, wo kalibriert"),
+            actual=round(fraction, 4),
+            severity="high",
+            detail=(f"Bit-Identitaets-Kriterium OK ({len(identical)}/{len(with_trades)}), aber KEINE "
+                    f"der {len(with_trades)} Study/Studies mit >= 1 Holdout-Trade traegt eine "
+                    "kalibrierte Slippage (slippage_p50_bps_calibrated) — Mindestdelta-Kriterium "
+                    "nicht auswertbar (leerer Kalibrierungs-Cache). #1074/#1222."),
+            evaluable=False,
+            evaluability={
+                "evaluable": False,
+                "inconclusive_reason": "NO_CALIBRATED_SLIPPAGE",
+                "n_studies_measured": len(with_trades),
+                "n_studies_with_calibration": 0,
+            },
+        )
     # Issue #1055/#1204 Fix Punkt 4 — Mindestdelta-Kriterium, unabhaengig vom obigen Bit-Identitaets-
-    # Anteil geprueft (beide Kriterien MUESSEN gelten).
+    # Anteil geprueft (beide Kriterien MUESSEN gelten, sofern auswertbar).
     delta_offenders: dict[str, dict] = {}
+    n_missing_holdout_scoped_numerator = 0
     for r in with_trades:
         slippage_p50 = r.get("slippage_p50_bps_calibrated")
-        n_ts_exits = r.get("oos_n_trailing_stop_losses")
+        if not slippage_p50:
+            continue
+        n_ts_exits = r.get("holdout_n_trailing_stop_exits")
         n_total = r.get("holdout_total_trades")
-        if not slippage_p50 or not n_ts_exits or not n_total:
+        # Issue #1074/#1222 Fix Punkt 2 — fehlt der HOLDOUT-skopierte Zaehler (z. B. ein Report vor
+        # diesem Fix, oder ein Konsument, der ihn nicht mitliefert), ist DIESE Study fuer das
+        # Mindestdelta-Kriterium INCONCLUSIVE — kein Fail-open mit dem alten sweep-weiten
+        # ``oos_n_trailing_stop_losses``-Ersatz, und kein stiller Offender-Ausschluss ohne Spur.
+        if n_ts_exits is None or not n_total:
+            n_missing_holdout_scoped_numerator += 1
             continue
         min_expected_delta = (
             min_delta_coefficient * (float(slippage_p50) / 10000.0)
@@ -3940,15 +3994,15 @@ def check_cost_stress_distinctness(
                 "actual_delta": round(actual_delta, 6),
                 "min_expected_delta": round(min_expected_delta, 6),
                 "slippage_p50_bps_calibrated": slippage_p50,
+                "holdout_trailing_stop_exit_share": round(float(n_ts_exits) / float(n_total), 4),
             }
-    if delta_offenders:
-        passed = False
+    passed = bit_identity_passed and not delta_offenders
     return InvariantResult(
         name="check_cost_stress_distinctness",
         passed=passed,
         expected=(f"<= {min_affected_fraction:.0%} der Studies mit >= 1 Trade identisch zur Basis "
                  f"UND Delta >= {min_delta_coefficient} · slippage_p50/10000 · "
-                 "n_trailing_stop_exits/holdout_total_trades, wo kalibriert"),
+                 "holdout_n_trailing_stop_exits/holdout_total_trades, wo kalibriert"),
         actual=round(fraction, 4),
         severity="high",
         detail=("OK" if passed else
@@ -3956,14 +4010,21 @@ def check_cost_stress_distinctness(
                  "holdout_expectancy_cost_stress_full_realism == holdout_expectancy_capital_"
                  "weighted bit-exakt — die 'full_realism'-Kostenstufe ist ein No-Op (financing_bps/"
                  "slippage_bps sind in backtest.json fuer alle Asset-Klassen 0.0, #1010/#1162). "
-                 if fraction > min_affected_fraction else "") +
+                 if not bit_identity_passed else "") +
                 (f"{len(delta_offenders)} Study/Studies unterschreiten das Mindestdelta trotz "
                  f"kalibrierter Slippage: {delta_offenders} (#1204)."
                  if delta_offenders else "")),
+        evaluability={
+            "evaluable": True,
+            "inconclusive_reason": None,
+            "n_studies_measured": len(with_trades),
+            "n_studies_with_calibration": n_studies_with_calibration,
+            "n_studies_missing_holdout_scoped_numerator": n_missing_holdout_scoped_numerator,
+        },
         provenance={
             k: v for k, v in {
-                "n_identical": len(identical) if fraction > min_affected_fraction else None,
-                "n_with_trades": len(with_trades) if fraction > min_affected_fraction else None,
+                "n_identical": len(identical) if not bit_identity_passed else None,
+                "n_with_trades": len(with_trades) if not bit_identity_passed else None,
                 "delta_offenders": delta_offenders or None,
             }.items() if v is not None
         } or None,

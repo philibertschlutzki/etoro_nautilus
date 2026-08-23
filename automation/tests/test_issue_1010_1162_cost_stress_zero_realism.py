@@ -40,10 +40,36 @@ def test_reference_symptom_fails_when_full_realism_is_bit_identical_to_the_base_
 
 def test_passes_once_full_realism_diverges_in_at_least_90_percent_of_studies():
     """Akzeptanzkriterium 3: sobald reale Saetze > 0 gesetzt sind, weicht full_realism in >= 90 %
-    der Studies von der Basis ab -- hier direkt am Grenzfall (exactly 90% distinct) simuliert."""
-    records = [_record(-20.0, -20.05) for _ in range(9)] + [_record(-20.0, -20.0)]
+    der Studies von der Basis ab -- hier direkt am Grenzfall (exactly 90% distinct) simuliert.
+
+    Issue #1074/#1222 Fix — das Bit-Identitaets-Kriterium allein (ohne kalibrierte Slippage) ist
+    seit diesem Fix INCONCLUSIVE, nicht mehr ``passed=True`` (siehe
+    ``test_bit_identity_pass_without_any_calibration_is_inconclusive_not_true`` unten). Diese
+    Grenzfall-Fixture traegt deshalb jetzt zusaetzlich kalibrierte Slippage + den holdout-skopierten
+    Zaehler, sodass beide Kriterien (Bit-Identitaet UND Mindestdelta) tatsaechlich auswertbar sind."""
+    def _calibrated_record(exp, full_realism, trades=10):
+        r = _record(exp, full_realism, trades=trades)
+        r["slippage_p50_bps_calibrated"] = 20.0
+        r["holdout_n_trailing_stop_exits"] = trades
+        return r
+    records = ([_calibrated_record(-20.0, -20.05) for _ in range(9)]
+               + [_calibrated_record(-20.0, -20.0)])
     result = inv.check_cost_stress_distinctness(records)
     assert result.passed is True
+    assert result.evaluable is True
+
+
+def test_bit_identity_pass_without_any_calibration_is_inconclusive_not_true():
+    """Issue #1074/#1222 (Katalog #1247+) Fix Punkt 3 — ein leerer Kalibrierungs-Cache darf nicht
+    wie ein sauberer PASS aussehen: besteht das Bit-Identitaets-Kriterium, aber KEINE Study traegt
+    eine kalibrierte Slippage, ist das Ergebnis INCONCLUSIVE (``passed=None``, ``evaluable=False``),
+    nicht ``passed=True`` (kein Fail-open mit einem sweep-weiten Ersatz)."""
+    records = [_record(-20.0, -20.05) for _ in range(9)] + [_record(-20.0, -20.0)]
+    result = inv.check_cost_stress_distinctness(records)
+    assert result.passed is None
+    assert result.evaluable is False
+    assert result.evaluability["inconclusive_reason"] == "NO_CALIBRATED_SLIPPAGE"
+    assert result.evaluability["n_studies_with_calibration"] == 0
 
 
 def test_studies_without_trades_are_excluded_from_the_denominator():
