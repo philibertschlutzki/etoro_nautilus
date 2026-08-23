@@ -27,6 +27,8 @@ Kommentarverweis) plus ein Quelltext-Regressionswaechter, der sicherstellt, dass
 import re
 from pathlib import Path
 
+import pytest
+
 from automation.optimizer import invariants as inv
 
 # Hinweis: hourly_strategy_base.py definiert ``class HourlyStrategyBase(Strategy):`` — echte
@@ -132,22 +134,23 @@ def test_formula_inactive_without_configured_trade_amount_pct():
 
 # --- invariants.check_sizing_cap_enforcement --------------------------------------------------------
 
-def _study(strategy, symbol, *, trade_amount_pct, f_realized_max):
+def _study(strategy, symbol, *, trade_amount_pct, f_realized_peak_max):
     return {"strategy": strategy, "symbol": symbol, "trade_amount_pct": trade_amount_pct,
-            "holdout_f_realized_max": f_realized_max}
+            "holdout_f_realized_peak_max": f_realized_peak_max}
 
 
 def test_check_passes_when_max_within_tolerance():
     result = inv.check_sizing_cap_enforcement([
-        _study("A", "X.ETORO", trade_amount_pct=15.0, f_realized_max=0.153),  # 15.3% <= 1.05*15
+        _study("A", "X.ETORO", trade_amount_pct=15.0, f_realized_peak_max=0.153),  # 15.3% <= 1.05*15
     ])
     assert result.passed is True
 
 
 def test_check_fails_reproducing_b10_signature():
-    """f_realized bis zu 1,66x trade_amount_pct -- weit ueber der 1,05x-Toleranz."""
+    """f_realized_peak bis zu 1,66x trade_amount_pct -- weit ueber der 1,05x-Toleranz."""
     result = inv.check_sizing_cap_enforcement([
-        _study("AdxAtrMomentumStrategy", "KRYS.ETORO", trade_amount_pct=15.0, f_realized_max=0.249),
+        _study("AdxAtrMomentumStrategy", "KRYS.ETORO", trade_amount_pct=15.0,
+               f_realized_peak_max=0.249),
     ])
     assert result.passed is False
     assert result.severity == "blocking"
@@ -157,11 +160,24 @@ def test_check_fails_reproducing_b10_signature():
 
 def test_check_not_applicable_without_data():
     """Issue #1084/#1232 Fix Punkt 2 — VERSCHAERFUNG: eine fehlende Eingabe (kein Study mit
-    holdout_f_realized_max) darf bei einem 'blocking'-Check nicht wie ein sauberer PASS aussehen.
-    ``passed=None``/``evaluable=False`` (INCONCLUSIVE) ersetzt das vormalige fail-open
+    holdout_f_realized_peak_max) darf bei einem 'blocking'-Check nicht wie ein sauberer PASS
+    aussehen. ``passed=None``/``evaluable=False`` (INCONCLUSIVE) ersetzt das vormalige fail-open
     ``passed=True`` — exakt das Symptom aus #1084 (11/11 Laeufe passed=True, actual=None, weil
     confirm.py das Feld nie in den Study-Record durchreichte)."""
     result = inv.check_sizing_cap_enforcement([{"strategy": "A", "symbol": "X.ETORO"}])
     assert result.passed is None
     assert result.evaluable is False
     assert result.actual is None
+
+
+def test_offender_surfaces_turnover_as_context_next_to_the_deciding_peak_value():
+    """Issue #1085/#1233 Fix Punkt 3 — der Umschlag steht als Kontext NEBEN dem entscheidenden
+    Peak-Wert, damit ein Befund als Hebelueberschreitung oder als reiner Scale-in-Umschlag lesbar
+    ist. Reproduziert das KRYS-Symptom: zwei Aufstockungen zu je 15% mit Teilabbau ergeben Umschlag
+    30%, obwohl das gleichzeitige Exposure (peak) nie 15% ueberschritt."""
+    record = _study("AdxAtrMomentumStrategy", "KRYS.ETORO", trade_amount_pct=15.0,
+                     f_realized_peak_max=0.249)
+    record["holdout_f_turnover_realized_max"] = 0.30
+    result = inv.check_sizing_cap_enforcement([record])
+    offender = result.actual["AdxAtrMomentumStrategy/KRYS.ETORO"]
+    assert offender["f_turnover_realized_max_pct"] == pytest.approx(30.0)

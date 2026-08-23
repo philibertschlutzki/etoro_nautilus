@@ -1762,7 +1762,8 @@ def _study_record(proposal: dict, study,
             trial_attrs, "oos_stop_exit_slippage_bps_median"),
         # Issue #1059/#1208 — dieselbe Groesse, aber HOLDOUT-skopiert (aus dem promotierten
         # Holdout-Re-Evaluations-Pfad, siehe holdout_total_trades-Feldkommentar unten und
-        # _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS["oos_f_realized_median"] fuer dasselbe Muster).
+        # _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS["oos_f_turnover_realized_median"] fuer dasselbe
+        # Muster).
         # Root-Cause #1208: das obige Feld ist OOS-skopiert (Median ueber ALLE Sweep-Trials dieser
         # Study), stand aber in summary_de.py OHNE Scope-Kennzeichnung direkt unter den
         # Holdout-Ertragszahlen — eine Study mit 0 Holdout-Trades (z. B. verworfen/nicht promotiert)
@@ -1972,17 +1973,23 @@ def _study_record(proposal: dict, study,
         # seither (mathematisch weiterhin die korrekte Basis fuer die #1028-Sizing-Identitaet, siehe
         # ``check_sizing_identity_coherence``) — KEIN Entscheidungs-/Sortier-/Gate-Konsument mehr.
         "holdout_expectancy_notional_weighted": holdout_metrics.get("oos_expectancy"),
-        # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-
-        # Anteil (rt_notional / equity_at_entry, Median), Rohmaterial fuer
-        # invariants.check_sizing_identity_coherence — ERSETZT dort den bisher AUSSCHLIESSLICH aus
-        # (holdout_total_return, holdout_expectancy_notional_weighted, holdout_total_trades)
-        # algebraisch implizierten Wert als primaeres Entscheidungskriterium, sofern verfuegbar.
-        "holdout_f_realized_median": holdout_metrics.get("oos_f_realized_median"),
-        # Issue #1060/#1209 (Katalog #1196-1221) — das MAXIMUM derselben direkt gemessenen Serie
-        # (rt_notional / equity_at_entry je Round-Trip); Rohmaterial fuer invariants.check_sizing_
-        # cap_enforcement (ein Sizing-Cap-Verstoss ist ein Worst-Case-Ereignis, das der Median
-        # strukturell verwaescht).
-        "holdout_f_realized_max": holdout_metrics.get("oos_f_realized_max"),
+        # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md), umbenannt #1085/#1233 —
+        # DIREKT gemessener Sizing-UMSCHLAG (Summe rt_notional / equity_at_entry ueber ALLE Legs
+        # eines Round-Trips). Reine Umschlagsdiagnose (severity low) — NICHT mehr das primaere
+        # Kriterium der Sizing-Checks (siehe holdout_f_realized_peak_median/_max unten): zwei
+        # Aufstockungen zu je 15% ergeben hier 30%, obwohl nie mehr als 15% GLEICHZEITIG offen
+        # waren (Root-Cause #1233, KRYS-Symptom in check_sizing_identity_coherence).
+        "holdout_f_turnover_realized_median": holdout_metrics.get("oos_f_turnover_realized_median"),
+        "holdout_f_turnover_realized_max": holdout_metrics.get("oos_f_turnover_realized_max"),
+        # Issue #1085/#1233 (Katalog #1247+, P0) Fix Punkt 1 — DIREKT gemessenes GLEICHZEITIGES
+        # Netto-Exposure (rt_notional_peak / equity_at_entry je Round-Trip) — die zum #1209-
+        # Sizing-Deckel passende Groesse (der Deckel begrenzt Exposure, nicht Umschlag). Median ist
+        # das primaere Kriterium fuer invariants.check_sizing_identity_coherence (ersetzt dort den
+        # bisher konsumierten Umschlagswert); Maximum (Issue #1060/#1209, Katalog #1196-1221 — ein
+        # Sizing-Cap-Verstoss ist ein Worst-Case-Ereignis, das der Median strukturell verwaescht)
+        # ist das Kriterium fuer invariants.check_sizing_cap_enforcement.
+        "holdout_f_realized_peak_median": holdout_metrics.get("oos_f_realized_peak_median"),
+        "holdout_f_realized_peak_max": holdout_metrics.get("oos_f_realized_peak_max"),
         # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
         # konfigurierten) Kostenkomponenten dieser Study; Rohmaterial fuer
         # invariants.check_applied_cost_components_resolved. Root-Cause des Vorzustands: ein

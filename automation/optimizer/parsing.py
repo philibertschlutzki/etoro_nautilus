@@ -258,14 +258,21 @@ class TournamentMetrics:
     # Issue #975/#1129 — der ROHE (ungefloorte) ATR-Median, Gegenstueck zu oos_atr_median_bps (dem
     # EFFEKTIVEN, ratschen-gefloorten Wert).
     oos_atr_raw_median_bps: float | None = None
-    # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-Anteil
-    # (rt_notional / equity_at_entry, Median), Rohmaterial fuer
-    # invariants.check_sizing_identity_coherence (siehe backtest_runner._aggregate_exit_telemetry-
-    # Docstring). None ohne mtm_series/fehlende Bars vor dem Entry (fail-open, additive Telemetrie).
-    oos_f_realized_median: float | None = None
-    # Issue #1060/#1209 (Katalog #1196-1221) — das MAXIMUM derselben Serie, siehe backtest_runner.
-    # _aggregate_exit_telemetry-Docstring; Rohmaterial fuer invariants.check_sizing_cap_enforcement.
-    oos_f_realized_max: float | None = None
+    # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-UMSCHLAG
+    # (Summe rt_notional / equity_at_entry ueber ALLE Legs, Median). Issue #1085/#1233 (Katalog
+    # #1247+, P0) — umbenannt von oos_f_realized_median: Umschlagsdiagnose (severity low), NICHT
+    # mehr das primaere Kriterium der Sizing-Checks (siehe oos_f_realized_peak_median unten). None
+    # ohne mtm_series/fehlende Bars vor dem Entry (fail-open, additive Telemetrie).
+    oos_f_turnover_realized_median: float | None = None
+    oos_f_turnover_realized_max: float | None = None
+    # Issue #1085/#1233 (Katalog #1247+, P0) Fix Punkt 1 — DIREKT gemessenes GLEICHZEITIGES
+    # Netto-Exposure (rt_notional_peak / equity_at_entry), siehe backtest_runner._finalize_
+    # round_trip-Kommentar. Median ist das primaere Kriterium fuer
+    # invariants.check_sizing_identity_coherence; Maximum (Issue #1060/#1209, Katalog #1196-1221 —
+    # ein Sizing-Cap-Verstoss ist ein WORST-CASE-Ereignis) fuer invariants.check_sizing_cap_
+    # enforcement.
+    oos_f_realized_peak_median: float | None = None
+    oos_f_realized_peak_max: float | None = None
     # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
     # konfigurierten) Kostenkomponenten dieses Levels, siehe backtest_runner.extract_metrics
     # (Stempelstelle direkt neben expectancy_round_trip_cost_stress_full_realism). Rohmaterial fuer
@@ -453,10 +460,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_atr_min_bps = oos_metrics.get("atr_min_bps")
     # Issue #975/#1129 — siehe TournamentMetrics-Docstring.
     oos_atr_raw_median_bps = oos_metrics.get("atr_raw_median_bps")
-    # Issue #989/#1143 — siehe TournamentMetrics-Docstring.
-    oos_f_realized_median = oos_metrics.get("f_realized_median")
-    # Issue #1060/#1209 — siehe TournamentMetrics-Docstring.
-    oos_f_realized_max = oos_metrics.get("f_realized_max")
+    # Issue #989/#1143, umbenannt #1085/#1233 — siehe TournamentMetrics-Docstring.
+    oos_f_turnover_realized_median = oos_metrics.get("f_turnover_realized_median")
+    oos_f_turnover_realized_max = oos_metrics.get("f_turnover_realized_max")
+    # Issue #1085/#1233 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
+    oos_f_realized_peak_median = oos_metrics.get("f_realized_peak_median")
+    oos_f_realized_peak_max = oos_metrics.get("f_realized_peak_max")
     # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
     oos_applied_financing_bps_per_day = oos_metrics.get("applied_financing_bps_per_day")
     oos_applied_slippage_bps = oos_metrics.get("applied_slippage_bps")
@@ -717,12 +726,18 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #975/#1129 — siehe TournamentMetrics-Docstring.
         oos_atr_raw_median_bps=(
             float(oos_atr_raw_median_bps) if oos_atr_raw_median_bps is not None else None),
-        # Issue #989/#1143 — siehe TournamentMetrics-Docstring.
-        oos_f_realized_median=(
-            float(oos_f_realized_median) if oos_f_realized_median is not None else None),
-        # Issue #1060/#1209 — siehe TournamentMetrics-Docstring.
-        oos_f_realized_max=(
-            float(oos_f_realized_max) if oos_f_realized_max is not None else None),
+        # Issue #989/#1143, umbenannt #1085/#1233 — siehe TournamentMetrics-Docstring.
+        oos_f_turnover_realized_median=(
+            float(oos_f_turnover_realized_median)
+            if oos_f_turnover_realized_median is not None else None),
+        oos_f_turnover_realized_max=(
+            float(oos_f_turnover_realized_max)
+            if oos_f_turnover_realized_max is not None else None),
+        # Issue #1085/#1233 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
+        oos_f_realized_peak_median=(
+            float(oos_f_realized_peak_median) if oos_f_realized_peak_median is not None else None),
+        oos_f_realized_peak_max=(
+            float(oos_f_realized_peak_max) if oos_f_realized_peak_max is not None else None),
         # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
         oos_applied_financing_bps_per_day=(
             float(oos_applied_financing_bps_per_day)

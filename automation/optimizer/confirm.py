@@ -589,18 +589,19 @@ def _metrics_dict(m) -> dict:
         # Issue #987/#1141 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
         "oos_expectancy_cost_stress_full_realism": getattr(
             m, "oos_expectancy_cost_stress_full_realism", None),
-        # Issue #989/#1143 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
-        "oos_f_realized_median": getattr(m, "oos_f_realized_median", None),
-        # Issue #1084/#1232 (Katalog #1247+, P0) — Root-Cause: ``oos_f_realized_max`` erreichte
-        # diese kuratierte Teilmenge NIE, obwohl ``_aggregate_exit_telemetry`` (backtest_runner.py)
-        # es aus DERSELBEN ``f_realized_values``-Serie wie ``oos_f_realized_median`` berechnet und
-        # ``parsing.TournamentMetrics`` es korrekt parst (``m.oos_f_realized_max`` existiert) — die
-        # Bruecke von ``m`` in dieses Dict fehlte einfach fuer den Max- (nicht den Median-)Zweig.
-        # ``holdout_f_realized_max`` war dadurch in 154/154 Study-Records ``null``, der
-        # blockierende ``check_sizing_cap_enforcement`` strukturell IMMER ``passed=True,
-        # actual=None`` (Pitfall #421-Klasse: eine je Feld einzeln kuratierte Teilmenge ist eine
-        # eigene Datenschranke).
-        "oos_f_realized_max": getattr(m, "oos_f_realized_max", None),
+        # Issue #989/#1143 (Katalog #986), umbenannt #1085/#1233 — siehe parsing.TournamentMetrics-
+        # Docstring. Issue #1084/#1232 (Katalog #1247+, P0) Root-Cause (historisch): der Max-Zweig
+        # fehlte hier frueher komplett, obwohl backtest_runner ihn aus derselben Serie berechnete
+        # und parsing.py ihn korrekt parste — die Bruecke fehlte NUR fuer den Max-, nicht den
+        # Median-Zweig (Pitfall #421-Klasse: eine je Feld einzeln kuratierte Teilmenge ist eine
+        # eigene Datenschranke). Beide Zweige sind seither explizit vorhanden.
+        "oos_f_turnover_realized_median": getattr(m, "oos_f_turnover_realized_median", None),
+        "oos_f_turnover_realized_max": getattr(m, "oos_f_turnover_realized_max", None),
+        # Issue #1085/#1233 (Katalog #1247+, P0) Fix Punkt 1 — siehe parsing.TournamentMetrics-
+        # Docstring; Rohmaterial fuer check_sizing_identity_coherence (Median)/check_sizing_cap_
+        # enforcement (Max).
+        "oos_f_realized_peak_median": getattr(m, "oos_f_realized_peak_median", None),
+        "oos_f_realized_peak_max": getattr(m, "oos_f_realized_peak_max", None),
         # Issue #1075/#1223 (Katalog #1247+, P0) — siehe parsing.TournamentMetrics-Docstring;
         # Rohmaterial fuer invariants.check_applied_cost_components_resolved.
         "oos_applied_financing_bps_per_day": getattr(m, "oos_applied_financing_bps_per_day", None),

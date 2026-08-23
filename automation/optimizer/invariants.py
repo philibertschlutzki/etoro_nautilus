@@ -4372,11 +4372,12 @@ def check_sizing_identity_coherence(
     Holdout-Spanne bei hohem Exposure, oder (c) Dust-Round-Trips im ``n``-Zaehler die Identitaet
     selbst verletzen koennen — DANN divergiert ``f_implied`` von ``trade_amount_pct``, OHNE dass das
     tatsaechliche Sizing (die reale ``rt_notional``/Equity-Relation) je Round-Trip abweicht.
-    ``holdout_f_realized_median`` (``rt_notional / equity_at_entry`` DIREKT je Round-Trip gemessen,
-    siehe ``backtest_runner._finalize_round_trip``) ist das primaere Entscheidungskriterium, sofern
-    verfuegbar — sie umgeht (a)-(c) vollstaendig, weil sie nicht ueber die Identitaet zurueckrechnet,
-    sondern das reale Notional/Equity-Verhaeltnis direkt abliest. NUR wenn ``holdout_f_realized_
-    median`` fehlt (aeltere Report-JSONs ohne dieses Feld), faellt die Pruefung auf die algebraische
+    ``holdout_f_realized_peak_median`` (``rt_notional_peak / equity_at_entry`` DIREKT je Round-Trip
+    gemessen, siehe ``backtest_runner._finalize_round_trip`` — das GLEICHZEITIGE Exposure, nicht
+    der Umschlag, Issue #1085/#1233) ist das primaere Entscheidungskriterium, sofern verfuegbar —
+    sie umgeht (a)-(c) vollstaendig, weil sie nicht ueber die Identitaet zurueckrechnet, sondern das
+    reale Notional/Equity-Verhaeltnis direkt abliest. NUR wenn ``holdout_f_realized_peak_median``
+    fehlt (aeltere Report-JSONs ohne dieses Feld), faellt die Pruefung auf die algebraische
     ``f_implied``-Berechnung zurueck (bit-identisch zum Pre-#989-Verhalten). ``actual`` traegt je
     Offender ``"source": "measured"|"implied"``, damit ein Bericht sofort unterscheidet, ob die
     Abweichung Sizing (measured) oder ein reiner Identitaets-/Metrik-Artefakt (implied) ist."""
@@ -4385,7 +4386,7 @@ def check_sizing_identity_coherence(
         if (r.get("holdout_total_trades") or 0) >= min_trades
         and r.get("trade_amount_pct")
         and (
-            r.get("holdout_f_realized_median") is not None
+            r.get("holdout_f_realized_peak_median") is not None
             or (r.get("holdout_expectancy_notional_weighted") is not None
                 and abs(r["holdout_expectancy_notional_weighted"]) >= min_abs_expectancy
                 and r.get("holdout_total_return") is not None)
@@ -4395,7 +4396,7 @@ def check_sizing_identity_coherence(
         return InvariantResult(
             name="check_sizing_identity_coherence",
             passed=True,
-            expected=f"|f_realized_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+            expected=f"|f_realized_peak_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
             actual=None,
             detail="Keine Studies mit Holdout-Trades/Expectancy/trade_amount_pct — nicht anwendbar.",
             severity="blocking",
@@ -4404,19 +4405,25 @@ def check_sizing_identity_coherence(
     for r in with_data:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         trade_amount_pct = float(r["trade_amount_pct"])
-        f_realized_median = r.get("holdout_f_realized_median")
-        if f_realized_median is not None:
-            # Issue #989/#1143 — DIREKT gemessen, primaeres Kriterium (siehe Docstring).
-            f_realized_pct = float(f_realized_median) * 100.0
-            gap = abs(f_realized_pct - trade_amount_pct) / trade_amount_pct
+        # Issue #1085/#1233 (Katalog #1247+, P0) — Root-Cause: das vormalige primaere Kriterium
+        # (``holdout_f_realized_median``) misst den UMSCHLAG (Summe ueber alle Legs eines
+        # Round-Trips), nicht das gleichzeitige Exposure, gegen das trade_amount_pct als Deckel
+        # gilt. ``holdout_f_realized_peak_median`` (rt_notional_peak / equity_at_entry) ist die
+        # Groesse, die tatsaechlich mit trade_amount_pct vergleichbar ist.
+        f_realized_peak_median = r.get("holdout_f_realized_peak_median")
+        if f_realized_peak_median is not None:
+            # Issue #989/#1143, korrigiert #1085/#1233 — DIREKT gemessen, primaeres Kriterium.
+            f_realized_peak_pct = float(f_realized_peak_median) * 100.0
+            gap = abs(f_realized_peak_pct - trade_amount_pct) / trade_amount_pct
             if gap > max_relative_gap:
                 offenders[key] = {
-                    "f_realized_pct": round(f_realized_pct, 4),
+                    "f_realized_peak_pct": round(f_realized_peak_pct, 4),
                     "trade_amount_pct": trade_amount_pct,
                     "source": "measured",
                 }
         else:
-            # Fallback: algebraisch implizierte Berechnung (kein holdout_f_realized_median verfuegbar).
+            # Fallback: algebraisch implizierte Berechnung (kein holdout_f_realized_peak_median
+            # verfuegbar).
             n = r["holdout_total_trades"]
             expectancy = float(r["holdout_expectancy_notional_weighted"])
             total_return = float(r["holdout_total_return"])
@@ -4435,15 +4442,16 @@ def check_sizing_identity_coherence(
     return InvariantResult(
         name="check_sizing_identity_coherence",
         passed=passed,
-        expected=f"|f_realized_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+        expected=f"|f_realized_peak_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies: der (gemessene oder implizierte, siehe je "
                 f"Offender 'source') Sizing-Anteil weicht relativ um mehr als {max_relative_gap} vom "
                 f"konfigurierten trade_amount_pct ab: {offenders} — bei 'source': 'measured' eine "
-                "reale Sizing-Anomalie (#989/#1143); bei 'implied' moeglicherweise nur ein "
-                "Identitaets-/Metrik-Artefakt, keine reale Sizing-Abweichung (#1028)."),
+                "reale Sizing-Anomalie (#989/#1143, gemessen als Exposure-Peak seit #1085/#1233); "
+                "bei 'implied' moeglicherweise nur ein Identitaets-/Metrik-Artefakt, keine reale "
+                "Sizing-Abweichung (#1028)."),
     )
 
 
@@ -4464,68 +4472,91 @@ def check_sizing_cap_enforcement(
     einer Strategie auf einem Instrument darf ``trade_amount_pct · equity`` nie ueberschreiten,
     ueberschiessende Anforderungen werden auf den verbleibenden Spielraum gekappt und als
     ``SIZING_CAP_HIT`` geloggt). Dieser Check ist die ABNAHMEMESSUNG dafuer: das GEMESSENE Maximum
-    (``holdout_f_realized_max``, dieselbe direkt gemessene Serie wie ``check_sizing_identity_
+    (``holdout_f_realized_peak_max``, dieselbe direkt gemessene Serie wie ``check_sizing_identity_
     coherence``s Median-Kriterium, hier aber das WORST-CASE-Ereignis statt des Medians — ein
     einzelner Cap-Verstoss wird von einem Median strukturell verwaescht) darf
     ``max_overshoot_factor`` (Default 1,05, Toleranz fuer Rundung/Slippage zwischen Order und Fill)
     mal ``trade_amount_pct`` nie uebersteigen.
 
+    Issue #1085/#1233 (Katalog #1247+, P0) Root-Cause: vor diesem Fix konsumierte dieser Check
+    ``holdout_f_realized_max`` — den UMSCHLAG (Summe ``rt_notional / equity_at_entry`` ueber ALLE
+    Legs eines Round-Trips), nicht das GLEICHZEITIGE Netto-Exposure, gegen das der #1209-Deckel
+    tatsaechlich wirkt. Zwei Aufstockungen zu je 15% mit zwischenzeitlichem Teilabbau ergaben
+    ``f_realized = 30%`` bei nie ueberschrittenen 15% GLEICHZEITIGEM Exposure (KRYS-Symptom, drei
+    Studies ueber der 0,35-Toleranz von ``check_sizing_identity_coherence``, ausgerechnet das
+    Symbol mit den einzigen drei positiven Alphas |t| >= 2 des Katalogs). ``holdout_f_realized_
+    peak_max`` (``rt_notional_peak / equity_at_entry``, das PEAK ueber gleichzeitig offene Legs)
+    ist die Groesse, die der Deckel tatsaechlich begrenzt.
+
     FAIL (severity ``blocking`` — dieselbe Kategorie wie ``check_sizing_identity_coherence``, ein
     Sizing-Cap-Verstoss ist ein Risikomanagement-Defekt, kein Diagnose-Befund). Studies ohne
-    ``holdout_f_realized_max`` (aeltere Report-JSONs, oder kein Holdout-Trade) sind nicht
-    auswertbar und werden uebersprungen (kein FAIL auf fehlender Evidenz)."""
+    ``holdout_f_realized_peak_max`` (aeltere Report-JSONs, oder kein Holdout-Trade) sind nicht
+    auswertbar und werden uebersprungen (kein FAIL auf fehlender Evidenz). Jeder Offender weist
+    zusaetzlich ``f_turnover_realized_max_pct`` (sofern verfuegbar) aus, damit ein Befund als
+    Hebelueberschreitung (``peak > cap``) oder als reiner Scale-in-Umschlag (``peak <= cap <
+    turnover``) lesbar ist."""
     with_data = [
         r for r in study_records
-        if r.get("holdout_f_realized_max") is not None and r.get("trade_amount_pct")
+        if r.get("holdout_f_realized_peak_max") is not None and r.get("trade_amount_pct")
     ]
     if not with_data:
         # Issue #1084/#1232 (Katalog #1247+, P0, Pitfall #413-Klasse in AGENTS.md) — Root-Cause:
-        # ``holdout_f_realized_max`` erreichte den Study-Record strukturell NIE (confirm.py's
-        # kuratierte Holdout-Metrik-Teilmenge liess das Feld aus, siehe dortiger Fix), wodurch dieser
-        # ``severity='blocking'``-Check IMMER hier landete und ``passed=True`` lieferte — fuer einen
-        # Cap-Abnahmecheck ununterscheidbar von "der Deckel wurde geprueft und haelt". Eine fehlende
-        # Eingabe darf bei einem blockierenden Check nicht wie ein sauberer PASS aussehen (dieselbe
-        # Konvention wie ``check_stop_loss_vs_bar_range``/#995/#1147): ``passed=None`` +
-        # ``evaluable=False`` statt eines fail-open ``True``.
+        # ``holdout_f_realized_max`` (heute ``holdout_f_realized_peak_max``) erreichte den
+        # Study-Record strukturell NIE (confirm.py's kuratierte Holdout-Metrik-Teilmenge liess das
+        # Feld aus, siehe dortiger Fix), wodurch dieser ``severity='blocking'``-Check IMMER hier
+        # landete und ``passed=True`` lieferte — fuer einen Cap-Abnahmecheck ununterscheidbar von
+        # "der Deckel wurde geprueft und haelt". Eine fehlende Eingabe darf bei einem blockierenden
+        # Check nicht wie ein sauberer PASS aussehen (dieselbe Konvention wie
+        # ``check_stop_loss_vs_bar_range``/#995/#1147): ``passed=None`` + ``evaluable=False`` statt
+        # eines fail-open ``True``.
         return InvariantResult(
             name="check_sizing_cap_enforcement",
             passed=None,
-            expected=f"f_realized_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
+            expected=f"f_realized_peak_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
             actual=None,
             severity="blocking",
             evaluable=False,
             evaluability={
                 "evaluable": False,
-                "inconclusive_reason": "NO_HOLDOUT_F_REALIZED_MAX_TELEMETRY",
+                "inconclusive_reason": "NO_HOLDOUT_F_REALIZED_PEAK_MAX_TELEMETRY",
                 "n_studies_measured": 0,
             },
-            detail="Keine Studies mit holdout_f_realized_max/trade_amount_pct — nicht auswertbar "
-                   "(INCONCLUSIVE, siehe evaluability; kein PASS im Sinne einer geprueften "
-                   "Grundgesamtheit).",
+            detail="Keine Studies mit holdout_f_realized_peak_max/trade_amount_pct — nicht "
+                   "auswertbar (INCONCLUSIVE, siehe evaluability; kein PASS im Sinne einer "
+                   "geprueften Grundgesamtheit).",
         )
     offenders: dict[str, dict] = {}
     for r in with_data:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         trade_amount_pct = float(r["trade_amount_pct"])
-        f_realized_max_pct = float(r["holdout_f_realized_max"]) * 100.0
+        f_realized_peak_max_pct = float(r["holdout_f_realized_peak_max"]) * 100.0
         limit = max_overshoot_factor * trade_amount_pct
-        if f_realized_max_pct > limit:
-            offenders[key] = {
-                "f_realized_max_pct": round(f_realized_max_pct, 4),
+        if f_realized_peak_max_pct > limit:
+            offender = {
+                "f_realized_peak_max_pct": round(f_realized_peak_max_pct, 4),
                 "trade_amount_pct": trade_amount_pct,
-                "overshoot_factor": round(f_realized_max_pct / trade_amount_pct, 4),
+                "overshoot_factor": round(f_realized_peak_max_pct / trade_amount_pct, 4),
             }
+            # Issue #1085/#1233 Fix Punkt 3 — Umschlag als Kontext NEBEN dem entscheidenden
+            # Peak-Wert, damit ein Befund als Hebelueberschreitung oder als Scale-in-Umschlag
+            # lesbar ist (peak > cap: echte Hebelueberschreitung; turnover >> peak: Scale-in ueber
+            # mehrere Legs, keine gleichzeitige Ueberschreitung).
+            if r.get("holdout_f_turnover_realized_max") is not None:
+                offender["f_turnover_realized_max_pct"] = round(
+                    float(r["holdout_f_turnover_realized_max"]) * 100.0, 4)
+            offenders[key] = offender
     passed = not offenders
     return InvariantResult(
         name="check_sizing_cap_enforcement",
         passed=passed,
-        expected=f"f_realized_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
+        expected=f"f_realized_peak_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies mit einem gemessenen Sizing-Maximum ueber "
-                f"{max_overshoot_factor}x des konfigurierten trade_amount_pct: {offenders} — der "
-                "Aggregat-Exposure-Deckel in _compute_quantity wurde nicht wirksam (#1209)."),
+                f"{len(offenders)} Study/Studies mit einem gemessenen Sizing-Maximum (gleichzeitiges "
+                f"Exposure) ueber {max_overshoot_factor}x des konfigurierten trade_amount_pct: "
+                f"{offenders} — der Aggregat-Exposure-Deckel in _compute_quantity wurde nicht "
+                "wirksam (#1209)."),
     )
 
 

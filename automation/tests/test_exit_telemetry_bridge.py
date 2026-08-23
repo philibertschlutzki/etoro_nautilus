@@ -53,8 +53,10 @@ def _metrics_dict_keys() -> set[str]:
 
 
 def test_oos_f_realized_max_now_reaches_metrics_dict():
-    """Regressionstest fuer die konkrete #1084-Bruchstelle."""
-    assert "oos_f_realized_max" in _metrics_dict_keys()
+    """Regressionstest fuer die konkrete #1084-Bruchstelle. Issue #1085/#1233 hat
+    ``oos_f_realized_max`` in ``oos_f_turnover_realized_max`` umbenannt (Umschlag statt Exposure-
+    Peak) — die Bruecke selbst (der eigentliche Gegenstand dieses Tests) besteht unveraendert."""
+    assert "oos_f_turnover_realized_max" in _metrics_dict_keys()
 
 
 def test_every_holdout_only_allowlisted_field_actually_reaches_metrics_dict():

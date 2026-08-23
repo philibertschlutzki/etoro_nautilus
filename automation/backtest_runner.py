@@ -4260,8 +4260,13 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     bar_range_p75s: list[float] = []
     zero_range_bar_fractions: list[float] = []
     # Issue #989/#1143 (Katalog #986) — UNBEDINGT (nicht auf TRAILING_STOP beschraenkt): der
-    # DIREKT gemessene Sizing-Anteil je Round-Trip (siehe _finalize_round_trip-Kommentar).
+    # DIREKT gemessene Sizing-Anteil je Round-Trip (siehe _finalize_round_trip-Kommentar). Issue
+    # #1085/#1233 (Katalog #1247+, P0) — dies ist der UMSCHLAG (Summe ueber alle Legs); umbenannt
+    # zu "f_turnover_realized" im Rueckgabe-Dict unten (Diagnose, severity low). Der Sizing-Cap
+    # selbst begrenzt das GLEICHZEITIGE Exposure — dafuer ist f_realized_peak_values (unten) die
+    # richtige Serie.
     f_realized_values: list[float] = []
+    f_realized_peak_values: list[float] = []
     for m in meta_list or []:
         # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
         # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
@@ -4320,6 +4325,8 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             zero_range_bar_fractions.append(float(m["zero_range_bar_fraction"]))
         if m.get("f_realized") is not None:
             f_realized_values.append(float(m["f_realized"]))
+        if m.get("f_realized_peak") is not None:
+            f_realized_peak_values.append(float(m["f_realized_peak"]))
     _rt_notionals_sorted = sorted(rt_notionals)
     return {
         "exit_reason_histogram": histogram,
@@ -4415,17 +4422,26 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         "zero_range_bar_fraction": (
             statistics.median(zero_range_bar_fractions) if zero_range_bar_fractions else None),
         # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-
-        # Anteil (rt_notional / equity_at_entry, Median ueber alle Round-Trips dieser Ebene),
-        # Rohmaterial fuer invariants.check_sizing_identity_coherence (ersetzt dort die bisher
-        # AUSSCHLIESSLICH algebraisch implizierte Groesse als primaeres Entscheidungskriterium).
-        "f_realized_median": (
+        # UMSCHLAG (Summe rt_notional / equity_at_entry ueber ALLE Legs eines Round-Trips, Median
+        # ueber alle Round-Trips dieser Ebene). Issue #1085/#1233 (Katalog #1247+, P0) — umbenannt
+        # von "f_realized_median" zu "f_turnover_realized_median": zwei Aufstockungen zu je 15%
+        # ergeben hier 30%, obwohl nie mehr als 15% GLEICHZEITIG offen waren (Umschlag, keine
+        # Exposure). Bleibt als Umschlagsdiagnose (severity low) erhalten; der #1209-Sizing-Deckel
+        # begrenzt Exposure, nicht Umschlag — siehe f_realized_peak_median/_max unten.
+        "f_turnover_realized_median": (
             statistics.median(f_realized_values) if f_realized_values else None),
-        # Issue #1060/#1209 (Katalog #1196-1221) — das MAXIMUM (nicht nur der Median) ueber
-        # dieselbe Serie: ein Sizing-Cap-Verstoss ist ein WORST-CASE-Ereignis (eine einzelne
-        # Aufstockung ueber den Deckel), das ein Median-basierter Check strukturell verwaesert —
-        # Rohmaterial fuer invariants.check_sizing_cap_enforcement.
-        "f_realized_max": (
+        "f_turnover_realized_max": (
             max(f_realized_values) if f_realized_values else None),
+        # Issue #1085/#1233 Fix Punkt 1 — f_realized_peak = rt_notional_peak / equity_at_entry, das
+        # GLEICHZEITIGE Netto-Exposure je Round-Trip (siehe _finalize_round_trip-Kommentar). Median
+        # ist die Zielgroesse fuer invariants.check_sizing_identity_coherence (ersetzt dort die
+        # bisher konsumierte Umschlagsgroesse); Maximum (Issue #1060/#1209, Katalog #1196-1221 —
+        # ein Sizing-Cap-Verstoss ist ein WORST-CASE-Ereignis, das ein Median-basierter Check
+        # strukturell verwaescht) ist die Zielgroesse fuer invariants.check_sizing_cap_enforcement.
+        "f_realized_peak_median": (
+            statistics.median(f_realized_peak_values) if f_realized_peak_values else None),
+        "f_realized_peak_max": (
+            max(f_realized_peak_values) if f_realized_peak_values else None),
     }
 
 
@@ -4834,14 +4850,25 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # zu diesem Fix). ``None`` ohne ``mtm_series``/vor der ersten Bar (fail-open, additive
             # Telemetrie).
             f_realized = None
+            # Issue #1085/#1233 (Katalog #1247+, P0) — ``f_realized`` (oben) summiert ueber ALLE
+            # Legs eines Round-Trips (Umschlag: zwei Aufstockungen zu je 15% ergeben 30%, obwohl
+            # nie mehr als 15% gleichzeitig offen waren). Der #1209-Sizing-Deckel begrenzt dagegen
+            # das GLEICHZEITIGE Netto-Exposure — ``rt_notional_peak`` (oben bereits berechnet,
+            # bislang nur in die separate ``rt_notional_peaks``-Liste einsortiert, NICHT durch
+            # ``f_realized`` geteilt) ist die dafuer passende Zaehler-Groesse.
+            # ``f_realized_peak = rt_notional_peak / equity_at_entry`` ist deshalb die Zielgroesse
+            # fuer JEDEN Sizing-Cap-Check; ``f_realized`` bleibt als Umschlagsdiagnose erhalten.
+            f_realized_peak = None
             if mtm_series is not None and not mtm_series.empty:
                 try:
                     _entry_ts = min(m[1] - m[2] for m in matches)
                     _equity_at_entry = mtm_series.asof(pd.Timestamp(_entry_ts, unit="ns"))
                     if _equity_at_entry is not None and not pd.isna(_equity_at_entry) and _equity_at_entry > 0:
                         f_realized = rt_notional / float(_equity_at_entry)
+                        f_realized_peak = rt_notional_peak / float(_equity_at_entry)
                 except (ValueError, TypeError, KeyError):
                     f_realized = None
+                    f_realized_peak = None
             # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 1 — Finanzierungs-
             # kosten je GEHALTENEM Kalendertag (aufgerundet — "je gehaltenem Kalendertag" ist hier
             # als ceil(Haltedauer/24h) gelesen, eine dokumentierte Vereinfachung: die tatsaechliche
@@ -4940,6 +4967,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "rt_financing_bps": rt_financing_bps,
                 # Issue #989/#1143 — siehe Kommentar an der Berechnung oben.
                 "f_realized": f_realized,
+                # Issue #1085/#1233 — siehe Kommentar an der Berechnung oben.
+                "f_realized_peak": f_realized_peak,
             })
 
         # Chronologisches FIFO-Matching pro Instrument
