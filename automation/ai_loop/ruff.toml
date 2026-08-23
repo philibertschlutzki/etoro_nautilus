@@ -1,0 +1,17 @@
+# automation/ai_loop/ruff.toml
+# Issue #1105 — scope: automation/ai_loop/workspace/ ONLY.
+#
+# automation/ai_loop/validator.py::StaticValidator.run_linters passes THIS file explicitly via
+# `ruff check --config automation/ai_loop/ruff.toml <one candidate file>` — it lints exactly one
+# file under automation/ai_loop/workspace/candidates/ per call, never the whole
+# automation/ai_loop package and never automation/strategies/. The repo has no root-level
+# pyproject.toml/ruff config, so this file is never picked up by ambient/repo-wide ruff
+# discovery either — it only applies when a caller points `--config` at it directly.
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "I"]
+# E501 (line-too-long) is redundant with line-length above and noisy for LLM-generated code
+# that isn't hand-wrapped; every other pycodestyle/pyflakes/isort check stays active.
+ignore = ["E501"]

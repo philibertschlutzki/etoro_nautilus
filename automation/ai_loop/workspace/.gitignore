@@ -1,0 +1,10 @@
+# automation/ai_loop/workspace/ — runtime scratch area (Issues #1105-#1107).
+#
+# Everything generated at runtime here (synthesized candidates, rejected-candidate archives,
+# backtest-run artifacts, the Path-A search-space-override candidate JSON) is transient AI-Loop
+# output and MUST NOT be committed. Only the directory skeleton (.gitkeep placeholders) and this
+# file are tracked.
+*
+!.gitignore
+!*/
+!**/.gitkeep

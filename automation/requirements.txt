@@ -18,6 +18,12 @@ pytest-json-report>=1.5.0
 pytest-timeout>=2.3.0
 pytest-mock>=3.12.0
 
+# Issue #1105 — automation/ai_loop/validator.py::StaticValidator.run_linters scopes both tools
+# to a SINGLE AI-Loop candidate file under automation/ai_loop/workspace/candidates/ (never the
+# whole repo/automation package) via the config files in automation/ai_loop/ (ruff.toml/mypy.ini).
+ruff>=0.6.0
+mypy>=1.10.0
+
 # Utils
 # Issue #802 — pct_change()'s fill_method-Default aenderte sich zwischen 2.0/2.1/3.0 und liess die
 # #756/#801-Log-Return-Identitaet von der Installationsumgebung statt der Konfiguration abhaengen.
