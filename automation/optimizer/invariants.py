@@ -4409,13 +4409,29 @@ def check_sizing_cap_enforcement(
         if r.get("holdout_f_realized_max") is not None and r.get("trade_amount_pct")
     ]
     if not with_data:
+        # Issue #1084/#1232 (Katalog #1247+, P0, Pitfall #413-Klasse in AGENTS.md) — Root-Cause:
+        # ``holdout_f_realized_max`` erreichte den Study-Record strukturell NIE (confirm.py's
+        # kuratierte Holdout-Metrik-Teilmenge liess das Feld aus, siehe dortiger Fix), wodurch dieser
+        # ``severity='blocking'``-Check IMMER hier landete und ``passed=True`` lieferte — fuer einen
+        # Cap-Abnahmecheck ununterscheidbar von "der Deckel wurde geprueft und haelt". Eine fehlende
+        # Eingabe darf bei einem blockierenden Check nicht wie ein sauberer PASS aussehen (dieselbe
+        # Konvention wie ``check_stop_loss_vs_bar_range``/#995/#1147): ``passed=None`` +
+        # ``evaluable=False`` statt eines fail-open ``True``.
         return InvariantResult(
             name="check_sizing_cap_enforcement",
-            passed=True,
+            passed=None,
             expected=f"f_realized_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
             actual=None,
             severity="blocking",
-            detail="Keine Studies mit holdout_f_realized_max/trade_amount_pct — nicht anwendbar.",
+            evaluable=False,
+            evaluability={
+                "evaluable": False,
+                "inconclusive_reason": "NO_HOLDOUT_F_REALIZED_MAX_TELEMETRY",
+                "n_studies_measured": 0,
+            },
+            detail="Keine Studies mit holdout_f_realized_max/trade_amount_pct — nicht auswertbar "
+                   "(INCONCLUSIVE, siehe evaluability; kein PASS im Sinne einer geprueften "
+                   "Grundgesamtheit).",
         )
     offenders: dict[str, dict] = {}
     for r in with_data:

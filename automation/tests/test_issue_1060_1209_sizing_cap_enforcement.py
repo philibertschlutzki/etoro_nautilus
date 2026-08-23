@@ -156,6 +156,12 @@ def test_check_fails_reproducing_b10_signature():
 
 
 def test_check_not_applicable_without_data():
+    """Issue #1084/#1232 Fix Punkt 2 — VERSCHAERFUNG: eine fehlende Eingabe (kein Study mit
+    holdout_f_realized_max) darf bei einem 'blocking'-Check nicht wie ein sauberer PASS aussehen.
+    ``passed=None``/``evaluable=False`` (INCONCLUSIVE) ersetzt das vormalige fail-open
+    ``passed=True`` — exakt das Symptom aus #1084 (11/11 Laeufe passed=True, actual=None, weil
+    confirm.py das Feld nie in den Study-Record durchreichte)."""
     result = inv.check_sizing_cap_enforcement([{"strategy": "A", "symbol": "X.ETORO"}])
-    assert result.passed is True
+    assert result.passed is None
+    assert result.evaluable is False
     assert result.actual is None

@@ -591,6 +591,16 @@ def _metrics_dict(m) -> dict:
             m, "oos_expectancy_cost_stress_full_realism", None),
         # Issue #989/#1143 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
         "oos_f_realized_median": getattr(m, "oos_f_realized_median", None),
+        # Issue #1084/#1232 (Katalog #1247+, P0) — Root-Cause: ``oos_f_realized_max`` erreichte
+        # diese kuratierte Teilmenge NIE, obwohl ``_aggregate_exit_telemetry`` (backtest_runner.py)
+        # es aus DERSELBEN ``f_realized_values``-Serie wie ``oos_f_realized_median`` berechnet und
+        # ``parsing.TournamentMetrics`` es korrekt parst (``m.oos_f_realized_max`` existiert) — die
+        # Bruecke von ``m`` in dieses Dict fehlte einfach fuer den Max- (nicht den Median-)Zweig.
+        # ``holdout_f_realized_max`` war dadurch in 154/154 Study-Records ``null``, der
+        # blockierende ``check_sizing_cap_enforcement`` strukturell IMMER ``passed=True,
+        # actual=None`` (Pitfall #421-Klasse: eine je Feld einzeln kuratierte Teilmenge ist eine
+        # eigene Datenschranke).
+        "oos_f_realized_max": getattr(m, "oos_f_realized_max", None),
         "oos_cvar_95": getattr(m, "oos_cvar_95", None),
         "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),
