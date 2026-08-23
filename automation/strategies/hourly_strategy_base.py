@@ -378,6 +378,18 @@ class HourlyStrategyBase(Strategy):
         # Setzstelle. None ausserhalb einer laufenden TRAILING_STOP-Ausloesung.
         self._trigger_anchor_price: float | None = None
         self._trigger_stop_distance_bps: float | None = None
+        # Issue #1080/#1228 (Katalog #1247+, P0, Semantik-Bump Simulation) — der Stop-LEVEL zum
+        # AUSLOESE-Zeitpunkt (self._trailing_stop_price im selben Moment wie Anker/Distanz oben),
+        # eingefroren VOR jeder weiteren Ratsche. Root-Cause des Vorzustands: die Ratsche
+        # (siehe _check_exits_and_update, "Update trailing stop"-Block) laeuft UNBEDINGT auf JEDER
+        # Bar, auch nachdem ein Exit bereits ausgeloest wurde (_exit_pending != None) — bis zum
+        # tatsaechlichen Markt-Close-Absetzen (u. U. erst nach #836-Watchdog-Bars) kann
+        # ``self._trailing_stop_price`` also weiter ratschen. Der ``TRAILING_STOP_PRICE``-Tag
+        # (gesetzt beim Absetzen) traegt dadurch den RATSCHE-VERSCHOBENEN Wert, nicht den, gegen den
+        # ``stop_distance_bps``/``STOP_TRIGGER_ANCHOR_PRICE`` tatsaechlich gebildet wurden — die
+        # Identitaet ``stop_distance_bps == (anchor - stop_px)/anchor`` bricht um genau den
+        # Ratschenbetrag. ``_trigger_stop_price`` ist die fehlende, eingefrorene Referenz.
+        self._trigger_stop_price: float | None = None
 
         self._profit_target_pct = getattr(config, "profit_target_pct", None)
         self._daily_trades: int = 0
@@ -906,6 +918,10 @@ class HourlyStrategyBase(Strategy):
                 _sign = 1.0 if self._trailing_stop_side == "SHORT" else -1.0
                 self._trigger_stop_distance_bps = (
                     _sign * (self._trailing_stop_price - _anchor) / _anchor * 10_000.0)
+                # Issue #1080/#1228 Fix Punkt 1 — der Stop-Level ZUSAMMEN mit Anker/Distanz
+                # einfrieren (siehe Feld-Docstring), NICHT der spaeter u. U. weiter geratschte
+                # ``self._trailing_stop_price`` zum Absetz-Zeitpunkt.
+                self._trigger_stop_price = self._trailing_stop_price
 
         # Exit condition 2: Time-based exit (24 bars, GR-01/#714)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
@@ -1073,7 +1089,31 @@ class HourlyStrategyBase(Strategy):
                         and self._trigger_anchor_price is not None):
                     tag_list.append(f"STOP_DISTANCE_BPS:{self._trigger_stop_distance_bps:.8f}")
                     tag_list.append(f"STOP_TRIGGER_ANCHOR_PRICE:{self._trigger_anchor_price:.8f}")
+                    # Issue #1080/#1228 (Katalog #1247+, P0, Semantik-Bump Simulation) Fix Punkt 2 —
+                    # der zum AUSLOESE-Zeitpunkt eingefrorene Stop-Level, als eigener Tag NEBEN
+                    # TRAILING_STOP_PRICE (das UNVERAENDERT den Stop-Level zum ABSETZ-Zeitpunkt
+                    # traegt — Nenner von resolve_stop_exit_slippage_bps, Zero-Regression). Dieser
+                    # neue Tag ist die Referenz fuer die Verlust-Zerlegungs-Identitaet
+                    # (backtest_runner._finalize_round_trip), NICHT TRAILING_STOP_PRICE.
+                    if self._trigger_stop_price is not None:
+                        tag_list.append(
+                            f"STOP_TRIGGER_STOP_PRICE:{self._trigger_stop_price:.8f}")
+                        # Fix Punkt 5 — der bisher unsichtbare Ratschenbetrag zwischen Ausloesung
+                        # und tatsaechlichem Absetzen, seitenbereinigt (LONG: eine steigende
+                        # Ratsche ist advers fuer den Verlust-Nenner, SHORT: eine fallende).
+                        _ratchet_sign = 1.0 if self._trailing_stop_side == "SHORT" else -1.0
+                        tag_list.append(
+                            "STOP_RATCHET_BETWEEN_TRIGGER_AND_SUBMIT_BPS:"
+                            f"{_ratchet_sign * (self._trailing_stop_price - self._trigger_stop_price) / self._trigger_anchor_price * 10_000.0:.8f}"
+                        )
             tags = tag_list
+            # Issue #1080/#1228 Fix Punkt 4 — die Trigger-Trias NACH der Tag-Emission auf None
+            # setzen: ein watchdog-erzwungener Close (self._exit_pending_kind bleibt TRAILING_STOP,
+            # aber OHNE einen frischen Trigger-Bar-Durchlauf, z. B. nach einem Reconnect) darf keine
+            # veralteten Anker-/Distanz-/Stop-Preis-Werte einer FRUEHEREN Position/Ausloesung erben.
+            self._trigger_anchor_price = None
+            self._trigger_stop_distance_bps = None
+            self._trigger_stop_price = None
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=exit_side,
@@ -1487,6 +1527,7 @@ class HourlyStrategyBase(Strategy):
         # Ausloese-Anker/-Distanz einer vorherigen Position.
         self._trigger_anchor_price = None
         self._trigger_stop_distance_bps = None
+        self._trigger_stop_price = None
         # Issue #836 — eine neue Position beginnt garantiert ohne einen laufenden Exit-Versuch.
         self._exit_pending = None
         self._exit_pending_kind = None

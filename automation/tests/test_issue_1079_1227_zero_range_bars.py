@@ -25,6 +25,13 @@ import re
 import pytest
 
 from automation.optimizer import invariants as inv
+from automation.strategies import hourly_strategy_base as hsb
+
+# Hinweis: automation/tests/conftest.py importiert das echte nautilus_trader VOR jeder
+# Testkollektion, sodass die aelteren, mock-installierenden Testmodule (die sonst per
+# ``if "nautilus_trader" not in sys.modules`` gaeten) ihren Mock ueberspringen — dieses Modul kann
+# sich deshalb auf einen normalen, direkten Import verlassen (siehe
+# test_issue_1080_1228_trigger_stop_price.py, dieselbe Absicherung).
 
 
 # --- Strukturtest gegen die Produktionsquelle (dieselbe Technik wie
@@ -32,12 +39,10 @@ from automation.optimizer import invariants as inv
 # NautilusTrader-Strategy-Setup fuer diese Guard-Pruefung) --------------------------------------
 
 def _execute_market_close_source() -> str:
-    from automation.strategies import hourly_strategy_base as hsb
     return inspect.getsource(hsb.HourlyStrategyBase._execute_market_close)
 
 
 def _check_exits_source() -> str:
-    from automation.strategies import hourly_strategy_base as hsb
     # Der Lese-/Filter-Block liegt in _check_exits_and_update (dort werden die Bar-Spannen
     # waehrend der offenen Position gesammelt).
     return inspect.getsource(hsb.HourlyStrategyBase._check_exits_and_update)
@@ -59,7 +64,6 @@ def test_bar_range_readings_are_only_appended_for_bars_with_positive_range():
 
 
 def test_zero_range_bar_count_and_total_bar_count_are_tracked():
-    from automation.strategies import hourly_strategy_base as hsb
     source = inspect.getsource(hsb.HourlyStrategyBase.__init__)
     assert "self._position_bar_count: int = 0" in source
     assert "self._position_zero_range_bar_count: int = 0" in source
@@ -75,12 +79,11 @@ def test_three_new_tags_emitted_on_closing_order():
 def test_nearest_rank_percentile_matches_backtest_runner_methodology():
     """Dieselbe Nearest-Rank-Arithmetik wie backtest_runner._pctl (Konsistenz der
     Perzentil-Methodik ueber das Modul-Paar hinweg, siehe Docstring an der Deklaration)."""
-    from automation.strategies.hourly_strategy_base import _nearest_rank_percentile
-    from automation.backtest_runner import _pctl
+    import automation.backtest_runner as br
 
     vals = sorted([1.0, 2.0, 3.0, 4.0, 10.0, 12.0, 30.0])
     for p in (0.5, 0.75, 0.9):
-        assert _nearest_rank_percentile(vals, p) == _pctl(vals, p)
+        assert hsb._nearest_rank_percentile(vals, p) == br._pctl(vals, p)
 
 
 def test_synthetic_series_reproduces_zero_median_before_and_positive_median_after_filtering():

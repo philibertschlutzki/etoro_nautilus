@@ -4043,6 +4043,17 @@ def _parse_exit_order_tags(tags) -> dict:
                 # backtest_runner._finalize_round_trip bildet trigger_to_fill_gap_bps UND
                 # realized_loss_bps mit DEMSELBEN Nenner, damit die Identitaet exakt ist.
                 meta["stop_trigger_anchor_price"] = float(value)
+            elif key == "STOP_TRIGGER_STOP_PRICE":
+                # Issue #1080/#1228 (Katalog #1247+, P0, Semantik-Bump Simulation) — der Stop-Level
+                # ZUM AUSLOESE-Zeitpunkt (eingefroren, siehe hourly_strategy_base._trigger_stop_price
+                # -Docstring), ANDERS als TRAILING_STOP_PRICE (Stop-Level zum ABSETZ-Zeitpunkt, kann
+                # zwischenzeitlich weiter geratscht sein). Dies ist die korrekte Referenz fuer
+                # trigger_to_fill_gap_bps — nicht trailing_stop_price.
+                meta["stop_trigger_stop_price"] = float(value)
+            elif key == "STOP_RATCHET_BETWEEN_TRIGGER_AND_SUBMIT_BPS":
+                # Issue #1080/#1228 Fix Punkt 5 — der bisher unsichtbare Ratschenbetrag zwischen
+                # Ausloesung und tatsaechlichem Absetzen, seitenbereinigt.
+                meta["stop_ratchet_between_trigger_and_submit_bps"] = float(value)
         except (TypeError, ValueError):
             continue
     return meta
@@ -4222,6 +4233,10 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     stop_distance_bps_values: list[float] = []
     trigger_to_fill_gap_bps_values: list[float] = []
     realized_loss_bps_values: list[float] = []
+    # Issue #1080/#1228 — der bisher unsichtbare Ratschenbetrag zwischen Ausloesung und
+    # tatsaechlichem Absetzen, dieselbe TRAILING_STOP-Population wie die drei Serien oben.
+    stop_ratchet_between_trigger_and_submit_bps_values: list[float] = []
+    n_trailing_stop_exits_with_ratchet_telemetry = 0
     n_stop_loss_identity_checked = 0
     n_stop_loss_identity_violations = 0
     # Issue #1035 (Katalog #866) — Root-Cause: der Zaehler unten (``losses_bps``) mittelt ueber
@@ -4281,6 +4296,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             trigger_to_fill_gap_bps_values.append(float(m["trigger_to_fill_gap_bps"]))
         if reason == "TRAILING_STOP" and m.get("realized_loss_bps") is not None:
             realized_loss_bps_values.append(float(m["realized_loss_bps"]))
+        if (reason == "TRAILING_STOP"
+                and m.get("stop_ratchet_between_trigger_and_submit_bps") is not None):
+            n_trailing_stop_exits_with_ratchet_telemetry += 1
+            stop_ratchet_between_trigger_and_submit_bps_values.append(
+                float(m["stop_ratchet_between_trigger_and_submit_bps"]))
         # Issue #1054/#1203 Akzeptanzkriterium 1 — Identitaet |realized_loss_bps −
         # (stop_distance_bps + trigger_to_fill_gap_bps)| < 1e-6 je Round-Trip, gezaehlt (nicht nur
         # angenommen): >= 99,9 % der TRAILING_STOP-Round-Trips muessen sie erfuellen.
@@ -4356,6 +4376,13 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             if trigger_to_fill_gap_bps_values else None),
         "realized_loss_bps_median": (
             statistics.median(realized_loss_bps_values) if realized_loss_bps_values else None),
+        # Issue #1080/#1228 (Katalog #1247+, P0) Fix Punkt 5 — Median des bisher unsichtbaren
+        # Ratschenbetrags zwischen Ausloesung und Absetzen, plus die Stichprobengroesse dahinter
+        # (Akzeptanzkriterium: >= 95% der TRAILING_STOP-Round-Trips gestempelt).
+        "stop_ratchet_between_trigger_and_submit_bps_median": (
+            statistics.median(stop_ratchet_between_trigger_and_submit_bps_values)
+            if stop_ratchet_between_trigger_and_submit_bps_values else None),
+        "n_trailing_stop_exits_with_ratchet_telemetry": n_trailing_stop_exits_with_ratchet_telemetry,
         "n_stop_loss_identity_checked": n_stop_loss_identity_checked,
         "n_stop_loss_identity_violations": n_stop_loss_identity_violations,
         # Issue #1097 (Katalog #930) — die Stichprobengroesse HINTER gross_loss_mean_bps (ALLE
@@ -4855,11 +4882,24 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Telemetrie (is_data_end_fallback oder fehlender Anker/Stop-Level).
             _anchor_px = None if is_data_end_fallback else meta.get("stop_trigger_anchor_price")
             _stop_distance_bps = None if is_data_end_fallback else meta.get("stop_distance_bps")
+            # Issue #1080/#1228 (Katalog #1247+, P0, Semantik-Bump Simulation) — Root-Cause: die
+            # Zerlegung bildete trigger_to_fill_gap_bps bislang gegen ``_stop_px``
+            # (``trailing_stop_price``, der Stop-Level zum ABSETZ-Zeitpunkt), waehrend
+            # ``stop_distance_bps`` (erster Summand) gegen den Stop-Level zum AUSLOESE-Zeitpunkt
+            # gebildet wurde. Ratscht der Stop zwischen Ausloesung und Absetzen (monoton, siehe
+            # hourly_strategy_base #1094), divergiert die Summenidentitaet um genau den
+            # Ratschenbetrag — bis zu 92,9% der TRAILING_STOP-Round-Trips auf NATGAS (viele Bars
+            # zwischen Ausloesung und Watchdog-erzwungenem Absetzen). ``stop_trigger_stop_price``
+            # (eingefroren zum Ausloese-Zeitpunkt, siehe hourly_strategy_base-Docstring) ist die
+            # korrekte Referenz — NICHT ``_stop_px``/``trailing_stop_price`` (das bleibt
+            # unveraendert der Nenner von ``stop_exit_slippage_bps`` oben, Zero-Regression).
+            _trigger_stop_px = None if is_data_end_fallback else meta.get("stop_trigger_stop_price")
             trigger_to_fill_gap_bps = None
             realized_loss_bps = None
-            if _anchor_px and closing_price is not None and _stop_px is not None:
+            if _anchor_px and closing_price is not None and _trigger_stop_px is not None:
                 _sign = 1.0 if is_short_close else -1.0
-                trigger_to_fill_gap_bps = _sign * (closing_price - _stop_px) / _anchor_px * 10_000.0
+                trigger_to_fill_gap_bps = (
+                    _sign * (closing_price - _trigger_stop_px) / _anchor_px * 10_000.0)
                 realized_loss_bps = _sign * (closing_price - _anchor_px) / _anchor_px * 10_000.0
             rt_exit_meta.append({
                 "exit_reason": "DATA_END" if is_data_end_fallback else meta.get("exit_reason"),
@@ -4890,6 +4930,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "stop_distance_bps": _stop_distance_bps,
                 "trigger_to_fill_gap_bps": trigger_to_fill_gap_bps,
                 "realized_loss_bps": realized_loss_bps,
+                # Issue #1080/#1228 — der eingefrorene Ausloese-Stop-Preis (Nenner-Konsistenz-
+                # Rohmaterial) und der seitenbereinigte Ratschenbetrag bis zum Absetzen.
+                "stop_trigger_stop_price": _trigger_stop_px,
+                "stop_ratchet_between_trigger_and_submit_bps": (
+                    None if is_data_end_fallback
+                    else meta.get("stop_ratchet_between_trigger_and_submit_bps")),
                 # Issue #987/#1141 — siehe Kommentar an der Berechnung oben.
                 "rt_financing_bps": rt_financing_bps,
                 # Issue #989/#1143 — siehe Kommentar an der Berechnung oben.
