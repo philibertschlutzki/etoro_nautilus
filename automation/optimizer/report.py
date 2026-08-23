@@ -1512,6 +1512,16 @@ def _study_record(proposal: dict, study,
         "n_trials_pruned": study_user_attrs.get("n_trials_pruned"),
         "n_trials_unevaluable": study_user_attrs.get("n_trials_unevaluable"),
         "n_trials_failed": study_user_attrs.get("n_trials_failed"),
+        # Issue #1086/#1234 (Katalog #1247+, P1) — die STORE-weiten (ueber alle Laeufe auf demselben
+        # Optuna-Store akkumulierten) Gegenstuecke zu den vier run-scopeden Zaehlern oben, aus
+        # run_optimization._emit_study_summary. Jeder Feldname traegt das ``_store``-Suffix, damit
+        # kein Konsument ihn versehentlich mit dem run-scopeden Zaehler verwechselt (#1235-Folgefix
+        # bindet die Invarianten-Konsumenten an diesen Vertrag).
+        "n_trials_total_store": study_user_attrs.get("n_trials_total_store"),
+        "n_trials_informative_store": study_user_attrs.get("n_trials_informative_store"),
+        "n_trials_pruned_store": study_user_attrs.get("n_trials_pruned_store"),
+        "n_trials_unevaluable_store": study_user_attrs.get("n_trials_unevaluable_store"),
+        "n_trials_failed_store": study_user_attrs.get("n_trials_failed_store"),
         # Issue #1063/#1213 (Katalog #1196-1221) — Root-Cause des B-9-"0"-Symptoms (§5.3 zeigte
         # "Guard-dominierte Studies: 0" bei 84-85% Zensur): dieses von run_optimization._emit_
         # study_summary gestempelte User-Attr (Issue #823 Fix Punkt 4) erreichte den Study-Record

@@ -2556,7 +2556,23 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     ``feasible_p_eligible``, ``constraint_improvement_rate``, ``gradient_signal``) ausweisen, damit
     eine (aussichtslose) Study NICHT in höhere Tiers eskaliert wird und der Eskalations-Entscheid aus
     dem Log nachvollziehbar ist."""
-    trials = list(getattr(study, "trials", None) or [])
+    # Issue #1086/#1234 (Katalog #1247+, P1) — Root-Cause: ``study.trials`` ist STORE-SCOPED (alle
+    # Trials aller Laeufe auf demselben Optuna-Store, ueber Warm-Start-Wiederholungen hinweg
+    # akkumuliert), waehrend diese Funktion ``run_id`` bereits als Parameter erhaelt. Die fuenf
+    # unten gestempelten Zaehler (``n_trials_total`` etc.) blieben bislang UNGEFILTERT — in
+    # Warm-Start-Laeufen z. B. ``n_trials_total = 403`` (= 123+140+140 ueber drei Laeufe) neben
+    # dem bereits korrekt run-scopeden ``n_trials_total_study``/``n_evaluable`` aus
+    # ``report._study_record`` (Issue #1198, ``trials_override``). Zwei verschiedene
+    # Grundgesamtheiten unter aehnlichen Namen (``check_denominator_coherence``/``check_counter_
+    # partition_consistency`` failten deshalb NUR in Warm-Start-Laeufen). ``store_trials`` haelt die
+    # VOLLE (store-weite) Population fuer die neuen ``_store``-Zaehler unten; ``trials`` wird ab hier
+    # auf ``run_id`` gefiltert — dieselbe Filterformulierung wie ``sweep.py``s
+    # ``deflation_family_floor``-Zaehlung (dortiger Kommentar).
+    store_trials = list(getattr(study, "trials", None) or [])
+    trials = store_trials
+    if run_id is not None:
+        trials = [t for t in store_trials
+                  if (getattr(t, "user_attrs", {}) or {}).get("run_id") == run_id]
     durs = [v for t in trials
             if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
     evaluable = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
@@ -2610,6 +2626,33 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         study.set_user_attr("n_trials_pruned", n_trials_pruned)
         study.set_user_attr("n_trials_failed", n_trials_failed)
         study.set_user_attr("n_trials_unevaluable", n_trials_unevaluable)
+    except Exception:
+        pass
+    # Issue #1086/#1234 (Katalog #1247+, P1) Fix Punkt 2 — die STORE-weiten (ungefilterten)
+    # Zaehlungen bleiben zusaetzlich unter eindeutigem ``_store``-Suffix erhalten, damit die
+    # Store-Groesse (z. B. fuer Betriebs-/Kapazitaetsfragen) weiter sichtbar ist — aber kein
+    # Konsument sie mehr mit dem run-scopeden Zaehler oben verwechseln kann (siehe #1235-Folgefix
+    # fuer die Invarianten-Konsumenten). Wird ``run_id`` nicht uebergeben, ist ``store_trials ==
+    # trials`` (dieselbe Population) und die ``_store``-Werte sind bit-identisch zu den
+    # run-scopeden — kein neues Verhalten fuer Aufrufer ohne ``run_id``.
+    n_trials_pruned_store = sum(
+        1 for t in store_trials if getattr(t, "state", None) == optuna.trial.TrialState.PRUNED)
+    n_trials_failed_store = sum(
+        1 for t in store_trials if getattr(t, "state", None) == optuna.trial.TrialState.FAIL)
+    n_trials_informative_store = sum(
+        1 for t in store_trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+    )
+    n_trials_unevaluable_store = max(
+        0, len(store_trials) - n_trials_pruned_store - n_trials_failed_store
+        - n_trials_informative_store)
+    try:
+        study.set_user_attr("n_trials_total_store", len(store_trials))
+        study.set_user_attr("n_trials_informative_store", n_trials_informative_store)
+        study.set_user_attr("n_trials_pruned_store", n_trials_pruned_store)
+        study.set_user_attr("n_trials_failed_store", n_trials_failed_store)
+        study.set_user_attr("n_trials_unevaluable_store", n_trials_unevaluable_store)
     except Exception:
         pass
     # Issue #1063/#1213 (P1, Katalog #1196-1221) — Root-Cause B-9: Squeeze/NVDA 153/180 (85,0%) bzw.
