@@ -1,3 +1,5 @@
+> **Status (2026-08-23):** Diese vier Issues wurden gegen den bestehenden Code-Stand geprüft, korrigiert und als GitHub-Issues #1104–#1107 angelegt (Reihenfolge 1:1 wie unten). Wichtigste Korrekturen dort: `logs/gate_eval_<id>.json` existiert nicht im Repo (Gate-Infos stecken in `logs/run_<id>.json`/`deployment_gate.DeploymentDecision`); der CLI-Aufruf von `run_optimization.py` in `closedloopoptimizer.md` §5.1 kennt nur `--strategy/--n-trials/--n-jobs`; der Orchestrator (Issue 4 / #1107) darf `strategies.json` niemals selbst schreiben (HI-3-Prinzip aus `automation/optimizer/champions.py`) und muss in einem isolierten Git-Worktree laufen. Für den aktuellen, verbindlichen Stand der Akzeptanzkriterien gelten die GitHub-Issues, nicht mehr dieses Dokument.
+
 Issue 1: Feature - AI Engine Scaffold (Client, Parsing, Ledger)
 Ziel
 Implementierung des Grundgerüsts für die AI-Optimierungsschleife. Dazu gehört ein asynchroner API-Client für DeepSeek sowie das Parsing-Modul, um historische Backtest-Logs und Gate-Rejections als strukturierten Prompt-Kontext aufzubereiten.
