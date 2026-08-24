@@ -111,6 +111,55 @@ def _cost_model_has_zero_realism(base_cfg: Path | None = None) -> bool:
     return bool(values) and all(v == 0.0 for v in values)
 
 
+def _cost_model_realism_from_applied(
+    studies: list[dict], base_cfg: Path | None = None,
+) -> tuple[bool, str, list[str]]:
+    """Issue #1077/#1225 (P1) — ``_cost_model_has_zero_realism`` liest ``backtest.json``, die
+    KONFIGURIERTEN Platzhalter — seit #1055/#1204 stammt die real ANGEWANDTE Slippage jedoch aus
+    dem Kalibrierungs-Cache, nicht mehr aus dieser Konfiguration. Root-Cause des #1225-Symptoms:
+    das Flag war in 11/11 Läufen ``true`` (weil ``backtest.json`` unkalibrierte 0,0-Platzhalter
+    trägt), obwohl ``full_realism`` auf 7 von 8 Symbolen tatsächlich 45,8–115,5 bps abzog — die
+    Warnung war dort falsch, auf dem achten Symbol (TSLA) richtig, aber aus dem falschen Grund
+    (Symbol-Override-Lücke, #1075/#1223, nicht die globale Konfiguration).
+
+    Leitet Zero-Realism seither aus den mit #1075/#1223 gestempelten ``applied_*``-Feldern JEDER
+    Study ab (dieselbe, einzige erlaubte Datenquelle wie jede andere Zeile in ``summary_de.py``,
+    kein zweiter ``backtest.json``-Lesezugriff). Rückgabe ``(cost_model_zero_realism,
+    cost_model_realism_source, zero_realism_symbols)``:
+      - ``config_zero``: ALLE Studies mit aufgelösten ``applied_*``-Feldern sind 0,0 —
+        ``cost_model_zero_realism=True``, identisch zur bisherigen Warnung.
+      - ``calibrated_cache``: KEINE Study ist 0,0 — ``cost_model_zero_realism=False``, keine
+        Warnung mehr nötig.
+      - ``mixed``: ein Teil der Studies ist 0,0 (typischerweise ein Symbol-Override, das die
+        Asset-Class-Aufloesung fuer Finanzierung/Slippage umgeht), ein Teil traegt reale Werte —
+        ``cost_model_zero_realism=False`` (die Aussage "ALLES ist 0,0" waere falsch), die
+        betroffenen Symbole werden namentlich in ``zero_realism_symbols`` zurueckgegeben, damit
+        §2.4 sie NENNEN statt sie unter einem pauschalen Verdikt zu verstecken.
+
+    Fallback ohne EINE klassifizierbare Study (kein Run-Studies mit aufgeloesten ``applied_*``-
+    Feldern, z. B. ein Report ohne Holdout-Trades) — dieselbe konfigurationsbasierte Heuristik wie
+    vor diesem Fix, da keine gemessenen Daten vorliegen, die die Konfiguration widerlegen koennten;
+    niemals ``mixed`` ohne mindestens zwei klassifizierbare Studies mit unterschiedlichem Befund."""
+    classified: list[tuple[str, bool]] = []
+    for r in studies:
+        slippage = r.get("applied_slippage_bps")
+        financing = r.get("applied_financing_bps_per_day")
+        if slippage is None or financing is None:
+            continue
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        classified.append((key, float(slippage) == 0.0 and float(financing) == 0.0))
+    if not classified:
+        legacy = _cost_model_has_zero_realism(base_cfg)
+        return legacy, ("config_zero" if legacy else "calibrated_cache"), []
+    zero_keys = sorted(k for k, is_zero in classified if is_zero)
+    nonzero_keys = [k for k, is_zero in classified if not is_zero]
+    if not nonzero_keys:
+        return True, "config_zero", []
+    if not zero_keys:
+        return False, "calibrated_cache", []
+    return False, "mixed", zero_keys
+
+
 def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, float]:
     """Issue #1028 (Katalog #866) — der EFFEKTIVE ``trade_amount_pct`` je Strategie
     (``strategy_defaults.json``, ``strategies.json[params]`` hat Vorrang, siehe
@@ -4503,6 +4552,11 @@ def _build_report(
     # Stand abgeleitet (dieselbe Reihenfolge wie vor #1037 — unveraendert).
     _decision_admissible = _compute_decision_admissible(invariant_checks)
 
+    # Issue #1077/#1225 (P1) — aus den gemessenen ``applied_*``-Feldern JEDER Study abgeleitet
+    # (siehe _cost_model_realism_from_applied-Docstring), NICHT mehr aus backtest.json direkt.
+    (_cost_model_zero_realism, _cost_model_realism_source,
+     _cost_model_zero_realism_symbols) = _cost_model_realism_from_applied(studies_out)
+
     report = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "run_id": run_id,
@@ -4589,13 +4643,18 @@ def _build_report(
             # c_rt, je Symbol) UNTERSCHEIDBAR von "der Floor bindet nirgends" (siehe
             # check_cost_basis_resolution/_atr_floor_bps_by_symbol-Docstring).
             "cost_model_resolution": _cost_model_resolution,
-            # Issue #1010/#1162 (Katalog #1170) — True, wenn die 'full_realism'-Kostenstress-Stufe
-            # ein No-Op ist (financing_bps/slippage_bps ueberall 0.0 in backtest.json). Traeger fuer
-            # summary_de.py Abschnitt 2.4 (die einzige erlaubte Datenquelle dort ist dieses Report-
-            # JSON, siehe dortiger Docstring) und unabhaengig vom check_cost_stress_distinctness-
-            # Verdikt selbst (die Methodik-Einschraenkung gilt, sobald konfiguriert, unabhaengig
-            # davon, ob genug Studies mit Trades vorlagen, um den Check auszuloesen).
-            "cost_model_zero_realism": _cost_model_has_zero_realism(),
+            # Issue #1010/#1162 (Katalog #1170), verschaerft durch #1077/#1225 — True, wenn die
+            # 'full_realism'-Kostenstress-Stufe fuer JEDE Study dieses Laufs ein No-Op ist. Seit
+            # #1077/#1225 aus den GEMESSENEN ``applied_*``-Feldern jeder Study abgeleitet (nicht
+            # mehr aus ``backtest.json``, den konfigurierten Platzhaltern — seit #1055/#1204 stammt
+            # die real angewandte Slippage aus dem Kalibrierungs-Cache). ``cost_model_realism_
+            # source`` unterscheidet, WESHALB: ``config_zero`` (wie zuvor), ``calibrated_cache``
+            # (keine Study betroffen) oder ``mixed`` (ein Teil der Studies, namentlich in
+            # ``cost_model_zero_realism_symbols``) — Traeger fuer summary_de.py Abschnitt 2.4 (die
+            # einzige erlaubte Datenquelle dort ist dieses Report-JSON, siehe dortiger Docstring).
+            "cost_model_zero_realism": _cost_model_zero_realism,
+            "cost_model_realism_source": _cost_model_realism_source,
+            "cost_model_zero_realism_symbols": _cost_model_zero_realism_symbols,
             # Issue #1016/#1168 (Katalog #1170) — {cache_path, cache_found}: macht "Cache-Datei
             # fehlt komplett" von "Cache existiert, Feld trotzdem None" unterscheidbar (Root-Cause
             # #1168: symbol_bar_quality war in 28/28 Studies zweier Läufe still None). Traeger fuer

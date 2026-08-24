@@ -657,22 +657,45 @@ def _section_2_monetary_result(report: dict) -> str:
         "Asset-Klasse, #774/#775) — kein garantiertes zukünftiges Ergebnis."
     )
     # Issue #1010/#1162 (Katalog #1170, P0) — Akzeptanzkriterium 2: Abschnitt 2.4 nennt explizit
-    # den methodischen Umfang, wenn financing_bps/slippage_bps ueberall 0.0 sind (backtest.json,
-    # #987/#1141) — die 'full_realism'-Kostenstress-Stufe ist dann ein No-Op, jede Ertragsaussage
-    # oben ist ohne Overnight-Finanzierung, ohne Slippage, ohne Market Impact. Quelle:
-    # ``cross_study.cost_model_zero_realism`` (report._cost_model_has_zero_realism) — dieselbe,
-    # einzige erlaubte Datenquelle (das bereits geschriebene Report-JSON) wie jede andere Zeile in
-    # diesem Modul.
-    if (report.get("cross_study") or {}).get("cost_model_zero_realism"):
+    # den methodischen Umfang, wenn financing_bps/slippage_bps ueberall 0.0 sind — die
+    # 'full_realism'-Kostenstress-Stufe ist dann ein No-Op, jede Ertragsaussage oben ist ohne
+    # Overnight-Finanzierung, ohne Slippage, ohne Market Impact.
+    #
+    # Issue #1077/#1225 (P1) — Root-Cause des Vorzustands: die Quelle war ``backtest.json``, die
+    # KONFIGURIERTEN Platzhalter, obwohl seit #1055/#1204 die real angewandte Slippage aus dem
+    # Kalibrierungs-Cache stammt — das Flag war dadurch in 11/11 Laeufen ``true``, obwohl
+    # ``full_realism`` auf 7 von 8 Symbolen tatsaechlich 45,8-115,5 bps abzog. Quelle jetzt:
+    # ``cross_study.cost_model_realism_source`` (report._cost_model_realism_from_applied), aus den
+    # GEMESSENEN ``applied_*``-Feldern jeder Study abgeleitet — dieselbe, einzige erlaubte
+    # Datenquelle (das bereits geschriebene Report-JSON) wie jede andere Zeile in diesem Modul.
+    # Der volle Warnblock (unten) erscheint nur noch bei ``config_zero`` (ALLE Studies betroffen);
+    # bei ``mixed`` nennt ein schmalerer Hinweis NUR die betroffenen Symbole namentlich, bei
+    # ``calibrated_cache`` entfaellt die Warnung vollstaendig.
+    _cross_study = report.get("cross_study") or {}
+    _cost_model_realism_source = _cross_study.get("cost_model_realism_source")
+    if _cost_model_realism_source is None:
+        # Rueckwaertskompatibilitaet zu Report-JSONs vor #1077/#1225 (nur das alte Bool-Feld).
+        _cost_model_realism_source = "config_zero" if _cross_study.get("cost_model_zero_realism") else None
+    if _cost_model_realism_source == "config_zero":
         lines.append("")
         lines.append(
             "⚠️ **Kalibrierungslücke:** Overnight-Finanzierung und Slippage sind in diesem Lauf "
-            "für alle Asset-Klassen mit 0,0 bps konfiguriert (`backtest.json`, unkalibrierte "
-            "Platzhalter, #987/#1141) — die Kostenstress-Stufe `full_realism` ist damit ein "
-            "No-Op. Jede oben genannte Ertragsaussage gilt **ohne Overnight-Finanzierung, ohne "
-            "Slippage, ohne Market Impact** (siehe `invariants.check_cost_stress_distinctness`, "
-            "#1010/#1162). Eine Kalibrierung mit realen Broker-Sätzen (Kontoauszug/"
-            "Gebührenübersicht) ist ausdrücklich NICHT Teil dieses Fixes."
+            "für alle Asset-Klassen mit 0,0 bps angewandt — die Kostenstress-Stufe `full_realism` "
+            "ist damit ein No-Op. Jede oben genannte Ertragsaussage gilt **ohne Overnight-"
+            "Finanzierung, ohne Slippage, ohne Market Impact** (siehe "
+            "`invariants.check_cost_stress_distinctness`, #1010/#1162). Eine Kalibrierung mit "
+            "realen Broker-Sätzen (Kontoauszug/Gebührenübersicht) ist ausdrücklich NICHT Teil "
+            "dieses Fixes."
+        )
+    elif _cost_model_realism_source == "mixed":
+        _zero_symbols = _cross_study.get("cost_model_zero_realism_symbols") or []
+        lines.append("")
+        lines.append(
+            "⚠️ **Kalibrierungslücke (teilweise):** für folgende Study/Studies sind Overnight-"
+            "Finanzierung und Slippage weiterhin mit 0,0 bps angewandt (z. B. eine Symbol-"
+            f"Override-Lücke, #1075/#1223) — dort ist die Kostenstress-Stufe `full_realism` ein "
+            f"No-Op: {', '.join(_zero_symbols) if _zero_symbols else 'k. A.'}. Für alle übrigen "
+            "Studies liegt ein Kalibrierungs-Cache mit real angewandten Kosten vor (#1055/#1204)."
         )
     # Issue #1029/#1178 (Katalog #866-2) — stop_exit_slippage_bps war in KEINEM Report-Abschnitt
     # und in KEINER Invariante ausgewiesen, obwohl sie in 14/14 Studies eines Referenzlaufs befuellt
