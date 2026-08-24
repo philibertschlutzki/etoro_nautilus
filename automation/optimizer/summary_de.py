@@ -23,6 +23,7 @@ skizzierten Einzel-Trade-Format ist an dieser Stelle dokumentiert, nicht stillsc
 from __future__ import annotations
 
 import logging
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -1184,6 +1185,19 @@ def _section_5_anomalies(report: dict) -> str:
         lines.append(f"- ATR-Floor-gebundene Studies (#1175): {len(_atr_floor_studies)}")
         if _atr_floor_studies:
             lines.append(f"  {', '.join(_atr_floor_studies)}")
+    # Issue #1083/#1231 (P1, Katalog #1247+) — Ergaenzung zur BINAEREN Study-Ebene-Zaehlung oben:
+    # der Median des PER-TRIAL-Bindungsanteils macht sichtbar, dass der Floor auch fuer Studies
+    # UNTERHALB der binaeren Schwelle fuer einen Teil ihrer Trials bindet (Root-Cause: max(median
+    # (raw), median(floor)) != median(max(raw_i, floor_i)), jeder Trial hat sein eigenes k).
+    _binding_fractions = [
+        r.get("atr_floor_binding_trial_fraction") for r in studies
+        if r.get("atr_floor_binding_trial_fraction") is not None
+    ]
+    if _binding_fractions:
+        lines.append(
+            f"  Median des Trial-Bindungsanteils (#1231, über {len(_binding_fractions)} Study/"
+            f"Studies mit Messwert): {_fmt_pct(statistics.median(_binding_fractions))}"
+        )
 
     # Issue #1040/#1189 (Katalog #1189) — Root-Cause: ``boundary_veto_evidence`` belegt aktive
     # Overrides bereits INDIREKT (active_bounds vs. default_bounds je klemmendem Parameter EINES

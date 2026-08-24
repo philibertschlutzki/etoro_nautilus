@@ -4662,33 +4662,54 @@ def check_atr_scale_homogeneity(
             continue
         label = f"{strategy}/{symbol}"
         raw = r.get("atr_raw_median_bps")
+        # Issue #1083/#1231 (P1, Katalog #1247+) Fix Punkt 4 — OR-Arm: ``binding_trial_fraction >=
+        # 0.5`` zaehlt UNABHAENGIG vom Study-Median-Kriterium als Bindung. Root-Cause: jeder Trial
+        # samplet sein eigenes k und hat damit seinen eigenen effektiven Floor
+        # (min_stop_to_cost_ratio · c_rt / k) — max(median(raw), median(floor)) ist NICHT
+        # median(max(raw_i, floor_i)) (Beispiel Sma/GOOGL: roh 9,246/Floor 8,823 median, bindet auf
+        # Study-Ebene NICHT, aber effektiv 12,037 — 30% ueber dem rohen Median — der Floor bindet
+        # dort fuer einen erheblichen Trial-Anteil, siehe report._stamp_atr_floor_bps_derived).
+        binding_trial_fraction = r.get("atr_floor_binding_trial_fraction")
+        binds_via_trial_fraction = (
+            binding_trial_fraction is not None and float(binding_trial_fraction) >= 0.5)
+        measured_this_study = binding_trial_fraction is not None
+        binds = False
+        criterion = None
+        detail: dict = {}
         if raw is not None:
-            n_studies_measured += 1
+            measured_this_study = True
+            detail["raw"] = round(float(raw), 4)
+            detail["floor"] = round(float(effective_floor), 4)
+            detail["faktor"] = round(float(effective_floor) / float(raw), 2) if raw else None
             if float(raw) < float(effective_floor) - floor_tolerance:
-                floor_binding_studies.append(label)
-                floor_binding_provenance[label] = {
-                    "raw": round(float(raw), 4), "floor": round(float(effective_floor), 4),
-                    "faktor": (round(float(effective_floor) / float(raw), 2) if raw else None),
-                    # Issue #1081/#1229 — umbenannt von ``stop_distance_bps``: die MODELLIERTE
-                    # (k · ATR) Distanz, konsistent mit dem ATR-Floor-Bindungs-Kontext dieser
-                    # Provenance (kein Konsum als Nenner einer Risiko-Ratio, siehe dortiger Fix).
-                    "stopdistanz_bps": r.get("stop_distance_bps_modelled"),
-                    "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
-                    "criterion": "atr_raw_median_bps_below_floor",
-                }
+                binds = True
+                criterion = "atr_raw_median_bps_below_floor"
         else:
             val = r.get("atr_median_bps")
-            if val is None:
-                continue
+            if val is not None:
+                measured_this_study = True
+                detail["floor"] = round(float(effective_floor), 4)
+                detail["atr_median_bps"] = round(float(val), 4)
+                if abs(float(val) - float(effective_floor)) <= floor_tolerance:
+                    binds = True
+                    criterion = "legacy_effective_atr_equals_floor"
+        if measured_this_study:
             n_studies_measured += 1
-            if abs(float(val) - float(effective_floor)) <= floor_tolerance:
-                floor_binding_studies.append(label)
-                floor_binding_provenance[label] = {
-                    "floor": round(float(effective_floor), 4), "atr_median_bps": round(float(val), 4),
-                    "stopdistanz_bps": r.get("stop_distance_bps_modelled"),
-                    "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
-                    "criterion": "legacy_effective_atr_equals_floor",
-                }
+        if binds_via_trial_fraction and not binds:
+            binds = True
+            criterion = "binding_trial_fraction_majority"
+        if binds:
+            floor_binding_studies.append(label)
+            # Issue #1081/#1229 — umbenannt von ``stop_distance_bps``: die MODELLIERTE (k · ATR)
+            # Distanz, konsistent mit dem ATR-Floor-Bindungs-Kontext dieser Provenance (kein
+            # Konsum als Nenner einer Risiko-Ratio, siehe dortiger Fix).
+            detail["stopdistanz_bps"] = r.get("stop_distance_bps_modelled")
+            detail["realized_stop_loss_ratio"] = r.get("realized_stop_loss_ratio")
+            # Issue #1083/#1231 Fix Punkt 2 — der Study-Eintrag bleibt (kein Befund geht verloren),
+            # ergaenzt aber den PER-TRIAL-Bindungsanteil in der detail-Struktur.
+            detail["binding_trial_fraction"] = binding_trial_fraction
+            detail["criterion"] = criterion
+            floor_binding_provenance[label] = detail
     # Issue #1026/#1175 Akzeptanzkriterium 3 — ``[]`` allein ist zwischen "gemessen, nichts
     # bindet" und "nicht gemessen" nicht unterscheidbar; dieses Flag macht die Evaluierbarkeit der
     # ``atr_floor_binding_studies``-Sektion selbst explizit (unabhaengig vom Spannweiten-

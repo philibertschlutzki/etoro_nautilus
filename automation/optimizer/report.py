@@ -388,6 +388,24 @@ def _stamp_atr_floor_bps_derived(
         else:
             r["atr_floor_bps_recommended"] = _micro_floor
             r["atr_floor_source"] = "bar_range"
+        # Issue #1083/#1231 (P1, Katalog #1247+) Fix Punkt 1 — Anteil der TRIALS mit
+        # atr_raw_i < floor_i, wobei floor_i der PER-TRIAL kostengekoppelte Floor ist (jeder Trial
+        # samplet sein eigenes k, siehe cost_coupled_atr_floor_bps-Docstring: "kein studienweiter
+        # Median — der ist zum Zeitpunkt eines einzelnen Backtests nicht bekannt"). Root-Cause:
+        # max(median(raw), median(floor)) ist NICHT median(max(raw_i, floor_i)) — Beispiel Sma/
+        # GOOGL: roh 9,246 median, Floor 8,823 median (bindet auf Study-Ebene nicht), aber
+        # effektiv 12,037 (30% ueber dem rohen Median) — der Floor bindet dort fuer einen
+        # erheblichen Trial-Anteil, ohne dass die Study-Ebene das zeigt.
+        _trial_pairs = r.pop("_atr_floor_binding_trial_pairs", None) or []
+        if base_floor is None or c_rt is None or not _trial_pairs:
+            r["atr_floor_binding_trial_fraction"] = None
+        else:
+            _n_binding = sum(
+                1 for k_i, raw_i in _trial_pairs
+                if raw_i < cost_coupled_atr_floor_bps(
+                    float(base_floor), atr_trailing_multiplier=k_i,
+                    round_trip_cost_bps=float(c_rt), min_stop_to_cost_ratio=min_stop_to_cost_ratio))
+            r["atr_floor_binding_trial_fraction"] = round(_n_binding / len(_trial_pairs), 4)
 
 
 def _max_symbol_exposure_fraction(base_cfg: Path | None = None) -> float | None:
@@ -1886,6 +1904,20 @@ def _study_record(proposal: dict, study,
             trial_attrs, "oos_stop_distance_share_median"),
         "trigger_to_fill_gap_share_median": _median_of_trial_field(
             trial_attrs, "oos_trigger_to_fill_gap_share_median"),
+        # Issue #1083/#1231 (P1, Katalog #1247+) — Rohmaterial fuer den PER-TRIAL ATR-Floor-
+        # Bindungsanteil (siehe _stamp_atr_floor_bps_derived-Docstring): jeder Trial hat sein
+        # EIGENES gesampeltes k (atr_trailing_multiplier) und damit seinen eigenen effektiven
+        # Floor (min_stop_to_cost_ratio · c_rt / k) — max(median(raw), median(floor)) ist NICHT
+        # median(max(raw_i, floor_i)). Nur ein Zwischenergebnis: wird von
+        # _stamp_atr_floor_bps_derived konsumiert und dort wieder entfernt (erscheint NICHT im
+        # finalen Report-JSON), da Basis-Floor/c_rt erst NACH diesem Aufruf aufgeloest werden.
+        "_atr_floor_binding_trial_pairs": [
+            (float((a.get("sampled_params") or {}).get("atr_trailing_multiplier")),
+             float(a["oos_atr_raw_median_bps"]))
+            for a in trial_attrs
+            if (a.get("sampled_params") or {}).get("atr_trailing_multiplier") is not None
+            and a.get("oos_atr_raw_median_bps") is not None
+        ],
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
         # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. Issue #1046/#1195 — fehlt der
