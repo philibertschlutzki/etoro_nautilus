@@ -2468,6 +2468,17 @@ def _diagnosed_pairs_all() -> list[dict[str, Any]]:
     return list(cache.values())
 
 
+
+# Issue #1096/#1244 (P2, Katalog #1247+) — Root-Cause: #1219 (``_writeback_search_stagnation_
+# diagnoses`` unten) hat den Rückschrieb NUR für ``search_made_progress``-Stagnation UND die
+# STRUCTURAL_ZERO_ELIGIBLE-Restmenge verdrahtet — ``STRUCTURAL_ALL_UNEVALUABLE`` (0 EVALUABLE
+# Trials, eine Stufe VOR ``STRUCTURAL_ZERO_ELIGIBLE``) blieb komplett aussen vor: dieser
+# ``stop_reason`` erzeugte NIE einen ``diagnosed_pairs``-Eintrag, unabhängig vom Cache-Schalter.
+_STRUCTURAL_DIAGNOSIS_STOP_REASONS = frozenset({
+    "STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE",
+})
+
+
 def _structural_zero_eligible_diagnosed_pairs(
     studies_out: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -2489,13 +2500,19 @@ def _structural_zero_eligible_diagnosed_pairs(
     live, ohne jeden Cache-Zugriff, für DIESEN Lauf auszuwerten. Der Vorschlag wird hier NUR
     GESCHRIEBEN (Report-Sichtbarkeit) — die ANWENDUNG (tatsächliche Denylist-/Bounds-Änderung)
     bleibt exakt wie im Issue-Text gefordert ein separater, bestätigter Schritt (weiterhin über den
-    gated Cache-Pfad, sobald #1066/#1086 an einem echten Mehrprozess-Lauf abgenommen sind)."""
+    gated Cache-Pfad, sobald #1066/#1086 an einem echten Mehrprozess-Lauf abgenommen sind).
+
+    Issue #1096/#1244 — auch ``STRUCTURAL_ALL_UNEVALUABLE``-Studies durchlaufen jetzt dieselbe
+    LIVE-Ableitung (``stop_reason`` wird durchgereicht, siehe ``diagnose_structural_zero_eligible_
+    gate``-Docstring für den eigenen, unbedingt frequenzseitigen Zweig dieses ``stop_reason``s)."""
     from automation.optimizer.sweep_diagnostics import diagnose_structural_zero_eligible_gate
     out = []
     for r in studies_out:
-        if r.get("stop_reason") != "STRUCTURAL_ZERO_ELIGIBLE":
+        stop_reason = r.get("stop_reason")
+        if stop_reason not in _STRUCTURAL_DIAGNOSIS_STOP_REASONS:
             continue
-        diagnosis = diagnose_structural_zero_eligible_gate(r.get("is_rejection_detail_counts"))
+        diagnosis = diagnose_structural_zero_eligible_gate(
+            r.get("is_rejection_detail_counts"), stop_reason=stop_reason)
         if diagnosis["binding_cause"] in (None, "none"):
             continue
         out.append({

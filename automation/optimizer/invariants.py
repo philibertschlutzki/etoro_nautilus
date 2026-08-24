@@ -5477,6 +5477,11 @@ def check_champion_corroboration_reachable(
     )
 
 
+_STRUCTURAL_DIAGNOSIS_STOP_REASONS = frozenset({
+    "STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE",
+})
+
+
 def check_structural_zero_eligible_has_diagnosis(
     studies_out: list[dict], diagnosed_pairs: list[dict],
 ) -> InvariantResult:
@@ -5485,31 +5490,43 @@ def check_structural_zero_eligible_has_diagnosis(
     hinterlassen — Root-Cause-Symptom des Issues war exakt das Gegenteil: 123 Trials, 100 % auf
     demselben Gate (``REJECT_OOS_MIN_PSR``), ``diagnosed_pairs == []`` — "Diagnose ohne Rückschrieb".
 
+    Issue #1096/#1244 (P2, Katalog #1247+) — derselbe Vertrag gilt jetzt AUCH für ``stop_reason ==
+    'STRUCTURAL_ALL_UNEVALUABLE'`` (0 EVALUABLE Trials, eine Stufe VOR STRUCTURAL_ZERO_ELIGIBLE):
+    Root-Cause war, dass der #1219-Rückschrieb (``report._writeback_search_stagnation_diagnoses``)
+    diesen ``stop_reason`` nie enumerierte — ``check_structural_zero_eligible_has_diagnosis`` feuerte
+    dadurch in 5/11 Läufen (u. a. AdxAtr/TSLA, VolatilityBreakoutPump/GOOGL), OHNE dass ein einziger
+    Report-Konsument je sah, WARUM.
+
     FAIL (severity ``medium``, Beobachtbarkeits- keine Korrektheitsverletzung — dieselbe Klasse wie
     ``check_symbol_bar_quality_cache_availability``), wenn mindestens eine STRUCTURAL_ZERO_ELIGIBLE-
-    Study kein zugehöriges ``diagnosed_pairs``-Element trägt (weder aus dem #761-Cache noch aus der
-    #1194-Live-Ableitung, siehe ``report._diagnosed_pairs_section``-Docstring). Ein Cohort mit
-    UNEINHEITLICHEM ``is_rejection_detail`` (kein dominantes Gate) FAILt hier bewusst ebenfalls —
-    das Issue verlangt einen Eintrag für JEDE STRUCTURAL_ZERO_ELIGIBLE-Study, nicht nur für die
-    homogenen Fälle; ein gemischter Cohort ohne Diagnose ist ein legitimes Signal, die
-    Klassifikation (``sweep_diagnostics.diagnose_structural_zero_eligible_gate``) zu erweitern."""
+    ODER STRUCTURAL_ALL_UNEVALUABLE-Study kein zugehöriges ``diagnosed_pairs``-Element trägt (weder
+    aus dem #761-Cache noch aus der #1194/#1244-Live-Ableitung, siehe
+    ``report._diagnosed_pairs_section``-Docstring). Ein STRUCTURAL_ZERO_ELIGIBLE-Cohort mit
+    UNEINHEITLICHEM ``is_rejection_detail`` (kein dominantes Gate) FAILt hier bewusst weiterhin —
+    das Issue verlangt einen Eintrag für JEDE betroffene Study, nicht nur für die homogenen Fälle;
+    ein gemischter Cohort ohne Diagnose ist ein legitimes Signal, die Klassifikation
+    (``sweep_diagnostics.diagnose_structural_zero_eligible_gate``) zu erweitern. Ein STRUCTURAL_ALL_
+    UNEVALUABLE-Cohort erhält dagegen IMMER eine Diagnose (kein homogenity-Torwächter, siehe dortiger
+    ``stop_reason``-Zweig — 0 evaluable Trials sind architektonisch immer ein Frequenz-, nie ein
+    Qualitätsbefund)."""
     diagnosed_keys = {(e.get("strategy"), e.get("symbol")) for e in (diagnosed_pairs or [])}
     affected = sorted({
         f"{r.get('strategy')}/{r.get('symbol')}" for r in (studies_out or [])
-        if r.get("stop_reason") == "STRUCTURAL_ZERO_ELIGIBLE"
+        if r.get("stop_reason") in _STRUCTURAL_DIAGNOSIS_STOP_REASONS
         and (r.get("strategy"), r.get("symbol")) not in diagnosed_keys
     })
     passed = not affected
     return InvariantResult(
         name="check_structural_zero_eligible_has_diagnosis",
         passed=passed,
-        expected="jede Study mit stop_reason=='STRUCTURAL_ZERO_ELIGIBLE' hat einen "
-                 "diagnosed_pairs-Eintrag",
+        expected="jede Study mit stop_reason in (STRUCTURAL_ZERO_ELIGIBLE, "
+                 "STRUCTURAL_ALL_UNEVALUABLE) hat einen diagnosed_pairs-Eintrag",
         actual={"missing_diagnosis_for": affected} if not passed else None,
         severity="medium",
         detail=("OK" if passed else
-                f"{len(affected)} STRUCTURAL_ZERO_ELIGIBLE-Study/ies ohne diagnosed_pairs-Eintrag: "
-                f"{affected} — Diagnose ohne Rückschrieb (#1194)."),
+                f"{len(affected)} STRUCTURAL_ZERO_ELIGIBLE/STRUCTURAL_ALL_UNEVALUABLE-Study/ies "
+                f"ohne diagnosed_pairs-Eintrag: {affected} — Diagnose ohne Rückschrieb "
+                "(#1194/#1244)."),
     )
 
 
