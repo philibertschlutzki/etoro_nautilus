@@ -1652,6 +1652,12 @@ def _study_record(proposal: dict, study,
         # Issue #1067/#1217 — TPE-Surrogat-Fit-Zeit dieser Study (siehe run_optimization.
         # _WindowedTPESampler-Docstring), Rohmaterial fuer invariants.check_search_overhead_share.
         "tpe_fit_seconds": study_user_attrs.get("tpe_fit_seconds"),
+        # Issue #1089/#1237 (P1, Katalog #1247+) — die tatsaechlich in den letzten Surrogat-Fit
+        # eingegangene (bzw. VOR dem Fenster verfuegbare) Trial-Zahl, Rohmaterial fuer
+        # invariants.check_tpe_fit_cost_share und das Akzeptanzkriterium "tpe_fit_trials_used <=
+        # tpe_fit_max_trials".
+        "tpe_fit_trials_used": study_user_attrs.get("tpe_fit_trials_used"),
+        "tpe_fit_trials_available": study_user_attrs.get("tpe_fit_trials_available"),
         "worker_id": study_user_attrs.get("worker_id"),
         # Issue #1104 (Katalog #937) — der Commit, auf dem DIESE Study tatsaechlich simuliert
         # wurde (gestempelt vor dem ersten Trial, siehe run_optimization.py), unabhaengig vom
@@ -3799,6 +3805,10 @@ def _build_report(
     # Issue #1067/#1217 Fix Punkt 3 — verwendet DENSELBEN store_scan_seconds-Wert wie oben.
     all_checks.append(("global", _inv.check_search_overhead_share(
         studies_out, store_scan_seconds=store_scan.get("store_scan_seconds"))))
+    # Issue #1089/#1237 (P1, Katalog #1247+) — engere, diagnostische Schwelle (5%, severity low)
+    # ausschliesslich auf tpe_fit_seconds, siehe dortiger Docstring fuer die Abgrenzung zu
+    # check_search_overhead_share (permanente 50%-Obergrenze inkl. store_scan_seconds).
+    all_checks.append(("global", _inv.check_tpe_fit_cost_share(studies_out)))
 
     # Issue #1023 Akzeptanzkriterium 2 — ist die gefilterte Menge leer, WAEHREND der Store nicht
     # leer war (jedes Proposal wurde als fremder Lauf ausgeschlossen), ist das kein leerer, sondern

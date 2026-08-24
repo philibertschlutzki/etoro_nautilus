@@ -1710,6 +1710,12 @@ class _WindowedTPESampler(optuna.samplers.TPESampler):
         # (eine Instanz je Study), gelesen vom Aufrufer NACH study.optimize() und dort als
         # study-user_attr gestempelt (siehe Aufrufstellen).
         self._fit_seconds_total = 0.0
+        # Issue #1089/#1237 (P1, Katalog #1247+) — die Trial-Zahl des LETZTEN Fit-Aufrufs (vor UND
+        # nach dem Fenster): am Studienende ist die Trial-Zahl maximal, das ist deshalb der
+        # aussagekraeftigste Messpunkt fuer "wie viele Trials gingen tatsaechlich in den Fit ein"
+        # (``tpe_fit_trials_used``/``_available``, gestempelt vom Aufrufer nach study.optimize()).
+        self._last_trials_used = 0
+        self._last_trials_available = 0
 
     def _sample(self, study, trial, search_space):
         _fit_t0 = time.perf_counter()
@@ -1730,12 +1736,14 @@ class _WindowedTPESampler(optuna.samplers.TPESampler):
         trials = study._get_trials(deepcopy=False, states=states, use_cache=use_cache)
         if self._constant_liar:
             trials = [t for t in trials if trial.number != t.number]
+        self._last_trials_available = len(trials)
 
         # Issue #1067/#1217 Fix — DAS gleitende Fenster: nur die zuletzt angelegten Trials gehen
         # in den Surrogat-Fit ein (aeltere bleiben Teil des Stores, werden hier nur nicht mehr
         # gefittet). ``sorted(..., key=.number)`` statt Store-Reihenfolge zu unterstellen.
         if self._history_window > 0 and len(trials) > self._history_window:
             trials = sorted(trials, key=lambda t: t.number)[-self._history_window:]
+        self._last_trials_used = len(trials)
 
         n = sum(t.state != _TrialState.RUNNING for t in trials)
         below_trials, above_trials = _split_trials(
@@ -1762,6 +1770,27 @@ def _resolve_tpe_history_window(opt_data: dict | None) -> int:
         return int(value) if int(value) > 0 else _TPE_HISTORY_WINDOW_DEFAULT
     except (TypeError, ValueError):
         return _TPE_HISTORY_WINDOW_DEFAULT
+
+
+# Issue #1089/#1237 (P1, Katalog #1247+) — Symptom: bei k=3 warm-gestarteten Vorlauf-Trials lag
+# ``Σ tpe_fit_seconds`` bei 228s (O(n^1,9) in der Store-Groesse), 8,6% der Wallclock im Surrogat-
+# Fit, ``cpu_utilisation_backtest`` bei 12,9%. ``tpe_history_window`` (#1067/#1217, Default 600)
+# deckelt bereits denselben Fit — ``tpe_fit_max_trials`` ist eine ZWEITE, unabhaengig konfigurierbare
+# Obergrenze mit eigenem Default (2000) und eigener Telemetrie (``tpe_fit_trials_used``/
+# ``_available``), NICHT als Ersatz fuer ``tpe_history_window`` gedacht: der EFFEKTIVE Fensterwert
+# ist das Minimum beider Werte (siehe Aufrufstellen), sodass eine grosszuegigere Konfiguration des
+# einen Wertes nicht die vom anderen garantierte Obergrenze aufheben kann.
+_TPE_FIT_MAX_TRIALS_DEFAULT = 2000
+
+
+def _resolve_tpe_fit_max_trials(opt_data: dict | None) -> int:
+    """Issue #1089/#1237 — ``optimizer.json['tpe_fit_max_trials']`` mit Default 2000. Fail-open bei
+    fehlendem/ungueltigem Wert (dieselbe Konvention wie ``_resolve_tpe_history_window``)."""
+    try:
+        value = (opt_data or {}).get("tpe_fit_max_trials", _TPE_FIT_MAX_TRIALS_DEFAULT)
+        return int(value) if int(value) > 0 else _TPE_FIT_MAX_TRIALS_DEFAULT
+    except (TypeError, ValueError):
+        return _TPE_FIT_MAX_TRIALS_DEFAULT
 
 
 def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
@@ -1829,7 +1858,11 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
             n_startup_trials=n_startup_trials,
             seed=seed,
             constraints_func=_oos_constraints_func,
-            history_window=_resolve_tpe_history_window(opt_data),
+            # Issue #1089/#1237 — die EFFEKTIVE Obergrenze ist das Minimum aus tpe_history_window
+            # (#1067/#1217) und tpe_fit_max_trials: keiner der beiden Werte kann die vom jeweils
+            # anderen garantierte Obergrenze aufheben.
+            history_window=min(
+                _resolve_tpe_history_window(opt_data), _resolve_tpe_fit_max_trials(opt_data)),
         )
 
     study = _create_study_with_retry(
@@ -1877,6 +1910,11 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # ist — NSGAIISampler im 'pareto'-Reward-Modus traegt diese Telemetrie nicht).
     if hasattr(sampler, "_fit_seconds_total"):
         study.set_user_attr("tpe_fit_seconds", round(sampler._fit_seconds_total, 4))
+        # Issue #1089/#1237 (P1) — je Study gestempelt, Rohmaterial fuer
+        # invariants.check_tpe_fit_cost_share und das Akzeptanzkriterium
+        # "tpe_fit_trials_used <= tpe_fit_max_trials".
+        study.set_user_attr("tpe_fit_trials_used", sampler._last_trials_used)
+        study.set_user_attr("tpe_fit_trials_available", sampler._last_trials_available)
     return study
 
 def _sanitize(symbol: str) -> str:
@@ -3926,7 +3964,11 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             n_startup_trials=n_startup_trials,
             seed=seed_eff,
             constraints_func=_oos_constraints_func,
-            history_window=_resolve_tpe_history_window(opt_data),
+            # Issue #1089/#1237 — die EFFEKTIVE Obergrenze ist das Minimum aus tpe_history_window
+            # (#1067/#1217) und tpe_fit_max_trials: keiner der beiden Werte kann die vom jeweils
+            # anderen garantierte Obergrenze aufheben.
+            history_window=min(
+                _resolve_tpe_history_window(opt_data), _resolve_tpe_fit_max_trials(opt_data)),
         )
 
     # Issue #411 — serialisiert + DDL-Race-fest (table studies already exists). Ersetzt das nackte
@@ -4146,6 +4188,11 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             # invariants.check_search_overhead_share zusammen mit study_wallclock_s oben.
             if hasattr(sampler, "_fit_seconds_total"):
                 study.set_user_attr("tpe_fit_seconds", round(sampler._fit_seconds_total, 4))
+                # Issue #1089/#1237 (P1) — je Study gestempelt, Rohmaterial fuer
+                # invariants.check_tpe_fit_cost_share und das Akzeptanzkriterium
+                # "tpe_fit_trials_used <= tpe_fit_max_trials".
+                study.set_user_attr("tpe_fit_trials_used", sampler._last_trials_used)
+                study.set_user_attr("tpe_fit_trials_available", sampler._last_trials_available)
         except Exception:
             logging.getLogger("optimizer").warning(
                 "[#851] Study-Zeitstempel-Telemetrie für '%s' fehlgeschlagen (non-fatal).",

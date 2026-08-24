@@ -8268,6 +8268,82 @@ def check_search_overhead_share(
     )
 
 
+def check_tpe_fit_cost_share(
+    study_records: list[dict], *, max_fraction: float = 0.05,
+) -> InvariantResult:
+    """Issue #1089/#1237 (P1, Katalog #1247+) — TPE-Fit-Fenster deckeln.
+
+    Symptom. ``Σ tpe_fit_seconds`` (ueber alle Studies eines Laufs) 25-35s bei k=1 warm-gestarteten
+    Vorlauf-Trials, 91-92s bei k=2, 228s bei k=3 — Skalierung ≈ O(n^1,9) in der Store-Groesse. Bei
+    k=3 gehen 8,6% der Wallclock in den Surrogat-Fit, ``cpu_utilisation_backtest`` faellt auf
+    12,9%.
+
+    Anders als ``check_search_overhead_share`` (severity ``high``, Schwelle 0,5, inkl.
+    ``store_scan_seconds``, die permanente Obergrenze fuer "die Suche verbringt nicht mehr als die
+    Haelfte ihrer Zeit mit Overhead") ist dies eine ENGERE, DIAGNOSTISCHE Schwelle (0,05 = 5%,
+    severity ``low``) ausschliesslich auf ``tpe_fit_seconds`` — ein fruehes Warnsignal, dass
+    ``tpe_fit_max_trials``/``tpe_history_window`` (``run_optimization._WindowedTPESampler``) enger
+    gesetzt werden sollten, lange bevor der Overhead die 50%-Schwelle des permanenten Checks
+    erreicht.
+
+    ``Σ tpe_fit_seconds / Σ study_wallclock_s`` (derselbe Aggregationsstil wie ``check_search_
+    overhead_share`` — ein GLOBALER, kein je-Study-Quotient) > ``max_fraction`` ⇒ FAIL.
+    ``INCONCLUSIVE`` (``passed=None``), wenn keine Study ``tpe_fit_seconds`` traegt (Pre-#1217-
+    Report oder reiner ``NSGAIISampler``-Lauf) — kein FAIL auf einer nicht gemessenen Groesse."""
+    _fit_values = [
+        r.get("tpe_fit_seconds") for r in study_records if r.get("tpe_fit_seconds") is not None]
+    _wallclock_values = [
+        r.get("study_wallclock_s") for r in study_records if r.get("study_wallclock_s") is not None]
+    expected = f"Σ tpe_fit_seconds / Σ study_wallclock_s <= {max_fraction:.0%}"
+    if not _fit_values:
+        return InvariantResult(
+            name="check_tpe_fit_cost_share",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="low",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_tpe_fit_seconds_telemetry",
+                          "n_studies": len(study_records)},
+            detail="Keine Study mit tpe_fit_seconds-Telemetrie (Pre-#1217-Report oder "
+                   "NSGAIISampler-Lauf) — nicht auswertbar.",
+        )
+    total_fit = sum(_fit_values)
+    total_wallclock = sum(_wallclock_values)
+    if total_wallclock <= 0:
+        return InvariantResult(
+            name="check_tpe_fit_cost_share",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="low",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "zero_total_wallclock",
+                          "n_studies": len(study_records)},
+            detail="Σ study_wallclock_s == 0 — nicht auswertbar.",
+        )
+    fraction = round(total_fit / total_wallclock, 4)
+    passed = fraction <= max_fraction
+    return InvariantResult(
+        name="check_tpe_fit_cost_share",
+        passed=passed,
+        expected=expected,
+        actual={
+            "tpe_fit_cost_fraction": fraction, "total_tpe_fit_seconds": round(total_fit, 4),
+            "total_wallclock_s": round(total_wallclock, 4), "n_studies_measured": len(_fit_values),
+        },
+        severity="low",
+        detail=("OK" if passed else
+                f"TPE-Fit-Anteil {fraction:.1%} > {max_fraction:.0%} — {total_fit:.1f}s Surrogat-"
+                f"Fit gegen {total_wallclock:.1f}s Gesamt-Wallclock; tpe_fit_max_trials/"
+                "tpe_history_window enger setzen (#1089/#1237)."),
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies": len(study_records)},
+    )
+
+
 def check_report_artifact_written(*, run_status: str | None, report_written: bool) -> InvariantResult:
     """Issue #1021/#1196 Fix 4.3 — ein Lauf, der ``run_status='complete'`` meldet, aber keinen
     ``run_<run_id>.json`` geschrieben hat, ist die Verallgemeinerung des Ausgangsbefunds: der
