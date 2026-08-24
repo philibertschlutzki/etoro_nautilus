@@ -8344,6 +8344,74 @@ def check_tpe_fit_cost_share(
     )
 
 
+def check_warm_start_efficacy(study_records: list[dict]) -> InvariantResult:
+    """Issue #1090/#1238 (P1, Katalog #1247+) — Warm-Start-Wirksamkeit messen statt annehmen.
+
+    Symptom. Es gibt keine Grösse im System, die beantwortet, ob ein Wiederholungslauf etwas
+    gebracht hat. Die Antwort aus dem Referenz-Batch ist negativ (B-11) und war nur durch externe
+    Paarbildung über elf Artefakte zu gewinnen.
+
+    Konsumiert ``warm_start_reward_delta``/``warm_start_holdout_delta`` (``report._study_record``,
+    nur gestempelt bei nachgewiesener Store-Wiederverwendung — siehe dortiger Kommentar). FAIL
+    (severity ``high``), wenn über die Studies mit BEIDEN Deltas der Median
+    ``warm_start_reward_delta > 0`` UND GLEICHZEITIG der Median ``warm_start_holdout_delta < 0``
+    ist — die ÜBERANPASSUNGS-Signatur: der Wiederholungslauf verbessert den (In-Sample-nahen)
+    Reward, verschlechtert aber das (echte, ungesehene) Holdout-Ergebnis, exakt der im
+    Referenz-Batch gemessene Zustand (Reward-Median +0,1663, Holdout-Median −5,46 bps).
+
+    ``INCONCLUSIVE`` (``passed=None``), wenn KEINE Study beide Deltas traegt — insbesondere bei
+    ``store_reuse.reused=false`` (kein Warm-Start in diesem Lauf, die Frage ist dann nicht
+    anwendbar, nicht "kein Problem gefunden")."""
+    with_both = [
+        r for r in study_records
+        if r.get("warm_start_reward_delta") is not None
+        and r.get("warm_start_holdout_delta") is not None
+    ]
+    expected = (
+        "NICHT gleichzeitig: Median(warm_start_reward_delta) > 0 UND "
+        "Median(warm_start_holdout_delta) < 0")
+    if not with_both:
+        return InvariantResult(
+            name="check_warm_start_efficacy",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_warm_started_studies",
+                          "n_studies": len(study_records)},
+            detail="Keine Study mit warm_start_reward_delta UND warm_start_holdout_delta — kein "
+                   "Warm-Start in diesem Lauf (store_reuse.reused=false) oder Pre-#1238-Report — "
+                   "nicht auswertbar (INCONCLUSIVE).",
+        )
+    reward_deltas = [float(r["warm_start_reward_delta"]) for r in with_both]
+    holdout_deltas = [float(r["warm_start_holdout_delta"]) for r in with_both]
+    reward_median = statistics.median(reward_deltas)
+    holdout_median = statistics.median(holdout_deltas)
+    passed = not (reward_median > 0 and holdout_median < 0)
+    actual = {
+        "warm_start_reward_delta_median": round(reward_median, 6),
+        "warm_start_holdout_delta_median": round(holdout_median, 6),
+        "n_studies_measured": len(with_both),
+    }
+    return InvariantResult(
+        name="check_warm_start_efficacy",
+        passed=passed,
+        expected=expected,
+        actual=actual,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies": len(study_records)},
+        detail=("OK" if passed else
+                f"Median(warm_start_reward_delta)={reward_median:+.4f} > 0 UND "
+                f"Median(warm_start_holdout_delta)={holdout_median:+.6f} < 0 über "
+                f"{len(with_both)} warm-gestartete Study/Studies — die Ueberanpassungs-Signatur: "
+                "der Wiederholungslauf verbessert den Reward, verschlechtert aber das Holdout-"
+                "Ergebnis (#1090/#1238)."),
+    )
+
+
 def check_report_artifact_written(*, run_status: str | None, report_written: bool) -> InvariantResult:
     """Issue #1021/#1196 Fix 4.3 — ein Lauf, der ``run_status='complete'`` meldet, aber keinen
     ``run_<run_id>.json`` geschrieben hat, ist die Verallgemeinerung des Ausgangsbefunds: der

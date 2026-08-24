@@ -826,6 +826,26 @@ def _section_3_duration(report: dict) -> str:
             f"Trials Vorlauf + {_store_reuse.get('n_trials_own', 0)} Trials dieser Lauf) — "
             "beeinflusst deflation_n_family/TPE-Seed, siehe #1021/#1196."
         )
+        # Issue #1090/#1238 (P1, Katalog #1247+) — misst, ob der Wiederholungslauf etwas gebracht
+        # hat, statt es unbelegt anzunehmen: der Median-Reward-Zugewinn NEBEN dem Median-Holdout-
+        # Effekt macht die Ueberanpassungs-Signatur (Reward besser, Holdout schlechter) sichtbar,
+        # siehe invariants.check_warm_start_efficacy.
+        _warm_start_reward_deltas = [
+            r.get("warm_start_reward_delta") for r in studies
+            if r.get("warm_start_reward_delta") is not None
+        ]
+        _warm_start_holdout_deltas = [
+            r.get("warm_start_holdout_delta") for r in studies
+            if r.get("warm_start_holdout_delta") is not None
+        ]
+        if _warm_start_reward_deltas or _warm_start_holdout_deltas:
+            lines.append(
+                f"  Median warm_start_reward_delta: "
+                f"{_fmt_num(statistics.median(_warm_start_reward_deltas), digits=4) if _warm_start_reward_deltas else 'k. A.'}"
+                f" | Median warm_start_holdout_delta: "
+                f"{_fmt_pct(statistics.median(_warm_start_holdout_deltas)) if _warm_start_holdout_deltas else 'k. A.'}"
+                " (#1238)"
+            )
     if report.get("symbols_planned") is not None:
         lines.append(
             f"- Symbole: {report.get('symbols_completed', 'k. A.')} von {report.get('symbols_planned', 'k. A.')} abgeschlossen"

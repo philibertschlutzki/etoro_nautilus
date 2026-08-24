@@ -3363,6 +3363,35 @@ def _windows_overlap(
     return a0 <= b1 and b0 <= a1
 
 
+def _prior_holdout_total_return(
+    prior_run_id: str | None, strategy: str | None, symbol: str | None,
+    *, reports_dir: Path | None = None,
+) -> float | None:
+    """Issue #1090/#1238 (P1, Katalog #1247+) — der HOLDOUT-Rueckgabewert des Vorlaufs
+    (``prior_run_id``) fuer DIESELBE (Strategie, Symbol)-Study, gelesen aus dessen bereits
+    persistiertem Report-Artefakt (``REPORTS_DIR / f"run_{prior_run_id}.json"``, siehe
+    ``generate_sweep_report``). Kein Optuna-Trial traegt ein Holdout-Ergebnis (das ist
+    ausschliesslich ``confirm.py``s Re-Evaluations-Pfad, gebunden an den jeweiligen Report-Lauf) —
+    dies ist die EINZIGE Quelle fuer den Vorlauf-Referenzwert.
+
+    Fail-open (``None``): fehlendes ``prior_run_id``, kein lesbares/parsbares Report-Artefakt fuer
+    diesen Lauf, oder keine (Strategie, Symbol)-Study darin — ein fehlender Vorlauf-Report darf die
+    Report-Generierung DIESES Laufs nie zum Absturz bringen (dieselbe Konvention wie jeder andere
+    ``_load_json``-Aufrufer in diesem Modul)."""
+    if not prior_run_id:
+        return None
+    _dir = reports_dir if reports_dir is not None else REPORTS_DIR
+    _path = Path(_dir) / f"run_{prior_run_id}.json"
+    _prior_report = _load_json(_path)
+    if not _prior_report:
+        return None
+    for _r in _prior_report.get("studies") or []:
+        if _r.get("strategy") == strategy and _r.get("symbol") == symbol:
+            _value = _r.get("holdout_total_return")
+            return float(_value) if isinstance(_value, (int, float)) else None
+    return None
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -3379,6 +3408,7 @@ def _build_report(
     prior_probe_invariant_checks: list[dict] | None = None,
     blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
+    reports_dir: Path | None = None,
 ) -> dict:
     # Issue #942/#1108 (Katalog #960) — ``blocking_invariant_triggered`` (der Name der
     # Fail-Fast-Invariante, die eine LIVE In-Prozess-Probe waehrend des Sweeps ausloeste, oder
@@ -3661,6 +3691,69 @@ def _build_report(
         # run_id-Nachweis traegt (der Legacy-/Zeitfenster-Fallback-Pfad ohne Nachweis bleibt
         # None — fail-open, siehe ``assert_invariant_scope_uncontaminated``-Docstring).
         record["run_id"] = run_id if _own_run_trials else None
+        # Issue #1090/#1238 (P1, Katalog #1247+) — bei nachgewiesener Store-Wiederverwendung
+        # (``_foreign_run_trials`` nicht leer) die Vorlauf-Referenzwerte aus dem Store lesen und
+        # stempeln: gibt es keine Grösse, die beantwortet, ob ein Wiederholungslauf etwas gebracht
+        # hat, bleibt die Antwort nur ueber eine externe Paarbildung ueber mehrere Artefakte
+        # gewinnbar (B-11-Symptom). ``prior_run_id`` ist der Fremd-run_id mit dem SPAETESTEN
+        # Zeitfenster-Ende (der unmittelbare Vorlauf; die Ueberlappungspruefung oben garantiert
+        # bereits, dass kein Fremdfenster mit dem eigenen ueberlappt).
+        if _foreign_run_trials:
+            _foreign_windows_for_prior = _trial_time_windows_by_run_id(_foreign_run_trials)
+            _prior_run_id = None
+            _latest_end = None
+            for _rid, _win in _foreign_windows_for_prior.items():
+                if _rid is None or _win is None:
+                    continue
+                if _latest_end is None or _win[1] > _latest_end:
+                    _latest_end = _win[1]
+                    _prior_run_id = _rid
+            if _prior_run_id is None:
+                # Fail-open auf fehlender Zeitstempel-Evidenz: deterministisch die kleinste
+                # bekannte Fremd-run_id waehlen, statt gar keinen Vorlauf zu benennen.
+                _candidate_ids = sorted({
+                    (getattr(t, "user_attrs", None) or {}).get("run_id") for t in _foreign_run_trials
+                    if (getattr(t, "user_attrs", None) or {}).get("run_id") is not None
+                })
+                _prior_run_id = _candidate_ids[0] if _candidate_ids else None
+            record["prior_run_id"] = _prior_run_id
+            _prior_run_trials = (
+                [t for t in _foreign_run_trials
+                 if (getattr(t, "user_attrs", None) or {}).get("run_id") == _prior_run_id]
+                if _prior_run_id else _foreign_run_trials)
+            _prior_feasible_rewards = [
+                float(t.value) for t in _prior_run_trials
+                if (getattr(t, "user_attrs", None) or {}).get("oos_eligible") is True
+                and isinstance(getattr(t, "value", None), (int, float))
+            ]
+            try:
+                _prior_direction = study.direction.name.lower() if study is not None else "maximize"
+            except Exception:
+                _prior_direction = "maximize"
+            record["prior_best_eligible_reward"] = (
+                (max(_prior_feasible_rewards) if _prior_direction == "maximize"
+                 else min(_prior_feasible_rewards))
+                if _prior_feasible_rewards else None
+            )
+            record["warm_start_reward_delta"] = (
+                record["best_eligible_reward"] - record["prior_best_eligible_reward"]
+                if record.get("best_eligible_reward") is not None
+                and record["prior_best_eligible_reward"] is not None else None
+            )
+            record["prior_holdout_total_return"] = _prior_holdout_total_return(
+                _prior_run_id, record.get("strategy"), record.get("symbol"),
+                reports_dir=reports_dir)
+            record["warm_start_holdout_delta"] = (
+                record["holdout_total_return"] - record["prior_holdout_total_return"]
+                if record.get("holdout_total_return") is not None
+                and record["prior_holdout_total_return"] is not None else None
+            )
+        else:
+            record["prior_run_id"] = None
+            record["prior_best_eligible_reward"] = None
+            record["warm_start_reward_delta"] = None
+            record["prior_holdout_total_return"] = None
+            record["warm_start_holdout_delta"] = None
         studies_out.append(record)
         filtered_proposals.append(proposal)
         study_label = f"{record['strategy']}/{record['symbol']}"
@@ -3809,6 +3902,10 @@ def _build_report(
     # ausschliesslich auf tpe_fit_seconds, siehe dortiger Docstring fuer die Abgrenzung zu
     # check_search_overhead_share (permanente 50%-Obergrenze inkl. store_scan_seconds).
     all_checks.append(("global", _inv.check_tpe_fit_cost_share(studies_out)))
+    # Issue #1090/#1238 (P1, Katalog #1247+) — misst, ob ein Wiederholungslauf (Warm-Start) den
+    # Reward auf Kosten des Holdout-Ergebnisses verbessert (Ueberanpassungs-Signatur), statt die
+    # Wirksamkeit unbelegt anzunehmen.
+    all_checks.append(("global", _inv.check_warm_start_efficacy(studies_out)))
 
     # Issue #1023 Akzeptanzkriterium 2 — ist die gefilterte Menge leer, WAEHREND der Store nicht
     # leer war (jedes Proposal wurde als fremder Lauf ausgeschlossen), ist das kein leerer, sondern
@@ -4944,6 +5041,10 @@ def generate_sweep_report(
         prior_probe_invariant_checks=prior_probe_invariant_checks,
         blocking_invariant_triggered=blocking_invariant_triggered,
         preflight_invariant_checks=preflight_invariant_checks,
+        # Issue #1090/#1238 — dieselbe Verzeichnis-Ueberschreibung wie unten (out_dir): der
+        # Vorlauf-Report (``_prior_holdout_total_return``) muss aus DEMSELBEN Verzeichnis gelesen
+        # werden, in das dieser Lauf schreibt, nicht aus dem Modul-Default ``REPORTS_DIR``.
+        reports_dir=reports_dir,
     )
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
