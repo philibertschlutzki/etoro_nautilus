@@ -62,6 +62,7 @@ _EXPECTED_FINGERPRINT_BY_VERSION = {
     22: _scale_fingerprint(CFG),  # Issue #961 — ZWEI Ausloeser (#958 Promotion-Admissibility-Guard, #960 min_profit_factor aus eligible_requires_all entfernt), beides Eligibility-/Selektions-Bumps ohne Beruehrung einer _SCALE_KEYS-Konstante. Skalen-Konstanten unveraendert.
     23: _scale_fingerprint(CFG),  # Issue #991 (Katalog E, GitHub-Issue #789) — #977 setzt penalty_dd_weight von 1.0 auf 0.0 (dd_penalty dominierte den Reward nur im bereits verworfenen Failure-Zweig; Risiko ist ueber das oos_max_drawdown-Gate abgedeckt) -- ECHTE _SCALE_KEYS-Aenderung, Fingerprint aktualisiert.
     24: _scale_fingerprint(CFG),  # Issue #1068/#1218 (Katalog #1196-1221) — fold_dispersion_weight/lambda_reg/penalty_turnover_weight von 0.5/0.25/0.0003 auf 0.0 gesetzt (die drei Terme trugen in 14/14 Laeufen < 1% der Reward-Streuung, siehe reward.RETIRED_REWARD_TERMS) -- ECHTE _SCALE_KEYS-Aenderung, Fingerprint aktualisiert.
+    25: _scale_fingerprint(CFG),  # Issue #1078/#1226 (Katalog #1247+) — kalibrierte p50-Slippage wird AN DER QUELLE (backtest_runner._apply_calibrated_slippage_deduction, auf der rohen Round-Trip-PnL-Serie, VOR jeder Reward-Berechnung) abgezogen, nicht ueber einen neuen/geaenderten reward.py-Gewichts-/Skalen-Term -- keine _SCALE_KEYS-Konstante betroffen, Skalen-Konstanten unveraendert.
 }
 
 
