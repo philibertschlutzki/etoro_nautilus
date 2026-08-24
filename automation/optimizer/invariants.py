@@ -6354,6 +6354,67 @@ def check_cost_basis_resolution(
     )
 
 
+def check_selection_cost_basis_contract(study_records: list[dict]) -> InvariantResult:
+    """Issue #1078/#1226 (P1, Semantik-Bump, reward_semantics_version v25) — ``selection_cost_basis``
+    (``report._study_record`` ⇐ ``backtest_runner._apply_calibrated_slippage_deduction``) behauptet
+    JE STUDY, ob die kalibrierte p50-Slippage bereits AN DER QUELLE (vor Reward-/Gate-/Deflations-
+    Bildung, NICHT nur in der separaten ``full_realism``-Report-Stress-Stufe) auf mindestens einem
+    TRAILING_STOP-Round-Trip abgezogen wurde (``'round_trip_plus_calibrated_slippage'``) oder nicht
+    (``'round_trip_only'``). Dieser Wächter prüft die interne Konsistenz dieser Behauptung gegen die
+    bereits gemessene ``holdout_stop_exit_slippage_bps`` (demselben Holdout-Pfad, #1029/#1178
+    entnommen): ``'round_trip_plus_calibrated_slippage'`` OHNE eine gemessene, von Null verschiedene
+    Holdout-Slippage wäre ein Widerspruch — der Abzug kann nur stattfinden, wenn tatsächlich eine
+    kalibrierte p50-Slippage > 0 vorlag (``_apply_calibrated_slippage_deduction``s einziger
+    Aktivierungspfad, siehe dortige Docstring).
+
+    Nur Studies mit >= 1 Holdout-Trade (``holdout_total_trades``) UND einem gesetzten
+    ``selection_cost_basis`` werden geprüft; kein Report-Datensatz mit dem Feld (Report vor
+    #1078/#1226, oder keine Studies mit Holdout-Trade) ⇒ ``inconclusive=True`` (kein Sweep-Abbruch,
+    kein stiller Pass-durch-Abwesenheit, analog dem Rest dieses Moduls)."""
+    with_trades = [r for r in study_records if (r.get("holdout_total_trades") or 0) >= 1]
+    checked = [r for r in with_trades if r.get("selection_cost_basis") is not None]
+    expected = (
+        "selection_cost_basis ∈ {'round_trip_only', 'round_trip_plus_calibrated_slippage'} je "
+        "Study mit >= 1 Holdout-Trade; 'round_trip_plus_calibrated_slippage' nur bei gemessener "
+        "holdout_stop_exit_slippage_bps != 0"
+    )
+    if not checked:
+        return InvariantResult(
+            name="check_selection_cost_basis_contract",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="medium",
+            detail="Kein Report-Datensatz traegt selection_cost_basis (Report vor #1078/#1226 oder "
+                   "keine Studies mit Holdout-Trade) — nicht auswertbar.",
+            inconclusive=True,
+        )
+    allowed = {"round_trip_only", "round_trip_plus_calibrated_slippage"}
+    offenders: dict[str, dict] = {}
+    for r in checked:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        basis = r.get("selection_cost_basis")
+        if basis not in allowed:
+            offenders[key] = {"selection_cost_basis": basis, "reason": "UNKNOWN_VALUE"}
+        elif basis == "round_trip_plus_calibrated_slippage" and not r.get("holdout_stop_exit_slippage_bps"):
+            offenders[key] = {
+                "selection_cost_basis": basis,
+                "holdout_stop_exit_slippage_bps": r.get("holdout_stop_exit_slippage_bps"),
+                "reason": "CLAIMED_ADJUSTMENT_WITHOUT_MEASURED_SLIPPAGE",
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_selection_cost_basis_contract",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="medium",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit widerspruechlichem selection_cost_basis: "
+                f"{offenders} (#1078/#1226)."),
+    )
+
+
 def _resolve_causal_hypothesis_state(
     candidates: list[dict], *, anchor_control_run_available: bool = False,
 ) -> str:

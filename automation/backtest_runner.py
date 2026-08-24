@@ -2501,6 +2501,34 @@ _sortino_numeric_guard_min_periods_cached: bool = False
 _sortino_numeric_guard_reference_mode_cache: str | None = None
 _sortino_numeric_guard_reference_bootstrap_cache: str | None = None
 _sortino_guard_family_median_min_siblings_cache: int | None = None
+_apply_calibrated_slippage_in_selection_cache: bool | None = None
+
+
+def _read_apply_calibrated_slippage_in_selection() -> bool:
+    """Issue #1078/#1226 (P1, Semantik-Bump) — ``optimizer.json['apply_calibrated_slippage_in_
+    selection']`` (Default ``True`` NACH diesem Fix — die ausgelieferte Config setzt ihn explizit,
+    der Python-Fallback bleibt bewusst derselbe Wert, keine zweite Kopie des Produktions-Defaults).
+    Gecached (Hot-Path, analog ``_read_sortino_numeric_guard``). Root-Cause (B-12): die Fill-
+    Slippage bei TRAILING_STOP-Exits ist im Median 44,1 % des Median-Stop-Verlusts und 7,85x c_rt
+    — vor diesem Fix beeinflusste sie weder Reward noch Eligibility-Gates noch Deflation, nur die
+    ``full_realism``-Report-Stress-Stufe (``_full_realism_expectancy``). ``False`` (Legacy-/Test-
+    Aufrufer, die den Key nicht setzen ODER ihn explizit deaktivieren) ⇒ bit-identisch zum
+    Vorzustand (Zero-Regression, Akzeptanzkriterium 1) — der Abzug greift dann an KEINER Stelle."""
+    global _apply_calibrated_slippage_in_selection_cache
+    if _apply_calibrated_slippage_in_selection_cache is not None:
+        return _apply_calibrated_slippage_in_selection_cache
+    val = True
+    try:
+        cfg_path = config_dir() / "optimizer.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("apply_calibrated_slippage_in_selection")
+            if raw is not None:
+                val = bool(raw)
+    except (OSError, ValueError, TypeError):
+        val = True
+    _apply_calibrated_slippage_in_selection_cache = val
+    return val
 
 
 def _read_sortino_numeric_guard() -> float:
@@ -4709,6 +4737,48 @@ def _full_realism_expectancy(
     return stressed_pnl_sum / notional_sum if notional_sum > 0.0 else None
 
 
+def _apply_calibrated_slippage_deduction(
+    rt_pnls_with_ts: list, rt_notionals_with_ts: list, rt_exit_meta: list, *,
+    slippage_bps_p50: float,
+) -> tuple[list, int]:
+    """Issue #1078/#1226 (P1, Semantik-Bump) Fix Punkt 1 — zieht die KALIBRIERTE p50-Slippage je
+    Asset-Klasse als Abzug auf JEDEN TRAILING_STOP-Round-Trip ab, AN DER QUELLE (unmittelbar nach
+    dem #1112-Dust-Boden, VOR jeder IS/OOS-/Fold-Aufteilung und jedem Konsumenten) — dieselbe
+    "Fix an der Quelle"-Konvention wie ``_filter_dust_round_trips``.
+
+    Root-Cause (Symptom B-12): die Fill-Slippage bei TRAILING_STOP-Exits ist im Median 44,1 % des
+    Median-Stop-Verlusts und 7,85x ``c_rt`` — sie beeinflusste bislang WEDER Reward NOCH
+    Eligibility-Gates NOCH Deflation, nur die ``full_realism``-Report-Stress-Stufe
+    (``_full_realism_expectancy``, eine reine Nachverarbeitung, die die primäre Simulation nicht
+    berührt). Diese Funktion zieht denselben VOLLEN (nicht nur den ``(multiplier-1)``-Anteil)
+    Slippage-Betrag ab wie ``_full_realism_expectancy``, aber AN DER QUELLE der PnL-Serie SELBST —
+    dadurch propagiert der Abzug automatisch in JEDE downstream abgeleitete Grösse (Expectancy,
+    Total Return, Profit-Faktor, Sortino-Eingang, Reward, Gates, Deflation), OHNE eine zweite,
+    separat gepflegte Konsumstelle zu brauchen (Akzeptanzkriterium 4: kein Pfad, der die alte
+    Kostenbasis weiterverwendet — es gibt nach diesem Fix nur noch EINE PnL-Serie).
+
+    ``rt_pnls_with_ts`` ist ``[(pnl, exit_ts, holding_ns, qty), ...]``, ``rt_notionals_with_ts`` ist
+    ``[(notional, exit_ts), ...]`` — beide index-parallel zu ``rt_exit_meta`` (dieselbe Konvention
+    wie ``_filter_dust_round_trips``). ``slippage_bps_p50 <= 0`` (kein Kalibrierungs-Cache, siehe
+    ``_read_apply_calibrated_slippage_in_selection``-Docstring) ⇒ No-Op, unverändert zurückgegeben
+    (Fail-Open, kein Raten). Rückgabe: ``(angepasste rt_pnls_with_ts, Anzahl tatsächlich
+    angepasster Round-Trips)``."""
+    if not slippage_bps_p50 or slippage_bps_p50 <= 0.0:
+        return rt_pnls_with_ts, 0
+    slippage_rate = slippage_bps_p50 / 10000.0
+    adjusted: list = []
+    n_adjusted = 0
+    for i, (pnl, exit_ts, holding_ns, qty) in enumerate(rt_pnls_with_ts):
+        meta = rt_exit_meta[i] if i < len(rt_exit_meta) else {}
+        if meta.get("exit_reason") == "TRAILING_STOP":
+            notional = rt_notionals_with_ts[i][0] if i < len(rt_notionals_with_ts) else None
+            if notional:
+                pnl = pnl - slippage_rate * notional
+                n_adjusted += 1
+        adjusted.append((pnl, exit_ts, holding_ns, qty))
+    return adjusted, n_adjusted
+
+
 def _filter_dust_round_trips(
     rt_pnls_with_ts: list[RoundTripRecord],
     rt_notionals_with_ts: list[NotionalRecord],
@@ -5183,6 +5253,27 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             log_fn(f"[Metriken] #946: {len(_dust_round_trips_discarded)} Dust-Round-Trip(s) "
                    "(Notional < 5% des Median-Notionals) an der Quelle verworfen.")
 
+        # Issue #1078/#1226 (P1, Semantik-Bump) — direkt NACH dem #1112-Dust-Boden, VOR jeder
+        # IS/OOS-/Fold-Aufteilung und jedem Konsumenten (Reward/Gates/Deflation lesen ALLE
+        # ausschliesslich die hier ersetzte ``rt_pnls_with_ts``): siehe
+        # ``_apply_calibrated_slippage_deduction``-Docstring fuer die Root-Cause. Gated ueber
+        # ``optimizer.json['apply_calibrated_slippage_in_selection']`` (Default true nach diesem
+        # Fix) — ausgeschaltet ODER ohne Kalibrierungs-Cache (``slippage_bps_p50<=0``) bleibt
+        # ``selection_cost_basis='round_trip_only'``, bit-identisch zum Vorzustand
+        # (Akzeptanzkriterium 1).
+        selection_cost_basis = "round_trip_only"
+        n_slippage_adjusted_round_trips = 0
+        if _read_apply_calibrated_slippage_in_selection():
+            rt_pnls_with_ts, n_slippage_adjusted_round_trips = _apply_calibrated_slippage_deduction(
+                rt_pnls_with_ts, rt_notionals_with_ts, rt_exit_meta,
+                slippage_bps_p50=slippage_bps_p50)
+            if n_slippage_adjusted_round_trips > 0:
+                selection_cost_basis = "round_trip_plus_calibrated_slippage"
+                if log_fn:
+                    log_fn(f"[Metriken] #1078: kalibrierte p50-Slippage ({slippage_bps_p50:.2f} bps) "
+                           f"auf {n_slippage_adjusted_round_trips} TRAILING_STOP-Round-Trip(s) "
+                           "an der Quelle abgezogen.")
+
         # Issue #448/#444 — beobachtete Fill-ts-Spanne (min/max der Round-Trip-Exit-ts über alle
         # Instrumente). Wird in die Worker-/Tournament-Telemetrie gehoben (data_window.fill_ts_*),
         # damit ein OOS-Domänen-Defekt (Fills außerhalb von [start_ns, end_ns]) ohne Ad-hoc-
@@ -5464,6 +5555,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
         is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta)
+        # Issue #1078/#1226 (P1, Semantik-Bump) Fix Punkt 2 — welche Kostenbasis DIESE Study
+        # tatsaechlich gespeist hat (``round_trip_only``/``round_trip_plus_calibrated_slippage``),
+        # gestempelt auf BEIDE Ebenen (IS/OOS lesen dieselbe rt_pnls_with_ts, siehe oben) — kein
+        # Raten, wenn kein Kalibrierungs-Cache vorliegt (siehe ``_apply_calibrated_slippage_
+        # deduction``-Aufruf oben).
+        is_metrics["selection_cost_basis"] = selection_cost_basis
+        oos_metrics["selection_cost_basis"] = selection_cost_basis
+        if n_slippage_adjusted_round_trips > 0:
+            is_metrics["selection_cost_basis_n_adjusted"] = n_slippage_adjusted_round_trips
+            oos_metrics["selection_cost_basis_n_adjusted"] = n_slippage_adjusted_round_trips
 
         # Issue #946/#1112 (Katalog #960) — die an der Quelle verworfenen Dust-Round-Trips (siehe
         # oben) DIESELBE IS/OOS-Klassifikation wie jeder andere Round-Trip, damit

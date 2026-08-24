@@ -622,6 +622,16 @@ def _metrics_dict(m) -> dict:
         # Issue #1038/#1187 — die Regressions-Stichprobengroesse; macht α·n (das oekonomisch
         # lesbare Holdout-Alpha) in report.py berechenbar.
         "oos_alpha_n_periods": getattr(m, "oos_alpha_n_periods", None),
+        # Issue #1078/#1226 (P1, Semantik-Bump) — welche Kostenbasis DIESE Holdout-Re-Evaluation
+        # tatsaechlich speiste (siehe backtest_runner._apply_calibrated_slippage_deduction). Der
+        # Schluessel traegt bewusst den vollen ``oos_``-Feldnamen (Konvention dieses Dicts, siehe
+        # z. B. ``oos_f_turnover_realized_median`` oben) — die im Report gewuenschte FLACHE
+        # Benennung ``selection_cost_basis`` (ohne ``holdout_``-Praefix, Akzeptanzkriterium #1078)
+        # entsteht erst in ``report.py``s ``_study_record`` (dort per ``.get("oos_selection_cost_
+        # basis")`` gelesen, nicht hier umbenannt — sonst haette
+        # ``test_every_holdout_only_allowlisted_field_actually_reaches_metrics_dict`` diesen
+        # Schluessel nicht gefunden, #994/#1146).
+        "oos_selection_cost_basis": getattr(m, "oos_selection_cost_basis", None),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
         # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
         # unterscheiden kann.

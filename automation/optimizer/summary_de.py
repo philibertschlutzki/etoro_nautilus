@@ -712,6 +712,28 @@ def _section_2_monetary_result(report: dict) -> str:
             f"No-Op: {', '.join(_zero_symbols) if _zero_symbols else 'k. A.'}. Für alle übrigen "
             "Studies liegt ein Kalibrierungs-Cache mit real angewandten Kosten vor (#1055/#1204)."
         )
+    # Issue #1078/#1226 (P1, Semantik-Bump) — Akzeptanzkriterium 3: Abschnitt 2.4 muss die
+    # SELEKTIONS-Kostenbasis (reward_semantics_version v25) von der reinen Report-Stress-Stufe
+    # (``full_realism``, s. u.) unterscheidbar machen — beide Achsen konsumieren denselben
+    # ``slippage_bps_p50``-Eingang, sind aber semantisch getrennt (#1095/#1243 benennt die beiden
+    # Nenner explizit). ``selection_cost_basis`` stammt aus den bereits gespeicherten Holdout-
+    # Metriken (report._study_record ⇐ backtest_runner._apply_calibrated_slippage_deduction).
+    _cost_basis_rows = [r for r in studies if r.get("selection_cost_basis") is not None]
+    if _cost_basis_rows:
+        _n_adjusted_basis = sum(
+            1 for r in _cost_basis_rows
+            if r.get("selection_cost_basis") == "round_trip_plus_calibrated_slippage"
+        )
+        lines.append("")
+        lines.append(
+            f"**Selektions-Kostenbasis** (Issue #1078/#1226, reward_semantics_version v25): "
+            f"{_n_adjusted_basis}/{len(_cost_basis_rows)} Study/Studies haben die kalibrierte "
+            "p50-Slippage bereits AN DER QUELLE (vor Reward-/Gate-/Deflations-Bildung) auf "
+            "mindestens einem TRAILING_STOP-Round-Trip abgezogen (`round_trip_plus_calibrated_"
+            "slippage`); die übrigen tragen `round_trip_only` (kein Kalibrierungs-Cache oder keine "
+            "TRAILING_STOP-Exits im Fenster) — NICHT zu verwechseln mit der `full_realism`-Report-"
+            "Stress-Stufe unten, die additiv (nicht ersetzend) wirkt."
+        )
     # Issue #1029/#1178 (Katalog #866-2) — stop_exit_slippage_bps war in KEINEM Report-Abschnitt
     # und in KEINER Invariante ausgewiesen, obwohl sie in 14/14 Studies eines Referenzlaufs befuellt
     # war (Median −12,41 bps, ~19 % des Median-Stop-Verlusts) — die groesste einzelne, gemessene

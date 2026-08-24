@@ -93,6 +93,7 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_f_realized_peak_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_max, #1085/#1233 check_sizing_cap_enforcement)",
     "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
+    "oos_selection_cost_basis": "holdout-only (confirm.py-Re-Evaluation, siehe report.py selection_cost_basis, #1078/#1226 check_selection_cost_basis_contract)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
     # Nachbarfeldern) und von report._study_record aus trial_attrs summiert — die vorherige

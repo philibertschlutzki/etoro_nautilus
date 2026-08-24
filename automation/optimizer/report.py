@@ -2171,6 +2171,11 @@ def _study_record(proposal: dict, study,
         "holdout_alpha": holdout_metrics.get("oos_alpha"),
         "holdout_beta": holdout_metrics.get("oos_beta"),
         "holdout_alpha_tstat": holdout_metrics.get("oos_alpha_tstat"),
+        # Issue #1078/#1226 (P1, Semantik-Bump, Fix Punkt 2) — welche Kostenbasis dieser Kandidat
+        # tatsaechlich durchlief (round_trip_only / round_trip_plus_calibrated_slippage), gestempelt
+        # von backtest_runner._apply_calibrated_slippage_deduction. None ⇒ kein Kalibrierungs-Cache/
+        # Legacy-Study (siehe confirm._metrics_dict).
+        "selection_cost_basis": holdout_metrics.get("oos_selection_cost_basis"),
         "holdout_no_alpha_detected": (
             abs(holdout_metrics["oos_alpha_tstat"]) < 1.0
             if holdout_metrics.get("oos_alpha_tstat") is not None else None
@@ -4246,6 +4251,10 @@ def _build_report(
     # Issue #1029/#1178 (Katalog #866-2) — dieselbe Kohorte, macht die gemessene Fill-Slippage
     # materiell sichtbar statt sie stillschweigend zu ignorieren.
     all_checks.append(("global", _inv.check_stop_exit_slippage_materiality(studies_out)))
+    # Issue #1078/#1226 (P1, Semantik-Bump) — prueft die interne Konsistenz von
+    # selection_cost_basis (oben, aus holdout_metrics gestempelt, siehe _study_record) gegen die
+    # bereits gemessene holdout_stop_exit_slippage_bps derselben Kohorte.
+    all_checks.append(("global", _inv.check_selection_cost_basis_contract(studies_out)))
 
     # Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter: divergiert das im Backtest
     # konfigurierte trade_amount_pct vom live tatsächlich gefahrenen MomentumLSAllocator-Deckel.

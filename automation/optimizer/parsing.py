@@ -193,6 +193,11 @@ class TournamentMetrics:
     # 1e-6/Bar) ist ohne diese Zahl im Report unlesbar; ``α·n`` ist das oekonomisch aussagekraeftige
     # Holdout-Alpha (kumulierter Log-Return-Beitrag ueber das gesamte Fenster).
     oos_alpha_n_periods: int | None = None
+    # Issue #1078/#1226 (P1, Semantik-Bump) — welche Kostenbasis DIESE Study tatsaechlich speiste:
+    # 'round_trip_only' (Vorzustand) oder 'round_trip_plus_calibrated_slippage' (kalibrierte
+    # p50-Slippage je TRAILING_STOP-Round-Trip an der Quelle abgezogen, siehe backtest_runner.
+    # _apply_calibrated_slippage_deduction). None ⇒ Legacy-JSON ohne das Feld (rueckwaertskompatibel).
+    oos_selection_cost_basis: str | None = None
     # Issue #710 — Haltedauer-Metrik (Bars, NICHT Sekunden — alle Strategien laufen auf 1h-Bars).
     # Median (robuste Zentraltendenz gegen schiefe per-Fold-Verteilungen) + p95 (Deadline-Nähe).
     # Optional[float]=None ⇒ migrationssicher (Legacy-JSONs/Fixtures ohne das Feld laufen unveraendert
@@ -424,6 +429,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #1038/#1187 — die Regressions-Stichprobengroesse (None-safe; fehlt unter denselben
     # Bedingungen wie oos_alpha).
     oos_alpha_n_periods = oos_metrics.get("oos_alpha_n_periods")
+    # Issue #1078/#1226 — welche Kostenbasis diese Study speiste (None-safe ⇒ rückwärtskompatibel
+    # zu Pre-#1078-JSONs).
+    oos_selection_cost_basis = oos_metrics.get("selection_cost_basis")
     # Issue #850 — Exposure-Telemetrie (None-safe ⇒ rückwärtskompatibel zu Pre-#850-JSONs).
     oos_exposure_fraction = oos_metrics.get("exposure_fraction")
     # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
@@ -691,6 +699,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #1038/#1187 — Regressions-Stichprobengroesse (None-safe).
         oos_alpha_n_periods=(
             int(oos_alpha_n_periods) if oos_alpha_n_periods is not None else None),
+        # Issue #1078/#1226 — welche Kostenbasis diese Study speiste (None-safe).
+        oos_selection_cost_basis=(
+            str(oos_selection_cost_basis) if oos_selection_cost_basis is not None else None),
         oos_exposure_fraction=float(oos_exposure_fraction) if oos_exposure_fraction is not None else None,
         # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
         oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,
