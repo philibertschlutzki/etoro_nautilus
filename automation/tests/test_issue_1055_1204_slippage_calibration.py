@@ -166,7 +166,10 @@ def _study(strategy, symbol, *, capital_weighted, full_realism, total_trades,
         "holdout_expectancy_cost_stress_full_realism": full_realism,
         "holdout_total_trades": total_trades,
         "slippage_p50_bps_calibrated": slippage_p50,
-        "oos_n_trailing_stop_losses": n_ts_exits,
+        # Issue #1074/#1222 Fix Punkt 2 — der Zaehler ist jetzt HOLDOUT-skopiert (dieselbe
+        # Grundgesamtheit wie holdout_total_trades), nicht mehr die sweep-weite Zaehlung
+        # oos_n_trailing_stop_losses (die urspruengliche Root-Cause der Skalierung).
+        "holdout_n_trailing_stop_exits": n_ts_exits,
     }
 
 

@@ -23,6 +23,7 @@ skizzierten Einzel-Trade-Format ist an dieser Stelle dokumentiert, nicht stillsc
 from __future__ import annotations
 
 import logging
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -520,6 +521,20 @@ def _section_2_monetary_result(report: dict) -> str:
             # normal_rows garantiert bereits exposure_ >= _min_exposure_for_normalization.
             return excess_ / exposure_ if excess_ is not None and exposure_ else None
 
+        # Issue #1093/#1241 (P1, Fix Punkt 3) — Root-Cause derselben #986/#1140-Fehlerklasse:
+        # excess_per_exposure ist zwar exposure-normiert, aber immer noch ein absoluter
+        # Endpunkt-Return-Vergleich — dieselbe Grösse, die als Gate bereits durch t(α) ersetzt wurde
+        # (siehe automation/config/tournament.json['oos_min_alpha_tstat']-Schema-Doku). Die Rangfolge
+        # zog bislang nach excess_per_exposure, während die Eligibility-Entscheidung bereits auf t(α)
+        # umgestellt ist — Rang und Gate massen damit zwei verschiedene Grössen. Fix: die Sortierung
+        # folgt jetzt derselben t(α)-Statistik wie das Gate; Excess/Exposure bleibt als Spalte
+        # erhalten (weiterhin ökonomisch lesbar, nur nicht mehr die primäre Rangfolgengrösse). Ein
+        # fehlendes t(α) (kein auswertbares Regressions-Fenster) sortiert ans Ende, nicht in die Mitte
+        # (0.0 wäre mit einem echten t(α)=0 ununterscheidbar).
+        def _alpha_tstat_sort_key(r: dict) -> float:
+            v = r.get("holdout_alpha_tstat")
+            return float(v) if v is not None else float("-inf")
+
         # Issue #1038/#1187 (Katalog #1187) — Root-Cause: ``α`` (Grössenordnung 1e-6/Bar) mit 5
         # Nachkommastellen zeigte in 13/13 Zeilen ``0.00000``/``-0.00000``/``-0.00001`` — technisch
         # korrekt gerundet, aber ökonomisch unlesbar. Ersetzt durch ``α·n (%)`` (das KUMULIERTE
@@ -532,7 +547,7 @@ def _section_2_monetary_result(report: dict) -> str:
             "Excess/Exposure | α·n (%) | α (bps/Bar) | β | t(α) | Vorzeichen |"
         )
         lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
-        for r in sorted(normal_rows, key=lambda r: _excess_per_exposure(r) or 0.0, reverse=True):
+        for r in sorted(normal_rows, key=_alpha_tstat_sort_key, reverse=True):
             excess = r["holdout_excess_return"]
             buyhold = r.get("holdout_buyhold_return")
             exposure = r.get("holdout_exposure_fraction")
@@ -657,22 +672,67 @@ def _section_2_monetary_result(report: dict) -> str:
         "Asset-Klasse, #774/#775) — kein garantiertes zukünftiges Ergebnis."
     )
     # Issue #1010/#1162 (Katalog #1170, P0) — Akzeptanzkriterium 2: Abschnitt 2.4 nennt explizit
-    # den methodischen Umfang, wenn financing_bps/slippage_bps ueberall 0.0 sind (backtest.json,
-    # #987/#1141) — die 'full_realism'-Kostenstress-Stufe ist dann ein No-Op, jede Ertragsaussage
-    # oben ist ohne Overnight-Finanzierung, ohne Slippage, ohne Market Impact. Quelle:
-    # ``cross_study.cost_model_zero_realism`` (report._cost_model_has_zero_realism) — dieselbe,
-    # einzige erlaubte Datenquelle (das bereits geschriebene Report-JSON) wie jede andere Zeile in
-    # diesem Modul.
-    if (report.get("cross_study") or {}).get("cost_model_zero_realism"):
+    # den methodischen Umfang, wenn financing_bps/slippage_bps ueberall 0.0 sind — die
+    # 'full_realism'-Kostenstress-Stufe ist dann ein No-Op, jede Ertragsaussage oben ist ohne
+    # Overnight-Finanzierung, ohne Slippage, ohne Market Impact.
+    #
+    # Issue #1077/#1225 (P1) — Root-Cause des Vorzustands: die Quelle war ``backtest.json``, die
+    # KONFIGURIERTEN Platzhalter, obwohl seit #1055/#1204 die real angewandte Slippage aus dem
+    # Kalibrierungs-Cache stammt — das Flag war dadurch in 11/11 Laeufen ``true``, obwohl
+    # ``full_realism`` auf 7 von 8 Symbolen tatsaechlich 45,8-115,5 bps abzog. Quelle jetzt:
+    # ``cross_study.cost_model_realism_source`` (report._cost_model_realism_from_applied), aus den
+    # GEMESSENEN ``applied_*``-Feldern jeder Study abgeleitet — dieselbe, einzige erlaubte
+    # Datenquelle (das bereits geschriebene Report-JSON) wie jede andere Zeile in diesem Modul.
+    # Der volle Warnblock (unten) erscheint nur noch bei ``config_zero`` (ALLE Studies betroffen);
+    # bei ``mixed`` nennt ein schmalerer Hinweis NUR die betroffenen Symbole namentlich, bei
+    # ``calibrated_cache`` entfaellt die Warnung vollstaendig.
+    _cross_study = report.get("cross_study") or {}
+    _cost_model_realism_source = _cross_study.get("cost_model_realism_source")
+    if _cost_model_realism_source is None:
+        # Rueckwaertskompatibilitaet zu Report-JSONs vor #1077/#1225 (nur das alte Bool-Feld).
+        _cost_model_realism_source = "config_zero" if _cross_study.get("cost_model_zero_realism") else None
+    if _cost_model_realism_source == "config_zero":
         lines.append("")
         lines.append(
             "⚠️ **Kalibrierungslücke:** Overnight-Finanzierung und Slippage sind in diesem Lauf "
-            "für alle Asset-Klassen mit 0,0 bps konfiguriert (`backtest.json`, unkalibrierte "
-            "Platzhalter, #987/#1141) — die Kostenstress-Stufe `full_realism` ist damit ein "
-            "No-Op. Jede oben genannte Ertragsaussage gilt **ohne Overnight-Finanzierung, ohne "
-            "Slippage, ohne Market Impact** (siehe `invariants.check_cost_stress_distinctness`, "
-            "#1010/#1162). Eine Kalibrierung mit realen Broker-Sätzen (Kontoauszug/"
-            "Gebührenübersicht) ist ausdrücklich NICHT Teil dieses Fixes."
+            "für alle Asset-Klassen mit 0,0 bps angewandt — die Kostenstress-Stufe `full_realism` "
+            "ist damit ein No-Op. Jede oben genannte Ertragsaussage gilt **ohne Overnight-"
+            "Finanzierung, ohne Slippage, ohne Market Impact** (siehe "
+            "`invariants.check_cost_stress_distinctness`, #1010/#1162). Eine Kalibrierung mit "
+            "realen Broker-Sätzen (Kontoauszug/Gebührenübersicht) ist ausdrücklich NICHT Teil "
+            "dieses Fixes."
+        )
+    elif _cost_model_realism_source == "mixed":
+        _zero_symbols = _cross_study.get("cost_model_zero_realism_symbols") or []
+        lines.append("")
+        lines.append(
+            "⚠️ **Kalibrierungslücke (teilweise):** für folgende Study/Studies sind Overnight-"
+            "Finanzierung und Slippage weiterhin mit 0,0 bps angewandt (z. B. eine Symbol-"
+            f"Override-Lücke, #1075/#1223) — dort ist die Kostenstress-Stufe `full_realism` ein "
+            f"No-Op: {', '.join(_zero_symbols) if _zero_symbols else 'k. A.'}. Für alle übrigen "
+            "Studies liegt ein Kalibrierungs-Cache mit real angewandten Kosten vor (#1055/#1204)."
+        )
+    # Issue #1078/#1226 (P1, Semantik-Bump) — Akzeptanzkriterium 3: Abschnitt 2.4 muss die
+    # SELEKTIONS-Kostenbasis (reward_semantics_version v25) von der reinen Report-Stress-Stufe
+    # (``full_realism``, s. u.) unterscheidbar machen — beide Achsen konsumieren denselben
+    # ``slippage_bps_p50``-Eingang, sind aber semantisch getrennt (#1095/#1243 benennt die beiden
+    # Nenner explizit). ``selection_cost_basis`` stammt aus den bereits gespeicherten Holdout-
+    # Metriken (report._study_record ⇐ backtest_runner._apply_calibrated_slippage_deduction).
+    _cost_basis_rows = [r for r in studies if r.get("selection_cost_basis") is not None]
+    if _cost_basis_rows:
+        _n_adjusted_basis = sum(
+            1 for r in _cost_basis_rows
+            if r.get("selection_cost_basis") == "round_trip_plus_calibrated_slippage"
+        )
+        lines.append("")
+        lines.append(
+            f"**Selektions-Kostenbasis** (Issue #1078/#1226, reward_semantics_version v25): "
+            f"{_n_adjusted_basis}/{len(_cost_basis_rows)} Study/Studies haben die kalibrierte "
+            "p50-Slippage bereits AN DER QUELLE (vor Reward-/Gate-/Deflations-Bildung) auf "
+            "mindestens einem TRAILING_STOP-Round-Trip abgezogen (`round_trip_plus_calibrated_"
+            "slippage`); die übrigen tragen `round_trip_only` (kein Kalibrierungs-Cache oder keine "
+            "TRAILING_STOP-Exits im Fenster) — NICHT zu verwechseln mit der `full_realism`-Report-"
+            "Stress-Stufe unten, die additiv (nicht ersetzend) wirkt."
         )
     # Issue #1029/#1178 (Katalog #866-2) — stop_exit_slippage_bps war in KEINEM Report-Abschnitt
     # und in KEINER Invariante ausgewiesen, obwohl sie in 14/14 Studies eines Referenzlaufs befuellt
@@ -691,13 +751,25 @@ def _section_2_monetary_result(report: dict) -> str:
             "Stop-Level):"
         )
         lines.append("")
+        # Issue #1095/#1243 (P2, Katalog #1247+) — die Fill-Slippage hier UND der Absetzen-zu-
+        # Fill-Gap in der naechsten Tabelle sind ZWEI VERSCHIEDENE Groessen mit unterschiedlichem
+        # Nenner (bei fast identischen Zahlenwerten, z. B. AdxAtr/GOOGL 20,62 vs. 20,63) — dieser
+        # Lesehinweis + die benannten Spaltenueberschriften unten machen den jeweiligen Nenner
+        # ALLEIN aus dem Artefakt unterscheidbar, ohne die Berechnung selbst zu aendern.
+        lines.append(
+            "*Lesehinweis:* diese Tabelle bezieht die Slippage auf den **Stop-Level** (den Preis, "
+            "zu dem der Trailing-Stop stand); die folgende Tabelle bezieht den Absetzen-zu-Fill-"
+            "Gap auf den **Auslöse-Anker** (den Preis, der den Stop ausgelöst hat) — zwei "
+            "verschiedene Nenner, keine Doppelzählung derselben Grösse."
+        )
+        lines.append("")
         # Issue #1059/#1208 Fix — zwei getrennte Spalten statt einer einzelnen (scope-vermischten)
         # Slippage-Spalte; die Holdout-Spalte ist ``k. A.``, solange holdout_total_trades 0/None
         # ist (Akzeptanzkriterium: "Keine Study mit 0 Holdout-Trades trägt in der Holdout-Spalte
         # einen Wert").
         lines.append(
-            "| Strategie | Symbol | c_rt (bps) | Slippage (OOS, Median, bps, advers=+) | "
-            "Slippage (Holdout, Median, bps, advers=+) |")
+            "| Strategie | Symbol | c_rt (bps) | Slippage vs. Stop-Level (OOS, Median, bps, "
+            "advers=+) | Slippage vs. Stop-Level (Holdout, Median, bps, advers=+) |")
         lines.append("|---|---|---:|---:|---:|")
         for r in sorted(_slippage_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
             _has_holdout_trades = bool(r.get("holdout_total_trades"))
@@ -711,26 +783,69 @@ def _section_2_monetary_result(report: dict) -> str:
     # stop_distance_bps + trigger_to_fill_gap_bps" (drei Spalten statt einer einzelnen
     # Verlustzahl), damit ein Leser sieht, welcher Anteil des Stop-Verlusts aus der konfigurierten
     # Distanz (k · ATR) und welcher aus der Absetzen-zu-Fill-Latenz stammt (#1203-Root-Cause).
+    #
+    # Issue #1082/#1230 (P1, Katalog #1247+) — Root-Cause: die drei Spalten sind DREI UNABHAENGIG
+    # medianisierte Groessen (backtest_runner._aggregate_exit_telemetry) — die Tabelle behauptete
+    # bislang implizit ``realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps`` FUER
+    # DIESE ZAHLEN, was nicht galt (Median einer Summe != Summe der Mediane; Residuum Median +12,00
+    # bps = 16,17% des Median-Verlusts in 151/154 Studies). Die drei absoluten Mediane bleiben als
+    # Kontext; die beiden neuen ANTEILSSPALTEN (je Round-Trip gebildet, dann medianisiert) sind die
+    # korrekt zerlegte Groesse und summieren sich per Konstruktion auf 1 (bis auf Rundung, siehe
+    # `invariants.check_stop_loss_share_decomposition`).
     _decomp_rows = [r for r in studies if r.get("realized_loss_bps") is not None]
     if _decomp_rows:
         lines.append("")
         lines.append(
-            "**Verlust-Zerlegung bei TRAILING_STOP-Exits** (Median je Study, bps, advers=+; "
-            "`realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps`, siehe "
-            "`invariants.check_stop_loss_decomposition_identity`):"
+            "**Verlust-Zerlegung bei TRAILING_STOP-Exits** — Median je Grösse (NICHT additiv, "
+            "siehe Anteilsspalten; Median einer Summe ≠ Summe der Mediane, #1082/#1230), bps, "
+            "advers=+; die Anteile werden je Round-Trip gebildet und summieren sich per "
+            "Konstruktion auf 1 (bis auf Rundung), siehe "
+            "`invariants.check_stop_loss_share_decomposition`:"
         )
         lines.append("")
         lines.append(
-            "| Strategie | Symbol | Stopdistanz (bps) | Absetzen-zu-Fill-Gap (bps) | "
-            "Realisierter Verlust (bps) |"
+            "| Strategie | Symbol | Stopdistanz (bps) | Absetzen-zu-Fill-Gap vs. Auslöse-Anker "
+            "(bps) | Realisierter Verlust (bps) | Anteil Stopdistanz | Anteil Absetzen-zu-Fill-"
+            "Gap |"
         )
-        lines.append("|---|---|---:|---:|---:|")
+        lines.append("|---|---|---:|---:|---:|---:|---:|")
         for r in sorted(_decomp_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | "
                 f"{_fmt_num(r.get('stop_distance_bps_measured'), digits=2)} | "
                 f"{_fmt_num(r.get('trigger_to_fill_gap_bps'), digits=2)} | "
-                f"{_fmt_num(r.get('realized_loss_bps'), digits=2)} |"
+                f"{_fmt_num(r.get('realized_loss_bps'), digits=2)} | "
+                f"{_fmt_pct(r.get('stop_distance_share_median'))} | "
+                f"{_fmt_pct(r.get('trigger_to_fill_gap_share_median'))} |"
+            )
+    # Issue #1076/#1224 (Katalog #1247+, P0) Fix Punkt 3 — die Kostenstress-Leiter
+    # (``invariants.check_cost_stress_monotonicity``) erhielt mit #987/#1141 eine vierte, additive
+    # Stufe (``full_realism``), die bislang NUR im Report-JSON stand, nicht im Artefakt selbst — ein
+    # Leser konnte die Monotonie-Klausel (exp >= exp_1_5x >= exp_2x >= exp_full_realism) nicht ohne
+    # JSON-Zugriff nachvollziehen. Diese Tabelle macht die Leiter je Study sichtbar.
+    _cost_stress_rows = [
+        r for r in studies if r.get("holdout_expectancy_capital_weighted") is not None
+    ]
+    if _cost_stress_rows:
+        lines.append("")
+        lines.append(
+            "**Kostenstress-Leiter** (Expectancy kapitalgewichtet je Study, bps; monoton fallend "
+            "von links nach rechts erwartet, `full_realism` als untere Schranke — "
+            "`invariants.check_cost_stress_monotonicity`):"
+        )
+        lines.append("")
+        lines.append(
+            "| Strategie | Symbol | Expectancy | Expectancy 1,5×-Stress | Expectancy 2×-Stress | "
+            "Expectancy unter full_realism |"
+        )
+        lines.append("|---|---|---:|---:|---:|---:|")
+        for r in sorted(_cost_stress_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('holdout_expectancy_capital_weighted'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_expectancy_cost_stress_1_5x'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_expectancy_cost_stress_2x'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_expectancy_cost_stress_full_realism'), digits=4)} |"
             )
     return "\n".join(lines)
 
@@ -760,6 +875,26 @@ def _section_3_duration(report: dict) -> str:
             f"Trials Vorlauf + {_store_reuse.get('n_trials_own', 0)} Trials dieser Lauf) — "
             "beeinflusst deflation_n_family/TPE-Seed, siehe #1021/#1196."
         )
+        # Issue #1090/#1238 (P1, Katalog #1247+) — misst, ob der Wiederholungslauf etwas gebracht
+        # hat, statt es unbelegt anzunehmen: der Median-Reward-Zugewinn NEBEN dem Median-Holdout-
+        # Effekt macht die Ueberanpassungs-Signatur (Reward besser, Holdout schlechter) sichtbar,
+        # siehe invariants.check_warm_start_efficacy.
+        _warm_start_reward_deltas = [
+            r.get("warm_start_reward_delta") for r in studies
+            if r.get("warm_start_reward_delta") is not None
+        ]
+        _warm_start_holdout_deltas = [
+            r.get("warm_start_holdout_delta") for r in studies
+            if r.get("warm_start_holdout_delta") is not None
+        ]
+        if _warm_start_reward_deltas or _warm_start_holdout_deltas:
+            lines.append(
+                f"  Median warm_start_reward_delta: "
+                f"{_fmt_num(statistics.median(_warm_start_reward_deltas), digits=4) if _warm_start_reward_deltas else 'k. A.'}"
+                f" | Median warm_start_holdout_delta: "
+                f"{_fmt_pct(statistics.median(_warm_start_holdout_deltas)) if _warm_start_holdout_deltas else 'k. A.'}"
+                " (#1238)"
+            )
     if report.get("symbols_planned") is not None:
         lines.append(
             f"- Symbole: {report.get('symbols_completed', 'k. A.')} von {report.get('symbols_planned', 'k. A.')} abgeschlossen"
@@ -893,16 +1028,22 @@ def _section_3_duration(report: dict) -> str:
             "`bars_per_calendar_day` > 8 auf EQUITY/COMMODITY ist die Signatur einer 24/7-"
             "aufgefüllten Bar-Achse (24,0 = kein Handelszeiten-Filter); "
             "`session_coverage_fraction` ist der Anteil der Bars innerhalb der erwarteten Session "
-            "(siehe `invariants.check_session_calendar_coherence`, #1011/#1163/#1027/#1176)."
+            "(siehe `invariants.check_session_calendar_coherence`, #1011/#1163/#1027/#1176). "
+            "`zero_range_bar_fraction` (#1079/#1227) ist der Anteil der Bars mit `high == low` "
+            "waehrend einer Position — ein hoher Wert ist die messbare Fassung desselben "
+            "Kalenderproblems: der Stop kann auf einer solchen Bar nicht ausloesen (siehe "
+            "`invariants.check_zero_range_bar_share`)."
         )
         lines.append("")
-        lines.append("| Strategie | Symbol | Bars/Kalendertag | Session-Abdeckung |")
-        lines.append("|---|---|---:|---:|")
+        lines.append(
+            "| Strategie | Symbol | Bars/Kalendertag | Session-Abdeckung | Nullspannen-Bar-Anteil |")
+        lines.append("|---|---|---:|---:|---:|")
         for r in sorted(_bar_axis_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | "
                 f"{_fmt_num(r.get('bars_per_calendar_day'), digits=2)} | "
-                f"{_fmt_pct(r.get('session_coverage_fraction'))} |"
+                f"{_fmt_pct(r.get('session_coverage_fraction'))} | "
+                f"{_fmt_pct(r.get('zero_range_bar_fraction'))} |"
             )
     return "\n".join(lines)
 
@@ -1113,6 +1254,19 @@ def _section_5_anomalies(report: dict) -> str:
         lines.append(f"- ATR-Floor-gebundene Studies (#1175): {len(_atr_floor_studies)}")
         if _atr_floor_studies:
             lines.append(f"  {', '.join(_atr_floor_studies)}")
+    # Issue #1083/#1231 (P1, Katalog #1247+) — Ergaenzung zur BINAEREN Study-Ebene-Zaehlung oben:
+    # der Median des PER-TRIAL-Bindungsanteils macht sichtbar, dass der Floor auch fuer Studies
+    # UNTERHALB der binaeren Schwelle fuer einen Teil ihrer Trials bindet (Root-Cause: max(median
+    # (raw), median(floor)) != median(max(raw_i, floor_i)), jeder Trial hat sein eigenes k).
+    _binding_fractions = [
+        r.get("atr_floor_binding_trial_fraction") for r in studies
+        if r.get("atr_floor_binding_trial_fraction") is not None
+    ]
+    if _binding_fractions:
+        lines.append(
+            f"  Median des Trial-Bindungsanteils (#1231, über {len(_binding_fractions)} Study/"
+            f"Studies mit Messwert): {_fmt_pct(statistics.median(_binding_fractions))}"
+        )
 
     # Issue #1040/#1189 (Katalog #1189) — Root-Cause: ``boundary_veto_evidence`` belegt aktive
     # Overrides bereits INDIREKT (active_bounds vs. default_bounds je klemmendem Parameter EINES

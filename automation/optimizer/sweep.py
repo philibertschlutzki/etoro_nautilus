@@ -1670,7 +1670,8 @@ def _family_period_returns_from_studies(pairs, studies, *,
     return family_returns
 
 
-def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> None:
+def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict, *,
+                                store_found_at_run_start: bool | None = None) -> None:
     """Issue #818 — ``champions.maybe_write_back`` hatte KEINE Produktions-Call-Site (getestet,
     dokumentiert, nie ausgeführt — exakt die Pitfall-#237-Fehlerklasse). Ebene 2 des Epics #702
     (Default-Nachführung nach ``strategy_symbol_seeds.json``) läuft erst ab hier tatsächlich.
@@ -1682,6 +1683,20 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
     ``skipped_reason`` macht den Grund für ein *nicht* erfolgtes Rückschreiben genauso sichtbar
     wie das Rückschreiben selbst (Lehre aus #783/#786: ein unaufgeschlüsselter Nicht-Ausgang ist
     die teuerste Telemetrie-Lücke im System).
+
+    ``store_found_at_run_start`` (Issue #1094/#1242, P1) — dieselbe In-Prozess-Variable, die
+    ``run_per_symbol_sweep`` als ``CHAMPION_STORE_SCAN``-Ereignis emittiert (``champions.
+    store_status()['store_found']``, die ALLERERSTE Champion-Store-Beruehrung des Laufs, VOR jedem
+    ``mkdir``-Seiteneffekt). ``False`` reklassifiziert ein ``STORE_EMPTY`` (von ``load_champion_
+    entry_with_reason``s ``_champion_store_has_any_entry()`` — einer LIVE-Glob-Pruefung ZUM
+    ZEITPUNKT DIESES Paar-Versuchs) unmittelbar AN DER QUELLE zu ``STORE_PATH_MISSING`` — statt
+    der vorherigen, NACHTRAEGLICHEN Reklassifikation in ``report._champions_summary`` (dort per
+    Wiederabspielen des ERSTEN JSONL-``CHAMPION_STORE_SCAN``-Ereignisses, das bei mehreren
+    Symbolen in getrennten Worker-Prozessen NICHT zuverlaessig demselben Symbol/Lauf entspricht,
+    dessen ``STORE_EMPTY``-Ereignisse es reklassifizieren soll). ``None`` (Default, Legacy-/Test-
+    Aufrufer ohne diesen Parameter) ⇒ keine Reklassifikation, bit-identisch zum Pre-#1094-Verhalten
+    (``report.py``s Reklassifikation bleibt als Fallback fuer den ``studies_out``-Rekonstruktions-
+    pfad ohne Ereignisstrom bestehen).
 
     Fail-open: ein Fehler in dieser Funktion darf den Sweep nie crashen (analog Champion-Store/
     Retention) — der Aufrufer (``_run_confirm_and_export``) muss NICHT selbst absichern."""
@@ -1696,6 +1711,8 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
             strategy, symbol, opt_data=opt_data)
         applied = False
         skipped_reason = _no_entry_reason or "STORE_EMPTY"
+        if skipped_reason == "STORE_EMPTY" and store_found_at_run_start is False:
+            skipped_reason = "STORE_PATH_MISSING"
         advance_days = None
         corroboration_count = None
         # Issue #1103 (Katalog #936) — WELCHER Store-Schlüssel gesucht wurde und welche tatsächlich
@@ -1730,6 +1747,145 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
     except Exception:
         log.warning("[#818] %s/%s: Champion-Writeback fehlgeschlagen (non-fatal).",
                     strategy, symbol, exc_info=True)
+
+
+def run_corroboration_pass(*, strategies: list[str] | None = None,
+                           symbols: list[str] | None = None,
+                           run_backtest=None, opt_data: dict | None = None,
+                           run_id: str | None = None) -> dict:
+    """Issue #1094/#1242 (P1, Fix Punkt 3) — ``--corroboration-pass``: re-evaluiert AUSSCHLIESSLICH
+    bereits gespeicherte Champions (``data/optimizer/champions/*.json``) gegen das AKTUELLE
+    Datenfenster, OHNE eine neue Optuna-Suche (kein ``optimize_symbol``-Aufruf, keine 1940 Trials).
+
+    Root-Cause (#1242): Korroboration (``champions.store_champion``s ``_bump_corroboration``, #821)
+    setzt voraus, dass dasselbe (Strategie, Symbol)-Paar erneut GESUCHT wird — unter einer
+    ``least_recently_covered``-Abdeckungsrotation, die bewusst Breite statt Wiederholung
+    maximiert, ist das strukturell selten (``max(corroboration_count)=1`` in 7/11 Läufen). Diese
+    Betriebsart bietet einen ZWEITEN, viel BILLIGEREN Weg zur erneuten Bestätigung: ein Champion,
+    dessen gespeicherter Parametervektor das Symbol-Holdout-Gate auf dem AKTUELLEN Fenster erneut
+    besteht, gilt als bester eligibler Kandidat und durchläuft denselben ``store_champion``/
+    ``_attempt_champion_writeback``-Pfad wie ein regulärer Sweep-Kandidat — ``corroboration_count``
+    wird dadurch UNABHÄNGIG von der Abdeckungsrotation UND OHNE Warm-Start des Optuna-Study-Stores
+    erreichbar (Akzeptanzkriterium 2: ``max_corroboration_count >= 2`` ist ohne ``--warm-start on``
+    erreichbar).
+
+    Berührt NIEMALS ``confirm.confirm_per_symbol_promotion`` (die DSR-/Familien-Multiplizitätsstufe,
+    inkl. ``deflation_n_family``) — nur den leichtgewichtigen, single-symbol Holdout-Gate-Check
+    (``confirm._holdout_metrics_for_params``/``_holdout_gate_passed``, denselben, den
+    ``confirm_on_holdout`` für den globalen Baseline-Vektor verwendet). Akzeptanzkriterium 3:
+    ``deflation_n_family_raw`` bleibt durch diesen Pfad strukturell unverändert (der Pfad berechnet
+    diese Grösse gar nicht).
+
+    Rückgabe: ``{'attempted', 'reconfirmed', 'writeback_attempts', 'skipped_no_entry', 'results'}``
+    — ``results`` ist eine Liste von ``{'strategy', 'symbol', 'reconfirmed', ...}``-Dicts, eines je
+    betrachtetem Paar (Rohmaterial für eine Zusammenfassung/CLI-Ausgabe)."""
+    from automation.optimizer import confirm as _confirm_mod
+
+    log = logging.getLogger("optimizer")
+    if opt_data is None:
+        opt_data = _load_optimizer_config()
+    if run_id is None:
+        run_id = f"corroboration_pass_{default_run_id()}"
+
+    tournament_path = config_dir() / "tournament.json"
+    risk_dd_cap = 0.30
+    if tournament_path.exists():
+        try:
+            risk_dd_cap = (json.loads(tournament_path.read_text("utf-8")) or {}).get(
+                "max_drawdown", 0.30)
+        except (OSError, ValueError):
+            pass
+    sortino_fallback_enabled = bool(opt_data.get("oos_sortino_fallback"))
+
+    strategy_filter = set(strategies) if strategies else None
+    symbol_filter = set(symbols) if symbols else None
+
+    try:
+        champion_paths = sorted(champions._champions_dir().glob("champion_*.json"))
+    except OSError:
+        champion_paths = []
+
+    pairs: list[tuple[str, str]] = []
+    for path in champion_paths:
+        try:
+            raw_entry = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        strategy, symbol = raw_entry.get("strategy"), raw_entry.get("symbol")
+        if not strategy or not symbol:
+            continue
+        if strategy_filter is not None and strategy not in strategy_filter:
+            continue
+        if symbol_filter is not None and symbol not in symbol_filter:
+            continue
+        pairs.append((strategy, symbol))
+
+    latest_ts = latest_ts_by_symbol([s for _, s in pairs]) if pairs else {}
+
+    attempted = 0
+    reconfirmed = 0
+    writeback_attempts = 0
+    skipped_no_entry = 0
+    results: list[dict] = []
+    for strategy, symbol in pairs:
+        entry = champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        if entry is None or not entry.get("params"):
+            skipped_no_entry += 1
+            continue
+        attempted += 1
+        params = dict(entry["params"])
+        newest_ns = latest_ts.get(symbol)
+        _holdout_kwargs = {"catalog_newest_ns": newest_ns}
+        if run_backtest is not None:
+            _holdout_kwargs["run_backtest"] = run_backtest
+        try:
+            m = _confirm_mod._holdout_metrics_for_params(
+                strategy, symbol, params, **_holdout_kwargs)
+        except Exception:
+            log.warning("[#1094] %s/%s: Corroboration-Pass-Holdout fehlgeschlagen (non-fatal).",
+                       strategy, symbol, exc_info=True)
+            results.append({"strategy": strategy, "symbol": symbol, "reconfirmed": False,
+                            "error": True})
+            continue
+        passed = _confirm_mod._holdout_gate_passed(
+            m, risk_dd_cap, sortino_fallback_enabled=sortino_fallback_enabled)
+        results.append({"strategy": strategy, "symbol": symbol, "reconfirmed": passed})
+        if not passed:
+            continue
+        reconfirmed += 1
+
+        class _CorroborationPassStudy:
+            # Issue #1094/#1242 — dieselbe Study-Fassade wie eine echte Optuna-Study nach einer
+            # Promotion (best_value, siehe champions._build_entry_from_promotion): dieser Pfad
+            # lief nie einen Trial, daher best_value = der gemessene Holdout-Return direkt.
+            best_value = m.oos_total_return
+            directions = ["maximize"]
+
+        promotion = {
+            "promote": False, "status": "CORROBORATION_PASS_RECONFIRMED",
+            "is_rejection_detail_override": None,
+            "symbol_params": params, "R_symbol": m.oos_total_return, "R_global": None,
+            "promotion_margin": 0.0, "holdout_passed": True,
+            "trial_dir": getattr(m, "holdout_trial_dir", None),
+            "metrics_symbol": {}, "metrics_global": {},
+        }
+        try:
+            champions.store_champion(_CorroborationPassStudy(), strategy, symbol, promotion,
+                                     catalog_newest_ns=newest_ns, opt_data=opt_data,
+                                     tier=entry.get("tier", "all"), run_id=run_id)
+        except Exception:
+            log.warning("[#1094] %s/%s: Corroboration-Pass-Store-Schreiben fehlgeschlagen "
+                       "(non-fatal).", strategy, symbol, exc_info=True)
+            continue
+        _attempt_champion_writeback(strategy, symbol, opt_data)
+        writeback_attempts += 1
+
+    log.info("[#1094] Corroboration-Pass abgeschlossen: attempted=%d reconfirmed=%d "
+             "writeback_attempts=%d skipped_no_entry=%d", attempted, reconfirmed,
+             writeback_attempts, skipped_no_entry)
+    return {"attempted": attempted, "reconfirmed": reconfirmed,
+           "writeback_attempts": writeback_attempts, "skipped_no_entry": skipped_no_entry,
+           "results": results}
 
 
 def _sweep_run_lock_path() -> Path:
@@ -1959,7 +2115,23 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ``report._champions_summary`` liest dieses Ereignis zurueck, um STORE_EMPTY von
     # STORE_PATH_MISSING zu unterscheiden UND um den Store-Pfad/-Zustand im Report zu benennen
     # (Akzeptanzkriterium 1 — "der Report nennt den Store-Pfad und dessen Zustand").
-    emit_execution_event(logging.getLogger("optimizer"), "CHAMPION_STORE_SCAN", champions.store_status())
+    _champion_store_status_at_run_start = champions.store_status()
+    emit_execution_event(
+        logging.getLogger("optimizer"), "CHAMPION_STORE_SCAN", _champion_store_status_at_run_start)
+    # Issue #1094/#1242 (P1) — dasselbe ``store_found`` wird UNMITTELBAR (in-process, keine
+    # Cross-Prozess-JSONL-Replay-Faellbarkeit) an ``_attempt_champion_writeback`` durchgereicht
+    # (siehe dortiger Docstring): vorher stempelte ``load_champion_entry_with_reason`` STORE_EMPTY
+    # unabhaengig ueber ``_champion_store_has_any_entry()`` (eine LIVE-Glob-Pruefung ZUM ZEITPUNKT
+    # jedes einzelnen Paar-Versuchs), waehrend ``report._champions_summary`` erst NACHTRAEGLICH,
+    # durch Wiederabspielen des ERSTEN ``CHAMPION_STORE_SCAN``-Ereignisses aus einem JSONL-Sidecar,
+    # zwischen STORE_EMPTY und STORE_PATH_MISSING unterschied — bei mehreren Symbolen in getrennten
+    # Worker-Prozessen (n_jobs > 1) kann der REPORT-Prozess ein ANDERES Scan-Ereignis lesen als das,
+    # das den TATSAECHLICHEN Lauf-Start-Zustand fuer DIESES Symbols Paare traegt (der `champions.
+    # store_path`, den der Report zeigt, ist der AKTUELLE, laengst-existierende Pfad — nicht der
+    # zum Zeitpunkt des jeweiligen Skip-Ereignisses). Die Klassifikation wird jetzt AN DER QUELLE,
+    # aus DERSELBEN In-Prozess-Variable wie ``store_found`` selbst, gestempelt — kein Cross-Prozess-
+    # Replay noetig.
+    _champion_store_found_at_run_start = bool(_champion_store_status_at_run_start.get("store_found"))
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
     # Fake (HI-7-Tests) wird der Schema-Pre-Init uebersprungen — ein Fake-optimize_symbol beruehrt
     # keine SQLite-Datei, also gibt es nichts zu bootstrappen (kein Storage-Seiteneffekt im Test).
@@ -2647,7 +2819,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                         strategy, symbol, exc_info=True,
                     )
                 else:
-                    _attempt_champion_writeback(strategy, symbol, opt_data)
+                    _attempt_champion_writeback(
+                        strategy, symbol, opt_data,
+                        store_found_at_run_start=_champion_store_found_at_run_start)
                 # Issue #733/#794 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
                 # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum wird ab hier nicht mehr
                 # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.
@@ -3491,6 +3665,13 @@ def main(argv: list[str] | None = None) -> list[Path]:
     parser.add_argument("--report-only", metavar="RUN_ID", default=None,
                         help="Erzeugt/rekonstruiert nur den Report fuer RUN_ID aus den vorhandenen "
                              "proposal_*.json (keine neue Optimierung).")
+    # Issue #1094/#1242 (P1, Fix Punkt 3) — re-evaluiert AUSSCHLIESSLICH gespeicherte Champions
+    # gegen das aktuelle Datenfenster (kein optimize_symbol, keine neue Optuna-Suche, keine
+    # Multiplizitaetskosten) — siehe run_corroboration_pass-Docstring. Billiger, gezielter Weg zur
+    # Korroboration, unabhaengig von der least_recently_covered-Abdeckungsrotation.
+    parser.add_argument("--corroboration-pass", action="store_true", default=False,
+                        help="Re-evaluiert nur gespeicherte Champions gegen das aktuelle "
+                             "Datenfenster (keine neue Suche) — siehe run_corroboration_pass().")
     # Issue #840 (Pitfall #264, 6. Wiederkehr von #237) — der #799-Fortschritts-Checkpoint war
     # vollstaendig implementiert, aber ohne CLI-Einstieg unerreichbar: main() erzeugte bei JEDEM
     # Aufruf ueber default_run_id() eine NEUE run_id ⇒ frischer Checkpoint, JEDER Abbruch bei einem
@@ -3516,6 +3697,18 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
+
+    # Issue #1094/#1242 (P1, Fix Punkt 3) — dieselbe --strategies/--symbols-Filterung wie der
+    # reguläre Sweep, aber KEIN Enqueue/optimize_symbol/Reporting-Apparat: run_corroboration_pass
+    # ist ein eigenständiger, billiger Pfad (siehe dortiger Docstring).
+    if args.corroboration_pass:
+        setup_bot_logging("optimizer", run_id=args.run_id or f"corroboration_pass_{default_run_id()}")
+        summary = run_corroboration_pass(strategies=strategies, symbols=symbols)
+        print(f"🔁 Corroboration-Pass: attempted={summary['attempted']} "
+              f"reconfirmed={summary['reconfirmed']} "
+              f"writeback_attempts={summary['writeback_attempts']} "
+              f"skipped_no_entry={summary['skipped_no_entry']}")
+        return []
 
     # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-
     # Logger (unten) als auch den Dateinamen des #742-Sweep-Reports (am Ende dieser Funktion) —

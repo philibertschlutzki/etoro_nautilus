@@ -50,6 +50,9 @@ def test_check_effective_stop_distance_measured_case_still_passes_normally():
         "atr_median_bps": 10.0, "atr_trailing_multiplier_median": 2.0,
         "gross_loss_median_bps_trailing_stop": 15.0,
         "oos_n_trailing_stop_losses": 40,
+        # Issue #1081/#1229 — der Legacy-Fallback konsumiert seither die GEMESSENE Distanz statt
+        # k*ATR; bewusst identisch zu 10.0*2.0 gesetzt (bit-identische Testerwartung).
+        "stop_distance_bps_measured": 20.0,
     }
     result = inv.check_effective_stop_distance([study])
     assert result.passed is True

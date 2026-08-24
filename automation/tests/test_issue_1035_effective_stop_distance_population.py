@@ -22,6 +22,9 @@ def test_passes_when_trailing_stop_loss_matches_configured_distance():
         # Issue #972/#1126 — check_effective_stop_distance konsumiert seither die robuste
         # Median-Variante als primaeren Zaehler (Pitfall #405 in AGENTS.md).
         gross_loss_median_bps_trailing_stop=16.0,
+        # Issue #1081/#1229 — der Legacy-Fallback konsumiert seither die GEMESSENE Distanz statt
+        # k*ATR; bewusst identisch zu 2.0*20.0 gesetzt (bit-identische Testerwartung).
+        stop_distance_bps_measured=40.0,
     )]
     result = inv.check_effective_stop_distance(records)
     assert result.passed is True
@@ -36,6 +39,7 @@ def test_fails_when_trailing_stop_loss_is_far_below_configured_distance():
         oos_gross_loss_mean_bps_trailing_stop=3.6, oos_n_trailing_stop_losses=50,
         oos_gross_loss_mean_bps_trailing_stop_pooled=3.6,
         gross_loss_median_bps_trailing_stop=3.6,
+        stop_distance_bps_measured=40.0,
     )]
     result = inv.check_effective_stop_distance(records)
     assert result.passed is False

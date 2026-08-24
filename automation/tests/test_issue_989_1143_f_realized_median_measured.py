@@ -31,7 +31,7 @@ def test_measured_f_realized_takes_priority_and_passes_despite_implied_divergenc
         "strategy": "SqueezeBreakoutStrategy", "symbol": "TSLA.ETORO",
         "holdout_total_trades": n, "holdout_expectancy_notional_weighted": expectancy,
         "holdout_total_return": total_return, "trade_amount_pct": 15.0,
-        "holdout_f_realized_median": 0.149,  # 14.9 % — nahe an 15 %, gap < 0.35
+        "holdout_f_realized_peak_median": 0.149,  # 14.9 % — nahe an 15 %, gap < 0.35
     }]
     result = inv.check_sizing_identity_coherence(records)
     assert result.passed is True
@@ -45,14 +45,14 @@ def test_measured_f_realized_still_fails_on_genuine_sizing_deviation():
         "strategy": "ComboTrendVwap", "symbol": "NVDA.ETORO",
         "holdout_total_trades": 40, "holdout_expectancy_notional_weighted": 0.005,
         "holdout_total_return": 0.10, "trade_amount_pct": 15.0,
-        "holdout_f_realized_median": 0.0973,  # 9.73 % — die im Issue genannte NVDA-Signatur
+        "holdout_f_realized_peak_median": 0.0973,  # 9.73 % — die im Issue genannte NVDA-Signatur
     }]
     result = inv.check_sizing_identity_coherence(records)
     assert result.passed is False
     assert result.severity == "blocking"
     offender = result.actual["ComboTrendVwap/NVDA.ETORO"]
     assert offender["source"] == "measured"
-    assert offender["f_realized_pct"] == pytest.approx(9.73, abs=0.01)
+    assert offender["f_realized_peak_pct"] == pytest.approx(9.73, abs=0.01)
 
 
 def test_falls_back_to_implied_calculation_without_measured_field():
@@ -77,7 +77,7 @@ def test_falls_back_to_implied_and_reports_source_implied_on_failure():
         "strategy": "SqueezeBreakoutStrategy", "symbol": "TSLA.ETORO",
         "holdout_total_trades": n, "holdout_expectancy_notional_weighted": expectancy,
         "holdout_total_return": total_return, "trade_amount_pct": 15.0,
-        # kein holdout_f_realized_median -> Fallback-Pfad
+        # kein holdout_f_realized_peak_median -> Fallback-Pfad
     }]
     result = inv.check_sizing_identity_coherence(records)
     assert result.passed is False
@@ -93,7 +93,7 @@ def test_measured_path_does_not_require_expectancy_or_total_return():
     records = [{
         "strategy": "S", "symbol": "A.ETORO",
         "holdout_total_trades": 15, "trade_amount_pct": 15.0,
-        "holdout_f_realized_median": 0.15,
+        "holdout_f_realized_peak_median": 0.15,
     }]
     result = inv.check_sizing_identity_coherence(records)
     assert result.passed is True
@@ -101,6 +101,8 @@ def test_measured_path_does_not_require_expectancy_or_total_return():
 
 # ── backtest_runner pure-function tests (nautilus_trader-Umgebungs-Einschraenkung, siehe AGENTS.md)
 def test_aggregate_exit_telemetry_computes_f_realized_median():
+    """Issue #1085/#1233 — der Rueckgabe-Schluessel heisst seither ``f_turnover_realized_median``
+    (Umschlagsdiagnose); die Berechnung selbst (Median ueber ``f_realized``) ist unveraendert."""
     from automation.backtest_runner import _aggregate_exit_telemetry
     meta_list = [
         {"exit_reason": "TRAILING_STOP", "f_realized": 0.14},
@@ -108,10 +110,10 @@ def test_aggregate_exit_telemetry_computes_f_realized_median():
         {"exit_reason": "TIME_BOX", "f_realized": 0.15},
     ]
     result = _aggregate_exit_telemetry(meta_list)
-    assert result["f_realized_median"] == pytest.approx(0.15)
+    assert result["f_turnover_realized_median"] == pytest.approx(0.15)
 
 
 def test_aggregate_exit_telemetry_f_realized_median_none_without_data():
     from automation.backtest_runner import _aggregate_exit_telemetry
     result = _aggregate_exit_telemetry([{"exit_reason": "TIME_BOX"}])
-    assert result["f_realized_median"] is None
+    assert result["f_turnover_realized_median"] is None

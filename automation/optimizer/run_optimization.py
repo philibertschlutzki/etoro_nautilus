@@ -29,6 +29,7 @@ from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
     check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
     gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
+    check_mandatory_gate_reachability_live,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
@@ -81,10 +82,18 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_exposure_fraction": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_exposure_fraction, #986/#1140)",
     "oos_alpha": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_beta": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
-    "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    # Issue #1093/#1241 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
+    # seit dem neuen oos_min_alpha_tstat-Gate tatsaechlich per Sweep-Trial gestempelt (siehe
+    # Stempelstelle oben, neben oos_win_rate) — Grundlage fuer reward.check_mandatory_gate_
+    # reachability_live. oos_alpha/oos_beta bleiben holdout-only (kein Gate braucht sie live).
     "oos_alpha_n_periods": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #1038/#1187)",
-    "oos_f_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_median, #989/#1143)",
-    "oos_f_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_max, #1060/#1209 check_sizing_cap_enforcement)",
+    "oos_f_turnover_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_median, #989/#1143, umbenannt #1085/#1233)",
+    "oos_f_turnover_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_max, #989/#1143, umbenannt #1085/#1233)",
+    "oos_f_realized_peak_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_median, #1085/#1233 check_sizing_identity_coherence)",
+    "oos_f_realized_peak_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_max, #1085/#1233 check_sizing_cap_enforcement)",
+    "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
+    "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
+    "oos_selection_cost_basis": "holdout-only (confirm.py-Re-Evaluation, siehe report.py selection_cost_basis, #1078/#1226 check_selection_cost_basis_contract)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
     # Nachbarfeldern) und von report._study_record aus trial_attrs summiert — die vorherige
@@ -1706,6 +1715,12 @@ class _WindowedTPESampler(optuna.samplers.TPESampler):
         # (eine Instanz je Study), gelesen vom Aufrufer NACH study.optimize() und dort als
         # study-user_attr gestempelt (siehe Aufrufstellen).
         self._fit_seconds_total = 0.0
+        # Issue #1089/#1237 (P1, Katalog #1247+) — die Trial-Zahl des LETZTEN Fit-Aufrufs (vor UND
+        # nach dem Fenster): am Studienende ist die Trial-Zahl maximal, das ist deshalb der
+        # aussagekraeftigste Messpunkt fuer "wie viele Trials gingen tatsaechlich in den Fit ein"
+        # (``tpe_fit_trials_used``/``_available``, gestempelt vom Aufrufer nach study.optimize()).
+        self._last_trials_used = 0
+        self._last_trials_available = 0
 
     def _sample(self, study, trial, search_space):
         _fit_t0 = time.perf_counter()
@@ -1726,12 +1741,14 @@ class _WindowedTPESampler(optuna.samplers.TPESampler):
         trials = study._get_trials(deepcopy=False, states=states, use_cache=use_cache)
         if self._constant_liar:
             trials = [t for t in trials if trial.number != t.number]
+        self._last_trials_available = len(trials)
 
         # Issue #1067/#1217 Fix — DAS gleitende Fenster: nur die zuletzt angelegten Trials gehen
         # in den Surrogat-Fit ein (aeltere bleiben Teil des Stores, werden hier nur nicht mehr
         # gefittet). ``sorted(..., key=.number)`` statt Store-Reihenfolge zu unterstellen.
         if self._history_window > 0 and len(trials) > self._history_window:
             trials = sorted(trials, key=lambda t: t.number)[-self._history_window:]
+        self._last_trials_used = len(trials)
 
         n = sum(t.state != _TrialState.RUNNING for t in trials)
         below_trials, above_trials = _split_trials(
@@ -1758,6 +1775,27 @@ def _resolve_tpe_history_window(opt_data: dict | None) -> int:
         return int(value) if int(value) > 0 else _TPE_HISTORY_WINDOW_DEFAULT
     except (TypeError, ValueError):
         return _TPE_HISTORY_WINDOW_DEFAULT
+
+
+# Issue #1089/#1237 (P1, Katalog #1247+) — Symptom: bei k=3 warm-gestarteten Vorlauf-Trials lag
+# ``Σ tpe_fit_seconds`` bei 228s (O(n^1,9) in der Store-Groesse), 8,6% der Wallclock im Surrogat-
+# Fit, ``cpu_utilisation_backtest`` bei 12,9%. ``tpe_history_window`` (#1067/#1217, Default 600)
+# deckelt bereits denselben Fit — ``tpe_fit_max_trials`` ist eine ZWEITE, unabhaengig konfigurierbare
+# Obergrenze mit eigenem Default (2000) und eigener Telemetrie (``tpe_fit_trials_used``/
+# ``_available``), NICHT als Ersatz fuer ``tpe_history_window`` gedacht: der EFFEKTIVE Fensterwert
+# ist das Minimum beider Werte (siehe Aufrufstellen), sodass eine grosszuegigere Konfiguration des
+# einen Wertes nicht die vom anderen garantierte Obergrenze aufheben kann.
+_TPE_FIT_MAX_TRIALS_DEFAULT = 2000
+
+
+def _resolve_tpe_fit_max_trials(opt_data: dict | None) -> int:
+    """Issue #1089/#1237 — ``optimizer.json['tpe_fit_max_trials']`` mit Default 2000. Fail-open bei
+    fehlendem/ungueltigem Wert (dieselbe Konvention wie ``_resolve_tpe_history_window``)."""
+    try:
+        value = (opt_data or {}).get("tpe_fit_max_trials", _TPE_FIT_MAX_TRIALS_DEFAULT)
+        return int(value) if int(value) > 0 else _TPE_FIT_MAX_TRIALS_DEFAULT
+    except (TypeError, ValueError):
+        return _TPE_FIT_MAX_TRIALS_DEFAULT
 
 
 def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
@@ -1825,7 +1863,11 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
             n_startup_trials=n_startup_trials,
             seed=seed,
             constraints_func=_oos_constraints_func,
-            history_window=_resolve_tpe_history_window(opt_data),
+            # Issue #1089/#1237 — die EFFEKTIVE Obergrenze ist das Minimum aus tpe_history_window
+            # (#1067/#1217) und tpe_fit_max_trials: keiner der beiden Werte kann die vom jeweils
+            # anderen garantierte Obergrenze aufheben.
+            history_window=min(
+                _resolve_tpe_history_window(opt_data), _resolve_tpe_fit_max_trials(opt_data)),
         )
 
     study = _create_study_with_retry(
@@ -1873,6 +1915,11 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # ist — NSGAIISampler im 'pareto'-Reward-Modus traegt diese Telemetrie nicht).
     if hasattr(sampler, "_fit_seconds_total"):
         study.set_user_attr("tpe_fit_seconds", round(sampler._fit_seconds_total, 4))
+        # Issue #1089/#1237 (P1) — je Study gestempelt, Rohmaterial fuer
+        # invariants.check_tpe_fit_cost_share und das Akzeptanzkriterium
+        # "tpe_fit_trials_used <= tpe_fit_max_trials".
+        study.set_user_attr("tpe_fit_trials_used", sampler._last_trials_used)
+        study.set_user_attr("tpe_fit_trials_available", sampler._last_trials_available)
     return study
 
 def _sanitize(symbol: str) -> str:
@@ -2556,7 +2603,23 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     ``feasible_p_eligible``, ``constraint_improvement_rate``, ``gradient_signal``) ausweisen, damit
     eine (aussichtslose) Study NICHT in höhere Tiers eskaliert wird und der Eskalations-Entscheid aus
     dem Log nachvollziehbar ist."""
-    trials = list(getattr(study, "trials", None) or [])
+    # Issue #1086/#1234 (Katalog #1247+, P1) — Root-Cause: ``study.trials`` ist STORE-SCOPED (alle
+    # Trials aller Laeufe auf demselben Optuna-Store, ueber Warm-Start-Wiederholungen hinweg
+    # akkumuliert), waehrend diese Funktion ``run_id`` bereits als Parameter erhaelt. Die fuenf
+    # unten gestempelten Zaehler (``n_trials_total`` etc.) blieben bislang UNGEFILTERT — in
+    # Warm-Start-Laeufen z. B. ``n_trials_total = 403`` (= 123+140+140 ueber drei Laeufe) neben
+    # dem bereits korrekt run-scopeden ``n_trials_total_study``/``n_evaluable`` aus
+    # ``report._study_record`` (Issue #1198, ``trials_override``). Zwei verschiedene
+    # Grundgesamtheiten unter aehnlichen Namen (``check_denominator_coherence``/``check_counter_
+    # partition_consistency`` failten deshalb NUR in Warm-Start-Laeufen). ``store_trials`` haelt die
+    # VOLLE (store-weite) Population fuer die neuen ``_store``-Zaehler unten; ``trials`` wird ab hier
+    # auf ``run_id`` gefiltert — dieselbe Filterformulierung wie ``sweep.py``s
+    # ``deflation_family_floor``-Zaehlung (dortiger Kommentar).
+    store_trials = list(getattr(study, "trials", None) or [])
+    trials = store_trials
+    if run_id is not None:
+        trials = [t for t in store_trials
+                  if (getattr(t, "user_attrs", {}) or {}).get("run_id") == run_id]
     durs = [v for t in trials
             if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
     evaluable = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
@@ -2610,6 +2673,33 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         study.set_user_attr("n_trials_pruned", n_trials_pruned)
         study.set_user_attr("n_trials_failed", n_trials_failed)
         study.set_user_attr("n_trials_unevaluable", n_trials_unevaluable)
+    except Exception:
+        pass
+    # Issue #1086/#1234 (Katalog #1247+, P1) Fix Punkt 2 — die STORE-weiten (ungefilterten)
+    # Zaehlungen bleiben zusaetzlich unter eindeutigem ``_store``-Suffix erhalten, damit die
+    # Store-Groesse (z. B. fuer Betriebs-/Kapazitaetsfragen) weiter sichtbar ist — aber kein
+    # Konsument sie mehr mit dem run-scopeden Zaehler oben verwechseln kann (siehe #1235-Folgefix
+    # fuer die Invarianten-Konsumenten). Wird ``run_id`` nicht uebergeben, ist ``store_trials ==
+    # trials`` (dieselbe Population) und die ``_store``-Werte sind bit-identisch zu den
+    # run-scopeden — kein neues Verhalten fuer Aufrufer ohne ``run_id``.
+    n_trials_pruned_store = sum(
+        1 for t in store_trials if getattr(t, "state", None) == optuna.trial.TrialState.PRUNED)
+    n_trials_failed_store = sum(
+        1 for t in store_trials if getattr(t, "state", None) == optuna.trial.TrialState.FAIL)
+    n_trials_informative_store = sum(
+        1 for t in store_trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+    )
+    n_trials_unevaluable_store = max(
+        0, len(store_trials) - n_trials_pruned_store - n_trials_failed_store
+        - n_trials_informative_store)
+    try:
+        study.set_user_attr("n_trials_total_store", len(store_trials))
+        study.set_user_attr("n_trials_informative_store", n_trials_informative_store)
+        study.set_user_attr("n_trials_pruned_store", n_trials_pruned_store)
+        study.set_user_attr("n_trials_failed_store", n_trials_failed_store)
+        study.set_user_attr("n_trials_unevaluable_store", n_trials_unevaluable_store)
     except Exception:
         pass
     # Issue #1063/#1213 (P1, Katalog #1196-1221) — Root-Cause B-9: Squeeze/NVDA 153/180 (85,0%) bzw.
@@ -2889,6 +2979,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     # für TSLA.ETORO Hourly tatsächlich beobachtete OOS-Win-Rate blieb unter ~0.11).
     live_win_rates = [getattr(t, "user_attrs", {}).get("oos_win_rate") for t in trials
                       if getattr(t, "user_attrs", {}).get("oos_win_rate") is not None]
+    # Issue #1093/#1241 (P1) — dieselbe Live-Kohorte fuer das neue MANDATORY oos_min_alpha_tstat-
+    # Gate (siehe reward.check_mandatory_gate_reachability_live-Docstring).
+    live_alpha_tstats = [getattr(t, "user_attrs", {}).get("oos_alpha_tstat") for t in trials
+                         if getattr(t, "user_attrs", {}).get("oos_alpha_tstat") is not None]
     any_arm_live_unreachable = []
     # Issue #668 — hebt die reine #660-Warnung auf eine KONFIGURIERTE Policy (warn/drop_arm/
     # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
@@ -2905,6 +2999,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
             any_arm_policy_decision = resolve_any_arm_policy(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
+            # Issue #1093/#1241 — die READ-ONLY Diagnose fuer das neue MANDATORY-Gate wird in
+            # dieselbe Telemetrie-Liste gemergt (keine Policy-Wirkung, siehe Docstring dort), damit
+            # ``any_arm_live_unreachable`` (Akzeptanzkriterium #1241) auch ein strukturell
+            # unerreichbares oos_min_alpha_tstat-Gate erfasst.
+            any_arm_live_unreachable = list(any_arm_live_unreachable) + [
+                c for c in check_mandatory_gate_reachability_live(
+                    _tcfg_arm, {"min_alpha_tstat": live_alpha_tstats}, n_evaluated=evaluable)
+                if c not in any_arm_live_unreachable
+            ]
             _emit_any_arm_reachability_result(
                 logging.getLogger("optimizer"), any_arm_live_unreachable,
                 check_name="check_any_arm_reachability_live",
@@ -3372,6 +3475,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
         if metrics.oos_bar_range_median_bps is not None:
             trial.set_user_attr("oos_bar_range_median_bps", metrics.oos_bar_range_median_bps)
+        # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_bar_range_p75_bps is not None:
+            trial.set_user_attr("oos_bar_range_p75_bps", metrics.oos_bar_range_p75_bps)
+        if metrics.oos_zero_range_bar_fraction is not None:
+            trial.set_user_attr(
+                "oos_zero_range_bar_fraction", metrics.oos_zero_range_bar_fraction)
         # Issue #1054/#1203 (Katalog #1196-1221) — siehe TournamentMetrics-Docstring.
         if metrics.oos_stop_distance_bps_median is not None:
             trial.set_user_attr(
@@ -3386,6 +3495,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_n_stop_loss_identity_checked", metrics.oos_n_stop_loss_identity_checked)
         trial.set_user_attr(
             "oos_n_stop_loss_identity_violations", metrics.oos_n_stop_loss_identity_violations)
+        # Issue #1082/#1230 (P1, Katalog #1247+) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_stop_distance_share_median is not None:
+            trial.set_user_attr(
+                "oos_stop_distance_share_median", metrics.oos_stop_distance_share_median)
+        if metrics.oos_trigger_to_fill_gap_share_median is not None:
+            trial.set_user_attr(
+                "oos_trigger_to_fill_gap_share_median",
+                metrics.oos_trigger_to_fill_gap_share_median)
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         trial.set_user_attr("oos_n_losses", metrics.oos_n_losses)
         # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als
@@ -3599,6 +3716,11 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         if metrics.oos_evaluated:
             if metrics.oos_win_rate is not None:
                 trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
+            # Issue #1093/#1241 (P1) — dieselbe "nur gesetzt, wenn vorhanden"-Konvention wie
+            # oos_win_rate: LIVE-Reachability-Grundlage fuer das neue oos_min_alpha_tstat-Gate
+            # (siehe check_mandatory_gate_reachability_live unten).
+            if metrics.oos_alpha_tstat is not None:
+                trial.set_user_attr("oos_alpha_tstat", metrics.oos_alpha_tstat)
             if metrics.oos_profit_factor is not None:
                 trial.set_user_attr("oos_profit_factor", metrics.oos_profit_factor)
             if metrics.oos_expectancy is not None:
@@ -3865,7 +3987,11 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             n_startup_trials=n_startup_trials,
             seed=seed_eff,
             constraints_func=_oos_constraints_func,
-            history_window=_resolve_tpe_history_window(opt_data),
+            # Issue #1089/#1237 — die EFFEKTIVE Obergrenze ist das Minimum aus tpe_history_window
+            # (#1067/#1217) und tpe_fit_max_trials: keiner der beiden Werte kann die vom jeweils
+            # anderen garantierte Obergrenze aufheben.
+            history_window=min(
+                _resolve_tpe_history_window(opt_data), _resolve_tpe_fit_max_trials(opt_data)),
         )
 
     # Issue #411 — serialisiert + DDL-Race-fest (table studies already exists). Ersetzt das nackte
@@ -4085,6 +4211,11 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             # invariants.check_search_overhead_share zusammen mit study_wallclock_s oben.
             if hasattr(sampler, "_fit_seconds_total"):
                 study.set_user_attr("tpe_fit_seconds", round(sampler._fit_seconds_total, 4))
+                # Issue #1089/#1237 (P1) — je Study gestempelt, Rohmaterial fuer
+                # invariants.check_tpe_fit_cost_share und das Akzeptanzkriterium
+                # "tpe_fit_trials_used <= tpe_fit_max_trials".
+                study.set_user_attr("tpe_fit_trials_used", sampler._last_trials_used)
+                study.set_user_attr("tpe_fit_trials_available", sampler._last_trials_available)
         except Exception:
             logging.getLogger("optimizer").warning(
                 "[#851] Study-Zeitstempel-Telemetrie für '%s' fehlgeschlagen (non-fatal).",

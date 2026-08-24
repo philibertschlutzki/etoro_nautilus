@@ -1046,6 +1046,16 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     exportierte ``deflation_n_effective`` von genau dieser Formel ab, hat die Entscheidung eine
     ANDERE N-/Varianzquelle konsumiert als die Telemetrie ausweist — exakt die #670-Fehlerklasse
     (eine Nachricht behauptete die falsche Varianzquelle).
+
+    Issue #1092/#1240 (P1) — ``severity`` von ``medium`` auf ``high`` gehoben: eine abweichende
+    Multiplizität verändert die Promotionsschwelle DIREKT (Φ⁻¹(1−1/n) in ``sr0_multiple_testing``),
+    nicht nur eine nachgelagerte Anzeige — dieselbe Kategorie wie ``check_n_family_partition``
+    (bereits ``blocking``). confirm.py stempelt seither ``deflation_n_eligible`` als das per-Study-N,
+    das TATSAECHLICH in die ``max()``-Formel eingegangen ist (eingefroren VOR einer moeglichen
+    #865-``per_stratum``-Reassignment der bare ``deflation_n``-Variable auf eine engere Stratum-
+    Zahl für einen ANDEREN Zweck — die von der Multiplizität ABSICHTLICH entkoppelte Varianz-
+    schätzung), sowie ``deflation_n_source`` (``n_eligible``/``n_family_stage1_per_strategy``/
+    ``max_of_both``), welche Seite des max() tatsächlich gewonnen hat.
     """
     n_eligible = holdout_metrics.get("deflation_n_eligible")
     n_family_eff = holdout_metrics.get("deflation_n_family_effective")
@@ -1057,6 +1067,7 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
             expected="deflation_n_effective == max(deflation_n_eligible, deflation_n_family_effective)",
             actual=None,
             detail="Keine Deflations-Kohorte (deflated_selection=False oder N<2) — nicht anwendbar.",
+            severity="high",
         )
     expected_n = max(n_eligible or 0, n_family_eff or 0)
     passed = n_effective == expected_n
@@ -1069,6 +1080,7 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
                 f"deflation_n_effective={n_effective} != max(N_eligible={n_eligible}, "
                 f"N_family_effective={n_family_eff})={expected_n} — Entscheidung und Telemetrie "
                 "koennten unterschiedliche N-/Varianzquellen konsumiert haben (#652/#670)."),
+        severity="high",
     )
 
 
@@ -2235,28 +2247,68 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
     diese zweite Identität ist der Regressionswächter dagegen, unabhängig von der ersten (die
     ausschliesslich über ``n_trials_informative`` rechnet und den PRUNED-Fehlalarm daher NICHT
     sieht). Fehlt ``n_evaluable`` (Pre-#1079-Report) ⇒ nur die erste Identität zählt (bit-identisch
-    zum Pre-#1079-Verhalten)."""
-    keys = ("n_trials_total", "n_trials_informative", "n_trials_pruned",
-            "n_trials_unevaluable", "n_trials_failed")
+    zum Pre-#1079-Verhalten).
+
+    Issue #1087/#1235 (P2, Katalog #1247+) — Root-Cause: dieser Check las bislang das BARE
+    ``n_trials_total`` — bis #1086/#1234 STORE-scoped (ueber Warm-Start-Wiederholungen akkumuliert,
+    z. B. 403 = 123+140+140 ueber drei Laeufe), seither RUN-scoped und bit-identisch zu
+    ``n_trials_total_study``, aber unter einem Namen, der diesen Vertrag NICHT explizit macht — ein
+    Leser der Fehlermeldung "n_trials_total (403)" neben einem im selben Record stehenden
+    ``n_trials_total_study = 140`` kann die beiden Grundgesamtheiten nicht auseinanderhalten.
+    Dieser Check bevorzugt seither ``n_trials_total_study`` (faellt auf das gleichwertige, bare
+    ``n_trials_total`` zurueck, falls der explizite Name fehlt — beide sind seit #1086/#1234
+    bit-identisch, kein Verhaltensunterschied fuer bestehende Aufrufer). Ist zusaetzlich
+    ``n_trials_total_store`` vorhanden UND weicht es vom run-scopeden Total ab UND erklaert es eine
+    ansonsten festgestellte Zerlegungs-Abweichung (die vier Kategorien summieren sich auf GENAU den
+    STORE-skopierten statt den RUN-skopierten Wert), meldet der Detailtext die eigene, benannte
+    Diagnose ``STORE_SCOPED_COUNTER_PRESENT`` statt einer irrefuehrenden, unerklaerten
+    Partitionsverletzung — dieselbe Zaehler-Skopen-Vermischung, die #1086/#1234 fuer die Quelle
+    bereits behoben hat, bleibt hier fuer den KONSUMENTEN als benannter Befund sichtbar, statt als
+    bare Zahlendivergenz zu erscheinen."""
+    total_study = study_counts.get("n_trials_total_study")
+    total_field = "n_trials_total_study"
+    if total_study is None:
+        total_study = study_counts.get("n_trials_total")
+        total_field = "n_trials_total"
+    keys = ("n_trials_informative", "n_trials_pruned", "n_trials_unevaluable", "n_trials_failed")
     values = {k: study_counts.get(k) for k in keys}
-    if any(v is None for v in values.values()):
+    if total_study is None or any(v is None for v in values.values()):
         return InvariantResult(
             name="check_denominator_coherence",
             passed=True,
             expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
-                     "n_trials_failed == n_trials_total",
+                     "n_trials_failed == n_trials_total_study",
             actual=None,
             detail="Zähler unbekannt (Pre-#885-Report) — nicht anwendbar.",
         )
-    total = values["n_trials_total"]
+    total = total_study
+    values = {total_field: total, **values}
     parts_sum = (values["n_trials_informative"] + values["n_trials_pruned"]
                  + values["n_trials_unevaluable"] + values["n_trials_failed"])
     passed = parts_sum == total
     detail_parts = []
+    total_store = study_counts.get("n_trials_total_store")
+    store_scoped_counter_present = (
+        not passed and total_store is not None and total_store != total and parts_sum == total_store)
     if not passed:
-        detail_parts.append(
-            f"Zerlegung ({parts_sum}) != n_trials_total ({total}): {values} — die #885-"
-            "Trial-Kategorien sind nicht disjunkt/vollständig.")
+        if store_scoped_counter_present:
+            values["n_trials_total_store"] = total_store
+            detail_parts.append(
+                f"STORE_SCOPED_COUNTER_PRESENT: die Zerlegung ({parts_sum}) stimmt mit dem "
+                f"STORE-skopierten n_trials_total_store ({total_store}) ueberein, nicht mit dem "
+                f"RUN-skopierten {total_field} ({total}) — die vier Kategorien-Zaehler sind "
+                "store-skopiert, waehrend der Nenner run-skopiert ist (oder umgekehrt); keine "
+                "echte Partitionsverletzung, aber die Zaehler-Skopen dieses Records sind "
+                "vermischt worden (#1235).")
+            # Issue #1087/#1235 — eine erklaerte Skopen-Vermischung ist KEINE echte
+            # Partitionsverletzung (die Kategorien-Zaehler selbst summieren sich korrekt auf EINE
+            # konsistente Grundgesamtheit, nur unter dem falschen Namen) — die Diagnose ersetzt den
+            # Fehlschlag, statt ihn nur umzubenennen.
+            passed = True
+        else:
+            detail_parts.append(
+                f"Zerlegung ({parts_sum}) != {total_field} ({total}): {values} — die #885-"
+                "Trial-Kategorien sind nicht disjunkt/vollständig.")
 
     n_evaluable = study_counts.get("n_evaluable")
     if n_evaluable is not None:
@@ -2269,7 +2321,7 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
         if not evaluable_passed:
             detail_parts.append(
                 f"Zweite Identität (#1079): n_evaluable + n_trials_pruned + n_trials_unevaluable + "
-                f"n_trials_failed ({evaluable_parts_sum}) != n_trials_total ({total}) — n_evaluable "
+                f"n_trials_failed ({evaluable_parts_sum}) != {total_field} ({total}) — n_evaluable "
                 "ueberlappt mit einer der anderen Kategorien (z. B. PRUNED-Trials, Beweis B-13 im "
                 "#866-Katalog).")
 
@@ -2277,9 +2329,13 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
         name="check_denominator_coherence",
         passed=passed,
         expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
-                 "n_trials_failed == n_trials_total (und n_evaluable analog, sofern vorhanden)",
+                 "n_trials_failed == n_trials_total_study (und n_evaluable analog, sofern "
+                 "vorhanden)",
         actual=values,
-        detail="OK" if passed else " ".join(detail_parts),
+        # Issue #1087/#1235 — STORE_SCOPED_COUNTER_PRESENT bleibt SICHTBAR, auch wenn sie den
+        # Fehlschlag ersetzt (passed=True): eine erklaerte Skopen-Vermischung ist ein Befund, der
+        # NICHT in einem stillen "OK" verschwinden darf.
+        detail="OK" if not detail_parts else " ".join(detail_parts),
     )
 
 
@@ -3861,6 +3917,76 @@ def check_summary_row_completeness(
     )
 
 
+def check_applied_cost_components_resolved(study_records: list[dict]) -> InvariantResult:
+    """Issue #1075/#1223 (Katalog #1247+, P0) — der symbolspezifische Kosten-Auflösungspfad liess
+    Finanzierung/Slippage lautlos auf die DEFAULT-Kostenbasis fallen, wenn ein Symbol NUR einen
+    Spread-Override (``spread_bps_by_symbol``) trug — die kalibrierte Slippage (#1204) erreichte
+    ein solches Symbol dadurch NIE, ohne dass das im Report je sichtbar war (Symptom: TSLA, das
+    einzige Symbol mit Spread-Override, war das einzige Symbol mit
+    ``capital_weighted − full_realism == 0,000 bps`` in 42/42 Studies).
+
+    FAIL (severity ``blocking``) je Study mit ``holdout_total_trades >= 1``, wenn EINE der beiden
+    Bedingungen gilt:
+    1. ``applied_slippage_bps`` ist ``None`` — die Kostenauflösung hat den Study-Record strukturell
+       nicht erreicht (dieselbe Bruecken-Fehlerklasse wie #1084).
+    2. Ein Kalibrierungs-Cache existiert fuer diese Study (``slippage_p50_bps_calibrated`` ist
+       definiert UND ``> 0``), aber ``applied_slippage_bps == 0.0`` — das ist EXAKT die #1223-
+       Signatur: eine kalibrierte Slippage existiert fuer die Asset-Klasse dieses Symbols, erreicht
+       den tatsaechlich angewandten Kostenwert aber nicht. Keine Wert-GLEICHHEIT verlangt (``applied_
+       slippage_bps`` ist die volle Round-Trip-Slippage aus ``slippage_bps_by_asset_class``,
+       ``slippage_p50_bps_calibrated`` das P50 EINER unabhaengigen Kalibrierungsgroesse aus
+       demselben Cache — beide sind unterschiedliche Perzentile derselben Verteilung UND per
+       Konstruktion nicht identisch; Konsistenz heisst hier "kalibriert UND angewandt sind
+       gleichzeitig 0 oder gleichzeitig ungleich 0", nicht Wertgleichheit).
+
+    Symbole mit Symbol-Override (Spread) sind ausdruecklich NICHT ausgenommen — das war die
+    Root-Cause. Studies ohne ``holdout_total_trades >= 1`` werden nicht geprueft."""
+    with_trades = [r for r in study_records if (r.get("holdout_total_trades") or 0) >= 1]
+    if not with_trades:
+        return InvariantResult(
+            name="check_applied_cost_components_resolved",
+            passed=True,
+            expected="applied_slippage_bps nicht-null; 0 nur, wenn keine Kalibrierung existiert",
+            actual=None,
+            severity="blocking",
+            detail="Keine Studies mit >= 1 Holdout-Trade — nicht anwendbar.",
+        )
+    missing: list[str] = []
+    zero_despite_calibration: dict[str, dict] = {}
+    for r in with_trades:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        applied = r.get("applied_slippage_bps")
+        if applied is None:
+            missing.append(key)
+            continue
+        calibrated = r.get("slippage_p50_bps_calibrated")
+        if calibrated and float(calibrated) > 0 and float(applied) == 0.0:
+            zero_despite_calibration[key] = {
+                "applied_slippage_bps": float(applied),
+                "slippage_p50_bps_calibrated": float(calibrated),
+            }
+    passed = not missing and not zero_despite_calibration
+    return InvariantResult(
+        name="check_applied_cost_components_resolved",
+        passed=passed,
+        expected="applied_slippage_bps nicht-null; 0 nur, wenn keine Kalibrierung existiert",
+        actual={"n_missing": len(missing), "n_zero_despite_calibration": len(zero_despite_calibration)},
+        severity="blocking",
+        detail=("OK" if passed else
+                (f"{len(missing)} Study/Studies ohne applied_slippage_bps: {missing}. "
+                 if missing else "") +
+                (f"{len(zero_despite_calibration)} Study/Studies mit kalibrierter Slippage, aber "
+                 f"applied_slippage_bps == 0.0 (#1223 Symbol-Override-Signatur): "
+                 f"{zero_despite_calibration}." if zero_despite_calibration else "")),
+        provenance={
+            k: v for k, v in {
+                "missing": missing or None,
+                "zero_despite_calibration": zero_despite_calibration or None,
+            }.items() if v is not None
+        } or None,
+    )
+
+
 def check_cost_stress_distinctness(
     study_records: list[dict], *, min_affected_fraction: float = 0.9,
     min_delta_coefficient: float = 0.5,
@@ -3890,14 +4016,37 @@ def check_cost_stress_distinctness(
     allein laesst eine trivial kleine, oekonomisch bedeutungslose Differenz durchgehen (z. B. eine
     Rundungsdifferenz oder eine nur fuer EINE Asset-Klasse kalibrierte Slippage). Fuer jede Study
     mit einer kalibrierten p50-Slippage (``slippage_p50_bps_calibrated``, ``report.py`` aus
-    ``calibrated_slippage.json``) UND ``oos_n_trailing_stop_losses`` UND ``holdout_total_trades``
+    ``calibrated_slippage.json``) UND ``holdout_n_trailing_stop_exits`` UND ``holdout_total_trades``
     MUSS die Differenz mindestens
-    ``min_delta_coefficient · slippage_p50_bps/10000 · n_trailing_stop_exits / holdout_total_trades``
+    ``min_delta_coefficient · slippage_p50_bps/10000 · holdout_n_trailing_stop_exits / holdout_total_trades``
     betragen — die erwartete Kostenwirkung, SKALIERT auf den Anteil der Round-Trips, an denen
-    ueberhaupt eine TRAILING_STOP-Slippage gemessen wurde (``holdout_total_trades`` ersetzt hier die
-    im Issue genannte ``n_bars`` — eine reine Bars-Zahl ist auf Study-Ebene nicht als Feld verfuegbar;
-    die Round-Trip-Zahl skaliert dieselbe Grundidee, "Slippage wirkt nur auf einen ANTEIL der
-    Grundgesamtheit", ohne eine neue, ungeprüfte Kennzahl zu erfinden)."""
+    ueberhaupt eine TRAILING_STOP-Slippage gemessen wurde.
+
+    Issue #1074/#1222 (Katalog #1247+, P0) Fix — zwei weitere Root-Causes behoben:
+    1. **Reihenfolge** (kein Effekt auf diese Funktion selbst, siehe ``report.py``): der Aufruf
+       dieser Invariante lief bisher VOR der ``slippage_p50_bps_calibrated``-Stempelung im selben
+       Report-Aufbau — die Funktion sah das Feld dadurch NIE (``if not slippage_p50: continue``
+       griff fuer JEDEN Record, das Mindestdelta-Kriterium war strukturell inert, 11/11 Laeufe
+       ``passed=True``).
+    2. **Skalierung**: der Zaehler ``n_trailing_stop_exits`` war ``oos_n_trailing_stop_losses`` —
+       eine SWEEP-WEITE Zaehlung ueber ALLE Trials der Study (``report._study_record`` summiert
+       ueber ``trial_attrs``, Groessenordnung 10.000+), der Nenner ``holdout_total_trades`` ein
+       EINZELNER Holdout-Backtest (Groessenordnung 100). Median-Quotient 159,5 statt <= 1. Ersetzt
+       durch ``holdout_n_trailing_stop_exits`` (``report.py``, aus ``holdout_metrics`` — DEMSELBEN
+       Holdout-Pfad wie ``holdout_total_trades``, siehe dortiger Feld-Kommentar) — beide Groessen
+       jetzt aus EINEM Bezugsrahmen (Pitfall-Klasse #441 in AGENTS.md: Median/Anteil/Quotient nur
+       innerhalb derselben Grundgesamtheit bilden).
+
+    Ein leerer Kalibrierungs-Cache (KEINE Study mit >= 1 Holdout-Trade traegt eine kalibrierte
+    Slippage) macht das Mindestdelta-Kriterium unauswertbar. Besteht in diesem Fall das
+    Bit-Identitaets-Kriterium (``fraction <= min_affected_fraction``), ist das Gesamtergebnis
+    ``evaluable=False``/``passed=None`` (INCONCLUSIVE) — NICHT ``passed=True``: eine fehlende
+    Eingabe darf nicht wie ein sauberer Befund aussehen (kein Fail-open mit einem sweep-weiten
+    Ersatz). Verletzt dagegen bereits das Bit-Identitaets-Kriterium, bleibt das ein echtes FAIL,
+    unabhaengig von der Kalibrierungsverfuegbarkeit — das ist ein eigenstaendiger Befund
+    (#1010/#1162), der keine Slippage-Kalibrierung braucht. ``n_studies_with_calibration`` steht in
+    jedem Ergebnis unter ``evaluability`` bzw. ``provenance``, damit ein leerer Cache im Artefakt
+    sichtbar bleibt statt lautlos durchzulaufen."""
     with_trades = [
         r for r in study_records
         if (r.get("holdout_total_trades") or 0) >= 1
@@ -3920,15 +4069,46 @@ def check_cost_stress_distinctness(
         == float(r["holdout_expectancy_capital_weighted"])
     ]
     fraction = len(identical) / len(with_trades)
-    passed = fraction <= min_affected_fraction
+    bit_identity_passed = fraction <= min_affected_fraction
+    n_studies_with_calibration = sum(
+        1 for r in with_trades if r.get("slippage_p50_bps_calibrated"))
+    if bit_identity_passed and n_studies_with_calibration == 0:
+        return InvariantResult(
+            name="check_cost_stress_distinctness",
+            passed=None,
+            expected=(f"<= {min_affected_fraction:.0%} der Studies mit >= 1 Trade identisch zur Basis "
+                     f"UND Delta >= {min_delta_coefficient} · slippage_p50/10000 · "
+                     "holdout_n_trailing_stop_exits/holdout_total_trades, wo kalibriert"),
+            actual=round(fraction, 4),
+            severity="high",
+            detail=(f"Bit-Identitaets-Kriterium OK ({len(identical)}/{len(with_trades)}), aber KEINE "
+                    f"der {len(with_trades)} Study/Studies mit >= 1 Holdout-Trade traegt eine "
+                    "kalibrierte Slippage (slippage_p50_bps_calibrated) — Mindestdelta-Kriterium "
+                    "nicht auswertbar (leerer Kalibrierungs-Cache). #1074/#1222."),
+            evaluable=False,
+            evaluability={
+                "evaluable": False,
+                "inconclusive_reason": "NO_CALIBRATED_SLIPPAGE",
+                "n_studies_measured": len(with_trades),
+                "n_studies_with_calibration": 0,
+            },
+        )
     # Issue #1055/#1204 Fix Punkt 4 — Mindestdelta-Kriterium, unabhaengig vom obigen Bit-Identitaets-
-    # Anteil geprueft (beide Kriterien MUESSEN gelten).
+    # Anteil geprueft (beide Kriterien MUESSEN gelten, sofern auswertbar).
     delta_offenders: dict[str, dict] = {}
+    n_missing_holdout_scoped_numerator = 0
     for r in with_trades:
         slippage_p50 = r.get("slippage_p50_bps_calibrated")
-        n_ts_exits = r.get("oos_n_trailing_stop_losses")
+        if not slippage_p50:
+            continue
+        n_ts_exits = r.get("holdout_n_trailing_stop_exits")
         n_total = r.get("holdout_total_trades")
-        if not slippage_p50 or not n_ts_exits or not n_total:
+        # Issue #1074/#1222 Fix Punkt 2 — fehlt der HOLDOUT-skopierte Zaehler (z. B. ein Report vor
+        # diesem Fix, oder ein Konsument, der ihn nicht mitliefert), ist DIESE Study fuer das
+        # Mindestdelta-Kriterium INCONCLUSIVE — kein Fail-open mit dem alten sweep-weiten
+        # ``oos_n_trailing_stop_losses``-Ersatz, und kein stiller Offender-Ausschluss ohne Spur.
+        if n_ts_exits is None or not n_total:
+            n_missing_holdout_scoped_numerator += 1
             continue
         min_expected_delta = (
             min_delta_coefficient * (float(slippage_p50) / 10000.0)
@@ -3940,15 +4120,15 @@ def check_cost_stress_distinctness(
                 "actual_delta": round(actual_delta, 6),
                 "min_expected_delta": round(min_expected_delta, 6),
                 "slippage_p50_bps_calibrated": slippage_p50,
+                "holdout_trailing_stop_exit_share": round(float(n_ts_exits) / float(n_total), 4),
             }
-    if delta_offenders:
-        passed = False
+    passed = bit_identity_passed and not delta_offenders
     return InvariantResult(
         name="check_cost_stress_distinctness",
         passed=passed,
         expected=(f"<= {min_affected_fraction:.0%} der Studies mit >= 1 Trade identisch zur Basis "
                  f"UND Delta >= {min_delta_coefficient} · slippage_p50/10000 · "
-                 "n_trailing_stop_exits/holdout_total_trades, wo kalibriert"),
+                 "holdout_n_trailing_stop_exits/holdout_total_trades, wo kalibriert"),
         actual=round(fraction, 4),
         severity="high",
         detail=("OK" if passed else
@@ -3956,14 +4136,21 @@ def check_cost_stress_distinctness(
                  "holdout_expectancy_cost_stress_full_realism == holdout_expectancy_capital_"
                  "weighted bit-exakt — die 'full_realism'-Kostenstufe ist ein No-Op (financing_bps/"
                  "slippage_bps sind in backtest.json fuer alle Asset-Klassen 0.0, #1010/#1162). "
-                 if fraction > min_affected_fraction else "") +
+                 if not bit_identity_passed else "") +
                 (f"{len(delta_offenders)} Study/Studies unterschreiten das Mindestdelta trotz "
                  f"kalibrierter Slippage: {delta_offenders} (#1204)."
                  if delta_offenders else "")),
+        evaluability={
+            "evaluable": True,
+            "inconclusive_reason": None,
+            "n_studies_measured": len(with_trades),
+            "n_studies_with_calibration": n_studies_with_calibration,
+            "n_studies_missing_holdout_scoped_numerator": n_missing_holdout_scoped_numerator,
+        },
         provenance={
             k: v for k, v in {
-                "n_identical": len(identical) if fraction > min_affected_fraction else None,
-                "n_with_trades": len(with_trades) if fraction > min_affected_fraction else None,
+                "n_identical": len(identical) if not bit_identity_passed else None,
+                "n_with_trades": len(with_trades) if not bit_identity_passed else None,
                 "delta_offenders": delta_offenders or None,
             }.items() if v is not None
         } or None,
@@ -3985,12 +4172,27 @@ def check_cost_stress_monotonicity(
     VERBESSERUNG um +145,76 bps. Dieser Check FAILt auf genau diesem Altstand und besteht, sobald
     Basis und Leiter dieselbe Population teilen.
 
-    Klausel je Study mit definierten Werten:
-        exp >= exp_1_5x >= exp_2x
+    Issue #1076/#1224 (Katalog #1247+, P0) — die Leiter erhielt mit #987/#1141 eine VIERTE Stufe
+    (``full_realism``, additiv eingefuehrt), die nie in diese Pruefrelation aufgenommen wurde: in
+    42 von 146 Studies war ``full_realism`` MILDER als der 2×-Stress (Delta = +0,000300 =
+    ``c_rt(TSLA)``), waehrend dieser Check unveraendert ``passed=True, detail="OK"`` meldete — eine
+    additiv ergaenzte Stufe, die nicht in der Pruefrelation steht, ist eine ungeprüfte Stufe
+    (Pitfall #439 in AGENTS.md). Die Klausel ist jetzt:
+
+        exp >= exp_1_5x >= exp_2x >= exp_full_realism
         |(exp - exp_1_5x) - (exp_1_5x - exp_2x)| <= step_tolerance_bps (Default 0,05 bps)
 
-    Nur Studies mit allen drei Feldern definiert werden geprüft (kein Trade ⇒ nicht anwendbar für
-    diese Study, kein FAIL)."""
+    ``full_realism`` ist ausdruecklich eine UNTERE SCHRANKE der Leiter (Finanzierung + volle
+    Slippage statt eines c_rt-Vielfachen — ein qualitativ anderer Kostenmechanismus, siehe
+    ``backtest_runner._full_realism_expectancy``-Docstring), deshalb wird fuer den vierten Rang NUR
+    Monotonie verlangt, keine Schrittgleichheit mit den ersten beiden Stufen. ``_full_realism_
+    expectancy`` und ``_expectancy_cost_stress`` teilen sich denselben 5-%-Median-Notional-
+    Nennerboden (siehe dortige Docstrings) — nur dadurch ist ein Vergleich zwischen den Stufen
+    ueberhaupt eine Kostenaussage und keine Schaetzer-Artefakt-Differenz.
+
+    Nur Studies mit allen Feldern definiert werden geprüft (kein Trade ⇒ nicht anwendbar für diese
+    Study, kein FAIL); Studies ohne ``holdout_expectancy_cost_stress_full_realism`` werden weiterhin
+    NUR auf den ersten drei Raengen geprüft (Rueckwaertskompatibilitaet zu Reports vor #987/#1141)."""
     tolerance = step_tolerance_bps / 10000.0
     with_data = [
         r for r in study_records
@@ -4002,11 +4204,11 @@ def check_cost_stress_monotonicity(
         return InvariantResult(
             name="check_cost_stress_monotonicity",
             passed=True,
-            expected="exp >= exp_1_5x >= exp_2x UND gleich grosse Schritte (+/- "
-                     f"{step_tolerance_bps:.2f} bps)",
+            expected="exp >= exp_1_5x >= exp_2x >= exp_full_realism UND gleich grosse Schritte "
+                     f"(+/- {step_tolerance_bps:.2f} bps) zwischen exp/exp_1_5x/exp_2x",
             actual=None,
             severity="blocking",
-            detail="Keine Studies mit allen drei Kostenstress-Feldern — nicht anwendbar.",
+            detail="Keine Studies mit allen Kostenstress-Feldern — nicht anwendbar.",
         )
     offenders: dict[str, dict[str, float]] = {}
     for r in with_data:
@@ -4023,19 +4225,28 @@ def check_cost_stress_monotonicity(
         if abs(step_1 - step_2) > tolerance:
             offenders[key] = {"exp": exp, "exp_1_5x": exp_1_5x, "exp_2x": exp_2x,
                               "step_1": step_1, "step_2": step_2, "violation": "uneven_steps"}
+            continue
+        # Issue #1076/#1224 Fix Punkt 1 — die vierte Stufe: nur Monotonie (untere Schranke),
+        # keine Schrittgleichheit (full_realism ist ein anderer Kostenmechanismus).
+        exp_full_realism = r.get("holdout_expectancy_cost_stress_full_realism")
+        if exp_full_realism is not None and float(exp_full_realism) > exp_2x + tolerance:
+            offenders[key] = {"exp": exp, "exp_1_5x": exp_1_5x, "exp_2x": exp_2x,
+                              "exp_full_realism": float(exp_full_realism),
+                              "violation": "full_realism_milder_than_2x"}
     passed = not offenders
     return InvariantResult(
         name="check_cost_stress_monotonicity",
         passed=passed,
-        expected="exp >= exp_1_5x >= exp_2x UND gleich grosse Schritte (+/- "
-                 f"{step_tolerance_bps:.2f} bps)",
+        expected="exp >= exp_1_5x >= exp_2x >= exp_full_realism UND gleich grosse Schritte "
+                 f"(+/- {step_tolerance_bps:.2f} bps) zwischen exp/exp_1_5x/exp_2x",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies: die Kostenstress-Leiter ist nicht monoton "
-                "und/oder ungleich gestuft — Basis (holdout_expectancy_capital_weighted) und "
-                "Leiter (holdout_expectancy_cost_stress_1_5x/_2x) stehen auf verschiedenen "
-                f"Populationen (#945/#1111): {offenders}"),
+                f"{len(offenders)} Study/Studies: die Kostenstress-Leiter ist nicht monoton, "
+                "ungleich gestuft, und/oder full_realism (untere Schranke) ist milder als der "
+                "2×-Stress — Basis (holdout_expectancy_capital_weighted) und Leiter "
+                "(holdout_expectancy_cost_stress_1_5x/_2x/_full_realism) stehen auf verschiedenen "
+                f"Populationen (#945/#1111, #1076/#1224): {offenders}"),
         provenance={"offenders": offenders} if offenders else None,
     )
 
@@ -4241,11 +4452,12 @@ def check_sizing_identity_coherence(
     Holdout-Spanne bei hohem Exposure, oder (c) Dust-Round-Trips im ``n``-Zaehler die Identitaet
     selbst verletzen koennen — DANN divergiert ``f_implied`` von ``trade_amount_pct``, OHNE dass das
     tatsaechliche Sizing (die reale ``rt_notional``/Equity-Relation) je Round-Trip abweicht.
-    ``holdout_f_realized_median`` (``rt_notional / equity_at_entry`` DIREKT je Round-Trip gemessen,
-    siehe ``backtest_runner._finalize_round_trip``) ist das primaere Entscheidungskriterium, sofern
-    verfuegbar — sie umgeht (a)-(c) vollstaendig, weil sie nicht ueber die Identitaet zurueckrechnet,
-    sondern das reale Notional/Equity-Verhaeltnis direkt abliest. NUR wenn ``holdout_f_realized_
-    median`` fehlt (aeltere Report-JSONs ohne dieses Feld), faellt die Pruefung auf die algebraische
+    ``holdout_f_realized_peak_median`` (``rt_notional_peak / equity_at_entry`` DIREKT je Round-Trip
+    gemessen, siehe ``backtest_runner._finalize_round_trip`` — das GLEICHZEITIGE Exposure, nicht
+    der Umschlag, Issue #1085/#1233) ist das primaere Entscheidungskriterium, sofern verfuegbar —
+    sie umgeht (a)-(c) vollstaendig, weil sie nicht ueber die Identitaet zurueckrechnet, sondern das
+    reale Notional/Equity-Verhaeltnis direkt abliest. NUR wenn ``holdout_f_realized_peak_median``
+    fehlt (aeltere Report-JSONs ohne dieses Feld), faellt die Pruefung auf die algebraische
     ``f_implied``-Berechnung zurueck (bit-identisch zum Pre-#989-Verhalten). ``actual`` traegt je
     Offender ``"source": "measured"|"implied"``, damit ein Bericht sofort unterscheidet, ob die
     Abweichung Sizing (measured) oder ein reiner Identitaets-/Metrik-Artefakt (implied) ist."""
@@ -4254,7 +4466,7 @@ def check_sizing_identity_coherence(
         if (r.get("holdout_total_trades") or 0) >= min_trades
         and r.get("trade_amount_pct")
         and (
-            r.get("holdout_f_realized_median") is not None
+            r.get("holdout_f_realized_peak_median") is not None
             or (r.get("holdout_expectancy_notional_weighted") is not None
                 and abs(r["holdout_expectancy_notional_weighted"]) >= min_abs_expectancy
                 and r.get("holdout_total_return") is not None)
@@ -4264,7 +4476,7 @@ def check_sizing_identity_coherence(
         return InvariantResult(
             name="check_sizing_identity_coherence",
             passed=True,
-            expected=f"|f_realized_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+            expected=f"|f_realized_peak_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
             actual=None,
             detail="Keine Studies mit Holdout-Trades/Expectancy/trade_amount_pct — nicht anwendbar.",
             severity="blocking",
@@ -4273,19 +4485,25 @@ def check_sizing_identity_coherence(
     for r in with_data:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         trade_amount_pct = float(r["trade_amount_pct"])
-        f_realized_median = r.get("holdout_f_realized_median")
-        if f_realized_median is not None:
-            # Issue #989/#1143 — DIREKT gemessen, primaeres Kriterium (siehe Docstring).
-            f_realized_pct = float(f_realized_median) * 100.0
-            gap = abs(f_realized_pct - trade_amount_pct) / trade_amount_pct
+        # Issue #1085/#1233 (Katalog #1247+, P0) — Root-Cause: das vormalige primaere Kriterium
+        # (``holdout_f_realized_median``) misst den UMSCHLAG (Summe ueber alle Legs eines
+        # Round-Trips), nicht das gleichzeitige Exposure, gegen das trade_amount_pct als Deckel
+        # gilt. ``holdout_f_realized_peak_median`` (rt_notional_peak / equity_at_entry) ist die
+        # Groesse, die tatsaechlich mit trade_amount_pct vergleichbar ist.
+        f_realized_peak_median = r.get("holdout_f_realized_peak_median")
+        if f_realized_peak_median is not None:
+            # Issue #989/#1143, korrigiert #1085/#1233 — DIREKT gemessen, primaeres Kriterium.
+            f_realized_peak_pct = float(f_realized_peak_median) * 100.0
+            gap = abs(f_realized_peak_pct - trade_amount_pct) / trade_amount_pct
             if gap > max_relative_gap:
                 offenders[key] = {
-                    "f_realized_pct": round(f_realized_pct, 4),
+                    "f_realized_peak_pct": round(f_realized_peak_pct, 4),
                     "trade_amount_pct": trade_amount_pct,
                     "source": "measured",
                 }
         else:
-            # Fallback: algebraisch implizierte Berechnung (kein holdout_f_realized_median verfuegbar).
+            # Fallback: algebraisch implizierte Berechnung (kein holdout_f_realized_peak_median
+            # verfuegbar).
             n = r["holdout_total_trades"]
             expectancy = float(r["holdout_expectancy_notional_weighted"])
             total_return = float(r["holdout_total_return"])
@@ -4304,15 +4522,16 @@ def check_sizing_identity_coherence(
     return InvariantResult(
         name="check_sizing_identity_coherence",
         passed=passed,
-        expected=f"|f_realized_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+        expected=f"|f_realized_peak_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies: der (gemessene oder implizierte, siehe je "
                 f"Offender 'source') Sizing-Anteil weicht relativ um mehr als {max_relative_gap} vom "
                 f"konfigurierten trade_amount_pct ab: {offenders} — bei 'source': 'measured' eine "
-                "reale Sizing-Anomalie (#989/#1143); bei 'implied' moeglicherweise nur ein "
-                "Identitaets-/Metrik-Artefakt, keine reale Sizing-Abweichung (#1028)."),
+                "reale Sizing-Anomalie (#989/#1143, gemessen als Exposure-Peak seit #1085/#1233); "
+                "bei 'implied' moeglicherweise nur ein Identitaets-/Metrik-Artefakt, keine reale "
+                "Sizing-Abweichung (#1028)."),
     )
 
 
@@ -4333,52 +4552,91 @@ def check_sizing_cap_enforcement(
     einer Strategie auf einem Instrument darf ``trade_amount_pct · equity`` nie ueberschreiten,
     ueberschiessende Anforderungen werden auf den verbleibenden Spielraum gekappt und als
     ``SIZING_CAP_HIT`` geloggt). Dieser Check ist die ABNAHMEMESSUNG dafuer: das GEMESSENE Maximum
-    (``holdout_f_realized_max``, dieselbe direkt gemessene Serie wie ``check_sizing_identity_
+    (``holdout_f_realized_peak_max``, dieselbe direkt gemessene Serie wie ``check_sizing_identity_
     coherence``s Median-Kriterium, hier aber das WORST-CASE-Ereignis statt des Medians — ein
     einzelner Cap-Verstoss wird von einem Median strukturell verwaescht) darf
     ``max_overshoot_factor`` (Default 1,05, Toleranz fuer Rundung/Slippage zwischen Order und Fill)
     mal ``trade_amount_pct`` nie uebersteigen.
 
+    Issue #1085/#1233 (Katalog #1247+, P0) Root-Cause: vor diesem Fix konsumierte dieser Check
+    ``holdout_f_realized_max`` — den UMSCHLAG (Summe ``rt_notional / equity_at_entry`` ueber ALLE
+    Legs eines Round-Trips), nicht das GLEICHZEITIGE Netto-Exposure, gegen das der #1209-Deckel
+    tatsaechlich wirkt. Zwei Aufstockungen zu je 15% mit zwischenzeitlichem Teilabbau ergaben
+    ``f_realized = 30%`` bei nie ueberschrittenen 15% GLEICHZEITIGEM Exposure (KRYS-Symptom, drei
+    Studies ueber der 0,35-Toleranz von ``check_sizing_identity_coherence``, ausgerechnet das
+    Symbol mit den einzigen drei positiven Alphas |t| >= 2 des Katalogs). ``holdout_f_realized_
+    peak_max`` (``rt_notional_peak / equity_at_entry``, das PEAK ueber gleichzeitig offene Legs)
+    ist die Groesse, die der Deckel tatsaechlich begrenzt.
+
     FAIL (severity ``blocking`` — dieselbe Kategorie wie ``check_sizing_identity_coherence``, ein
     Sizing-Cap-Verstoss ist ein Risikomanagement-Defekt, kein Diagnose-Befund). Studies ohne
-    ``holdout_f_realized_max`` (aeltere Report-JSONs, oder kein Holdout-Trade) sind nicht
-    auswertbar und werden uebersprungen (kein FAIL auf fehlender Evidenz)."""
+    ``holdout_f_realized_peak_max`` (aeltere Report-JSONs, oder kein Holdout-Trade) sind nicht
+    auswertbar und werden uebersprungen (kein FAIL auf fehlender Evidenz). Jeder Offender weist
+    zusaetzlich ``f_turnover_realized_max_pct`` (sofern verfuegbar) aus, damit ein Befund als
+    Hebelueberschreitung (``peak > cap``) oder als reiner Scale-in-Umschlag (``peak <= cap <
+    turnover``) lesbar ist."""
     with_data = [
         r for r in study_records
-        if r.get("holdout_f_realized_max") is not None and r.get("trade_amount_pct")
+        if r.get("holdout_f_realized_peak_max") is not None and r.get("trade_amount_pct")
     ]
     if not with_data:
+        # Issue #1084/#1232 (Katalog #1247+, P0, Pitfall #413-Klasse in AGENTS.md) — Root-Cause:
+        # ``holdout_f_realized_max`` (heute ``holdout_f_realized_peak_max``) erreichte den
+        # Study-Record strukturell NIE (confirm.py's kuratierte Holdout-Metrik-Teilmenge liess das
+        # Feld aus, siehe dortiger Fix), wodurch dieser ``severity='blocking'``-Check IMMER hier
+        # landete und ``passed=True`` lieferte — fuer einen Cap-Abnahmecheck ununterscheidbar von
+        # "der Deckel wurde geprueft und haelt". Eine fehlende Eingabe darf bei einem blockierenden
+        # Check nicht wie ein sauberer PASS aussehen (dieselbe Konvention wie
+        # ``check_stop_loss_vs_bar_range``/#995/#1147): ``passed=None`` + ``evaluable=False`` statt
+        # eines fail-open ``True``.
         return InvariantResult(
             name="check_sizing_cap_enforcement",
-            passed=True,
-            expected=f"f_realized_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
+            passed=None,
+            expected=f"f_realized_peak_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
             actual=None,
             severity="blocking",
-            detail="Keine Studies mit holdout_f_realized_max/trade_amount_pct — nicht anwendbar.",
+            evaluable=False,
+            evaluability={
+                "evaluable": False,
+                "inconclusive_reason": "NO_HOLDOUT_F_REALIZED_PEAK_MAX_TELEMETRY",
+                "n_studies_measured": 0,
+            },
+            detail="Keine Studies mit holdout_f_realized_peak_max/trade_amount_pct — nicht "
+                   "auswertbar (INCONCLUSIVE, siehe evaluability; kein PASS im Sinne einer "
+                   "geprueften Grundgesamtheit).",
         )
     offenders: dict[str, dict] = {}
     for r in with_data:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         trade_amount_pct = float(r["trade_amount_pct"])
-        f_realized_max_pct = float(r["holdout_f_realized_max"]) * 100.0
+        f_realized_peak_max_pct = float(r["holdout_f_realized_peak_max"]) * 100.0
         limit = max_overshoot_factor * trade_amount_pct
-        if f_realized_max_pct > limit:
-            offenders[key] = {
-                "f_realized_max_pct": round(f_realized_max_pct, 4),
+        if f_realized_peak_max_pct > limit:
+            offender = {
+                "f_realized_peak_max_pct": round(f_realized_peak_max_pct, 4),
                 "trade_amount_pct": trade_amount_pct,
-                "overshoot_factor": round(f_realized_max_pct / trade_amount_pct, 4),
+                "overshoot_factor": round(f_realized_peak_max_pct / trade_amount_pct, 4),
             }
+            # Issue #1085/#1233 Fix Punkt 3 — Umschlag als Kontext NEBEN dem entscheidenden
+            # Peak-Wert, damit ein Befund als Hebelueberschreitung oder als Scale-in-Umschlag
+            # lesbar ist (peak > cap: echte Hebelueberschreitung; turnover >> peak: Scale-in ueber
+            # mehrere Legs, keine gleichzeitige Ueberschreitung).
+            if r.get("holdout_f_turnover_realized_max") is not None:
+                offender["f_turnover_realized_max_pct"] = round(
+                    float(r["holdout_f_turnover_realized_max"]) * 100.0, 4)
+            offenders[key] = offender
     passed = not offenders
     return InvariantResult(
         name="check_sizing_cap_enforcement",
         passed=passed,
-        expected=f"f_realized_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
+        expected=f"f_realized_peak_max_pct <= {max_overshoot_factor} * trade_amount_pct je Study",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies mit einem gemessenen Sizing-Maximum ueber "
-                f"{max_overshoot_factor}x des konfigurierten trade_amount_pct: {offenders} — der "
-                "Aggregat-Exposure-Deckel in _compute_quantity wurde nicht wirksam (#1209)."),
+                f"{len(offenders)} Study/Studies mit einem gemessenen Sizing-Maximum (gleichzeitiges "
+                f"Exposure) ueber {max_overshoot_factor}x des konfigurierten trade_amount_pct: "
+                f"{offenders} — der Aggregat-Exposure-Deckel in _compute_quantity wurde nicht "
+                "wirksam (#1209)."),
     )
 
 
@@ -4460,30 +4718,54 @@ def check_atr_scale_homogeneity(
             continue
         label = f"{strategy}/{symbol}"
         raw = r.get("atr_raw_median_bps")
+        # Issue #1083/#1231 (P1, Katalog #1247+) Fix Punkt 4 — OR-Arm: ``binding_trial_fraction >=
+        # 0.5`` zaehlt UNABHAENGIG vom Study-Median-Kriterium als Bindung. Root-Cause: jeder Trial
+        # samplet sein eigenes k und hat damit seinen eigenen effektiven Floor
+        # (min_stop_to_cost_ratio · c_rt / k) — max(median(raw), median(floor)) ist NICHT
+        # median(max(raw_i, floor_i)) (Beispiel Sma/GOOGL: roh 9,246/Floor 8,823 median, bindet auf
+        # Study-Ebene NICHT, aber effektiv 12,037 — 30% ueber dem rohen Median — der Floor bindet
+        # dort fuer einen erheblichen Trial-Anteil, siehe report._stamp_atr_floor_bps_derived).
+        binding_trial_fraction = r.get("atr_floor_binding_trial_fraction")
+        binds_via_trial_fraction = (
+            binding_trial_fraction is not None and float(binding_trial_fraction) >= 0.5)
+        measured_this_study = binding_trial_fraction is not None
+        binds = False
+        criterion = None
+        detail: dict = {}
         if raw is not None:
-            n_studies_measured += 1
+            measured_this_study = True
+            detail["raw"] = round(float(raw), 4)
+            detail["floor"] = round(float(effective_floor), 4)
+            detail["faktor"] = round(float(effective_floor) / float(raw), 2) if raw else None
             if float(raw) < float(effective_floor) - floor_tolerance:
-                floor_binding_studies.append(label)
-                floor_binding_provenance[label] = {
-                    "raw": round(float(raw), 4), "floor": round(float(effective_floor), 4),
-                    "faktor": (round(float(effective_floor) / float(raw), 2) if raw else None),
-                    "stopdistanz_bps": r.get("stop_distance_bps"),
-                    "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
-                    "criterion": "atr_raw_median_bps_below_floor",
-                }
+                binds = True
+                criterion = "atr_raw_median_bps_below_floor"
         else:
             val = r.get("atr_median_bps")
-            if val is None:
-                continue
+            if val is not None:
+                measured_this_study = True
+                detail["floor"] = round(float(effective_floor), 4)
+                detail["atr_median_bps"] = round(float(val), 4)
+                if abs(float(val) - float(effective_floor)) <= floor_tolerance:
+                    binds = True
+                    criterion = "legacy_effective_atr_equals_floor"
+        if measured_this_study:
             n_studies_measured += 1
-            if abs(float(val) - float(effective_floor)) <= floor_tolerance:
-                floor_binding_studies.append(label)
-                floor_binding_provenance[label] = {
-                    "floor": round(float(effective_floor), 4), "atr_median_bps": round(float(val), 4),
-                    "stopdistanz_bps": r.get("stop_distance_bps"),
-                    "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
-                    "criterion": "legacy_effective_atr_equals_floor",
-                }
+        if binds_via_trial_fraction and not binds:
+            binds = True
+            criterion = "binding_trial_fraction_majority"
+        if binds:
+            floor_binding_studies.append(label)
+            # Issue #1081/#1229 — umbenannt von ``stop_distance_bps``: die MODELLIERTE (k · ATR)
+            # Distanz, konsistent mit dem ATR-Floor-Bindungs-Kontext dieser Provenance (kein
+            # Konsum als Nenner einer Risiko-Ratio, siehe dortiger Fix).
+            detail["stopdistanz_bps"] = r.get("stop_distance_bps_modelled")
+            detail["realized_stop_loss_ratio"] = r.get("realized_stop_loss_ratio")
+            # Issue #1083/#1231 Fix Punkt 2 — der Study-Eintrag bleibt (kein Befund geht verloren),
+            # ergaenzt aber den PER-TRIAL-Bindungsanteil in der detail-Struktur.
+            detail["binding_trial_fraction"] = binding_trial_fraction
+            detail["criterion"] = criterion
+            floor_binding_provenance[label] = detail
     # Issue #1026/#1175 Akzeptanzkriterium 3 — ``[]`` allein ist zwischen "gemessen, nichts
     # bindet" und "nicht gemessen" nicht unterscheidbar; dieses Flag macht die Evaluierbarkeit der
     # ``atr_floor_binding_studies``-Sektion selbst explizit (unabhaengig vom Spannweiten-
@@ -4560,8 +4842,8 @@ def check_atr_floor_enforcement(
 
     Root-Cause (zu verifizieren je Study, nicht pauschal behauptet): entweder wird der Floor auf
     ``atr_raw_median_bps`` angewendet, während der SIMULIERTE, effektive Stop (``atr_median_bps ·
-    atr_trailing_multiplier_median``, dasselbe ``stop_distance_bps``-Feld, das ``check_stop_cost_
-    ratio`` konsumiert) eine VOR dem Floor bestimmte Distanz trägt, oder das ``k`` in
+    atr_trailing_multiplier_median``, dasselbe ``stop_distance_bps_modelled``-Feld, das ``check_
+    stop_cost_ratio`` konsumiert) eine VOR dem Floor bestimmte Distanz trägt, oder das ``k`` in
     ``atr_floor_bps_derived · k`` unterscheidet sich vom ``k`` der Ausführung, oder die
     Floor-Bindungs-Erkennung (``check_atr_scale_homogeneity``) und ``check_stop_cost_ratio`` bilden
     ihre Kohorten unterschiedlich. Dieser Check macht den Widerspruch selbst zu einem benannten
@@ -4601,7 +4883,10 @@ def check_atr_floor_enforcement(
         if not floor_binding:
             continue
         k = r.get("atr_trailing_multiplier_median")
-        effective_stop_distance_bps = r.get("stop_distance_bps")
+        # Issue #1081/#1229 — umbenannt von ``stop_distance_bps``: die MODELLIERTE (k · ATR)
+        # Distanz ist hier korrekt, da dieser Check die Floor-KONSTRUKTION (nicht die Ausfuehrung)
+        # gegen die Kostenbasis prueft (siehe Docstring).
+        effective_stop_distance_bps = r.get("stop_distance_bps_modelled")
         c_rt = r.get("round_trip_cost_bps")
         if k is None or effective_stop_distance_bps is None or c_rt is None or c_rt <= 0:
             continue
@@ -5192,6 +5477,11 @@ def check_champion_corroboration_reachable(
     )
 
 
+_STRUCTURAL_DIAGNOSIS_STOP_REASONS = frozenset({
+    "STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE",
+})
+
+
 def check_structural_zero_eligible_has_diagnosis(
     studies_out: list[dict], diagnosed_pairs: list[dict],
 ) -> InvariantResult:
@@ -5200,31 +5490,43 @@ def check_structural_zero_eligible_has_diagnosis(
     hinterlassen — Root-Cause-Symptom des Issues war exakt das Gegenteil: 123 Trials, 100 % auf
     demselben Gate (``REJECT_OOS_MIN_PSR``), ``diagnosed_pairs == []`` — "Diagnose ohne Rückschrieb".
 
+    Issue #1096/#1244 (P2, Katalog #1247+) — derselbe Vertrag gilt jetzt AUCH für ``stop_reason ==
+    'STRUCTURAL_ALL_UNEVALUABLE'`` (0 EVALUABLE Trials, eine Stufe VOR STRUCTURAL_ZERO_ELIGIBLE):
+    Root-Cause war, dass der #1219-Rückschrieb (``report._writeback_search_stagnation_diagnoses``)
+    diesen ``stop_reason`` nie enumerierte — ``check_structural_zero_eligible_has_diagnosis`` feuerte
+    dadurch in 5/11 Läufen (u. a. AdxAtr/TSLA, VolatilityBreakoutPump/GOOGL), OHNE dass ein einziger
+    Report-Konsument je sah, WARUM.
+
     FAIL (severity ``medium``, Beobachtbarkeits- keine Korrektheitsverletzung — dieselbe Klasse wie
     ``check_symbol_bar_quality_cache_availability``), wenn mindestens eine STRUCTURAL_ZERO_ELIGIBLE-
-    Study kein zugehöriges ``diagnosed_pairs``-Element trägt (weder aus dem #761-Cache noch aus der
-    #1194-Live-Ableitung, siehe ``report._diagnosed_pairs_section``-Docstring). Ein Cohort mit
-    UNEINHEITLICHEM ``is_rejection_detail`` (kein dominantes Gate) FAILt hier bewusst ebenfalls —
-    das Issue verlangt einen Eintrag für JEDE STRUCTURAL_ZERO_ELIGIBLE-Study, nicht nur für die
-    homogenen Fälle; ein gemischter Cohort ohne Diagnose ist ein legitimes Signal, die
-    Klassifikation (``sweep_diagnostics.diagnose_structural_zero_eligible_gate``) zu erweitern."""
+    ODER STRUCTURAL_ALL_UNEVALUABLE-Study kein zugehöriges ``diagnosed_pairs``-Element trägt (weder
+    aus dem #761-Cache noch aus der #1194/#1244-Live-Ableitung, siehe
+    ``report._diagnosed_pairs_section``-Docstring). Ein STRUCTURAL_ZERO_ELIGIBLE-Cohort mit
+    UNEINHEITLICHEM ``is_rejection_detail`` (kein dominantes Gate) FAILt hier bewusst weiterhin —
+    das Issue verlangt einen Eintrag für JEDE betroffene Study, nicht nur für die homogenen Fälle;
+    ein gemischter Cohort ohne Diagnose ist ein legitimes Signal, die Klassifikation
+    (``sweep_diagnostics.diagnose_structural_zero_eligible_gate``) zu erweitern. Ein STRUCTURAL_ALL_
+    UNEVALUABLE-Cohort erhält dagegen IMMER eine Diagnose (kein homogenity-Torwächter, siehe dortiger
+    ``stop_reason``-Zweig — 0 evaluable Trials sind architektonisch immer ein Frequenz-, nie ein
+    Qualitätsbefund)."""
     diagnosed_keys = {(e.get("strategy"), e.get("symbol")) for e in (diagnosed_pairs or [])}
     affected = sorted({
         f"{r.get('strategy')}/{r.get('symbol')}" for r in (studies_out or [])
-        if r.get("stop_reason") == "STRUCTURAL_ZERO_ELIGIBLE"
+        if r.get("stop_reason") in _STRUCTURAL_DIAGNOSIS_STOP_REASONS
         and (r.get("strategy"), r.get("symbol")) not in diagnosed_keys
     })
     passed = not affected
     return InvariantResult(
         name="check_structural_zero_eligible_has_diagnosis",
         passed=passed,
-        expected="jede Study mit stop_reason=='STRUCTURAL_ZERO_ELIGIBLE' hat einen "
-                 "diagnosed_pairs-Eintrag",
+        expected="jede Study mit stop_reason in (STRUCTURAL_ZERO_ELIGIBLE, "
+                 "STRUCTURAL_ALL_UNEVALUABLE) hat einen diagnosed_pairs-Eintrag",
         actual={"missing_diagnosis_for": affected} if not passed else None,
         severity="medium",
         detail=("OK" if passed else
-                f"{len(affected)} STRUCTURAL_ZERO_ELIGIBLE-Study/ies ohne diagnosed_pairs-Eintrag: "
-                f"{affected} — Diagnose ohne Rückschrieb (#1194)."),
+                f"{len(affected)} STRUCTURAL_ZERO_ELIGIBLE/STRUCTURAL_ALL_UNEVALUABLE-Study/ies "
+                f"ohne diagnosed_pairs-Eintrag: {affected} — Diagnose ohne Rückschrieb "
+                "(#1194/#1244)."),
     )
 
 
@@ -5681,7 +5983,19 @@ def check_effective_stop_distance(study_records: list[dict], *,
     ausgewiesen hatte — zwei entkoppelte Taxonomien fuer "darf einen Sweep abbrechen" (Pitfall #410
     in AGENTS.md). ``severity='blocking'`` IMPLIZIERT seither fail-fast-Faehigkeit; siehe
     ``check_fail_fast_invariants_are_blocking`` fuer den neuen Regressionswaechter gegen ein
-    erneutes Auseinanderlaufen."""
+    erneutes Auseinanderlaufen.
+
+    Issue #1081/#1229 (P0, Katalog #1247+) — sowohl der primaere Kohorten-Pfad (``report.
+    _effective_stop_ratio_for_trial``) als auch der Legacy-Fallback unten konsumieren seither die
+    GEMESSENE Stopdistanz (``stop_distance_bps_measured``/``oos_stop_distance_bps_median``,
+    #1054/#1203), NICHT mehr das MODELLIERTE ``k · ATR``: Median eines Produkts ≠ Produkt der
+    Mediane, UND ``k``/``ATR_eff`` sind ueber den kostengekoppelten Floor korreliert (B-5: die
+    modellierte Distanz weicht Faktor 0,525-3,543 (Median 1,290) von der gemessenen ab). Fehlt die
+    gemessene Distanz (Legacy-Report vor #1054/#1203), ist die Study INCONCLUSIVE statt eines
+    stillen Rueckfalls auf die modellierte Groesse — die modellierte Distanz bleibt unter
+    ``stop_distance_bps_modelled``/``realized_stop_loss_ratio_vs_modelled`` erhalten (siehe
+    ``report._study_record``-Docstring), konsumiert aber KEINE Invariante mehr als primaeren
+    Risiko-Nenner."""
     candidates = [
         r for r in study_records
         if r.get("effective_stop_ratio_cohort_median") is not None
@@ -5697,8 +6011,8 @@ def check_effective_stop_distance(study_records: list[dict], *,
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=None,
-            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
-                     f"<= {max_ratio} je Study",
+            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
+                     f"(stop_distance_bps_measured) <= {max_ratio} je Study",
             actual=None,
             detail="Keine Studies mit Exit-Telemetrie (Issue #899) — nicht auswertbar "
                    "(n_candidates=0, n_measured=0).",
@@ -5737,9 +6051,8 @@ def check_effective_stop_distance(study_records: list[dict], *,
                 offenders_high[key] = ratio
             continue
         # Issue #1053/#1202 — FALLBACK fuer Studies OHNE die neuen Kohorten-Felder (Legacy-Reports,
-        # Test-Fixtures vor diesem Fix): unveraendertes Vor-#1202-Verhalten, kein zweiter,
-        # abweichender Berechnungspfad fuer echte Report-Daten (die IMMER die Kohorten-Felder
-        # tragen, sobald report._study_record sie berechnet hat).
+        # Test-Fixtures vor diesem Fix), abweichender Berechnungspfad fuer echte Report-Daten (die
+        # IMMER die Kohorten-Felder tragen, sobald report._study_record sie berechnet hat).
         n_stop_exits = int(r.get("oos_n_trailing_stop_losses") or 0)
         loss_bps = r.get("gross_loss_median_bps_trailing_stop")
         if loss_bps is None or n_stop_exits < min_trailing_stop_exits:
@@ -5748,17 +6061,20 @@ def check_effective_stop_distance(study_records: list[dict], *,
             # statt eines FAILs auf einer nicht nachweislich richtigen Zahl.
             inconclusive_studies[key] = n_stop_exits
             continue
-        if r.get("atr_median_bps") is None or r.get("atr_trailing_multiplier_median") is None:
+        # Issue #1081/#1229 (P0, Katalog #1247+) — der Nenner ist seither die GEMESSENE Distanz
+        # (``stop_distance_bps_measured``, #1054/#1203), NICHT mehr das MODELLIERTE ``k · ATR``:
+        # Median eines Produkts ≠ Produkt der Mediane. Fehlt die gemessene Distanz (z. B. ein
+        # Report vor #1054/#1203), ist die Study INCONCLUSIVE statt eines stillen Rueckfalls auf
+        # die modellierte Groesse.
+        measured_distance_bps = r.get("stop_distance_bps_measured")
+        if measured_distance_bps is None or float(measured_distance_bps) <= 0:
             inconclusive_studies[key] = n_stop_exits
             continue
         with_data.append(r)
-        configured_distance_bps = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
-        if configured_distance_bps <= 0:
-            continue
-        ratio = round(float(loss_bps) / configured_distance_bps, 4)
+        ratio = round(float(loss_bps) / float(measured_distance_bps), 4)
         _pooled_mean_loss = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
         _pooled_ratio = (
-            round(float(_pooled_mean_loss) / configured_distance_bps, 4)
+            round(float(_pooled_mean_loss) / float(measured_distance_bps), 4)
             if _pooled_mean_loss is not None else None)
         # Issue #1042/#1191 (Katalog #1191) — umbenannt von ``ratio_pooled_mean``: dieses Feld
         # quotientiert ``oos_gross_loss_mean_bps_trailing_stop_pooled`` (ein EINZIGER, trade-
@@ -5780,8 +6096,8 @@ def check_effective_stop_distance(study_records: list[dict], *,
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=None,
-            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
-                     f"<= {max_ratio} je Study",
+            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
+                     f"(stop_distance_bps_measured) <= {max_ratio} je Study",
             actual=inconclusive_studies if inconclusive_studies else None,
             severity="blocking",
             detail=f"Keine Study mit >= {min_cohort_trials} eligiblen Kohorten-Trials (bzw. Legacy: "
@@ -5807,14 +6123,92 @@ def check_effective_stop_distance(study_records: list[dict], *,
     return InvariantResult(
         name="check_effective_stop_distance",
         passed=passed,
-        expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
-                 f"<= {max_ratio} je Study",
+        expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
+                 f"(stop_distance_bps_measured) <= {max_ratio} je Study",
         actual=all_ratios,
         severity="blocking",
         detail=("OK (n_studies_measured=%d)" % len(with_data) if passed else " ".join(detail_parts)),
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None,
                       "n_candidates": len(candidates), "n_measured": len(with_data)},
+    )
+
+
+def check_stop_distance_model_fidelity(
+    study_records: list[dict], *,
+    max_relative_deviation: float = 0.25,
+    max_offending_fraction: float = 0.25,
+) -> InvariantResult:
+    """Issue #1081/#1229 (P0, Katalog #1247+) Fix Punkt 3 — misst, wie weit die MODELLIERTE
+    Stopdistanz (``stop_distance_bps_modelled``, ``atr_trailing_multiplier_median · atr_median_bps``
+    — die Größe, die im Suchraum GETUNT wird) von der tatsächlich AUSGEFÜHRTEN, gemessenen Distanz
+    (``stop_distance_bps_measured``, #1054/#1203) abweicht.
+
+    Symptom (B-5): auf dem archivierten Batch weicht das Verhältnis um Faktor 0,525-3,543 (Median
+    1,290) ab — Median eines Produkts (``k_median · ATR_median``) ≠ Produkt der Mediane, UND ``k``
+    und ``ATR_eff`` sind über den kostengekoppelten Floor korreliert (#1096). Ohne diesen Check blieb
+    diese Divergenz unbeobachtet, obwohl seit #1081/#1229 KEINE Risiko-Invariante mehr die
+    modellierte Größe als Nenner konsumiert — ``check_stop_distance_model_fidelity`` macht
+    stattdessen die Diskrepanz SELBST zu einem benannten, geprüften Befund: ein Sampler, der primär
+    gegen die modellierte Größe tunt (``atr_trailing_multiplier`` ist der gesampelte Parameter),
+    während die tatsächlich risikorelevante Größe die gemessene ist, braucht eine explizite Wache
+    gegen ein zu weites Auseinanderlaufen beider Größen.
+
+    FAIL (severity ``high``, diagnostisch — keine Simulationsänderung erforderlich), wenn
+    ``|stop_distance_bps_measured / stop_distance_bps_modelled − 1| > max_relative_deviation``
+    (Default 0,25) für mehr als ``max_offending_fraction`` (Default 0,25 = 25 %) der Studies mit
+    beiden Feldern. Studies ohne beide Felder werden übersprungen; keine Study mit beiden Feldern
+    ⇒ ``passed=None``/``evaluable=False`` (INCONCLUSIVE, kein Fail-open auf fehlender Evidenz)."""
+    candidates = [
+        r for r in study_records
+        if r.get("stop_distance_bps_measured") is not None
+        and r.get("stop_distance_bps_modelled")
+    ]
+    if not candidates:
+        return InvariantResult(
+            name="check_stop_distance_model_fidelity",
+            passed=None,
+            expected=f"|stop_distance_bps_measured / stop_distance_bps_modelled - 1| <= "
+                     f"{max_relative_deviation:.0%} für >= {1 - max_offending_fraction:.0%} der Studies",
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_studies_with_both_fields",
+                          "n_candidates": 0},
+            detail="Keine Study mit gemessener UND modellierter Stopdistanz — nicht auswertbar "
+                   "(INCONCLUSIVE).",
+        )
+    offenders: dict[str, dict] = {}
+    for r in candidates:
+        measured = float(r["stop_distance_bps_measured"])
+        modelled = float(r["stop_distance_bps_modelled"])
+        rel_dev = round(abs(measured / modelled - 1.0), 4)
+        if rel_dev > max_relative_deviation:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "stop_distance_bps_measured": round(measured, 4),
+                "stop_distance_bps_modelled": round(modelled, 4),
+                "relative_deviation": rel_dev,
+            }
+    offending_fraction = round(len(offenders) / len(candidates), 4)
+    passed = offending_fraction <= max_offending_fraction
+    return InvariantResult(
+        name="check_stop_distance_model_fidelity",
+        passed=passed,
+        expected=f"|stop_distance_bps_measured / stop_distance_bps_modelled - 1| <= "
+                 f"{max_relative_deviation:.0%} für >= {1 - max_offending_fraction:.0%} der Studies",
+        actual=offenders if offenders else None,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_candidates": len(candidates)},
+        detail=("OK (n_candidates=%d, offending_fraction=%.1f%%)"
+                % (len(candidates), offending_fraction * 100) if passed else
+                f"{len(offenders)} von {len(candidates)} Studies ({offending_fraction:.1%}) weichen "
+                f"um mehr als {max_relative_deviation:.0%} zwischen gemessener und modellierter "
+                f"Stopdistanz ab (> {max_offending_fraction:.0%}-Schwelle) — die im Suchraum "
+                "getunte (modellierte) Größe ist auf diesem Anteil kein verlässlicher Proxy für die "
+                f"tatsächlich ausgeführte Distanz (#1081/#1229): {offenders}"),
+        provenance={"offending_fraction": offending_fraction, "n_candidates": len(candidates)},
     )
 
 
@@ -5977,6 +6371,67 @@ def check_cost_basis_resolution(
     )
 
 
+def check_selection_cost_basis_contract(study_records: list[dict]) -> InvariantResult:
+    """Issue #1078/#1226 (P1, Semantik-Bump, reward_semantics_version v25) — ``selection_cost_basis``
+    (``report._study_record`` ⇐ ``backtest_runner._apply_calibrated_slippage_deduction``) behauptet
+    JE STUDY, ob die kalibrierte p50-Slippage bereits AN DER QUELLE (vor Reward-/Gate-/Deflations-
+    Bildung, NICHT nur in der separaten ``full_realism``-Report-Stress-Stufe) auf mindestens einem
+    TRAILING_STOP-Round-Trip abgezogen wurde (``'round_trip_plus_calibrated_slippage'``) oder nicht
+    (``'round_trip_only'``). Dieser Wächter prüft die interne Konsistenz dieser Behauptung gegen die
+    bereits gemessene ``holdout_stop_exit_slippage_bps`` (demselben Holdout-Pfad, #1029/#1178
+    entnommen): ``'round_trip_plus_calibrated_slippage'`` OHNE eine gemessene, von Null verschiedene
+    Holdout-Slippage wäre ein Widerspruch — der Abzug kann nur stattfinden, wenn tatsächlich eine
+    kalibrierte p50-Slippage > 0 vorlag (``_apply_calibrated_slippage_deduction``s einziger
+    Aktivierungspfad, siehe dortige Docstring).
+
+    Nur Studies mit >= 1 Holdout-Trade (``holdout_total_trades``) UND einem gesetzten
+    ``selection_cost_basis`` werden geprüft; kein Report-Datensatz mit dem Feld (Report vor
+    #1078/#1226, oder keine Studies mit Holdout-Trade) ⇒ ``inconclusive=True`` (kein Sweep-Abbruch,
+    kein stiller Pass-durch-Abwesenheit, analog dem Rest dieses Moduls)."""
+    with_trades = [r for r in study_records if (r.get("holdout_total_trades") or 0) >= 1]
+    checked = [r for r in with_trades if r.get("selection_cost_basis") is not None]
+    expected = (
+        "selection_cost_basis ∈ {'round_trip_only', 'round_trip_plus_calibrated_slippage'} je "
+        "Study mit >= 1 Holdout-Trade; 'round_trip_plus_calibrated_slippage' nur bei gemessener "
+        "holdout_stop_exit_slippage_bps != 0"
+    )
+    if not checked:
+        return InvariantResult(
+            name="check_selection_cost_basis_contract",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="medium",
+            detail="Kein Report-Datensatz traegt selection_cost_basis (Report vor #1078/#1226 oder "
+                   "keine Studies mit Holdout-Trade) — nicht auswertbar.",
+            inconclusive=True,
+        )
+    allowed = {"round_trip_only", "round_trip_plus_calibrated_slippage"}
+    offenders: dict[str, dict] = {}
+    for r in checked:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        basis = r.get("selection_cost_basis")
+        if basis not in allowed:
+            offenders[key] = {"selection_cost_basis": basis, "reason": "UNKNOWN_VALUE"}
+        elif basis == "round_trip_plus_calibrated_slippage" and not r.get("holdout_stop_exit_slippage_bps"):
+            offenders[key] = {
+                "selection_cost_basis": basis,
+                "holdout_stop_exit_slippage_bps": r.get("holdout_stop_exit_slippage_bps"),
+                "reason": "CLAIMED_ADJUSTMENT_WITHOUT_MEASURED_SLIPPAGE",
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_selection_cost_basis_contract",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="medium",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit widerspruechlichem selection_cost_basis: "
+                f"{offenders} (#1078/#1226)."),
+    )
+
+
 def _resolve_causal_hypothesis_state(
     candidates: list[dict], *, anchor_control_run_available: bool = False,
 ) -> str:
@@ -6079,7 +6534,16 @@ def check_trailing_stop_risk_calibration_acceptance(
     sondern je Study unabhängig gegen ein festes Band geprüft wird) — Kandidaten-Gate unverändert
     (>= 3 Studies mit >= ``min_trailing_stop_exits`` nachweislichen TRAILING_STOP-Exits, sonst
     ``INCONCLUSIVE`` für den GESAMTEN Check, da Kriterien 2 und 3 nicht unabhängig von Kriterium 1
-    beurteilt werden können, siehe Pitfall #413)."""
+    beurteilt werden können, siehe Pitfall #413).
+
+    Issue #1081/#1229 (P0, Katalog #1247+) — Root-Cause: ``ratio_by_study`` berechnete den Quotienten
+    bislang LOKAL aus ``atr_trailing_multiplier_median · atr_median_bps`` (dem MODELLIERTEN Nenner),
+    UNABHAENGIG vom im Study-Record gestempelten ``realized_stop_loss_ratio`` — trotz Docstring-
+    Behauptung "derselbe Quotient wie check_effective_stop_distance" ein ZWEITER, abweichender
+    Berechnungspfad (#1005/#1157-Namenskollisionsklasse: gleicher Name, andere Grundgesamtheit).
+    Der Nenner ist seither die GEMESSENE Distanz (``stop_distance_bps_measured``, #1054/#1203); eine
+    Study ohne sie traegt keinen Eintrag in ``ratio_by_study`` (kein Rueckfall auf die modellierte
+    Groesse) statt eines Quotienten auf einer anderen Basis als Kriterium 1."""
     candidates = [
         r for r in study_records
         if r.get("atr_median_bps")
@@ -6089,12 +6553,14 @@ def check_trailing_stop_risk_calibration_acceptance(
     ]
     ratio_by_study: dict[str, float] = {}
     for r in candidates:
-        k_atr = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
-        if k_atr <= 0:
+        # Issue #1081/#1229 — GEMESSENE Distanz statt des lokal rekonstruierten k·ATR-Produkts
+        # (siehe Docstring oben); fehlt sie, traegt diese Study keinen Eintrag.
+        measured_distance_bps = r.get("stop_distance_bps_measured")
+        if measured_distance_bps is None or float(measured_distance_bps) <= 0:
             continue
         loss = float(r["gross_loss_median_bps_trailing_stop"])
         key = f"{r.get('strategy')}/{r.get('symbol')}"
-        ratio_by_study[key] = round(loss / k_atr, 4)
+        ratio_by_study[key] = round(loss / float(measured_distance_bps), 4)
 
     # Issue #1056/#1205 Fix Punkt a) — WITHIN-STUDY-Paare (aus report._study_record vorberechnet),
     # NICHT mehr die STUDY-MEDIANE aus `candidates` oben (dort weiterhin fuer Kriterium 2 verwendet).
@@ -6402,6 +6868,14 @@ def check_stop_loss_vs_bar_range(
             provenance=None,
         )
     passed = not offenders
+    # Issue #1079/#1227 (Katalog #1247+, P0) Fix Punkt 3 — ``zero_range_bar_fraction`` als KONTEXT
+    # neben den Verhaeltnissen (nicht als eigene Bedingung dieses Checks — das ist Aufgabe der
+    # separaten ``check_zero_range_bar_share``): macht sichtbar, wie stark die zugrundeliegende
+    # ``bar_range_median_bps``-Messung bereits selbst von Nullspannen-Bars entlastet war.
+    for r in candidates:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        if key in all_ratios and r.get("zero_range_bar_fraction") is not None:
+            all_ratios[key]["zero_range_bar_fraction"] = round(float(r["zero_range_bar_fraction"]), 4)
     return InvariantResult(
         name="check_stop_loss_vs_bar_range",
         passed=passed,
@@ -6419,6 +6893,68 @@ def check_stop_loss_vs_bar_range(
                 f"Stopdistanz: {offenders} — der Verlust ist latenz-, nicht stopgetrieben (#1119); "
                 "jede Stop-Parametrisierung ist unter dieser Bedingung wirkungslos, siehe #1092B."),
         provenance={"ratios_by_study": all_ratios} if all_ratios else None,
+    )
+
+
+def check_zero_range_bar_share(
+    study_records: list[dict], *,
+    max_high_share_fraction: float = 0.2,
+    high_share_threshold: float = 0.5,
+) -> InvariantResult:
+    """Issue #1079/#1227 (Katalog #1247+, P0, Pitfall #446-Klasse in AGENTS.md) Fix Punkt 4 — die
+    messbare Fassung des Kalenderproblems hinter ``bar_range_median_bps == 0`` (#1176 Schritt 2
+    braucht dieses Feld als Vorbedingung): eine synthetische 24/7-Bar-Erzeugung fuer Symbole ausserhalb
+    RTH-Handelszeiten (#1011/#1163) fuellt Kalenderluecken mit Bars, deren ``high == low`` ist
+    (``ZERO_RANGE_BAR_FRACTION``-Tag, ``hourly_strategy_base._execute_market_close``). Ein hoher
+    Anteil solcher Bars bedeutet: die Mehrheit der Bars, durch die eine Position lebt, enthaelt keine
+    Bewegung — ein Stop kann dort strukturell nicht ausloesen; loest er dennoch aus, traegt die
+    naechste REALE Bar die ganze Bewegung (Erklaerung fuer die #1119-Latenzsignatur).
+
+    FAIL (severity ``high``), wenn ``zero_range_bar_fraction`` in MEHR ALS
+    ``max_high_share_fraction`` (Default 20 %) der Studies ueber ``high_share_threshold`` (Default
+    0,5) liegt. Nur Studies mit definiertem ``zero_range_bar_fraction`` werden gezaehlt; keine
+    solche Study ⇒ nicht anwendbar (PASS, evaluable=False — kein Urteil ohne Telemetrie, dieselbe
+    Konvention wie andere Checks dieses Katalogs)."""
+    with_data = [r for r in study_records if r.get("zero_range_bar_fraction") is not None]
+    if not with_data:
+        return InvariantResult(
+            name="check_zero_range_bar_share",
+            passed=None,
+            expected=f"<= {max_high_share_fraction:.0%} der Studies mit zero_range_bar_fraction > "
+                     f"{high_share_threshold}",
+            actual=None,
+            severity="high",
+            evaluable=False,
+            evaluability={
+                "evaluable": False,
+                "inconclusive_reason": "NO_ZERO_RANGE_BAR_FRACTION_TELEMETRY",
+                "n_studies_measured": 0,
+            },
+            detail="Keine Study mit zero_range_bar_fraction-Telemetrie — nicht auswertbar.",
+        )
+    offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": round(float(r["zero_range_bar_fraction"]), 4)
+        for r in with_data if float(r["zero_range_bar_fraction"]) > high_share_threshold
+    }
+    fraction = len(offenders) / len(with_data)
+    passed = fraction <= max_high_share_fraction
+    return InvariantResult(
+        name="check_zero_range_bar_share",
+        passed=passed,
+        expected=f"<= {max_high_share_fraction:.0%} der Studies mit zero_range_bar_fraction > "
+                 f"{high_share_threshold}",
+        actual=round(fraction, 4),
+        severity="high",
+        evaluable=True,
+        evaluability={
+            "evaluable": True, "inconclusive_reason": None, "n_studies_measured": len(with_data),
+        },
+        detail=("OK" if passed else
+                f"{len(offenders)}/{len(with_data)} Studies mit zero_range_bar_fraction > "
+                f"{high_share_threshold}: {offenders} — die Mehrheit der Bars, durch die diese "
+                "Positionen liefen, enthielt keine Bewegung (#1176 Schritt 2 addressiert die "
+                "Wurzel: RTH-Bar-Achse statt 24/7-Kalender)."),
+        provenance={"offenders": offenders} if offenders else None,
     )
 
 
@@ -6548,6 +7084,73 @@ def check_stop_loss_decomposition_identity(
                 f"trigger_to_fill_gap_bps ueber der {max_violation_fraction:.1%}-Schwelle: "
                 f"{offenders} — der gemeinsame Nenner (Ausloese-Anker) ist nicht konsistent "
                 "durchgezogen (#1203)."),
+    )
+
+
+def check_stop_loss_share_decomposition(
+    study_records: list[dict], *, max_sum_deviation: float = 0.02,
+) -> InvariantResult:
+    """Issue #1082/#1230 (P1, Katalog #1247+) — die Report-Zerlegung addierte drei UNABHAENGIG
+    gebildete Mediane, statt Anteile je Round-Trip zu bilden.
+
+    Symptom. §2.4 behauptete ``realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps``
+    auf Basis der drei getrennt medianisierten Groessen (``stop_distance_bps_measured``,
+    ``trigger_to_fill_gap_bps``, ``realized_loss_bps`` in ``study_records``) — die gezeigten Zahlen
+    erfuellten die Gleichung NICHT: Residuum Median +12,00 bps = 16,17% des Median-Verlusts, positiv
+    in 151 von 154 Studies. Root-Cause: die per-Round-Trip-Identitaet haelt (siehe
+    ``check_stop_loss_decomposition_identity``), aber der Median EINER SUMME ist nicht die SUMME
+    der Mediane, und beide Summanden sind rechtsschief und positiv korreliert.
+
+    Fix (siehe ``backtest_runner._aggregate_exit_telemetry``/``report._study_record``): die Anteile
+    ``stop_distance_bps / realized_loss_bps``/``trigger_to_fill_gap_bps / realized_loss_bps`` werden
+    JE ROUND-TRIP gebildet und DANN medianisiert (``stop_distance_share_median``/``trigger_to_fill_
+    gap_share_median``) — sie summieren sich per Konstruktion auf 1 (bis auf Rundung). Dieser Check
+    bewacht GENAU diese Konstruktions-Eigenschaft: FAIL (severity ``medium`` — eine Diagnose-/
+    Report-Korrektheitsfrage, kein Risiko-Urteil), wenn ``|stop_distance_share_median +
+    trigger_to_fill_gap_share_median − 1| > max_sum_deviation`` (Default 0,02). Studies ohne beide
+    Felder werden uebersprungen; keine Study mit beiden Feldern ⇒ nicht anwendbar (kein Fail-open,
+    aber auch kein Urteil auf einer nicht-blockierenden Diagnose-Groesse)."""
+    candidates = [
+        r for r in study_records
+        if r.get("stop_distance_share_median") is not None
+        and r.get("trigger_to_fill_gap_share_median") is not None
+    ]
+    if not candidates:
+        return InvariantResult(
+            name="check_stop_loss_share_decomposition",
+            passed=True,
+            expected=f"|stop_distance_share_median + trigger_to_fill_gap_share_median - 1| <= "
+                     f"{max_sum_deviation}",
+            actual=None,
+            severity="medium",
+            detail="Keine Study mit beiden Anteilsfeldern — nicht anwendbar.",
+        )
+    offenders: dict[str, dict] = {}
+    for r in candidates:
+        stop_share = float(r["stop_distance_share_median"])
+        gap_share = float(r["trigger_to_fill_gap_share_median"])
+        deviation = round(abs(stop_share + gap_share - 1.0), 4)
+        if deviation > max_sum_deviation:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "stop_distance_share_median": round(stop_share, 4),
+                "trigger_to_fill_gap_share_median": round(gap_share, 4),
+                "sum_deviation": deviation,
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_stop_loss_share_decomposition",
+        passed=passed,
+        expected=f"|stop_distance_share_median + trigger_to_fill_gap_share_median - 1| <= "
+                 f"{max_sum_deviation}",
+        actual=offenders if offenders else None,
+        severity="medium",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_candidates": len(candidates)},
+        detail=("OK" if passed else
+                f"{len(offenders)} von {len(candidates)} Studies weichen um mehr als "
+                f"{max_sum_deviation} von der erwarteten Anteilssumme 1 ab: {offenders} — die "
+                "Anteile werden je Round-Trip gebildet, sollten sich also per Konstruktion (bis "
+                "auf Rundung) auf 1 summieren (#1082/#1230)."),
     )
 
 
@@ -7585,28 +8188,28 @@ def check_stop_distance_microstructure_floor(study_records: list[dict]) -> Invar
 
     FAIL (severity ``high`` — diagnostisch, siehe ``report._stamp_atr_floor_bps_derived``-
     Docstring: die Mikrostruktur-Untergrenze ist additive Report-Telemetrie, noch nicht in die
-    Simulation zurückgespeist), wenn ``stop_distance_bps < bar_range_median_bps`` für eine Study
-    mit beiden Feldern — die tatsächlich SIMULIERTE Stopdistanz lag unter der beobachteten
-    Median-Bar-Spanne. Studies ohne beide Felder werden übersprungen (fail-open auf fehlender
-    Evidenz)."""
+    Simulation zurückgespeist), wenn ``stop_distance_bps_modelled < bar_range_median_bps`` für eine
+    Study mit beiden Feldern — die tatsächlich SIMULIERTE (Issue #1081/#1229: umbenannt von
+    ``stop_distance_bps``) Stopdistanz lag unter der beobachteten Median-Bar-Spanne. Studies ohne
+    beide Felder werden übersprungen (fail-open auf fehlender Evidenz)."""
     offenders: dict[str, dict] = {}
     n_measured = 0
     for r in study_records:
-        stop_distance = r.get("stop_distance_bps")
+        stop_distance = r.get("stop_distance_bps_modelled")
         bar_range = r.get("bar_range_median_bps")
         if stop_distance is None or bar_range is None:
             continue
         n_measured += 1
         if float(stop_distance) < float(bar_range):
             offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
-                "stop_distance_bps": round(float(stop_distance), 4),
+                "stop_distance_bps_modelled": round(float(stop_distance), 4),
                 "bar_range_median_bps": round(float(bar_range), 4),
             }
     passed = not offenders
     return InvariantResult(
         name="check_stop_distance_microstructure_floor",
         passed=passed,
-        expected="stop_distance_bps >= bar_range_median_bps je Study",
+        expected="stop_distance_bps_modelled >= bar_range_median_bps je Study",
         actual=offenders or None,
         severity="high",
         detail=("OK" if passed else
@@ -7752,6 +8355,150 @@ def check_search_overhead_share(
                 "Backtest-Zeit, #1067/#1217)."),
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies": len(study_records)},
+    )
+
+
+def check_tpe_fit_cost_share(
+    study_records: list[dict], *, max_fraction: float = 0.05,
+) -> InvariantResult:
+    """Issue #1089/#1237 (P1, Katalog #1247+) — TPE-Fit-Fenster deckeln.
+
+    Symptom. ``Σ tpe_fit_seconds`` (ueber alle Studies eines Laufs) 25-35s bei k=1 warm-gestarteten
+    Vorlauf-Trials, 91-92s bei k=2, 228s bei k=3 — Skalierung ≈ O(n^1,9) in der Store-Groesse. Bei
+    k=3 gehen 8,6% der Wallclock in den Surrogat-Fit, ``cpu_utilisation_backtest`` faellt auf
+    12,9%.
+
+    Anders als ``check_search_overhead_share`` (severity ``high``, Schwelle 0,5, inkl.
+    ``store_scan_seconds``, die permanente Obergrenze fuer "die Suche verbringt nicht mehr als die
+    Haelfte ihrer Zeit mit Overhead") ist dies eine ENGERE, DIAGNOSTISCHE Schwelle (0,05 = 5%,
+    severity ``low``) ausschliesslich auf ``tpe_fit_seconds`` — ein fruehes Warnsignal, dass
+    ``tpe_fit_max_trials``/``tpe_history_window`` (``run_optimization._WindowedTPESampler``) enger
+    gesetzt werden sollten, lange bevor der Overhead die 50%-Schwelle des permanenten Checks
+    erreicht.
+
+    ``Σ tpe_fit_seconds / Σ study_wallclock_s`` (derselbe Aggregationsstil wie ``check_search_
+    overhead_share`` — ein GLOBALER, kein je-Study-Quotient) > ``max_fraction`` ⇒ FAIL.
+    ``INCONCLUSIVE`` (``passed=None``), wenn keine Study ``tpe_fit_seconds`` traegt (Pre-#1217-
+    Report oder reiner ``NSGAIISampler``-Lauf) — kein FAIL auf einer nicht gemessenen Groesse."""
+    _fit_values = [
+        r.get("tpe_fit_seconds") for r in study_records if r.get("tpe_fit_seconds") is not None]
+    _wallclock_values = [
+        r.get("study_wallclock_s") for r in study_records if r.get("study_wallclock_s") is not None]
+    expected = f"Σ tpe_fit_seconds / Σ study_wallclock_s <= {max_fraction:.0%}"
+    if not _fit_values:
+        return InvariantResult(
+            name="check_tpe_fit_cost_share",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="low",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_tpe_fit_seconds_telemetry",
+                          "n_studies": len(study_records)},
+            detail="Keine Study mit tpe_fit_seconds-Telemetrie (Pre-#1217-Report oder "
+                   "NSGAIISampler-Lauf) — nicht auswertbar.",
+        )
+    total_fit = sum(_fit_values)
+    total_wallclock = sum(_wallclock_values)
+    if total_wallclock <= 0:
+        return InvariantResult(
+            name="check_tpe_fit_cost_share",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="low",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "zero_total_wallclock",
+                          "n_studies": len(study_records)},
+            detail="Σ study_wallclock_s == 0 — nicht auswertbar.",
+        )
+    fraction = round(total_fit / total_wallclock, 4)
+    passed = fraction <= max_fraction
+    return InvariantResult(
+        name="check_tpe_fit_cost_share",
+        passed=passed,
+        expected=expected,
+        actual={
+            "tpe_fit_cost_fraction": fraction, "total_tpe_fit_seconds": round(total_fit, 4),
+            "total_wallclock_s": round(total_wallclock, 4), "n_studies_measured": len(_fit_values),
+        },
+        severity="low",
+        detail=("OK" if passed else
+                f"TPE-Fit-Anteil {fraction:.1%} > {max_fraction:.0%} — {total_fit:.1f}s Surrogat-"
+                f"Fit gegen {total_wallclock:.1f}s Gesamt-Wallclock; tpe_fit_max_trials/"
+                "tpe_history_window enger setzen (#1089/#1237)."),
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies": len(study_records)},
+    )
+
+
+def check_warm_start_efficacy(study_records: list[dict]) -> InvariantResult:
+    """Issue #1090/#1238 (P1, Katalog #1247+) — Warm-Start-Wirksamkeit messen statt annehmen.
+
+    Symptom. Es gibt keine Grösse im System, die beantwortet, ob ein Wiederholungslauf etwas
+    gebracht hat. Die Antwort aus dem Referenz-Batch ist negativ (B-11) und war nur durch externe
+    Paarbildung über elf Artefakte zu gewinnen.
+
+    Konsumiert ``warm_start_reward_delta``/``warm_start_holdout_delta`` (``report._study_record``,
+    nur gestempelt bei nachgewiesener Store-Wiederverwendung — siehe dortiger Kommentar). FAIL
+    (severity ``high``), wenn über die Studies mit BEIDEN Deltas der Median
+    ``warm_start_reward_delta > 0`` UND GLEICHZEITIG der Median ``warm_start_holdout_delta < 0``
+    ist — die ÜBERANPASSUNGS-Signatur: der Wiederholungslauf verbessert den (In-Sample-nahen)
+    Reward, verschlechtert aber das (echte, ungesehene) Holdout-Ergebnis, exakt der im
+    Referenz-Batch gemessene Zustand (Reward-Median +0,1663, Holdout-Median −5,46 bps).
+
+    ``INCONCLUSIVE`` (``passed=None``), wenn KEINE Study beide Deltas traegt — insbesondere bei
+    ``store_reuse.reused=false`` (kein Warm-Start in diesem Lauf, die Frage ist dann nicht
+    anwendbar, nicht "kein Problem gefunden")."""
+    with_both = [
+        r for r in study_records
+        if r.get("warm_start_reward_delta") is not None
+        and r.get("warm_start_holdout_delta") is not None
+    ]
+    expected = (
+        "NICHT gleichzeitig: Median(warm_start_reward_delta) > 0 UND "
+        "Median(warm_start_holdout_delta) < 0")
+    if not with_both:
+        return InvariantResult(
+            name="check_warm_start_efficacy",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_warm_started_studies",
+                          "n_studies": len(study_records)},
+            detail="Keine Study mit warm_start_reward_delta UND warm_start_holdout_delta — kein "
+                   "Warm-Start in diesem Lauf (store_reuse.reused=false) oder Pre-#1238-Report — "
+                   "nicht auswertbar (INCONCLUSIVE).",
+        )
+    reward_deltas = [float(r["warm_start_reward_delta"]) for r in with_both]
+    holdout_deltas = [float(r["warm_start_holdout_delta"]) for r in with_both]
+    reward_median = statistics.median(reward_deltas)
+    holdout_median = statistics.median(holdout_deltas)
+    passed = not (reward_median > 0 and holdout_median < 0)
+    actual = {
+        "warm_start_reward_delta_median": round(reward_median, 6),
+        "warm_start_holdout_delta_median": round(holdout_median, 6),
+        "n_studies_measured": len(with_both),
+    }
+    return InvariantResult(
+        name="check_warm_start_efficacy",
+        passed=passed,
+        expected=expected,
+        actual=actual,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies": len(study_records)},
+        detail=("OK" if passed else
+                f"Median(warm_start_reward_delta)={reward_median:+.4f} > 0 UND "
+                f"Median(warm_start_holdout_delta)={holdout_median:+.6f} < 0 über "
+                f"{len(with_both)} warm-gestartete Study/Studies — die Ueberanpassungs-Signatur: "
+                "der Wiederholungslauf verbessert den Reward, verschlechtert aber das Holdout-"
+                "Ergebnis (#1090/#1238)."),
     )
 
 

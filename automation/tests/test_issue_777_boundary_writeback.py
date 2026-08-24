@@ -131,6 +131,7 @@ def test_boundary_hit_fraction_0_4_now_writes_cache_entry(tmp_path, monkeypatch)
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        deflation_n_family=1,  # Issue #1091/#1239 — haelt die Fixture aus dem neuen Hard-Stop heraus.
     )
     assert res["status"] == "REJECTED_BOUNDARY_SOLUTION"    # #622-Tier bleibt unveraendert
     assert len(recorded) == 1                                # ABER jetzt EIN Cache-Eintrag
@@ -161,6 +162,7 @@ def test_boundary_hit_fraction_0_5_still_writes_cache_entry_via_hold_path(tmp_pa
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        deflation_n_family=1,  # Issue #1091/#1239 — haelt die Fixture aus dem neuen Hard-Stop heraus.
     )
     assert res["status"] == "HOLD_BOUNDARY_UNRESOLVED"
     assert len(recorded) == 1

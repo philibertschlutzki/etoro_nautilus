@@ -78,5 +78,8 @@ def test_column_headers_name_the_two_scopes_explicitly():
         "holdout_stop_exit_slippage_bps": None, "holdout_total_trades": 0,
     }])
     text = summary_de.generate_german_summary(report)
-    assert "Slippage (OOS, Median" in text
-    assert "Slippage (Holdout, Median" in text
+    # Issue #1095/#1243 — die Spaltenueberschriften nennen seither zusaetzlich den Nenner
+    # ("vs. Stop-Level"), damit sie nicht mit trigger_to_fill_gap_bps (Nenner: Ausloese-Anker,
+    # naechste Tabelle) verwechselt werden koennen.
+    assert "Slippage vs. Stop-Level (OOS, Median" in text
+    assert "Slippage vs. Stop-Level (Holdout, Median" in text

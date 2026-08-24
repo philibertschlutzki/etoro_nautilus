@@ -21,7 +21,8 @@ from automation.backtest_runner import _evaluate_oos_eligibility
 TCFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 
-def _oos(*, total_return, psr, excess, sortino=1.5, win_rate=0.4, pf=1.3, trades=40):
+def _oos(*, total_return, psr, excess, sortino=1.5, win_rate=0.4, pf=1.3, trades=40,
+         alpha_tstat=2.5):
     return {
         "total_trades": trades, "max_drawdown": 0.05, "win_rate": win_rate,
         "total_return": total_return, "expectancy": 0.02, "sortino_ratio": sortino, "psr": psr,
@@ -31,6 +32,10 @@ def _oos(*, total_return, psr, excess, sortino=1.5, win_rate=0.4, pf=1.3, trades
         # #550-Fold-Konsistenz-Gate ist ein orthogonales Kriterium, nicht Gegenstand von #650).
         "oos_profitable_folds": 4,
         "oos_excess_return": excess,
+        # Issue #1093/#1241 — t(α) ist seither Teil von eligible_requires_all (TCFG laedt die
+        # ECHTE tournament.json); ein Default über der Schwelle isoliert diese Tests weiterhin auf
+        # die Return-/PSR-/Excess-Gates, nicht Gegenstand von #650.
+        "oos_alpha_tstat": alpha_tstat,
     }
 
 

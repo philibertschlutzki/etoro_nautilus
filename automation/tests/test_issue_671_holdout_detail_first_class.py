@@ -122,6 +122,7 @@ def test_pbo_failed_candidate_has_first_class_holdout_reject_detail(tmp_path, mo
             study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
             run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                           global_result=global_result),
+            deflation_n_family=1,  # Issue #1091/#1239 — haelt die Fixture aus dem neuen Hard-Stop heraus.
         )
     finally:
         confirm._study_pbo = with_pbo
@@ -152,6 +153,7 @@ def test_dsr_drop_failed_candidate_has_first_class_holdout_reject_detail(tmp_pat
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        deflation_n_family=1,  # Issue #1091/#1239 — haelt die Fixture aus dem neuen Hard-Stop heraus.
     )
     assert res["is_rejection_detail_override"] == "REJECT_HOLDOUT_DSR_DROP"
 
@@ -175,6 +177,7 @@ def test_ready_for_pr_has_null_holdout_reject_detail(tmp_path, monkeypatch):
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=strong_symbol,
                                       global_result=weak_global),
+        deflation_n_family=1,  # Issue #1091/#1239 — haelt die Fixture aus dem neuen Hard-Stop heraus.
     )
     assert res["status"] == "READY_FOR_PR"
     assert res["is_rejection_detail_override"] is None

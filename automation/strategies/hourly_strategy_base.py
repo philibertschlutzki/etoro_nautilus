@@ -247,6 +247,15 @@ def compute_dyn_tp_target(
     return float(entry_price) - offset
 
 
+def _nearest_rank_percentile(sorted_vals: list[float], p: float) -> float:
+    """Issue #1079/#1227 — dieselbe Nearest-Rank-Perzentil-Arithmetik wie
+    ``backtest_runner._pctl`` (ein wiederverwendbarer Baustein statt einer Ad-hoc-Kopie mit
+    abweichender Methodik). ``sorted_vals`` MUSS bereits sortiert und nicht leer sein."""
+    n = len(sorted_vals)
+    idx = max(0, min(n - 1, round(p * (n - 1))))
+    return sorted_vals[idx]
+
+
 class HourlyStrategyBase(Strategy):
     """
     Base strategy providing ATR Trailing Stop and Time-based Exit for hourly candles.
@@ -351,11 +360,36 @@ class HourlyStrategyBase(Strategy):
         # Verlust kann dadurch strukturell an die Bar-Spanne gebunden sein, unabhaengig von der
         # konfigurierten Stopdistanz. Diese Serie macht das MESSBAR statt vermutet.
         self._position_bar_range_bps_readings: list[float] = []
+        # Issue #1079/#1227 (Katalog #1247+, P0) — Root-Cause: die Serie oben nahm bislang JEDE Bar
+        # auf, auch synthetische Fuellbars mit ``high == low`` (Kalenderluecken/geschlossene Sessions
+        # bei ``session_coverage_fraction`` << 1). Bei einer Positions-Haltedauer, deren Mehrheit auf
+        # solchen Nullspannen-Bars liegt, ist der MEDIAN der Serie strukturell 0 — korrekt gemessen,
+        # aber fuer den Zweck (Bar-Spanne als Referenzgroesse fuer den Stop-Verlust) ungeeignet
+        # (AGENTS.md Pitfall-Klasse #446: "ein Median ueber eine strukturell-null-Mehrheit misst die
+        # Mehrheit, nicht das Phaenomen"). ``_position_bar_range_bps_readings`` nimmt ab diesem Fix
+        # NUR NOCH Bars mit ``high > low`` auf; diese beiden Zaehler fuehren die VOLLSTAENDIGE
+        # Population UND den ausgeschlossenen Anteil separat mit, damit der Anteil selbst eine
+        # Kennzahl wird (``ZERO_RANGE_BAR_FRACTION``-Tag unten), statt beim Filtern spurlos zu
+        # verschwinden.
+        self._position_bar_count: int = 0
+        self._position_zero_range_bar_count: int = 0
         # Issue #1054/#1203 (Katalog #1196-1221) — Ankerpreis und Stopdistanz (bps) zum Zeitpunkt
         # der Ausloesung eines TRAILING_STOP-Exits, siehe _check_exits_and_update-Kommentar an der
         # Setzstelle. None ausserhalb einer laufenden TRAILING_STOP-Ausloesung.
         self._trigger_anchor_price: float | None = None
         self._trigger_stop_distance_bps: float | None = None
+        # Issue #1080/#1228 (Katalog #1247+, P0, Semantik-Bump Simulation) — der Stop-LEVEL zum
+        # AUSLOESE-Zeitpunkt (self._trailing_stop_price im selben Moment wie Anker/Distanz oben),
+        # eingefroren VOR jeder weiteren Ratsche. Root-Cause des Vorzustands: die Ratsche
+        # (siehe _check_exits_and_update, "Update trailing stop"-Block) laeuft UNBEDINGT auf JEDER
+        # Bar, auch nachdem ein Exit bereits ausgeloest wurde (_exit_pending != None) — bis zum
+        # tatsaechlichen Markt-Close-Absetzen (u. U. erst nach #836-Watchdog-Bars) kann
+        # ``self._trailing_stop_price`` also weiter ratschen. Der ``TRAILING_STOP_PRICE``-Tag
+        # (gesetzt beim Absetzen) traegt dadurch den RATSCHE-VERSCHOBENEN Wert, nicht den, gegen den
+        # ``stop_distance_bps``/``STOP_TRIGGER_ANCHOR_PRICE`` tatsaechlich gebildet wurden — die
+        # Identitaet ``stop_distance_bps == (anchor - stop_px)/anchor`` bricht um genau den
+        # Ratschenbetrag. ``_trigger_stop_price`` ist die fehlende, eingefrorene Referenz.
+        self._trigger_stop_price: float | None = None
 
         self._profit_target_pct = getattr(config, "profit_target_pct", None)
         self._daily_trades: int = 0
@@ -799,10 +833,18 @@ class HourlyStrategyBase(Strategy):
         # Rohmaterial fuer den BAR_RANGE_MEDIAN_BPS-Tag des schliessenden Orders. Anders als die
         # ATR-Ablesung oben (haengt an ``_exit_atr.initialized``) direkt aus ``bar.high``/
         # ``bar.low`` — keine Indikator-Historie noetig, jede Bar traegt ihre eigene Spanne.
+        # Issue #1079/#1227 Fix Punkt 1 — ``_position_bar_count`` zaehlt JEDE Bar (Vollpopulation),
+        # ``_position_bar_range_bps_readings`` nur noch Bars mit ``high > low`` (Nullspannen-Bars,
+        # z. B. synthetische Fuellbars ausserhalb der Handelszeiten, werden separat gezaehlt statt
+        # den Median zu dominieren, siehe Docstring an der Feld-Deklaration oben).
         if close > 0:
-            self._position_bar_range_bps_readings.append(
-                (float(bar.high) - float(bar.low)) / close * 10_000.0
-            )
+            self._position_bar_count += 1
+            if float(bar.high) > float(bar.low):
+                self._position_bar_range_bps_readings.append(
+                    (float(bar.high) - float(bar.low)) / close * 10_000.0
+                )
+            else:
+                self._position_zero_range_bar_count += 1
 
         # Update trailing stop.
         # Issue #1094 (Katalog #927) — REVIDIERT #897s Verzicht auf die Ratsche im "price_extreme"-
@@ -876,6 +918,10 @@ class HourlyStrategyBase(Strategy):
                 _sign = 1.0 if self._trailing_stop_side == "SHORT" else -1.0
                 self._trigger_stop_distance_bps = (
                     _sign * (self._trailing_stop_price - _anchor) / _anchor * 10_000.0)
+                # Issue #1080/#1228 Fix Punkt 1 — der Stop-Level ZUSAMMEN mit Anker/Distanz
+                # einfrieren (siehe Feld-Docstring), NICHT der spaeter u. U. weiter geratschte
+                # ``self._trailing_stop_price`` zum Absetz-Zeitpunkt.
+                self._trigger_stop_price = self._trailing_stop_price
 
         # Exit condition 2: Time-based exit (24 bars, GR-01/#714)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
@@ -1001,10 +1047,24 @@ class HourlyStrategyBase(Strategy):
                 tag_list.append(
                     f"ATR_RAW_MEDIAN_BPS:{statistics.median(self._position_atr_raw_bps_readings):.4f}")
             # Issue #953/#1119 (Katalog #960) — Median der Bar-Spannen dieser Position; siehe
-            # HourlyStrategyBase._position_bar_range_bps_readings-Docstring.
+            # HourlyStrategyBase._position_bar_range_bps_readings-Docstring. Seit #1079/#1227 ueber
+            # der um Nullspannen-Bars BEREINIGTEN Population (die Serie selbst wird bereits gefiltert
+            # befuellt, siehe dortiger Docstring).
             if self._position_bar_range_bps_readings:
                 tag_list.append(
                     f"BAR_RANGE_MEDIAN_BPS:{statistics.median(self._position_bar_range_bps_readings):.4f}")
+                # Issue #1079/#1227 Fix Punkt 2 — P75 derselben bereinigten Population, macht die
+                # rechtsschiefe Verteilung der Bar-Spanne zusaetzlich zum Median sichtbar.
+                _sorted_bar_ranges = sorted(self._position_bar_range_bps_readings)
+                tag_list.append(
+                    f"BAR_RANGE_P75_BPS:{_nearest_rank_percentile(_sorted_bar_ranges, 0.75):.4f}")
+            # Issue #1079/#1227 Fix Punkt 2/4 — Anteil der Nullspannen-Bars an der VOLLEN Population
+            # dieser Position; Rohmaterial fuer invariants.check_zero_range_bar_share. Nur gesetzt,
+            # wenn mindestens eine Bar waehrend der Position beobachtet wurde (close > 0-Guard oben).
+            if self._position_bar_count > 0:
+                tag_list.append(
+                    "ZERO_RANGE_BAR_FRACTION:"
+                    f"{self._position_zero_range_bar_count / self._position_bar_count:.6f}")
             # Issue #1095 (Katalog #928) — Bars zwischen Signal (self._exit_pending_bars=0 beim
             # Ausloesen des Exits, siehe _check_exits_and_update) und diesem tatsaechlichen Markt-
             # Close-Absetzen: 0, wenn derselbe Bar noch offene Orders stornieren + sofort schliessen
@@ -1029,7 +1089,31 @@ class HourlyStrategyBase(Strategy):
                         and self._trigger_anchor_price is not None):
                     tag_list.append(f"STOP_DISTANCE_BPS:{self._trigger_stop_distance_bps:.8f}")
                     tag_list.append(f"STOP_TRIGGER_ANCHOR_PRICE:{self._trigger_anchor_price:.8f}")
+                    # Issue #1080/#1228 (Katalog #1247+, P0, Semantik-Bump Simulation) Fix Punkt 2 —
+                    # der zum AUSLOESE-Zeitpunkt eingefrorene Stop-Level, als eigener Tag NEBEN
+                    # TRAILING_STOP_PRICE (das UNVERAENDERT den Stop-Level zum ABSETZ-Zeitpunkt
+                    # traegt — Nenner von resolve_stop_exit_slippage_bps, Zero-Regression). Dieser
+                    # neue Tag ist die Referenz fuer die Verlust-Zerlegungs-Identitaet
+                    # (backtest_runner._finalize_round_trip), NICHT TRAILING_STOP_PRICE.
+                    if self._trigger_stop_price is not None:
+                        tag_list.append(
+                            f"STOP_TRIGGER_STOP_PRICE:{self._trigger_stop_price:.8f}")
+                        # Fix Punkt 5 — der bisher unsichtbare Ratschenbetrag zwischen Ausloesung
+                        # und tatsaechlichem Absetzen, seitenbereinigt (LONG: eine steigende
+                        # Ratsche ist advers fuer den Verlust-Nenner, SHORT: eine fallende).
+                        _ratchet_sign = 1.0 if self._trailing_stop_side == "SHORT" else -1.0
+                        tag_list.append(
+                            "STOP_RATCHET_BETWEEN_TRIGGER_AND_SUBMIT_BPS:"
+                            f"{_ratchet_sign * (self._trailing_stop_price - self._trigger_stop_price) / self._trigger_anchor_price * 10_000.0:.8f}"
+                        )
             tags = tag_list
+            # Issue #1080/#1228 Fix Punkt 4 — die Trigger-Trias NACH der Tag-Emission auf None
+            # setzen: ein watchdog-erzwungener Close (self._exit_pending_kind bleibt TRAILING_STOP,
+            # aber OHNE einen frischen Trigger-Bar-Durchlauf, z. B. nach einem Reconnect) darf keine
+            # veralteten Anker-/Distanz-/Stop-Preis-Werte einer FRUEHEREN Position/Ausloesung erben.
+            self._trigger_anchor_price = None
+            self._trigger_stop_distance_bps = None
+            self._trigger_stop_price = None
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=exit_side,
@@ -1115,9 +1199,17 @@ class HourlyStrategyBase(Strategy):
             tag_list.append(f"ATR_MEDIAN_BPS:{statistics.median(self._position_atr_bps_readings):.4f}")
             tag_list.append(f"ATR_MIN_BPS:{min(self._position_atr_bps_readings):.4f}")
         # Issue #953/#1119 (Katalog #960) — siehe _execute_market_close, dieselbe Tag-Konvention.
+        # Issue #1079/#1227 — ebenso ueber der bereinigten Population + P75/ZERO_RANGE_BAR_FRACTION.
         if self._position_bar_range_bps_readings:
             tag_list.append(
                 f"BAR_RANGE_MEDIAN_BPS:{statistics.median(self._position_bar_range_bps_readings):.4f}")
+            _sorted_bar_ranges = sorted(self._position_bar_range_bps_readings)
+            tag_list.append(
+                f"BAR_RANGE_P75_BPS:{_nearest_rank_percentile(_sorted_bar_ranges, 0.75):.4f}")
+        if self._position_bar_count > 0:
+            tag_list.append(
+                "ZERO_RANGE_BAR_FRACTION:"
+                f"{self._position_zero_range_bar_count / self._position_bar_count:.6f}")
         order = self.order_factory.limit(
             instrument_id=self.instrument_id,
             order_side=exit_side,
@@ -1428,10 +1520,14 @@ class HourlyStrategyBase(Strategy):
         # Issue #953/#1119 (Katalog #960) — Bar-Spannen-Telemetrie-Puffer beginnt leer fuer jede
         # neue Position, analog dem ATR-Puffer oben.
         self._position_bar_range_bps_readings = []
+        # Issue #1079/#1227 — die beiden neuen Zaehler analog, siehe Feld-Deklaration im Konstruktor.
+        self._position_bar_count = 0
+        self._position_zero_range_bar_count = 0
         # Issue #1054/#1203 — analog den Puffern oben, beginnt jede neue Position ohne einen
         # Ausloese-Anker/-Distanz einer vorherigen Position.
         self._trigger_anchor_price = None
         self._trigger_stop_distance_bps = None
+        self._trigger_stop_price = None
         # Issue #836 — eine neue Position beginnt garantiert ohne einen laufenden Exit-Versuch.
         self._exit_pending = None
         self._exit_pending_kind = None

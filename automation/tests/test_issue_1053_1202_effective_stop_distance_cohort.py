@@ -53,61 +53,64 @@ from automation.optimizer import report as rpt
 
 
 # --- report._effective_stop_ratio_for_trial / _effective_stop_ratio_cohort ------------------------
+#
+# Issue #1081/#1229 (P0, Katalog #1247+) — der Nenner ist seither die GEMESSENE Stopdistanz DIESES
+# Trials (``oos_stop_distance_bps_median``, #1054/#1203), NICHT mehr das MODELLIERTE ``k · ATR``
+# (Median eines Produkts != Produkt der Mediane). ``_trial()`` traegt seither ``distance`` statt
+# ``k``/``atr``; die Werte sind bewusst so gewaehlt, dass die Ratios mit den vormaligen k*atr-
+# Beispielen bit-identisch bleiben (rein numerisch, kein Bedeutungswechsel der Testfaelle selbst).
 
-def _trial(k, atr, loss, n_stop_losses):
+def _trial(distance, loss, n_stop_losses):
     return {
-        "sampled_params": {"atr_trailing_multiplier": k},
-        "oos_atr_median_bps": atr,
+        "oos_stop_distance_bps_median": distance,
         "oos_gross_loss_mean_bps_trailing_stop": loss,
         "oos_n_trailing_stop_losses": n_stop_losses,
     }
 
 
-def test_ratio_for_trial_uses_the_same_trials_own_k_atr_and_loss():
-    ratio = rpt._effective_stop_ratio_for_trial(_trial(2.0, 10.0, 30.0, 5))
+def test_ratio_for_trial_uses_the_same_trials_own_measured_distance_and_loss():
+    ratio = rpt._effective_stop_ratio_for_trial(_trial(20.0, 30.0, 5))  # k=2.0, atr=10.0 vormals
     assert ratio == pytest.approx(1.5)
 
 
 def test_ratio_for_trial_is_none_when_any_component_missing():
     assert rpt._effective_stop_ratio_for_trial(
-        {"sampled_params": {}, "oos_atr_median_bps": 10.0,
-         "oos_gross_loss_mean_bps_trailing_stop": 30.0}) is None
+        {"oos_gross_loss_mean_bps_trailing_stop": 30.0}) is None
     assert rpt._effective_stop_ratio_for_trial(
-        {"sampled_params": {"atr_trailing_multiplier": 2.0},
-         "oos_gross_loss_mean_bps_trailing_stop": 30.0}) is None
-    assert rpt._effective_stop_ratio_for_trial(
-        {"sampled_params": {"atr_trailing_multiplier": 2.0}, "oos_atr_median_bps": 10.0}) is None
+        {"oos_stop_distance_bps_median": 20.0}) is None
+    assert rpt._effective_stop_ratio_for_trial({}) is None
 
 
 def test_ratio_for_trial_is_none_for_non_positive_denominator():
-    assert rpt._effective_stop_ratio_for_trial(_trial(0.0, 10.0, 30.0, 5)) is None
-    assert rpt._effective_stop_ratio_for_trial(_trial(-1.0, 10.0, 30.0, 5)) is None
+    assert rpt._effective_stop_ratio_for_trial(_trial(0.0, 30.0, 5)) is None
+    assert rpt._effective_stop_ratio_for_trial(_trial(-1.0, 30.0, 5)) is None
 
 
 def test_cohort_excludes_trials_below_the_per_trial_stop_exit_floor():
     """Ein Trial mit nur 2 nachweislichen Stop-Exits (< 3) traegt keinen robusten mittleren
     Stop-Verlust und darf die Kohorte nicht verwaessern."""
-    trials = [_trial(2.0, 10.0, 30.0, 5), _trial(2.0, 10.0, 30.0, 5), _trial(2.0, 10.0, 30.0, 5),
-              _trial(5.0, 10.0, 999.0, 2)]  # ausgeschlossen (n_stop_losses=2 < 3)
+    trials = [_trial(20.0, 30.0, 5), _trial(20.0, 30.0, 5), _trial(20.0, 30.0, 5),
+              _trial(50.0, 999.0, 2)]  # ausgeschlossen (n_stop_losses=2 < 3)
     median, n = rpt._effective_stop_ratio_cohort(trials)
     assert median == pytest.approx(1.5)
     assert n == 3
 
 
 def test_cohort_is_none_without_any_eligible_trial():
-    median, n = rpt._effective_stop_ratio_cohort([_trial(2.0, 10.0, 30.0, 1)])
+    median, n = rpt._effective_stop_ratio_cohort([_trial(20.0, 30.0, 1)])
     assert median is None
     assert n == 0
 
 
 def test_cohort_holds_numerator_and_denominator_on_the_same_trial_even_under_sampler_drift():
-    """Der Kern des #1202-Fixes: obwohl die Trials sehr unterschiedliche k-Werte sampeln (wie ein
-    TPE-Sampler es zwischen Re-Runs tut), bleibt jede Ratio intern konsistent (Zaehler/Nenner
-    IMMER vom selben Trial) -- der Median ist robust gegen die Streuung der k-Werte selbst."""
+    """Der Kern des #1202-Fixes: obwohl die Trials sehr unterschiedliche Stopdistanzen tragen (wie
+    ein TPE-Sampler es zwischen Re-Runs am gesampelten Multiplikator bewirkt), bleibt jede Ratio
+    intern konsistent (Zaehler/Nenner IMMER vom selben Trial) -- der Median ist robust gegen die
+    Streuung der Distanz selbst."""
     trials = [
-        _trial(0.5, 10.0, 15.0, 5),   # ratio 3.0
-        _trial(3.0, 10.0, 90.0, 5),   # ratio 3.0
-        _trial(1.5, 10.0, 45.0, 5),   # ratio 3.0
+        _trial(5.0, 15.0, 5),    # ratio 3.0
+        _trial(30.0, 90.0, 5),   # ratio 3.0
+        _trial(15.0, 45.0, 5),   # ratio 3.0
     ]
     median, n = rpt._effective_stop_ratio_cohort(trials)
     assert median == pytest.approx(3.0)
@@ -180,15 +183,35 @@ def test_two_runs_with_identical_cohort_data_yield_identical_verdicts():
 
 # --- Legacy-Fallback: Records ohne die neuen #1202-Kohorten-Felder --------------------------------
 
-def test_legacy_records_without_cohort_fields_fall_back_to_the_old_computation():
-    """Ein Record OHNE die neuen Felder (z. B. ein Legacy-Report vor #1202) faellt auf die
-    unveraenderte Vor-#1202-Berechnung zurueck, statt INCONCLUSIVE zu werden."""
+def test_legacy_records_without_cohort_fields_fall_back_to_the_measured_distance():
+    """Ein Record OHNE die Kohorten-Felder (z. B. ein Report zwischen #1202 und #1203), aber MIT
+    der gemessenen Stopdistanz (#1054/#1203), faellt auf die study-skopierte, GEMESSENE Berechnung
+    zurueck (Issue #1081/#1229: nicht mehr auf die modellierte k*ATR-Groesse)."""
     legacy = {
         "strategy": "A", "symbol": "X.ETORO",
-        "atr_median_bps": 20.0, "atr_trailing_multiplier_median": 2.0,
-        "gross_loss_median_bps_trailing_stop": 16.0,  # ratio == 0.4 (min bound)
+        "gross_loss_median_bps_trailing_stop": 16.0,  # ratio == 0.4 (min bound) gegen distance=40
+        "stop_distance_bps_measured": 40.0,
+        "atr_median_bps": 20.0, "atr_trailing_multiplier_median": 2.0,  # nur Kandidaten-Vorfilter
         "oos_n_trailing_stop_losses": 40,
     }
     result = inv.check_effective_stop_distance([legacy])
     assert result.passed is True
     assert result.actual["A/X.ETORO"]["ratio_median"] == 0.4
+
+
+def test_legacy_records_without_measured_distance_are_inconclusive_not_a_fallback_pass():
+    """Issue #1081/#1229 Fix Punkt 2 — fehlt die GEMESSENE Distanz (z. B. ein echter Legacy-Report
+    vor #1054/#1203), darf der Check NICHT still auf die modellierte Groesse (k*ATR) zurueckfallen
+    -- INCONCLUSIVE statt eines Urteils auf der Suchraum-Referenz statt der ausgefuehrten Distanz."""
+    legacy = {
+        "strategy": "A", "symbol": "X.ETORO",
+        "atr_median_bps": 20.0, "atr_trailing_multiplier_median": 2.0,
+        "gross_loss_median_bps_trailing_stop": 16.0,
+        "oos_n_trailing_stop_losses": 40,
+        # kein stop_distance_bps_measured
+    }
+    result = inv.check_effective_stop_distance([legacy])
+    assert result.passed is None
+    assert result.inconclusive is True
+    assert result.evaluable is False
+    assert result.actual == {"A/X.ETORO": 40}  # inconclusive_studies traegt den Stop-Exit-Zaehler

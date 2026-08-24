@@ -29,6 +29,11 @@ def _record(strategy, symbol, *, atr_bps, k, loss_bps, n_stop_exits=50):
         # Issue #972/#1126 — check_effective_stop_distance konsumiert seither die robuste Median-
         # Variante als primaeren Zaehler (Pitfall #405 in AGENTS.md).
         "gross_loss_median_bps_trailing_stop": loss_bps,
+        # Issue #1081/#1229 (GitHub-Issue, nicht zu verwechseln mit der Katalog-Nummer im
+        # Modul-Docstring) — der Legacy-Fallback konsumiert seither die GEMESSENE Distanz statt
+        # k*ATR; fuer diese Fixtures bewusst identisch zu ``atr_bps * k`` gesetzt (bit-identische
+        # Testerwartungen, kein Bedeutungswechsel dieser Testfaelle selbst).
+        "stop_distance_bps_measured": atr_bps * k,
     }
 
 

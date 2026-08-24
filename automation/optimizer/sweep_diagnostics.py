@@ -97,6 +97,7 @@ def classify_rejection_detail_gate_type(is_rejection_detail: str | None) -> str 
 
 def diagnose_structural_zero_eligible_gate(
     is_rejection_detail_counts: dict[str, int] | None, *, homogeneity_threshold: float = 1.0,
+    stop_reason: str | None = None,
 ) -> dict:
     """Issue #1045/#1194 — Root-Cause: ``resolve_ineligible_binding_cause`` klassifiziert einen
     ZERO_ELIGIBLE-Kollaps zwar bereits korrekt als ``'signal_quality'`` (voll evaluierte Kohorte,
@@ -114,6 +115,20 @@ def diagnose_structural_zero_eligible_gate(
     diese Schwelle ERREICHEN, sonst bleibt der Befund ``binding_cause='none'`` (ein gemischter
     Cohort ist von hier aus nicht eindeutig einem einzelnen Gate zuzuordnen — kein Rateversuch).
 
+    Issue #1096/#1244 (P2, Katalog #1247+) — ``stop_reason='STRUCTURAL_ALL_UNEVALUABLE'`` (0
+    EVALUABLE Trials, nicht nur 0 eligible) nimmt einen EIGENEN, VORGELAGERTEN Zweig: die vier
+    ``is_rejection_detail``-Codes, die ein nie-OOS-evaluierter Trial tragen kann
+    (``REJECT_OOS_WINDOW_UNREACHABLE``/``REJECT_OOS_INACTIVE``/``REJECT_OOS_DISCARDED_BY_IS_GATE``/
+    ``REJECT_OOS_NOT_EVALUATED``, siehe ``run_optimization._classify_is_rejection_detail``) messen
+    per Konstruktion NIEMALS eine Trade-QUALITAET (dafuer braucht es evaluierte Trades, die es hier
+    per Definition nicht gibt) — dieselbe architektonische Garantie, die ``diagnose_trade_
+    frequency``s ``n_evaluable==0``-Zweig bereits einhaelt (der dort NIEMALS ``'signal_quality'``
+    zurueckgibt). Der Befund ist deshalb UNBEDINGT ``gate_type='frequency'``/``binding_cause=
+    'signal_sparse'``/``proposed_action='search_space_override'`` — unabhaengig von der homogeneity_
+    threshold-Pruefung unten (die ausschliesslich fuer die STRUCTURAL_ZERO_ELIGIBLE-Qualitaetsfrage
+    gilt) und selbst bei LEEREN ``is_rejection_detail_counts`` (die vier Codes bleiben informativ in
+    ``dominant_rejection_detail``, entscheiden aber nicht mehr ueber ``binding_cause``).
+
     Rueckgabe: ``{dominant_rejection_detail, dominant_fraction, gate_type, binding_cause,
     proposed_action}``. ``proposed_action`` ist ``'search_space_override'`` (Frequenz-Gate),
     ``'budget_deprioritization'`` (Qualitaets-Gate, MILDER als ``'denylist'`` — dieselbe
@@ -124,6 +139,15 @@ def diagnose_structural_zero_eligible_gate(
     Schritt, exakt wie im Issue-Text gefordert)."""
     counts = is_rejection_detail_counts or {}
     total = sum(counts.values())
+    if stop_reason == "STRUCTURAL_ALL_UNEVALUABLE":
+        dominant_detail, dominant_count = (
+            max(counts.items(), key=lambda kv: kv[1]) if counts else (None, 0))
+        return {
+            "dominant_rejection_detail": dominant_detail,
+            "dominant_fraction": round(dominant_count / total, 4) if total else None,
+            "gate_type": "frequency", "binding_cause": "signal_sparse",
+            "proposed_action": "search_space_override",
+        }
     if total == 0:
         return {"dominant_rejection_detail": None, "dominant_fraction": None,
                 "gate_type": None, "binding_cause": "none", "proposed_action": "none"}

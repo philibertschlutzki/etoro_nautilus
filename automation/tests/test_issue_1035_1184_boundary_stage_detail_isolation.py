@@ -109,6 +109,11 @@ def _run_confirm(tmp_path, monkeypatch, *, boundary_fraction, boundary_direction
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        # Issue #1091/#1239: eine resolvierte (wenn auch minimale) Familien-N haelt die Fixture
+        # aus dem neuen unbedingten Hard-Stop heraus, ohne deflation_n_effective zu veraendern
+        # (max(deflation_n, 1) == deflation_n bei deflation_n >= 2, siehe confirm.py) -- diese
+        # Tests pruefen die Boundary-Stufe, nicht die Familien-Multiplizitaet.
+        deflation_n_family=1,
     )
 
 

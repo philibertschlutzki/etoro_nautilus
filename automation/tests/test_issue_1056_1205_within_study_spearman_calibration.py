@@ -113,6 +113,10 @@ def _study(strategy, symbol, *, spearman, n_pairs, atr_bps=10.0, k=2.0, loss_bps
         "oos_total_trades_with_exit_telemetry": total_exits,
         "stop_calibration_spearman_within_study": spearman,
         "stop_calibration_n_pairs_within_study": n_pairs,
+        # Issue #1081/#1229 — Kriterium 2 konsumiert seither die GEMESSENE Distanz statt eines
+        # lokal rekonstruierten k*ATR-Produkts; bewusst identisch zu ``atr_bps * k`` gesetzt
+        # (bit-identische Testerwartungen in dieser Datei, kein Bedeutungswechsel).
+        "stop_distance_bps_measured": atr_bps * k,
     }
 
 

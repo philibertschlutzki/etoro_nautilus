@@ -109,6 +109,9 @@ def test_negative_excess_return_no_longer_blocks_eligibility():
         "profit_factor": 1.3, "median_position_notional": 1000.0,
         "oos_folds_total": 4, "oos_fold_sortinos": [1.5, 1.4, 1.6, 1.5],
         "oos_excess_return": -0.01,   # unterbietet Buy&Hold, aber kein hartes Gate mehr seit #776
+        # Issue #1093/#1241 — t(α) ist seither Teil von eligible_requires_all (TCFG laedt die
+        # ECHTE tournament.json); isoliert diesen Test weiterhin auf das Excess-Return-Gate.
+        "oos_alpha_tstat": 2.5,
     }
     ev = _evaluate_oos_eligibility(oos, TCFG)
     assert ev["oos_eligible"] is True

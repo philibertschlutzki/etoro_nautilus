@@ -589,8 +589,23 @@ def _metrics_dict(m) -> dict:
         # Issue #987/#1141 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
         "oos_expectancy_cost_stress_full_realism": getattr(
             m, "oos_expectancy_cost_stress_full_realism", None),
-        # Issue #989/#1143 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
-        "oos_f_realized_median": getattr(m, "oos_f_realized_median", None),
+        # Issue #989/#1143 (Katalog #986), umbenannt #1085/#1233 — siehe parsing.TournamentMetrics-
+        # Docstring. Issue #1084/#1232 (Katalog #1247+, P0) Root-Cause (historisch): der Max-Zweig
+        # fehlte hier frueher komplett, obwohl backtest_runner ihn aus derselben Serie berechnete
+        # und parsing.py ihn korrekt parste — die Bruecke fehlte NUR fuer den Max-, nicht den
+        # Median-Zweig (Pitfall #421-Klasse: eine je Feld einzeln kuratierte Teilmenge ist eine
+        # eigene Datenschranke). Beide Zweige sind seither explizit vorhanden.
+        "oos_f_turnover_realized_median": getattr(m, "oos_f_turnover_realized_median", None),
+        "oos_f_turnover_realized_max": getattr(m, "oos_f_turnover_realized_max", None),
+        # Issue #1085/#1233 (Katalog #1247+, P0) Fix Punkt 1 — siehe parsing.TournamentMetrics-
+        # Docstring; Rohmaterial fuer check_sizing_identity_coherence (Median)/check_sizing_cap_
+        # enforcement (Max).
+        "oos_f_realized_peak_median": getattr(m, "oos_f_realized_peak_median", None),
+        "oos_f_realized_peak_max": getattr(m, "oos_f_realized_peak_max", None),
+        # Issue #1075/#1223 (Katalog #1247+, P0) — siehe parsing.TournamentMetrics-Docstring;
+        # Rohmaterial fuer invariants.check_applied_cost_components_resolved.
+        "oos_applied_financing_bps_per_day": getattr(m, "oos_applied_financing_bps_per_day", None),
+        "oos_applied_slippage_bps": getattr(m, "oos_applied_slippage_bps", None),
         "oos_cvar_95": getattr(m, "oos_cvar_95", None),
         "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),
@@ -607,6 +622,16 @@ def _metrics_dict(m) -> dict:
         # Issue #1038/#1187 — die Regressions-Stichprobengroesse; macht α·n (das oekonomisch
         # lesbare Holdout-Alpha) in report.py berechenbar.
         "oos_alpha_n_periods": getattr(m, "oos_alpha_n_periods", None),
+        # Issue #1078/#1226 (P1, Semantik-Bump) — welche Kostenbasis DIESE Holdout-Re-Evaluation
+        # tatsaechlich speiste (siehe backtest_runner._apply_calibrated_slippage_deduction). Der
+        # Schluessel traegt bewusst den vollen ``oos_``-Feldnamen (Konvention dieses Dicts, siehe
+        # z. B. ``oos_f_turnover_realized_median`` oben) — die im Report gewuenschte FLACHE
+        # Benennung ``selection_cost_basis`` (ohne ``holdout_``-Praefix, Akzeptanzkriterium #1078)
+        # entsteht erst in ``report.py``s ``_study_record`` (dort per ``.get("oos_selection_cost_
+        # basis")`` gelesen, nicht hier umbenannt — sonst haette
+        # ``test_every_holdout_only_allowlisted_field_actually_reaches_metrics_dict`` diesen
+        # Schluessel nicht gefunden, #994/#1146).
+        "oos_selection_cost_basis": getattr(m, "oos_selection_cost_basis", None),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
         # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
         # unterscheiden kann.
@@ -1380,6 +1405,25 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # max() ist jetzt die DECLUSTERTE Zahl (``deflation_n_family_effective``), nicht mehr die
         # rohe Σ — das ist der eigentliche Fix (E[max_N] auf effektiver statt roher Config-Zahl).
         deflation_n_effective = max(deflation_n, deflation_n_family_effective)
+        # Issue #1092/#1240 (P1) — Fix Punkt 1: ``deflation_n_effective`` wird HIER, EINMALIG, aus
+        # genau diesen beiden Groessen berechnet; ``deflation_n_eligible_at_effective`` friert das
+        # PER-STUDY-N ein, das TATSAECHLICH in diese Formel eingegangen ist — unabhaengig davon,
+        # ob die bare Variable ``deflation_n`` SPAETER (z. B. durch die #865-``per_stratum``-
+        # Heterogenitaetspolitik, die ``deflation_n`` auf die engere Stratum-Zahl reassigned, siehe
+        # unten) fuer einen ANDEREN Zweck — die Varianzschaetzung, ABSICHTLICH von der Multiplizitaet
+        # entkoppelt, siehe ``deflation.sr0_multiple_testing_robust``s ``n_trials``/
+        # ``variance_n_trials``-Docstring — weiterverwendet wird. Ohne dieses Einfrieren wuerde die
+        # #652/#670-Telemetrie (``deflation_n_eligible``) nach einer Stratum-Narrowing eine ANDERE
+        # Zahl zeigen als die, die tatsaechlich in ``deflation_n_effective`` eingegangen ist, und
+        # ``check_n_family_consistency`` faelschlich feuern, ohne dass Entscheidung UND Telemetrie
+        # tatsaechlich divergiert waeren. Fix Punkt 2 — ``deflation_n_source`` macht sichtbar,
+        # welche der beiden Seiten des max() tatsaechlich gewonnen hat.
+        deflation_n_eligible_at_effective = deflation_n
+        deflation_n_source = (
+            "n_family_stage1_per_strategy" if deflation_n_family_effective > deflation_n
+            else "n_eligible" if deflation_n > deflation_n_family_effective
+            else "max_of_both"
+        )
         if deflation_n >= 2:
             import statistics as _st
             from automation.optimizer.deflation import sr0_multiple_testing_robust
@@ -1561,18 +1605,32 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # eine Familien-Multiplizitaet ERMITTELT hat und sie EXPLIZIT leer (0) meldet, loest den
     # Hard-Stop aus (siehe sweep._run_confirm_and_export: ``n_family_stage1_map.get(..., 0)``,
     # real IMMER ein int, nie None).
+    # Issue #1091/#1239 (P1, Katalog #1247+) — Root-Cause der #1034-Luecke: der Guard oben prueft
+    # nur den EXTERN uebergebenen ``deflation_n_family`` (``is not None and <= 0``), nicht die
+    # INTERN bereits aus demselben Parameter abgeleitete ``deflation_n_family_raw = int(
+    # deflation_n_family or 0)`` — kollabiert auch dann auf 0, wenn der Aufrufer eine unaufloesbare
+    # Familie durch ``deflation_n_family=None`` signalisiert (z. B. ``FAMILY_EXCLUDED_DEGENERATE``,
+    # #981/#1135) statt eines expliziten 0 — der #1034-Guard allein liess GENAU diesen Fall bewusst
+    # als "Legacy-Aufrufer, hat den Parameter nie gemessen" passieren (``deflation_n_family is not
+    # None``-Bedingung), obwohl ``deflation_n_effective = max(deflation_n, deflation_n_family_
+    # effective)`` weiter oben den Rueckfall auf das per-Study-N bereits maskiert hat, OHNE jedes
+    # Flag — Symptom: SqueezeBreakout/TSLA (deflation_n_family_raw=0, deflation_n_family_frozen=
+    # None, 180 Trials, 20/48/51 eligibel) passierte alle drei Laeufe. Fix: die Bedingung prueft
+    # direkt ``deflation_n_family_raw`` (subsumiert den alten expliziten-0-Fall vollstaendig, da
+    # ``deflation_n_family_raw`` fuer JEDEN nicht-positiven ``deflation_n_family``-Wert — explizit
+    # 0, negativ, oder ``None`` — auf denselben nicht-positiven Wert kollabiert).
     family_n_unresolvable = (
-        deflated_selection and deflation_n >= 2
-        and deflation_n_family is not None and int(deflation_n_family) <= 0
+        deflated_selection and deflation_n >= 2 and deflation_n_family_raw <= 0
     )
     if holdout_passed and family_n_unresolvable:
         holdout_passed = False
         holdout_reject_detail = "REJECT_PROMOTION_FAMILY_UNRESOLVABLE"
         logging.getLogger("optimizer").warning(
-            "[#1034] %s/%s: Deflationsstufe erreicht (deflation_n=%d), aber deflation_n_family "
-            "unaufloesbar (%r) ⇒ REJECT_PROMOTION_FAMILY_UNRESOLVABLE (kein Ersatzpfad, keine "
-            "stillschweigende per-Study-N-Substitution).",
-            strategy, symbol, deflation_n, deflation_n_family,
+            "[#1034/#1239] %s/%s: Deflationsstufe erreicht (deflation_n=%d), aber "
+            "deflation_n_family (%r) / deflation_n_family_raw (%r) unaufloesbar ⇒ "
+            "REJECT_PROMOTION_FAMILY_UNRESOLVABLE (kein Ersatzpfad, keine stillschweigende "
+            "per-Study-N-Substitution).",
+            strategy, symbol, deflation_n, deflation_n_family, deflation_n_family_raw,
         )
 
     # Issue #865 (Pitfall #277) — die Heterogenitäts-Politik wird JETZT angewendet, VOR der DSR-
@@ -2273,7 +2331,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Issue #758 — welche Inferenzmethode DIESE DSR tatsaechlich lieferte; im Regelfall
         # identisch zur Eligibility-Methode (backtest_runner.psr_inference_method).
         best_result["metrics_symbol"]["deflation_inference_method"] = deflation_inference_method
-        best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
+        # Issue #1092/#1240 (P1) — ``deflation_n_eligible_at_effective`` (eingefroren, siehe oben)
+        # statt der bare ``deflation_n``: letztere kann durch die #865-``per_stratum``-Politik
+        # inzwischen auf eine engere Stratum-Zahl reassigned sein, waehrend diese Telemetrie exakt
+        # das per-Study-N zeigen muss, das TATSAECHLICH in ``deflation_n_effective``s max()-Formel
+        # eingegangen ist (sonst feuert ``check_n_family_consistency`` faelschlich).
+        best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n_eligible_at_effective
+        best_result["metrics_symbol"]["deflation_n_source"] = deflation_n_source
         # Issue #670 — ``deflation_used_var_floor`` bleibt aus Rückwärtskompat-Gründen erhalten
         # (bedeutet NUR "λ ≥ 0.5"). Die PRÄZISEN Grössen für die Forensik: ``deflation_lambda`` (das
         # tatsächliche Shrinkage-Gewicht) und ``deflation_theoretical_var_source`` (seit #701 IMMER

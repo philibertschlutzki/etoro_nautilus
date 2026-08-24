@@ -135,6 +135,10 @@ def _run_confirm(tmp_path, monkeypatch, *, boundary_fraction, boundary_direction
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
         run_id=run_id,
+        # Issue #1091/#1239: resolvierte (minimale) Familien-N haelt die Fixture aus dem neuen
+        # unbedingten Hard-Stop heraus, ohne deflation_n_effective zu veraendern (siehe
+        # confirm.py) -- diese Tests pruefen die Boundary-Route, nicht die Familien-Multiplizitaet.
+        deflation_n_family=1,
     )
 
 

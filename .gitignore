@@ -28,3 +28,6 @@ automation/.env
 /data/*
 /data/optimizer/
 !/data/optimizer/champions/
+
+# Harness worktree/session state, not repo content
+.claude/
