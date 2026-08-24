@@ -54,9 +54,14 @@ def test_eligible_requires_all_matches_documented_default():
     eligible_requires_any-OR-Arm hierher (Pitfall #279 — eine Disjunktion über genau ein Element
     ist logisch identisch mit einer Konjunktions-Klausel). Issue #960 entfernte es wieder (sechste
     Redundanz-Instanz: Jaccard 0.964-0.979 mit oos_min_psr, gemessener marginaler Eigenbeitrag
-    exakt 0.000 über 100-160 Trials in >= 3 Studies)."""
+    exakt 0.000 über 100-160 Trials in >= 3 Studies).
+
+    Issue #1093/#1241 — 'oos_min_alpha_tstat' ist ein NEUES Gate (t(α)-Vorfilter statt des
+    entfernten absoluten Excess-Return-Gates, siehe test_issue_1093_1241_alpha_tstat_prefilter.py),
+    keine Wiederherstellung der #776-Redundanz: t(α) ist exposure-bereinigt (OLS-Alpha/Beta-
+    Regression), das alte oos_min_excess_return war es nicht."""
     assert CFG["eligible_requires_all"] == [
-        "min_trades", "max_drawdown", "oos_min_psr",
+        "min_trades", "max_drawdown", "oos_min_psr", "oos_min_alpha_tstat",
     ]
 
 

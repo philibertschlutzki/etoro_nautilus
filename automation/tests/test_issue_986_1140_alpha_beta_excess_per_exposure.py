@@ -180,23 +180,55 @@ def _minimal_report(**overrides):
     return base
 
 
-def test_section_2_3_ranks_by_excess_per_unit_exposure_not_total_return():
-    """Kern-Akzeptanzkriterium: eine Study mit NIEDRIGEREM Strategie-Return aber HOEHEREM
-    excess_per_unit_exposure rankt jetzt VOR einer Study mit hohem Strategie-Return, aber
-    niedrigem excess_per_unit_exposure (vorher: Sortierung nach holdout_total_return)."""
+def test_section_2_3_ranks_by_alpha_tstat_not_excess_per_unit_exposure():
+    """Kern-Akzeptanzkriterium VOR Issue #1093/#1241: eine Study mit NIEDRIGEREM Strategie-Return
+    aber HOEHEREM excess_per_unit_exposure rankte vor einer Study mit hohem Strategie-Return, aber
+    niedrigem excess_per_unit_exposure.
+
+    Update (#1093/#1241, Fix Punkt 3): excess_per_unit_exposure ist zwar exposure-normiert, bleibt
+    aber ein absoluter Endpunkt-Return-Vergleich — dieselbe Grössenklasse, die als GATE bereits
+    durch t(α) ersetzt wurde (0/42 Studies auf steigenden Symbolen bestanden das alte Excess-Gate,
+    107/112 auf fallenden Symbolen trivial positiv ohne einen einzigen positiven Return). Die
+    Rangfolge folgt jetzt derselben t(α)-Statistik wie das Gate, damit Rang und Eligibility-
+    Entscheidung dieselbe Grösse messen. Diese Fixture kehrt das Vorzeichen bewusst um
+    (LowRatioHighAlpha hat das NIEDRIGERE excess_per_unit_exposure, aber das HOEHERE t(α)) — der
+    Beweis, dass t(α) und nicht mehr excess_per_unit_exposure die Rangfolge treibt.
+    excess_per_unit_exposure bleibt als Spalte erhalten (siehe test_section_2_3_shows_alpha_beta_
+    tstat_columns)."""
     report = _minimal_report(studies=[
-        {"strategy": "LowReturnHighRatio", "symbol": "X.ETORO", "holdout_total_return": 0.01,
+        {"strategy": "HighRatioLowAlpha", "symbol": "X.ETORO", "holdout_total_return": 0.01,
          "holdout_buyhold_return": -0.10, "holdout_excess_return": 0.11,
-         "holdout_exposure_fraction": 0.1, "holdout_excess_per_unit_exposure": 1.1},
-        {"strategy": "HighReturnLowRatio", "symbol": "Y.ETORO", "holdout_total_return": 0.20,
+         "holdout_exposure_fraction": 0.1, "holdout_excess_per_unit_exposure": 1.1,
+         "holdout_alpha_tstat": 0.5},
+        {"strategy": "LowRatioHighAlpha", "symbol": "Y.ETORO", "holdout_total_return": 0.20,
          "holdout_buyhold_return": 0.15, "holdout_excess_return": 0.05,
-         "holdout_exposure_fraction": 0.9, "holdout_excess_per_unit_exposure": 0.0556},
+         "holdout_exposure_fraction": 0.9, "holdout_excess_per_unit_exposure": 0.0556,
+         "holdout_alpha_tstat": 3.2},
     ])
     text = summary_de.generate_german_summary(report)
     section_2_3 = text.split("### 2.3")[1].split("### 2.4")[0]
-    idx_low = section_2_3.index("LowReturnHighRatio")
-    idx_high = section_2_3.index("HighReturnLowRatio")
-    assert idx_low < idx_high
+    idx_high_alpha = section_2_3.index("LowRatioHighAlpha")
+    idx_low_alpha = section_2_3.index("HighRatioLowAlpha")
+    assert idx_high_alpha < idx_low_alpha
+
+
+def test_section_2_3_missing_alpha_tstat_sorts_last():
+    """Eine Study ohne auswertbares t(α) (kein Regressionsfenster) sortiert ans ENDE, nicht in die
+    Mitte -- 0.0 wäre mit einem echten, schwachen t(α)=0 ununterscheidbar (#1093/#1241)."""
+    report = _minimal_report(studies=[
+        {"strategy": "NoAlphaWindow", "symbol": "X.ETORO", "holdout_total_return": 0.20,
+         "holdout_buyhold_return": -0.05, "holdout_excess_return": 0.25,
+         "holdout_exposure_fraction": 0.5, "holdout_excess_per_unit_exposure": 0.5},
+        {"strategy": "WeakNegativeAlpha", "symbol": "Y.ETORO", "holdout_total_return": 0.01,
+         "holdout_buyhold_return": 0.0, "holdout_excess_return": 0.01,
+         "holdout_exposure_fraction": 0.5, "holdout_excess_per_unit_exposure": 0.02,
+         "holdout_alpha_tstat": -0.1},
+    ])
+    text = summary_de.generate_german_summary(report)
+    section_2_3 = text.split("### 2.3")[1].split("### 2.4")[0]
+    idx_weak = section_2_3.index("WeakNegativeAlpha")
+    idx_missing = section_2_3.index("NoAlphaWindow")
+    assert idx_weak < idx_missing
 
 
 def test_section_2_3_falls_back_to_inline_ratio_without_precomputed_field():

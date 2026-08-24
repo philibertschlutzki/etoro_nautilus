@@ -381,6 +381,8 @@ OOS_CONDITION_MAP_KEYS = frozenset({
     "min_profitable_folds_frac",
     "min_excess_return",
     "min_evaluable_folds",
+    # Issue #1093/#1241 (P1) — t(α)-Vorfilter statt eines absoluten Excess-Return-Gates.
+    "min_alpha_tstat",
 })
 
 # Issue #760 — kanonische Registry der ``condition_map``-Handler, die tatsächlich eine
@@ -394,6 +396,8 @@ OOS_GATE_DELTA_KEYS = frozenset({
     "min_trades", "min_total_return", "min_expectancy", "max_drawdown", "min_win_rate",
     "min_sortino", "min_psr", "min_profit_factor", "min_excess_return",
     "min_profitable_folds_frac",
+    # Issue #1093/#1241 (P1) — t(α)-Delta wird gestempelt (siehe oos_gate_deltas oben).
+    "min_alpha_tstat",
 })
 
 
@@ -789,6 +793,30 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             psr_valid = False
             psr_reason = _reason("oos_min_psr", float(psr), float(req_psr), "<")
 
+    # Issue #1093/#1241 (P1) — t(α)-Vorfilter statt eines absoluten Excess-Return-Gates. Root-Cause
+    # (Symptom: 0/42 auf drei steigenden Symbolen, 107/112 trivial-positiver Excess auf fünf
+    # fallenden ohne einen einzigen positiven Return): ein Excess-Gate gegen einen Benchmark ohne
+    # Exposure-Normierung misst im fallenden Markt negatives Beta (Nichtstun erfüllt es trivial) und
+    # ist im steigenden Markt durch Alpha allein oft nicht erreichbar (absoluter Endpunkt-Vergleich).
+    # ``oos_alpha_tstat`` (OLS-Regression Strategie- vs. Benchmark-Perioden-Returns,
+    # ``_alpha_beta_regression``) ist bereits exposure-bereinigt (β trennt Marktbeteiligung von
+    # Alpha) — dieselbe t-Statistik, die ``holdout_alpha_tstat``/``holdout_no_alpha_detected``
+    # bereits report-seitig zeigen (#986/#1140), hier erstmals als GATE. Wie ``oos_min_psr``: ein
+    # UNDEFINIERTER t(α) (< 3 Perioden für die Regression, ``_alpha_beta_regression`` liefert dann
+    # None) ist NICHT eligible — kein impliziter Pass.
+    req_alpha_tstat = t_overrides.get("oos_min_alpha_tstat", tournament_cfg.get("oos_min_alpha_tstat"))
+    alpha_tstat = oos_metrics.get("oos_alpha_tstat")
+    alpha_tstat_valid = True
+    alpha_tstat_reason = ""
+    if req_alpha_tstat is not None:
+        if alpha_tstat is None:
+            alpha_tstat_valid = False
+            alpha_tstat_reason = f"oos_min_alpha_tstat: None (insufficient/undefined) < {req_alpha_tstat}"
+        elif float(alpha_tstat) < float(req_alpha_tstat):
+            alpha_tstat_valid = False
+            alpha_tstat_reason = _reason(
+                "oos_min_alpha_tstat", float(alpha_tstat), float(req_alpha_tstat), "<")
+
     condition_map = {
         "min_trades":        (n_trades >= req_trades, f"oos_min_trades: {n_trades} < {req_trades}"),
         "min_total_return":  (total_return >= req_return, _reason("oos_min_total_return", total_return, req_return, "<")),
@@ -807,6 +835,7 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         "min_profitable_folds_frac": (prof_folds_valid, prof_folds_reason),
         "min_excess_return": (excess_valid, excess_reason),
         "min_evaluable_folds": (eval_folds_valid, eval_folds_reason),
+        "min_alpha_tstat": (alpha_tstat_valid, alpha_tstat_reason),
     }
 
     # Issue #554 — maschinenlesbares Delta-Dict (actual − threshold; für max_drawdown cap − actual,
@@ -830,6 +859,9 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         oos_gate_deltas["oos_min_excess_return"] = float(oos_metrics["oos_excess_return"] - req_excess_return)
     if prof_folds_frac_delta is not None:
         oos_gate_deltas["oos_min_profitable_folds_frac"] = prof_folds_frac_delta
+    # Issue #1093/#1241 — t(α)-Delta (maschinenlesbar, dieselbe Konvention wie oos_min_psr oben).
+    if alpha_tstat is not None and req_alpha_tstat is not None:
+        oos_gate_deltas["oos_min_alpha_tstat"] = float(float(alpha_tstat) - float(req_alpha_tstat))
 
     # Issue #649 — kanonische Normalisierung (``_canonical_gate_key``, entfernt ein optionales
     # ``oos_``-Präfix) VOR jedem ``condition_map``-Lookup. ``tournament.json`` schreibt manche

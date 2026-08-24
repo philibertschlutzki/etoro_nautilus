@@ -521,6 +521,20 @@ def _section_2_monetary_result(report: dict) -> str:
             # normal_rows garantiert bereits exposure_ >= _min_exposure_for_normalization.
             return excess_ / exposure_ if excess_ is not None and exposure_ else None
 
+        # Issue #1093/#1241 (P1, Fix Punkt 3) — Root-Cause derselben #986/#1140-Fehlerklasse:
+        # excess_per_exposure ist zwar exposure-normiert, aber immer noch ein absoluter
+        # Endpunkt-Return-Vergleich — dieselbe Grösse, die als Gate bereits durch t(α) ersetzt wurde
+        # (siehe automation/config/tournament.json['oos_min_alpha_tstat']-Schema-Doku). Die Rangfolge
+        # zog bislang nach excess_per_exposure, während die Eligibility-Entscheidung bereits auf t(α)
+        # umgestellt ist — Rang und Gate massen damit zwei verschiedene Grössen. Fix: die Sortierung
+        # folgt jetzt derselben t(α)-Statistik wie das Gate; Excess/Exposure bleibt als Spalte
+        # erhalten (weiterhin ökonomisch lesbar, nur nicht mehr die primäre Rangfolgengrösse). Ein
+        # fehlendes t(α) (kein auswertbares Regressions-Fenster) sortiert ans Ende, nicht in die Mitte
+        # (0.0 wäre mit einem echten t(α)=0 ununterscheidbar).
+        def _alpha_tstat_sort_key(r: dict) -> float:
+            v = r.get("holdout_alpha_tstat")
+            return float(v) if v is not None else float("-inf")
+
         # Issue #1038/#1187 (Katalog #1187) — Root-Cause: ``α`` (Grössenordnung 1e-6/Bar) mit 5
         # Nachkommastellen zeigte in 13/13 Zeilen ``0.00000``/``-0.00000``/``-0.00001`` — technisch
         # korrekt gerundet, aber ökonomisch unlesbar. Ersetzt durch ``α·n (%)`` (das KUMULIERTE
@@ -533,7 +547,7 @@ def _section_2_monetary_result(report: dict) -> str:
             "Excess/Exposure | α·n (%) | α (bps/Bar) | β | t(α) | Vorzeichen |"
         )
         lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
-        for r in sorted(normal_rows, key=lambda r: _excess_per_exposure(r) or 0.0, reverse=True):
+        for r in sorted(normal_rows, key=_alpha_tstat_sort_key, reverse=True):
             excess = r["holdout_excess_return"]
             buyhold = r.get("holdout_buyhold_return")
             exposure = r.get("holdout_exposure_fraction")

@@ -323,6 +323,64 @@ def check_any_arm_reachability_live(tournament_cfg: dict | None,
     return unreachable
 
 
+# Issue #1093/#1241 (P1) — clause -> Threshold-Key fuer die LIVE-Reachability eines MANDATORY
+# ``eligible_requires_all``-Gates (dieselbe p99-vs-Schwelle-Statistik wie ``_ANY_ARM_LIVE_
+# THRESHOLD_KEYS``, aber ABSICHTLICH ein SEPARATES Dict/Funktion statt einer Wiederverwendung von
+# ``check_any_arm_reachability_live``/``resolve_any_arm_policy``: Letztere treibt ``any_arm_
+# unreachable_policy`` (Default seit #812 ``'drop_arm'``) — ein Verhalten, das NUR fuer eine
+# DISJUNKTION (ein OR-Arm kollabiert auf die uebrigen Arme) sinnvoll ist. Ein MANDATORY ``_all``-
+# Gate hat keine "uebrigen Arme", auf die es kollabieren koennte; ihn ueber denselben Mechanismus
+# laufen zu lassen wuerde das neue Alpha-Gate stillschweigend droppen/rekalibrieren, sobald es
+# strukturell unerreichbar ist — exakt das Fail-open, das #1091/#1034 fuer die Familien-
+# Multiplizitaet bereits geschlossen haben. Diese Funktion liefert NUR eine READ-ONLY Diagnose
+# (in ``any_arm_live_unreachable`` gemergt, siehe run_optimization.py) — keine Policy-Wirkung.
+_ALL_CLAUSE_LIVE_THRESHOLD_KEYS = {"min_alpha_tstat": "oos_min_alpha_tstat"}
+
+
+def check_mandatory_gate_reachability_live(tournament_cfg: dict | None,
+                                           observed_values: dict[str, list] | None, *,
+                                           n_evaluated: int | None = None) -> list[str]:
+    """Issue #1093/#1241 (P1) — wie ``check_any_arm_reachability_live`` (#660), aber für
+    ``eligible_requires_all``-Klauseln (siehe ``_ALL_CLAUSE_LIVE_THRESHOLD_KEYS``-Docstring für die
+    Begründung der getrennten Funktion statt einer Wiederverwendung). Symptom (#1241): ``0 von 42``
+    Studies auf drei steigenden Symbolen bestanden ein absolutes Excess-Return-Gate; das neue
+    ``oos_min_alpha_tstat``-Gate soll — anders als das alte Excess-Gate — SICHTBAR machen, wenn es
+    für ein spezifisches Symbol/Tier strukturell unerreichbar ist (t(α) bleibt in JEDEM Trial unter
+    der Schwelle), statt die Study lautlos auf 0 eligible Trials laufen zu lassen. Rückgabe: die
+    Namen der betroffenen Klauseln (leer, wenn alles erreichbar ist oder zu wenig Daten vorliegen)."""
+    import logging
+
+    if n_evaluated is not None and n_evaluated <= 0:
+        return []
+
+    min_observations = int((tournament_cfg or {}).get("any_arm_min_observations", 10))
+    all_clauses = (tournament_cfg or {}).get("eligible_requires_all", []) or []
+    unreachable = []
+    for clause in all_clauses:
+        threshold_key = _ALL_CLAUSE_LIVE_THRESHOLD_KEYS.get(clause)
+        if threshold_key is None:
+            continue
+        threshold = (tournament_cfg or {}).get(threshold_key)
+        if threshold is None:
+            continue
+        samples = [float(v) for v in (observed_values or {}).get(clause, []) if v is not None]
+        if len(samples) < min_observations:
+            continue
+        sorted_vals = sorted(samples)
+        p99_idx = max(0, min(len(sorted_vals) - 1, round(0.99 * (len(sorted_vals) - 1))))
+        p99 = sorted_vals[p99_idx]
+        if float(threshold) > p99:
+            unreachable.append(clause)
+            logging.getLogger("optimizer").warning(
+                "[#1093] eligible_requires_all-Klausel '%s': Schwelle %.4f > beobachtetes p99=%.4f "
+                "DIESER Study (%d Trials) — dieses MANDATORY Gate ist für DIESES Symbol/DIESE "
+                "Strategie strukturell unerreichbar (jeder Trial wird abgelehnt), unabhängig von "
+                "jeder anderen Kennzahl. tournament.json['%s'] symbol-spezifisch prüfen.",
+                clause, float(threshold), p99, len(samples), threshold_key,
+            )
+    return unreachable
+
+
 # Issue #668 — gültige Werte für tournament.json['any_arm_unreachable_policy']. 'warn' (Default,
 # fehlt der Key) ist BIT-IDENTISCH zum Pre-#668-Verhalten (nur die #660-Live-Warnung, keine
 # Verhaltensänderung). Ein unbekannter Wert bricht fail-loud ab (analog #659

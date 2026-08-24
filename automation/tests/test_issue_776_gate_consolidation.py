@@ -33,9 +33,13 @@ def test_conjunction_contains_exactly_one_risk_adjusted_return_gate():
     # eligible_requires_any-OR-Arm, Pitfall #279) — das ändert nichts an der hier geprüften
     # Eigenschaft (genau EIN *risikoadjustiertes Rendite*-Gate, PSR). Issue #960 entfernte
     # 'min_profit_factor' wieder (sechste Redundanz-Instanz: Jaccard 0.964-0.979 mit oos_min_psr,
-    # marginaler Eigenbeitrag exakt 0.000).
+    # marginaler Eigenbeitrag exakt 0.000). Issue #1093/#1241 fügte 'oos_min_alpha_tstat' hinzu —
+    # ein Alpha-SIGNIFIKANZ-Gate (exposure-bereinigte t-Statistik der OLS-Alpha/Beta-Regression),
+    # keine zweite Instanz derselben "risikoadjustierte Rendite"-Kategorie wie PSR, und keine
+    # Wiederherstellung des #776-entfernten absoluten Excess-Return-Gates (siehe die zweite
+    # Assertion unten).
     requires_all = CFG["eligible_requires_all"]
-    assert requires_all == ["min_trades", "max_drawdown", "oos_min_psr"]
+    assert requires_all == ["min_trades", "max_drawdown", "oos_min_psr", "oos_min_alpha_tstat"]
     assert "oos_min_excess_return" not in requires_all
 
 

@@ -29,6 +29,7 @@ from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
     check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
     gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
+    check_mandatory_gate_reachability_live,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
@@ -81,7 +82,10 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_exposure_fraction": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_exposure_fraction, #986/#1140)",
     "oos_alpha": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
     "oos_beta": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
-    "oos_alpha_tstat": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #986/#1140)",
+    # Issue #1093/#1241 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
+    # seit dem neuen oos_min_alpha_tstat-Gate tatsaechlich per Sweep-Trial gestempelt (siehe
+    # Stempelstelle oben, neben oos_win_rate) — Grundlage fuer reward.check_mandatory_gate_
+    # reachability_live. oos_alpha/oos_beta bleiben holdout-only (kein Gate braucht sie live).
     "oos_alpha_n_periods": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #1038/#1187)",
     "oos_f_turnover_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_median, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_turnover_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_max, #989/#1143, umbenannt #1085/#1233)",
@@ -2974,6 +2978,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     # für TSLA.ETORO Hourly tatsächlich beobachtete OOS-Win-Rate blieb unter ~0.11).
     live_win_rates = [getattr(t, "user_attrs", {}).get("oos_win_rate") for t in trials
                       if getattr(t, "user_attrs", {}).get("oos_win_rate") is not None]
+    # Issue #1093/#1241 (P1) — dieselbe Live-Kohorte fuer das neue MANDATORY oos_min_alpha_tstat-
+    # Gate (siehe reward.check_mandatory_gate_reachability_live-Docstring).
+    live_alpha_tstats = [getattr(t, "user_attrs", {}).get("oos_alpha_tstat") for t in trials
+                         if getattr(t, "user_attrs", {}).get("oos_alpha_tstat") is not None]
     any_arm_live_unreachable = []
     # Issue #668 — hebt die reine #660-Warnung auf eine KONFIGURIERTE Policy (warn/drop_arm/
     # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
@@ -2990,6 +2998,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
             any_arm_policy_decision = resolve_any_arm_policy(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
+            # Issue #1093/#1241 — die READ-ONLY Diagnose fuer das neue MANDATORY-Gate wird in
+            # dieselbe Telemetrie-Liste gemergt (keine Policy-Wirkung, siehe Docstring dort), damit
+            # ``any_arm_live_unreachable`` (Akzeptanzkriterium #1241) auch ein strukturell
+            # unerreichbares oos_min_alpha_tstat-Gate erfasst.
+            any_arm_live_unreachable = list(any_arm_live_unreachable) + [
+                c for c in check_mandatory_gate_reachability_live(
+                    _tcfg_arm, {"min_alpha_tstat": live_alpha_tstats}, n_evaluated=evaluable)
+                if c not in any_arm_live_unreachable
+            ]
             _emit_any_arm_reachability_result(
                 logging.getLogger("optimizer"), any_arm_live_unreachable,
                 check_name="check_any_arm_reachability_live",
@@ -3698,6 +3715,11 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         if metrics.oos_evaluated:
             if metrics.oos_win_rate is not None:
                 trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
+            # Issue #1093/#1241 (P1) — dieselbe "nur gesetzt, wenn vorhanden"-Konvention wie
+            # oos_win_rate: LIVE-Reachability-Grundlage fuer das neue oos_min_alpha_tstat-Gate
+            # (siehe check_mandatory_gate_reachability_live unten).
+            if metrics.oos_alpha_tstat is not None:
+                trial.set_user_attr("oos_alpha_tstat", metrics.oos_alpha_tstat)
             if metrics.oos_profit_factor is not None:
                 trial.set_user_attr("oos_profit_factor", metrics.oos_profit_factor)
             if metrics.oos_expectancy is not None:
