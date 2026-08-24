@@ -4731,7 +4731,20 @@ def _build_report(
     # confirm.py): ``bounds.py`` importiert ``spaces.py``, das seinerseits ``sweep_diagnostics``
     # lazy laedt — ein Modul-Top-Level-Import wuerde diese Kette unnoetig frueh aufloesen.
     from automation.optimizer.bounds import active_bounds_overrides as _active_bounds_overrides_fn
-    _active_bounds_overrides_list = _active_bounds_overrides_fn()
+    _active_bounds_overrides_all_list = _active_bounds_overrides_fn()
+    # Issue #1097/#1245 (P3, Katalog #1247+) — Root-Cause: ``cross_study.active_bounds_overrides``
+    # zeigte in ALLEN 11 Laeufen dasselbe GESAMTE kuratierte Inventar (alle 18 TSLA-Eintraege, auch
+    # im GOOGL-/NVDA-/NATGAS-Lauf) — summary_de.py §5.4 filtert bereits seit #1064/#1214 auf die
+    # Symbole DIESES Laufs, das JSON selbst tat es nicht. Dieselbe Filterung, dieselbe Quelle
+    # (``studies_out``, wie jede andere Report-Zeile) — die volle, ungefilterte Liste bleibt unter
+    # ``active_bounds_overrides_all`` erhalten (Fix-Vorgabe: "vollständige Liste ... erhalten").
+    _active_bounds_overrides_run_symbols = {
+        r.get("symbol") for r in studies_out if r.get("symbol")
+    }
+    _active_bounds_overrides_list = [
+        o for o in _active_bounds_overrides_all_list
+        if o.get("symbol") in _active_bounds_overrides_run_symbols
+    ]
 
     # Issue #1039/#1188 (Katalog #1188) — einmal berechnet (statt zweimal wie zuvor implizit
     # angenommen), damit die Sektion selbst UND die Regressions-Gegenprobe garantiert dieselbe
@@ -4944,13 +4957,16 @@ def _build_report(
             # Issue #1039/#1188 — primär aus ``studies_out`` selbst abgeleitet (siehe dortiger
             # Docstring), nicht mehr ausschliesslich aus dem #761-Diagnose-Cache.
             "boundary_solutions": _boundary_solutions_list,
-            # Issue #1040/#1189 (Katalog #1189) — Inventar ALLER aktiven Suchraum-Overrides
+            # Issue #1040/#1189 (Katalog #1189) — Inventar der aktiven Suchraum-Overrides
             # (kuratiert UND automatisch vorgeschlagen), je (Strategie, Symbol, Parameter) mit
             # active/default-Bounds, Quelle und Herkunft (siehe bounds.active_bounds_overrides-
             # Docstring). Macht sichtbar, DASS/WORueBER ein Suchraum ueberhaupt geweitet wurde,
             # statt nur ex-post ueber boundary_veto_evidence (nur der GEWINNER-Trial EINER Study)
             # erschliessbar zu sein.
+            # Issue #1097/#1245 (P3) — auf die Symbole DIESES Laufs gefiltert (siehe oben); die
+            # ungefilterte Fassung bleibt unter ``active_bounds_overrides_all`` verfuegbar.
             "active_bounds_overrides": _active_bounds_overrides_list,
+            "active_bounds_overrides_all": _active_bounds_overrides_all_list,
             # Issue #1082 Fix Punkt (a) — Studies unter der check_objective_branch_coverage-Schwelle
             # als Rohmaterial fuer den Suchbudget-Vorschlag des naechsten Laufs (sweep.py liest
             # diese Sektion aus dem juengsten Report und deprioritisiert die betroffenen Paare).

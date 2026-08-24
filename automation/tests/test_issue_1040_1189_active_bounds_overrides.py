@@ -84,8 +84,31 @@ def test_report_exports_active_bounds_overrides_in_cross_study(tmp_path, monkeyp
     import json
     data = json.loads(out_path.read_text("utf-8"))
     assert "active_bounds_overrides" in data["cross_study"]
-    names = {(o["strategy"], o["parameter"]) for o in data["cross_study"]["active_bounds_overrides"]}
-    assert ("TrendPullbackStrategy", "ema_period") in names
+    assert "active_bounds_overrides_all" in data["cross_study"]
+    # Issue #1097/#1245 (P3) — die volle, ungefilterte Fassung steht unter
+    # active_bounds_overrides_all (die kuratierte TSLA/ema_period-Override existiert unabhängig
+    # von diesem (leeren) Lauf).
+    names_all = {
+        (o["strategy"], o["parameter"]) for o in data["cross_study"]["active_bounds_overrides_all"]
+    }
+    assert ("TrendPullbackStrategy", "ema_period") in names_all
+    # active_bounds_overrides selbst ist auf die Symbole DIESES Laufs gefiltert (0 Studies ⇒ 0
+    # Laufsymbole ⇒ leer, obwohl active_bounds_overrides_all nicht leer ist) — Akzeptanzkriterium
+    # #1097/#1245.
+    assert data["cross_study"]["active_bounds_overrides"] == []
+
+
+def test_active_bounds_overrides_only_shows_entries_for_symbols_in_this_run():
+    """Akzeptanzkriterium #1097/#1245: im GOOGL-Lauf ist active_bounds_overrides leer (TSLA ist
+    nicht Teil des Laufs), waehrend die volle, ungefilterte Liste (active_bounds_overrides_all,
+    hier direkt ueber bounds.active_bounds_overrides() nachgebildet) TSLA weiterhin enthaelt."""
+    from automation.optimizer import bounds
+    all_overrides = bounds.active_bounds_overrides()
+    assert any(o["symbol"] == "TSLA.ETORO" for o in all_overrides)  # Sanity: Fixtur unveraendert.
+    run_symbols = {"GOOGL.ETORO"}
+    filtered = [o for o in all_overrides if o["symbol"] in run_symbols]
+    assert not any(o["symbol"] == "TSLA.ETORO" for o in filtered)
+    assert all(o["symbol"] == "GOOGL.ETORO" for o in filtered)
 
 
 # ── summary_de.py: Issue #1064/#1214 -- auf run.symbols gefiltert, IMMER gerendert (leer mit
