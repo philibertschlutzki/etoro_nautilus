@@ -62,7 +62,11 @@ def test_the_three_weights_are_zeroed_in_the_shipped_config():
 
 
 def test_reward_semantics_version_bumped_to_24():
-    assert CFG["reward_semantics_version"] == 24
+    # Issue #1078/#1226 bumped reward_semantics_version further (24 -> 25); wie jeder andere
+    # Bump-Test dieser Familie (test_issue_637/658/672/686/697/711/766/781/815/834/854/912/936/961
+    # -- allesamt ">="), verifiziert dieser Test nur, dass der #1068-Bump auf 24 monoton ERHALTEN
+    # blieb, nicht, dass 24 die aktuelle Version ist.
+    assert CFG["reward_semantics_version"] >= 24
 
 
 def test_version_history_documents_the_1218_bump():

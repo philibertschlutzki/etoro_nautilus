@@ -6936,3 +6936,35 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 
 ### 🟡 Pitfall #436 — Ein „aktives" Inventar ist auf den Scope des Laufs zu filtern [Katalog #1196–#1221, GitHub-Issue #1064]
 **Verbatim (Issue #1072 Teil VII):** Ein Inventar, das „aktiv" heisst, ist auf den Scope des Laufs zu filtern. Ein Report, der in einem NATGAS-Lauf TSLA-Bounds als aktiv ausweist, produziert falsche Kausalannahmen beim Leser.
+
+## Neue Pitfalls #437–446 (Issue-Katalog #1247+, verbatim aus Issue #1099 Abschnitt 8, Fix Punkt 3 aus Issue #1098/#1246)
+
+### 🔴 Pitfall #437 — Eine Invariante darf kein Feld lesen, das erst später im selben Report-Aufbau gestempelt wird [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Eine Invariante, die ein Feld liest, das erst später im selben Report-Aufbau gestempelt wird, ist fail-open. Neue Checks **nach** der vollständigen Record-Befüllung anhängen, und im Check zwischen „Feld fehlt" (`INCONCLUSIVE`) und „Feld ist 0" (`FAIL`) unterscheiden.
+
+### 🔴 Pitfall #438 — Ein Skalierungsterm in einer Schwellenformel muss aus einem Bezugsrahmen stammen [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Ein Skalierungsterm in einer Schwellenformel muss aus **einem** Bezugsrahmen stammen. `sweep_weite_Zählung / einzelner_Holdout` ist kein Anteil, auch wenn der Docstring es behauptet.
+
+### 🟠 Pitfall #439 — Eine Kostenstress-Leiter muss vollständig vom Monotonie-Wächter abgedeckt sein [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Eine Kostenstress-Leiter muss **vollständig** vom Monotonie-Wächter abgedeckt sein. Eine additiv ergänzte Stufe, die nicht in der Prüfrelation steht, ist eine ungeprüfte Stufe.
+
+### 🟠 Pitfall #440 — Ein Symbol-Override darf nur die Felder ersetzen, die er nennt [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Ein Symbol-Override darf nur die Felder ersetzen, die er nennt. Ersetzt er das ganze Kostenobjekt, erbt das Symbol lautlos Nullen für alles Übrige — und es ist immer genau das Symbol, das am meisten optimiert wurde.
+
+### 🟡 Pitfall #441 — Median eines Produkts/einer Summe ≠ Produkt/Summe der Mediane [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Median eines Produkts ≠ Produkt der Mediane; Median einer Summe ≠ Summe der Mediane. Wird eine Grösse per Round-Trip gemessen, ist die per-Round-Trip-Aggregation die einzige zulässige Grundlage für Quotienten, Anteile und Identitäten. Achte Instanz dieser Fehlerklasse (nach #304, #1126, #1173, #1230, #1231, #1229, #1233).
+
+### 🟡 Pitfall #442 — Eine berechnete Kennzahl ohne `set_user_attr`-Bruecke existiert für jede Invariante nicht [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Eine Kennzahl, die in `_aggregate_exit_telemetry` berechnet wird, aber nirgends `set_user_attr` erreicht, existiert für jede Invariante nicht. Ein generischer Brücken-Test über alle Rückgabewerte schliesst die Klasse; einzelne Reparaturen nicht (sechste Instanz nach #953, #1095, #1119, #1171, #1172).
+
+### 🟡 Pitfall #443 — „Notional eines Round-Trips" ist mehrdeutig: Umschlag oder Exposure [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** „Notional eines Round-Trips" ist mehrdeutig: Summe über Legs (Umschlag) oder Spitze (Exposure). Ein Deckel begrenzt Exposure; ein Check, der Umschlag misst, kann seine Einhaltung weder bestätigen noch widerlegen.
+
+### 🟠 Pitfall #444 — Die Überanpassungs-Signatur (steigender IS-Reward, fallender OOS-Ertrag) muss im System gemessen werden [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Steigender In-Sample-Reward bei fallendem Out-of-Sample-Ertrag ist die Überanpassungs-Signatur. Sie muss **im System gemessen** werden, nicht extern über mehrere Artefakte rekonstruiert.
+
+### 🟠 Pitfall #445 — Ein absolutes Exzess-Gate gegen einen Benchmark ist regimeabhängig trivial erfüllbar oder unerreichbar [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Ein absolutes Exzess-Gate gegen einen Benchmark ist im fallenden Markt durch Nichtstun erfüllbar und im steigenden durch Alpha allein nicht erreichbar. Exposure-normierte, t-verteilte Grössen funktionieren in beide Richtungen.
+
+### 🟡 Pitfall #446 — Ein Median über eine strukturell mehrheitlich-null Serie misst die Mehrheit, nicht das Phänomen [Katalog #1247+, GitHub-Issues #1098/#1099]
+**Verbatim (Issue #1099 Abschnitt 8):** Ein Median über eine Serie, deren Mehrheit strukturell null ist, misst die Mehrheit, nicht das Phänomen. Vor der Medianbildung die degenerierte Teilmenge ausschliessen **und** ihren Anteil als eigene Kennzahl ausweisen.
