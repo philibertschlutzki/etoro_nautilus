@@ -4116,12 +4116,27 @@ def check_cost_stress_monotonicity(
     VERBESSERUNG um +145,76 bps. Dieser Check FAILt auf genau diesem Altstand und besteht, sobald
     Basis und Leiter dieselbe Population teilen.
 
-    Klausel je Study mit definierten Werten:
-        exp >= exp_1_5x >= exp_2x
+    Issue #1076/#1224 (Katalog #1247+, P0) — die Leiter erhielt mit #987/#1141 eine VIERTE Stufe
+    (``full_realism``, additiv eingefuehrt), die nie in diese Pruefrelation aufgenommen wurde: in
+    42 von 146 Studies war ``full_realism`` MILDER als der 2×-Stress (Delta = +0,000300 =
+    ``c_rt(TSLA)``), waehrend dieser Check unveraendert ``passed=True, detail="OK"`` meldete — eine
+    additiv ergaenzte Stufe, die nicht in der Pruefrelation steht, ist eine ungeprüfte Stufe
+    (Pitfall #439 in AGENTS.md). Die Klausel ist jetzt:
+
+        exp >= exp_1_5x >= exp_2x >= exp_full_realism
         |(exp - exp_1_5x) - (exp_1_5x - exp_2x)| <= step_tolerance_bps (Default 0,05 bps)
 
-    Nur Studies mit allen drei Feldern definiert werden geprüft (kein Trade ⇒ nicht anwendbar für
-    diese Study, kein FAIL)."""
+    ``full_realism`` ist ausdruecklich eine UNTERE SCHRANKE der Leiter (Finanzierung + volle
+    Slippage statt eines c_rt-Vielfachen — ein qualitativ anderer Kostenmechanismus, siehe
+    ``backtest_runner._full_realism_expectancy``-Docstring), deshalb wird fuer den vierten Rang NUR
+    Monotonie verlangt, keine Schrittgleichheit mit den ersten beiden Stufen. ``_full_realism_
+    expectancy`` und ``_expectancy_cost_stress`` teilen sich denselben 5-%-Median-Notional-
+    Nennerboden (siehe dortige Docstrings) — nur dadurch ist ein Vergleich zwischen den Stufen
+    ueberhaupt eine Kostenaussage und keine Schaetzer-Artefakt-Differenz.
+
+    Nur Studies mit allen Feldern definiert werden geprüft (kein Trade ⇒ nicht anwendbar für diese
+    Study, kein FAIL); Studies ohne ``holdout_expectancy_cost_stress_full_realism`` werden weiterhin
+    NUR auf den ersten drei Raengen geprüft (Rueckwaertskompatibilitaet zu Reports vor #987/#1141)."""
     tolerance = step_tolerance_bps / 10000.0
     with_data = [
         r for r in study_records
@@ -4133,11 +4148,11 @@ def check_cost_stress_monotonicity(
         return InvariantResult(
             name="check_cost_stress_monotonicity",
             passed=True,
-            expected="exp >= exp_1_5x >= exp_2x UND gleich grosse Schritte (+/- "
-                     f"{step_tolerance_bps:.2f} bps)",
+            expected="exp >= exp_1_5x >= exp_2x >= exp_full_realism UND gleich grosse Schritte "
+                     f"(+/- {step_tolerance_bps:.2f} bps) zwischen exp/exp_1_5x/exp_2x",
             actual=None,
             severity="blocking",
-            detail="Keine Studies mit allen drei Kostenstress-Feldern — nicht anwendbar.",
+            detail="Keine Studies mit allen Kostenstress-Feldern — nicht anwendbar.",
         )
     offenders: dict[str, dict[str, float]] = {}
     for r in with_data:
@@ -4154,19 +4169,28 @@ def check_cost_stress_monotonicity(
         if abs(step_1 - step_2) > tolerance:
             offenders[key] = {"exp": exp, "exp_1_5x": exp_1_5x, "exp_2x": exp_2x,
                               "step_1": step_1, "step_2": step_2, "violation": "uneven_steps"}
+            continue
+        # Issue #1076/#1224 Fix Punkt 1 — die vierte Stufe: nur Monotonie (untere Schranke),
+        # keine Schrittgleichheit (full_realism ist ein anderer Kostenmechanismus).
+        exp_full_realism = r.get("holdout_expectancy_cost_stress_full_realism")
+        if exp_full_realism is not None and float(exp_full_realism) > exp_2x + tolerance:
+            offenders[key] = {"exp": exp, "exp_1_5x": exp_1_5x, "exp_2x": exp_2x,
+                              "exp_full_realism": float(exp_full_realism),
+                              "violation": "full_realism_milder_than_2x"}
     passed = not offenders
     return InvariantResult(
         name="check_cost_stress_monotonicity",
         passed=passed,
-        expected="exp >= exp_1_5x >= exp_2x UND gleich grosse Schritte (+/- "
-                 f"{step_tolerance_bps:.2f} bps)",
+        expected="exp >= exp_1_5x >= exp_2x >= exp_full_realism UND gleich grosse Schritte "
+                 f"(+/- {step_tolerance_bps:.2f} bps) zwischen exp/exp_1_5x/exp_2x",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies: die Kostenstress-Leiter ist nicht monoton "
-                "und/oder ungleich gestuft — Basis (holdout_expectancy_capital_weighted) und "
-                "Leiter (holdout_expectancy_cost_stress_1_5x/_2x) stehen auf verschiedenen "
-                f"Populationen (#945/#1111): {offenders}"),
+                f"{len(offenders)} Study/Studies: die Kostenstress-Leiter ist nicht monoton, "
+                "ungleich gestuft, und/oder full_realism (untere Schranke) ist milder als der "
+                "2×-Stress — Basis (holdout_expectancy_capital_weighted) und Leiter "
+                "(holdout_expectancy_cost_stress_1_5x/_2x/_full_realism) stehen auf verschiedenen "
+                f"Populationen (#945/#1111, #1076/#1224): {offenders}"),
         provenance={"offenders": offenders} if offenders else None,
     )
 

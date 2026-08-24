@@ -732,6 +732,35 @@ def _section_2_monetary_result(report: dict) -> str:
                 f"{_fmt_num(r.get('trigger_to_fill_gap_bps'), digits=2)} | "
                 f"{_fmt_num(r.get('realized_loss_bps'), digits=2)} |"
             )
+    # Issue #1076/#1224 (Katalog #1247+, P0) Fix Punkt 3 — die Kostenstress-Leiter
+    # (``invariants.check_cost_stress_monotonicity``) erhielt mit #987/#1141 eine vierte, additive
+    # Stufe (``full_realism``), die bislang NUR im Report-JSON stand, nicht im Artefakt selbst — ein
+    # Leser konnte die Monotonie-Klausel (exp >= exp_1_5x >= exp_2x >= exp_full_realism) nicht ohne
+    # JSON-Zugriff nachvollziehen. Diese Tabelle macht die Leiter je Study sichtbar.
+    _cost_stress_rows = [
+        r for r in studies if r.get("holdout_expectancy_capital_weighted") is not None
+    ]
+    if _cost_stress_rows:
+        lines.append("")
+        lines.append(
+            "**Kostenstress-Leiter** (Expectancy kapitalgewichtet je Study, bps; monoton fallend "
+            "von links nach rechts erwartet, `full_realism` als untere Schranke — "
+            "`invariants.check_cost_stress_monotonicity`):"
+        )
+        lines.append("")
+        lines.append(
+            "| Strategie | Symbol | Expectancy | Expectancy 1,5×-Stress | Expectancy 2×-Stress | "
+            "Expectancy unter full_realism |"
+        )
+        lines.append("|---|---|---:|---:|---:|---:|")
+        for r in sorted(_cost_stress_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('holdout_expectancy_capital_weighted'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_expectancy_cost_stress_1_5x'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_expectancy_cost_stress_2x'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_expectancy_cost_stress_full_realism'), digits=4)} |"
+            )
     return "\n".join(lines)
 
 

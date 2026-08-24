@@ -4615,7 +4615,20 @@ def _full_realism_expectancy(
 
     Finanzierung wird je Round-Trip ueber ``ceil(holding_ns / 1 Tag)`` Kalendertage berechnet
     (dieselbe dokumentierte Vereinfachung wie ``_finalize_round_trip``). Denselben 5-%-Median-
-    Notional-Nennerboden wie ``_expectancy_cost_stress``/``expectancy_capital_weighted`` (#1031).
+    Notional-Nennerboden wie ``_expectancy_cost_stress``/``expectancy_capital_weighted`` (#1031) —
+    NICHT nur zufaellig gleich, sondern eine explizite Invariante: unterscheiden sich die
+    Dust-/Notional-Boeden der beiden Funktionen, ist eine Differenz zwischen den Stufen nicht mehr
+    als Kostenwirkung interpretierbar, sondern vermischt sich mit einer Schaetzer-Artefakt-
+    Differenz (Issue #1076/#1224, Katalog #1247+, Test-fixiert in
+    test_issue_945_1111_cost_stress_basis.py).
+
+    Issue #1076/#1224 — ``full_realism`` ist ausdruecklich als UNTERE SCHRANKE der Kostenstress-
+    Leiter zu lesen (``invariants.check_cost_stress_monotonicity`` erzwingt
+    ``exp >= exp_1_5x >= exp_2x >= exp_full_realism``), nicht als eine weitere Stufe DERSELBEN
+    c_rt-Multiplikator-Reihe wie ``_expectancy_cost_stress`` — sie zieht einen qualitativ anderen
+    Kostenmechanismus ab (Finanzierung + volle Slippage statt eines c_rt-Vielfachen) und ist
+    deshalb nur gegen ``exp_2x`` monoton, nicht notwendig gleich gestuft.
+
     ``None`` ohne positive Notionale."""
     positive = [nz for _, nz, _ in pnls_notionals_holding if nz and nz > 0.0]
     if not positive:

@@ -23,6 +23,8 @@ Deckt ab:
   - ``summary_de.py`` Abschnitt 2.1 zeigt/sortiert nach ``holdout_expectancy_capital_weighted``,
     nicht mehr nach der (jetzt umbenannten) notional-gewichteten Grösse.
 """
+import pytest
+
 from automation.optimizer import invariants as inv
 from automation.optimizer import summary_de
 
@@ -108,6 +110,106 @@ def test_within_tolerance_rounding_still_passes():
 
 def test_not_applicable_without_all_three_fields():
     assert inv.check_cost_stress_monotonicity([{"strategy": "A", "symbol": "B"}]).passed is True
+
+
+# ── Issue #1076/#1224 (Katalog #1247+, P0) — vierte Stufe full_realism (untere Schranke) ────────
+
+def test_passes_when_full_realism_is_below_2x_within_a_lower_bound():
+    """full_realism ist additiv (#987/#1141) und braucht KEINE Schrittgleichheit zu 1.5x/2x --
+    nur exp_full_realism <= exp_2x (+ Toleranz) wird verlangt."""
+    records = [{
+        "strategy": "SqueezeBreakout", "symbol": "PLTR.ETORO",
+        "holdout_expectancy_capital_weighted": _bps(-21.57),
+        "holdout_expectancy_cost_stress_1_5x": _bps(-23.57),
+        "holdout_expectancy_cost_stress_2x": _bps(-25.57),
+        "holdout_expectancy_cost_stress_full_realism": _bps(-40.00),  # deutlich unter 2x, OK
+    }]
+    result = inv.check_cost_stress_monotonicity(records)
+    assert result.passed is True
+
+
+def test_fails_when_full_realism_is_milder_than_the_2x_stress():
+    """Reproduziert das #1224-Symptom: full_realism (additiv ergaenzte, ungeprüfte vierte Stufe)
+    war in 42/146 Studies MILDER als der 2x-Stress um genau c_rt(TSLA)=+0.000300 -- muss FAIL sein,
+    nicht der unveraenderte passed=True der Alt-Pruefrelation."""
+    records = [{
+        "strategy": "A", "symbol": "TSLA.ETORO",
+        "holdout_expectancy_capital_weighted": _bps(-10.0),
+        "holdout_expectancy_cost_stress_1_5x": _bps(-12.0),
+        "holdout_expectancy_cost_stress_2x": _bps(-14.0),
+        "holdout_expectancy_cost_stress_full_realism": _bps(-11.0),  # milder als 2x (-14.0)
+    }]
+    result = inv.check_cost_stress_monotonicity(records)
+    assert result.passed is False
+    offender = result.actual["A/TSLA.ETORO"]
+    assert offender["violation"] == "full_realism_milder_than_2x"
+    assert offender["exp_full_realism"] == pytest.approx(_bps(-11.0))
+
+
+def test_full_realism_within_tolerance_of_2x_still_passes():
+    records = [{
+        "strategy": "A", "symbol": "B.ETORO",
+        "holdout_expectancy_capital_weighted": _bps(-10.0),
+        "holdout_expectancy_cost_stress_1_5x": _bps(-12.0),
+        "holdout_expectancy_cost_stress_2x": _bps(-14.0),
+        "holdout_expectancy_cost_stress_full_realism": _bps(-14.03),  # 0.03bps < 0.05bps Toleranz
+    }]
+    result = inv.check_cost_stress_monotonicity(records)
+    assert result.passed is True
+
+
+def test_backward_compatible_studies_without_full_realism_field_are_unaffected():
+    """Studies ohne holdout_expectancy_cost_stress_full_realism (aeltere Report-JSONs) werden
+    weiterhin NUR auf den ersten drei Raengen geprueft -- Rueckwaertskompatibilitaet."""
+    records = [{
+        "strategy": "SqueezeBreakout", "symbol": "PLTR.ETORO",
+        "holdout_expectancy_capital_weighted": _bps(-21.57),
+        "holdout_expectancy_cost_stress_1_5x": _bps(-23.57),
+        "holdout_expectancy_cost_stress_2x": _bps(-25.57),
+        # kein holdout_expectancy_cost_stress_full_realism -> vierte Stufe wird uebersprungen
+    }]
+    result = inv.check_cost_stress_monotonicity(records)
+    assert result.passed is True
+
+
+def test_mixed_cohort_only_flags_the_study_with_the_full_realism_violation():
+    clean = [{
+        "strategy": f"Strat{i}", "symbol": "X.ETORO",
+        "holdout_expectancy_capital_weighted": _bps(-10.0 - i),
+        "holdout_expectancy_cost_stress_1_5x": _bps(-12.0 - i),
+        "holdout_expectancy_cost_stress_2x": _bps(-14.0 - i),
+        "holdout_expectancy_cost_stress_full_realism": _bps(-20.0 - i),
+    } for i in range(5)]
+    broken = [{
+        "strategy": "SqueezeBreakout", "symbol": "TSLA.ETORO",
+        "holdout_expectancy_capital_weighted": _bps(-10.0),
+        "holdout_expectancy_cost_stress_1_5x": _bps(-12.0),
+        "holdout_expectancy_cost_stress_2x": _bps(-14.0),
+        "holdout_expectancy_cost_stress_full_realism": _bps(-13.7),  # milder als 2x
+    }]
+    result = inv.check_cost_stress_monotonicity(clean + broken)
+    assert result.passed is False
+    assert len(result.actual) == 1
+    assert "SqueezeBreakout/TSLA.ETORO" in result.actual
+
+
+# ── summary_de.py Abschnitt 2.4: Kostenstress-Leiter inkl. full_realism sichtbar (#1076/#1224) ──
+
+def test_section_2_4_shows_the_full_cost_stress_ladder_including_full_realism():
+    candidates = [{
+        "strategy": "SqueezeBreakout", "symbol": "PLTR.ETORO",
+        "promotion_outcome": "READY_FOR_PR", "holdout_total_return": 0.01,
+        "holdout_expectancy_capital_weighted": _bps(-21.57),
+        "holdout_expectancy_cost_stress_1_5x": _bps(-23.57),
+        "holdout_expectancy_cost_stress_2x": _bps(-25.57),
+        "holdout_expectancy_cost_stress_full_realism": _bps(-40.00),
+        "holdout_total_trades": 8,
+    }]
+    text = summary_de.generate_german_summary(_report_with_candidates(candidates))
+    section = text.split("### 2.4")[1]
+    assert "Kostenstress-Leiter" in section
+    assert "full_realism" in section
+    assert "-0.0040" in section  # full_realism-Spalte, 4 Nachkommastellen
 
 
 # ── summary_de.py Abschnitt 2.1: sortiert/zeigt holdout_expectancy_capital_weighted ─────────────
