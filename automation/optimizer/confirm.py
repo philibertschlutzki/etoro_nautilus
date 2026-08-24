@@ -1576,18 +1576,32 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # eine Familien-Multiplizitaet ERMITTELT hat und sie EXPLIZIT leer (0) meldet, loest den
     # Hard-Stop aus (siehe sweep._run_confirm_and_export: ``n_family_stage1_map.get(..., 0)``,
     # real IMMER ein int, nie None).
+    # Issue #1091/#1239 (P1, Katalog #1247+) — Root-Cause der #1034-Luecke: der Guard oben prueft
+    # nur den EXTERN uebergebenen ``deflation_n_family`` (``is not None and <= 0``), nicht die
+    # INTERN bereits aus demselben Parameter abgeleitete ``deflation_n_family_raw = int(
+    # deflation_n_family or 0)`` — kollabiert auch dann auf 0, wenn der Aufrufer eine unaufloesbare
+    # Familie durch ``deflation_n_family=None`` signalisiert (z. B. ``FAMILY_EXCLUDED_DEGENERATE``,
+    # #981/#1135) statt eines expliziten 0 — der #1034-Guard allein liess GENAU diesen Fall bewusst
+    # als "Legacy-Aufrufer, hat den Parameter nie gemessen" passieren (``deflation_n_family is not
+    # None``-Bedingung), obwohl ``deflation_n_effective = max(deflation_n, deflation_n_family_
+    # effective)`` weiter oben den Rueckfall auf das per-Study-N bereits maskiert hat, OHNE jedes
+    # Flag — Symptom: SqueezeBreakout/TSLA (deflation_n_family_raw=0, deflation_n_family_frozen=
+    # None, 180 Trials, 20/48/51 eligibel) passierte alle drei Laeufe. Fix: die Bedingung prueft
+    # direkt ``deflation_n_family_raw`` (subsumiert den alten expliziten-0-Fall vollstaendig, da
+    # ``deflation_n_family_raw`` fuer JEDEN nicht-positiven ``deflation_n_family``-Wert — explizit
+    # 0, negativ, oder ``None`` — auf denselben nicht-positiven Wert kollabiert).
     family_n_unresolvable = (
-        deflated_selection and deflation_n >= 2
-        and deflation_n_family is not None and int(deflation_n_family) <= 0
+        deflated_selection and deflation_n >= 2 and deflation_n_family_raw <= 0
     )
     if holdout_passed and family_n_unresolvable:
         holdout_passed = False
         holdout_reject_detail = "REJECT_PROMOTION_FAMILY_UNRESOLVABLE"
         logging.getLogger("optimizer").warning(
-            "[#1034] %s/%s: Deflationsstufe erreicht (deflation_n=%d), aber deflation_n_family "
-            "unaufloesbar (%r) ⇒ REJECT_PROMOTION_FAMILY_UNRESOLVABLE (kein Ersatzpfad, keine "
-            "stillschweigende per-Study-N-Substitution).",
-            strategy, symbol, deflation_n, deflation_n_family,
+            "[#1034/#1239] %s/%s: Deflationsstufe erreicht (deflation_n=%d), aber "
+            "deflation_n_family (%r) / deflation_n_family_raw (%r) unaufloesbar ⇒ "
+            "REJECT_PROMOTION_FAMILY_UNRESOLVABLE (kein Ersatzpfad, keine stillschweigende "
+            "per-Study-N-Substitution).",
+            strategy, symbol, deflation_n, deflation_n_family, deflation_n_family_raw,
         )
 
     # Issue #865 (Pitfall #277) — die Heterogenitäts-Politik wird JETZT angewendet, VOR der DSR-

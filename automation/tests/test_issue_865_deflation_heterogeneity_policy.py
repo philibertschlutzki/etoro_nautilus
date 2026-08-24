@@ -254,6 +254,10 @@ def test_suppress_dsr_policy_nulls_before_promotion_decision(tmp_path, monkeypat
         study, "SmaCrossoverStrategy", "AAA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        # Issue #1091/#1239: resolvierte (minimale) Familien-N haelt diese Fixture aus dem neuen
+        # unbedingten Hard-Stop heraus, ohne deflation_n_effective zu veraendern -- dieser Test
+        # prueft die suppress_dsr-Heterogenitaetspolitik, nicht die Familien-Multiplizitaet.
+        deflation_n_family=1,
     )
     assert res["metrics_symbol"].get("deflated_sr0") is None
     assert res["metrics_symbol"].get("deflated_dsr") is None

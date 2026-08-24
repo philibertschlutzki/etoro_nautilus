@@ -143,6 +143,10 @@ def test_conjunction_mode_dsr_drop_still_blocks_promotion(tmp_path, monkeypatch,
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        # Issue #1091/#1239: resolvierte (minimale) Familien-N haelt diese Fixture aus dem neuen
+        # unbedingten Hard-Stop heraus, ohne deflation_n_effective zu veraendern -- dieser Test
+        # prueft den Konjunktions-Modus, nicht die Familien-Multiplizitaet.
+        deflation_n_family=1,
     )
     assert res["metrics_symbol"]["deflated_dsr"] < 0.95
     assert res["holdout_passed"] is False
@@ -169,6 +173,7 @@ def test_dsr_or_robust_pair_mode_does_not_reinstate_when_pbo_unavailable(tmp_pat
             study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
             run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                           global_result=global_result),
+            deflation_n_family=1,  # Issue #1091/#1239 — haelt die Fixture aus dem neuen Hard-Stop heraus.
         )
 
     # DSR selbst scheitert weiterhin (dieselbe Kohorte wie im Konjunktions-Test) ...
@@ -215,6 +220,7 @@ def test_dsr_or_robust_pair_mode_reinstates_with_real_pbo_and_ci_evidence(tmp_pa
             study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
             run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                           global_result=global_result),
+            deflation_n_family=1,  # Issue #1091/#1239 — haelt die Fixture aus dem neuen Hard-Stop heraus.
         )
 
     # DSR selbst scheitert weiterhin (dieselbe Kohorte wie im Konjunktions-Test, keine echten

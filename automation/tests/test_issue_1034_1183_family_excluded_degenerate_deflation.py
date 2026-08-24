@@ -12,8 +12,19 @@ Promotionsschranke, ohne jedes Flag.
 Fix (Variante b aus #1034, die konservative Fail-Loud-Linie): ein unbedingter Hard-Stop
 ``REJECT_PROMOTION_FAMILY_UNRESOLVABLE``, sobald die Deflationsstufe mit einer EXPLIZIT (nicht
 ``None``) auf 0 aufgeloesten Familien-Multiplizitaet erreicht wird. ``deflation_n_family=None``
-(Legacy-/Unit-Test-Aufrufer, die den Parameter nie uebergeben) bleibt bit-identisch zum
+(Legacy-/Unit-Test-Aufrufer, die den Parameter nie uebergeben) blieb ZUNAECHST bit-identisch zum
 Pre-#1034-Verhalten.
+
+Update (Issue #1091/#1239, P1, Katalog #1247+): genau diese ``None``-Ausnahme war die Luecke, die
+#1034 fail-open liess — ``deflation_n_family_raw`` (intern via ``int(deflation_n_family or 0)``
+abgeleitet) kollabiert auch bei ``deflation_n_family=None`` auf 0, und ein realer Aufrufer, der
+eine unaufloesbare Familie ueber ``None`` statt eines expliziten 0 signalisiert (z. B.
+``FAMILY_EXCLUDED_DEGENERATE``, #981/#1135), durchlief den #1034-Guard unbehelligt. #1091 schliesst
+diese Luecke: der Hard-Stop greift jetzt zusaetzlich, wenn ``deflation_n_family_raw in (None, 0)``
+— unabhaengig davon, ob der Aufrufer explizit 0 oder gar nichts (``None``) uebergeben hat.
+Produktionsverhalten ist unveraendert, da ``sweep.py`` ``deflation_n_family`` immer als
+``.get((strategy, symbol), 0)`` auflöst und NIE ``None`` uebergibt — nur Legacy-/Unit-Test-Aufrufer,
+die den Parameter weglassen, sind von der Verschaerfung betroffen.
 """
 import itertools
 import json
@@ -155,16 +166,23 @@ def test_excluded_degenerate_family_n_zero_rejects_with_dedicated_detail(tmp_pat
     assert res["metrics_symbol"]["deflation_n_family"] == 0
 
 
-def test_none_deflation_n_family_stays_bit_identical_to_pre_1034(tmp_path, monkeypatch):
-    """Ein Legacy-/Unit-Test-Aufrufer, der ``deflation_n_family`` gar nicht uebergibt (``None``,
-    Default), loest den neuen Hard-Stop NICHT aus -- nur ein Aufrufer, der eine Familien-
-    Multiplizitaet ERMITTELT und EXPLIZIT leer (0) gemeldet hat, tut das. Diese Fixture (kleine,
-    eng gestreute Kohorte um den promoteten Wert) lehnt bereits VOR #1034 unveraendert am
-    regulaeren DSR-Drop-Gate ab (#618) -- der Beweis fuer #1034 ist, dass sich der Ablehnungsgrund
-    NICHT auf den neuen Hard-Stop verschiebt."""
+def test_none_deflation_n_family_now_rejects_via_1091_raw_collapse(tmp_path, monkeypatch):
+    """Issue #1091/#1239: ein Aufrufer, der ``deflation_n_family`` gar nicht uebergibt (``None``,
+    Default), loest den Hard-Stop JETZT ebenfalls aus, weil ``deflation_n_family_raw`` (intern aus
+    demselben Parameter via ``int(deflation_n_family or 0)`` abgeleitet) in diesem Fall genauso auf
+    0 kollabiert wie beim expliziten ``deflation_n_family=0`` -- vor #1091 liess GENAU dieser
+    ``None``-Pfad den #1034-Guard passieren (``deflation_n_family is not None``-Bedingung), obwohl
+    ``deflation_n_effective`` den Rueckfall auf das per-Study-N bereits lautlos maskiert hatte.
+    Produktionsverhalten (``sweep.py``) ist unveraendert, da dort ``deflation_n_family`` nie
+    ``None`` ist -- betroffen sind ausschliesslich Legacy-/Unit-Test-Aufrufer, die den Parameter
+    weglassen."""
     res = _confirm_with_family_n(tmp_path, monkeypatch, deflation_n_family=_SENTINEL_OMIT)
 
-    assert res["is_rejection_detail_override"] == "REJECT_HOLDOUT_DSR_DROP"
+    assert res["promote"] is False
+    assert res["holdout_passed"] is False
+    assert res["is_rejection_detail_override"] == "REJECT_PROMOTION_FAMILY_UNRESOLVABLE"
+    assert res["stage_results"]["deflation"] == {
+        "passed": False, "detail": "REJECT_PROMOTION_FAMILY_UNRESOLVABLE"}
     assert res["metrics_symbol"]["deflation_n_family"] == 0  # int(None or 0) -- unveraendert #652
 
 

@@ -189,6 +189,11 @@ def test_trial_passing_all_gates_is_rejected_on_dsr_alone(tmp_path, monkeypatch,
             study, "SmaCrossoverStrategy", "AAA.ETORO", global_params=global_params,
             run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                           global_result=global_result),
+            # Issue #1091/#1239: resolvierte (minimale) Familien-N haelt diese Fixture aus dem
+            # neuen unbedingten Hard-Stop heraus, ohne deflation_n_effective zu veraendern
+            # (max(deflation_n, 1) == deflation_n bei deflation_n >= 2) -- dieser Test prueft den
+            # DSR-Drop, nicht die Familien-Multiplizitaet.
+            deflation_n_family=1,
         )
 
     assert res["R_symbol"] > res["R_global"] + res["promotion_margin"]

@@ -121,6 +121,10 @@ def test_dsr_drop_sets_correct_override(tmp_path, monkeypatch, caplog):
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        # Issue #1091/#1239: resolvierte (minimale) Familien-N haelt diese Fixture aus dem neuen
+        # unbedingten Hard-Stop heraus, ohne deflation_n_effective zu veraendern -- dieser Test
+        # prueft den DSR-Drop-Override, nicht die Familien-Multiplizitaet.
+        deflation_n_family=1,
     )
     # Issue #1002/#1154 (Katalog #1170) — der DSR-Drop ist eine Deflations-Ablehnung (das Holdout-
     # Gate selbst war bestanden), traegt seither REJECTED_ON_DEFLATION statt des geteilten
@@ -165,6 +169,7 @@ def test_no_edge_over_global_sets_correct_override(tmp_path, monkeypatch):
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=equal_result,
                                       global_result=equal_result),
+        deflation_n_family=1,  # Issue #1091/#1239 — siehe Kommentar oben, halte die Fixture aus dem Hard-Stop heraus.
     )
     assert res["holdout_passed"] is True
     assert res["promote"] is False
@@ -190,6 +195,7 @@ def test_pbo_overfit_sets_correct_override(tmp_path, monkeypatch):
             study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
             run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                           global_result=global_result),
+            deflation_n_family=1,  # Issue #1091/#1239 — siehe Kommentar oben, haelt die Fixture aus dem Hard-Stop heraus.
         )
     finally:
         confirm._study_pbo = with_pbo
@@ -215,6 +221,7 @@ def test_boundary_overfit_sets_correct_override(tmp_path, monkeypatch):
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        deflation_n_family=1,  # Issue #1091/#1239 — siehe Kommentar oben, haelt die Fixture aus dem Hard-Stop heraus.
     )
     assert res["status"] == "REJECTED_BOUNDARY_SOLUTION"
     assert res["is_rejection_detail_override"] == "REJECT_BOUNDARY_SOLUTION"
@@ -243,6 +250,7 @@ def test_boundary_unresolved_hold_sets_correct_override_and_writes_diagnosis_cac
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        deflation_n_family=1,  # Issue #1091/#1239 — siehe Kommentar oben, haelt die Fixture aus dem Hard-Stop heraus.
     )
     assert res["status"] == "HOLD_BOUNDARY_UNRESOLVED"
     assert res["is_rejection_detail_override"] == "HOLD_BOUNDARY_UNRESOLVED"
@@ -267,6 +275,7 @@ def test_ready_for_pr_has_no_rejection_override(tmp_path, monkeypatch):
         study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
         run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
                                       global_result=global_result),
+        deflation_n_family=1,  # Issue #1091/#1239 — siehe Kommentar oben, haelt die Fixture aus dem Hard-Stop heraus.
     )
     assert res["status"] == "READY_FOR_PR"
     assert res["promote"] is True
