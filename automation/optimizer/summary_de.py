@@ -751,13 +751,25 @@ def _section_2_monetary_result(report: dict) -> str:
             "Stop-Level):"
         )
         lines.append("")
+        # Issue #1095/#1243 (P2, Katalog #1247+) — die Fill-Slippage hier UND der Absetzen-zu-
+        # Fill-Gap in der naechsten Tabelle sind ZWEI VERSCHIEDENE Groessen mit unterschiedlichem
+        # Nenner (bei fast identischen Zahlenwerten, z. B. AdxAtr/GOOGL 20,62 vs. 20,63) — dieser
+        # Lesehinweis + die benannten Spaltenueberschriften unten machen den jeweiligen Nenner
+        # ALLEIN aus dem Artefakt unterscheidbar, ohne die Berechnung selbst zu aendern.
+        lines.append(
+            "*Lesehinweis:* diese Tabelle bezieht die Slippage auf den **Stop-Level** (den Preis, "
+            "zu dem der Trailing-Stop stand); die folgende Tabelle bezieht den Absetzen-zu-Fill-"
+            "Gap auf den **Auslöse-Anker** (den Preis, der den Stop ausgelöst hat) — zwei "
+            "verschiedene Nenner, keine Doppelzählung derselben Grösse."
+        )
+        lines.append("")
         # Issue #1059/#1208 Fix — zwei getrennte Spalten statt einer einzelnen (scope-vermischten)
         # Slippage-Spalte; die Holdout-Spalte ist ``k. A.``, solange holdout_total_trades 0/None
         # ist (Akzeptanzkriterium: "Keine Study mit 0 Holdout-Trades trägt in der Holdout-Spalte
         # einen Wert").
         lines.append(
-            "| Strategie | Symbol | c_rt (bps) | Slippage (OOS, Median, bps, advers=+) | "
-            "Slippage (Holdout, Median, bps, advers=+) |")
+            "| Strategie | Symbol | c_rt (bps) | Slippage vs. Stop-Level (OOS, Median, bps, "
+            "advers=+) | Slippage vs. Stop-Level (Holdout, Median, bps, advers=+) |")
         lines.append("|---|---|---:|---:|---:|")
         for r in sorted(_slippage_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
             _has_holdout_trades = bool(r.get("holdout_total_trades"))
@@ -792,8 +804,9 @@ def _section_2_monetary_result(report: dict) -> str:
         )
         lines.append("")
         lines.append(
-            "| Strategie | Symbol | Stopdistanz (bps) | Absetzen-zu-Fill-Gap (bps) | "
-            "Realisierter Verlust (bps) | Anteil Stopdistanz | Anteil Absetzen-zu-Fill-Gap |"
+            "| Strategie | Symbol | Stopdistanz (bps) | Absetzen-zu-Fill-Gap vs. Auslöse-Anker "
+            "(bps) | Realisierter Verlust (bps) | Anteil Stopdistanz | Anteil Absetzen-zu-Fill-"
+            "Gap |"
         )
         lines.append("|---|---|---:|---:|---:|---:|---:|")
         for r in sorted(_decomp_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
