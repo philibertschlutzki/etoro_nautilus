@@ -27,4 +27,7 @@ automation/.env
 # Repository Data Exclusions & Champions Exception
 /data/*
 /data/optimizer/
-!/data/optimizer/champions/.claude/
+!/data/optimizer/champions/
+
+# Harness worktree/session state, not repo content
+.claude/
