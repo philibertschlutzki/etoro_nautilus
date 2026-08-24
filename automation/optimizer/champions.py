@@ -566,7 +566,16 @@ def _bump_corroboration(prior_lifecycle: dict, run_id: str) -> tuple[int, str]:
     Schreibvorgänge: zwei ``store_champion``-Aufrufe mit DERSELBEN ``run_id`` (z. B. ein Confirm-
     Retry innerhalb desselben Sweeps) erhöhen den Zähler nicht. Gibt ``(neuer_count,
     last_seen_run)`` zurück — ``last_seen_run`` ist immer die aktuelle ``run_id`` (dieser
-    Schreibvorgang fand offensichtlich in diesem Lauf statt, unabhängig davon, ob er zählte)."""
+    Schreibvorgang fand offensichtlich in diesem Lauf statt, unabhängig davon, ob er zählte).
+
+    Issue #1094/#1242 — bewusst UNVERAENDERT gegenueber #821: der Snooping-Schutz (dieselbe/eine
+    NICHT fortgeschrittene Datenbasis bestaetigt nichts Neues) lebt bereits, konfigurierbar, in
+    ``maybe_write_back``s ``champion_corroboration_mode`` (#910 — ``window_advance``/
+    ``independent_search``/``either``). Eine zusaetzliche Fenster-Schranke HIER, an der Zaehl-
+    Quelle, wuerde den ``independent_search``-Modus strukturell unerreichbar machen (zwei
+    UNABHAENGIGE Laeufe DERSELBEN Datenbasis sollen unter diesem Modus GENAU DESHALB korroborieren
+    duerfen, siehe dortiger Docstring) — die Fenster-Politik gehoert an die EINE Stelle, die ueber
+    beide Modi entscheidet, nicht in den reinen Lauf-Zaehler."""
     prior_count = int(prior_lifecycle.get("corroboration_count", 1) or 1)
     if prior_lifecycle.get("last_seen_run") == run_id:
         return prior_count, run_id
