@@ -2235,28 +2235,68 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
     diese zweite Identität ist der Regressionswächter dagegen, unabhängig von der ersten (die
     ausschliesslich über ``n_trials_informative`` rechnet und den PRUNED-Fehlalarm daher NICHT
     sieht). Fehlt ``n_evaluable`` (Pre-#1079-Report) ⇒ nur die erste Identität zählt (bit-identisch
-    zum Pre-#1079-Verhalten)."""
-    keys = ("n_trials_total", "n_trials_informative", "n_trials_pruned",
-            "n_trials_unevaluable", "n_trials_failed")
+    zum Pre-#1079-Verhalten).
+
+    Issue #1087/#1235 (P2, Katalog #1247+) — Root-Cause: dieser Check las bislang das BARE
+    ``n_trials_total`` — bis #1086/#1234 STORE-scoped (ueber Warm-Start-Wiederholungen akkumuliert,
+    z. B. 403 = 123+140+140 ueber drei Laeufe), seither RUN-scoped und bit-identisch zu
+    ``n_trials_total_study``, aber unter einem Namen, der diesen Vertrag NICHT explizit macht — ein
+    Leser der Fehlermeldung "n_trials_total (403)" neben einem im selben Record stehenden
+    ``n_trials_total_study = 140`` kann die beiden Grundgesamtheiten nicht auseinanderhalten.
+    Dieser Check bevorzugt seither ``n_trials_total_study`` (faellt auf das gleichwertige, bare
+    ``n_trials_total`` zurueck, falls der explizite Name fehlt — beide sind seit #1086/#1234
+    bit-identisch, kein Verhaltensunterschied fuer bestehende Aufrufer). Ist zusaetzlich
+    ``n_trials_total_store`` vorhanden UND weicht es vom run-scopeden Total ab UND erklaert es eine
+    ansonsten festgestellte Zerlegungs-Abweichung (die vier Kategorien summieren sich auf GENAU den
+    STORE-skopierten statt den RUN-skopierten Wert), meldet der Detailtext die eigene, benannte
+    Diagnose ``STORE_SCOPED_COUNTER_PRESENT`` statt einer irrefuehrenden, unerklaerten
+    Partitionsverletzung — dieselbe Zaehler-Skopen-Vermischung, die #1086/#1234 fuer die Quelle
+    bereits behoben hat, bleibt hier fuer den KONSUMENTEN als benannter Befund sichtbar, statt als
+    bare Zahlendivergenz zu erscheinen."""
+    total_study = study_counts.get("n_trials_total_study")
+    total_field = "n_trials_total_study"
+    if total_study is None:
+        total_study = study_counts.get("n_trials_total")
+        total_field = "n_trials_total"
+    keys = ("n_trials_informative", "n_trials_pruned", "n_trials_unevaluable", "n_trials_failed")
     values = {k: study_counts.get(k) for k in keys}
-    if any(v is None for v in values.values()):
+    if total_study is None or any(v is None for v in values.values()):
         return InvariantResult(
             name="check_denominator_coherence",
             passed=True,
             expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
-                     "n_trials_failed == n_trials_total",
+                     "n_trials_failed == n_trials_total_study",
             actual=None,
             detail="Zähler unbekannt (Pre-#885-Report) — nicht anwendbar.",
         )
-    total = values["n_trials_total"]
+    total = total_study
+    values = {total_field: total, **values}
     parts_sum = (values["n_trials_informative"] + values["n_trials_pruned"]
                  + values["n_trials_unevaluable"] + values["n_trials_failed"])
     passed = parts_sum == total
     detail_parts = []
+    total_store = study_counts.get("n_trials_total_store")
+    store_scoped_counter_present = (
+        not passed and total_store is not None and total_store != total and parts_sum == total_store)
     if not passed:
-        detail_parts.append(
-            f"Zerlegung ({parts_sum}) != n_trials_total ({total}): {values} — die #885-"
-            "Trial-Kategorien sind nicht disjunkt/vollständig.")
+        if store_scoped_counter_present:
+            values["n_trials_total_store"] = total_store
+            detail_parts.append(
+                f"STORE_SCOPED_COUNTER_PRESENT: die Zerlegung ({parts_sum}) stimmt mit dem "
+                f"STORE-skopierten n_trials_total_store ({total_store}) ueberein, nicht mit dem "
+                f"RUN-skopierten {total_field} ({total}) — die vier Kategorien-Zaehler sind "
+                "store-skopiert, waehrend der Nenner run-skopiert ist (oder umgekehrt); keine "
+                "echte Partitionsverletzung, aber die Zaehler-Skopen dieses Records sind "
+                "vermischt worden (#1235).")
+            # Issue #1087/#1235 — eine erklaerte Skopen-Vermischung ist KEINE echte
+            # Partitionsverletzung (die Kategorien-Zaehler selbst summieren sich korrekt auf EINE
+            # konsistente Grundgesamtheit, nur unter dem falschen Namen) — die Diagnose ersetzt den
+            # Fehlschlag, statt ihn nur umzubenennen.
+            passed = True
+        else:
+            detail_parts.append(
+                f"Zerlegung ({parts_sum}) != {total_field} ({total}): {values} — die #885-"
+                "Trial-Kategorien sind nicht disjunkt/vollständig.")
 
     n_evaluable = study_counts.get("n_evaluable")
     if n_evaluable is not None:
@@ -2269,7 +2309,7 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
         if not evaluable_passed:
             detail_parts.append(
                 f"Zweite Identität (#1079): n_evaluable + n_trials_pruned + n_trials_unevaluable + "
-                f"n_trials_failed ({evaluable_parts_sum}) != n_trials_total ({total}) — n_evaluable "
+                f"n_trials_failed ({evaluable_parts_sum}) != {total_field} ({total}) — n_evaluable "
                 "ueberlappt mit einer der anderen Kategorien (z. B. PRUNED-Trials, Beweis B-13 im "
                 "#866-Katalog).")
 
@@ -2277,9 +2317,13 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
         name="check_denominator_coherence",
         passed=passed,
         expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
-                 "n_trials_failed == n_trials_total (und n_evaluable analog, sofern vorhanden)",
+                 "n_trials_failed == n_trials_total_study (und n_evaluable analog, sofern "
+                 "vorhanden)",
         actual=values,
-        detail="OK" if passed else " ".join(detail_parts),
+        # Issue #1087/#1235 — STORE_SCOPED_COUNTER_PRESENT bleibt SICHTBAR, auch wenn sie den
+        # Fehlschlag ersetzt (passed=True): eine erklaerte Skopen-Vermischung ist ein Befund, der
+        # NICHT in einem stillen "OK" verschwinden darf.
+        detail="OK" if not detail_parts else " ".join(detail_parts),
     )
 
 
