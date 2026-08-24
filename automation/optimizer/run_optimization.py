@@ -2184,6 +2184,16 @@ _OOS_REASON_PREFIX_MAP: tuple[tuple[str, str], ...] = (
     # dieser Zuordnung in _classify_is_rejection_detail abgefangen.
     ("oos_min_psr", "REJECT_OOS_MIN_PSR"),
     ("oos_min_excess_return", "REJECT_OOS_MIN_EXCESS_RETURN"),
+    # Issue #1115 — dieselbe #917-Fehlerklasse: das mit #1093/#1241 eingefuehrte
+    # oos_min_alpha_tstat-Gate fehlte hier vollstaendig, JEDE Ablehnung (definierter Miss UND
+    # undefinierter t(alpha), backtest_runner._evaluate_oos_eligibility) fiel auf den Catch-All
+    # REJECT_OOS_OTHER statt REJECT_OOS_MIN_ALPHA_TSTAT. Dadurch blieb
+    # is_rejection_detail_counts['REJECT_OOS_MIN_ALPHA_TSTAT'] bei 0, waehrend
+    # invariants.gate_inventory_table dieselben Trials unabhaengig ueber oos_rejection_reasons
+    # korrekt als n_solo_rejections > 0 fuer dieses Gate zaehlte -- die Ordnungs-Invariante
+    # 0 <= n_solo_rejections <= n_rejections (#1003/#1155) griff genau diese Divergenz ab und
+    # brach den Report-Schreibvorgang fail-loud ab (0 <= 43 <= 0 verletzt).
+    ("oos_min_alpha_tstat", "REJECT_OOS_MIN_ALPHA_TSTAT"),
     ("Micro-Sizing", "REJECT_OOS_MICRO_SIZING"),
     ("oos_not_evaluable", "REJECT_OOS_NOT_EVALUABLE"),
 )

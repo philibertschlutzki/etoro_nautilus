@@ -89,6 +89,27 @@ def test_map_oos_reason_prefixes():
     assert ro._map_oos_reason("voll unbekannter grund") == "REJECT_OOS_OTHER"
 
 
+# ===========================================================================
+# #1115 — dieselbe #917-Fehlerklasse: oos_min_alpha_tstat (#1093/#1241) fehlte im Prefix-Mapping
+# ===========================================================================
+def test_map_oos_reason_alpha_tstat_is_not_swallowed_by_other():
+    """Regression #1115: ohne den Fix landet jede oos_min_alpha_tstat-Ablehnung auf dem Catch-All
+    REJECT_OOS_OTHER statt REJECT_OOS_MIN_ALPHA_TSTAT."""
+    assert ro._map_oos_reason("oos_min_alpha_tstat: 0.3 < 2.0") == "REJECT_OOS_MIN_ALPHA_TSTAT"
+    assert ro._map_oos_reason(
+        "oos_min_alpha_tstat: None (insufficient/undefined) < 2.0") == "REJECT_OOS_MIN_ALPHA_TSTAT"
+
+
+def test_classify_is_rejection_detail_alpha_tstat_solo_reason():
+    """Ein Trial, dessen einziger Ablehnungsgrund oos_min_alpha_tstat ist, muss als
+    REJECT_OOS_MIN_ALPHA_TSTAT klassifiziert werden -- sonst divergiert is_rejection_detail_counts
+    von der reasons-basierten n_solo_rejections-Zaehlung in invariants.gate_inventory_table
+    (genau das #1115-Symptom: 0 <= n_solo_rejections(43) <= n_rejections(0) verletzt)."""
+    m = _metrics(oos_evaluated=True, oos_eligible=False,
+                 oos_rejection_reasons=["oos_min_alpha_tstat: 0.3 < 2.0"])
+    assert ro._classify_is_rejection_detail(m) == "REJECT_OOS_MIN_ALPHA_TSTAT"
+
+
 def test_classify_eligible_is_none():
     m = _metrics(oos_evaluated=True, oos_eligible=True, oos_total_trades=22)
     assert ro._classify_is_rejection_detail(m) == "NONE"
