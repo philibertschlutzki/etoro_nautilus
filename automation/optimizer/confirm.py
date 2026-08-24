@@ -1395,6 +1395,25 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # max() ist jetzt die DECLUSTERTE Zahl (``deflation_n_family_effective``), nicht mehr die
         # rohe Σ — das ist der eigentliche Fix (E[max_N] auf effektiver statt roher Config-Zahl).
         deflation_n_effective = max(deflation_n, deflation_n_family_effective)
+        # Issue #1092/#1240 (P1) — Fix Punkt 1: ``deflation_n_effective`` wird HIER, EINMALIG, aus
+        # genau diesen beiden Groessen berechnet; ``deflation_n_eligible_at_effective`` friert das
+        # PER-STUDY-N ein, das TATSAECHLICH in diese Formel eingegangen ist — unabhaengig davon,
+        # ob die bare Variable ``deflation_n`` SPAETER (z. B. durch die #865-``per_stratum``-
+        # Heterogenitaetspolitik, die ``deflation_n`` auf die engere Stratum-Zahl reassigned, siehe
+        # unten) fuer einen ANDEREN Zweck — die Varianzschaetzung, ABSICHTLICH von der Multiplizitaet
+        # entkoppelt, siehe ``deflation.sr0_multiple_testing_robust``s ``n_trials``/
+        # ``variance_n_trials``-Docstring — weiterverwendet wird. Ohne dieses Einfrieren wuerde die
+        # #652/#670-Telemetrie (``deflation_n_eligible``) nach einer Stratum-Narrowing eine ANDERE
+        # Zahl zeigen als die, die tatsaechlich in ``deflation_n_effective`` eingegangen ist, und
+        # ``check_n_family_consistency`` faelschlich feuern, ohne dass Entscheidung UND Telemetrie
+        # tatsaechlich divergiert waeren. Fix Punkt 2 — ``deflation_n_source`` macht sichtbar,
+        # welche der beiden Seiten des max() tatsaechlich gewonnen hat.
+        deflation_n_eligible_at_effective = deflation_n
+        deflation_n_source = (
+            "n_family_stage1_per_strategy" if deflation_n_family_effective > deflation_n
+            else "n_eligible" if deflation_n > deflation_n_family_effective
+            else "max_of_both"
+        )
         if deflation_n >= 2:
             import statistics as _st
             from automation.optimizer.deflation import sr0_multiple_testing_robust
@@ -2302,7 +2321,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Issue #758 — welche Inferenzmethode DIESE DSR tatsaechlich lieferte; im Regelfall
         # identisch zur Eligibility-Methode (backtest_runner.psr_inference_method).
         best_result["metrics_symbol"]["deflation_inference_method"] = deflation_inference_method
-        best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
+        # Issue #1092/#1240 (P1) — ``deflation_n_eligible_at_effective`` (eingefroren, siehe oben)
+        # statt der bare ``deflation_n``: letztere kann durch die #865-``per_stratum``-Politik
+        # inzwischen auf eine engere Stratum-Zahl reassigned sein, waehrend diese Telemetrie exakt
+        # das per-Study-N zeigen muss, das TATSAECHLICH in ``deflation_n_effective``s max()-Formel
+        # eingegangen ist (sonst feuert ``check_n_family_consistency`` faelschlich).
+        best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n_eligible_at_effective
+        best_result["metrics_symbol"]["deflation_n_source"] = deflation_n_source
         # Issue #670 — ``deflation_used_var_floor`` bleibt aus Rückwärtskompat-Gründen erhalten
         # (bedeutet NUR "λ ≥ 0.5"). Die PRÄZISEN Grössen für die Forensik: ``deflation_lambda`` (das
         # tatsächliche Shrinkage-Gewicht) und ``deflation_theoretical_var_source`` (seit #701 IMMER

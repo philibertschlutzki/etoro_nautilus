@@ -1046,6 +1046,16 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     exportierte ``deflation_n_effective`` von genau dieser Formel ab, hat die Entscheidung eine
     ANDERE N-/Varianzquelle konsumiert als die Telemetrie ausweist — exakt die #670-Fehlerklasse
     (eine Nachricht behauptete die falsche Varianzquelle).
+
+    Issue #1092/#1240 (P1) — ``severity`` von ``medium`` auf ``high`` gehoben: eine abweichende
+    Multiplizität verändert die Promotionsschwelle DIREKT (Φ⁻¹(1−1/n) in ``sr0_multiple_testing``),
+    nicht nur eine nachgelagerte Anzeige — dieselbe Kategorie wie ``check_n_family_partition``
+    (bereits ``blocking``). confirm.py stempelt seither ``deflation_n_eligible`` als das per-Study-N,
+    das TATSAECHLICH in die ``max()``-Formel eingegangen ist (eingefroren VOR einer moeglichen
+    #865-``per_stratum``-Reassignment der bare ``deflation_n``-Variable auf eine engere Stratum-
+    Zahl für einen ANDEREN Zweck — die von der Multiplizität ABSICHTLICH entkoppelte Varianz-
+    schätzung), sowie ``deflation_n_source`` (``n_eligible``/``n_family_stage1_per_strategy``/
+    ``max_of_both``), welche Seite des max() tatsächlich gewonnen hat.
     """
     n_eligible = holdout_metrics.get("deflation_n_eligible")
     n_family_eff = holdout_metrics.get("deflation_n_family_effective")
@@ -1057,6 +1067,7 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
             expected="deflation_n_effective == max(deflation_n_eligible, deflation_n_family_effective)",
             actual=None,
             detail="Keine Deflations-Kohorte (deflated_selection=False oder N<2) — nicht anwendbar.",
+            severity="high",
         )
     expected_n = max(n_eligible or 0, n_family_eff or 0)
     passed = n_effective == expected_n
@@ -1069,6 +1080,7 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
                 f"deflation_n_effective={n_effective} != max(N_eligible={n_eligible}, "
                 f"N_family_effective={n_family_eff})={expected_n} — Entscheidung und Telemetrie "
                 "koennten unterschiedliche N-/Varianzquellen konsumiert haben (#652/#670)."),
+        severity="high",
     )
 
 
