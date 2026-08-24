@@ -6932,6 +6932,73 @@ def check_stop_loss_decomposition_identity(
     )
 
 
+def check_stop_loss_share_decomposition(
+    study_records: list[dict], *, max_sum_deviation: float = 0.02,
+) -> InvariantResult:
+    """Issue #1082/#1230 (P1, Katalog #1247+) — die Report-Zerlegung addierte drei UNABHAENGIG
+    gebildete Mediane, statt Anteile je Round-Trip zu bilden.
+
+    Symptom. §2.4 behauptete ``realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps``
+    auf Basis der drei getrennt medianisierten Groessen (``stop_distance_bps_measured``,
+    ``trigger_to_fill_gap_bps``, ``realized_loss_bps`` in ``study_records``) — die gezeigten Zahlen
+    erfuellten die Gleichung NICHT: Residuum Median +12,00 bps = 16,17% des Median-Verlusts, positiv
+    in 151 von 154 Studies. Root-Cause: die per-Round-Trip-Identitaet haelt (siehe
+    ``check_stop_loss_decomposition_identity``), aber der Median EINER SUMME ist nicht die SUMME
+    der Mediane, und beide Summanden sind rechtsschief und positiv korreliert.
+
+    Fix (siehe ``backtest_runner._aggregate_exit_telemetry``/``report._study_record``): die Anteile
+    ``stop_distance_bps / realized_loss_bps``/``trigger_to_fill_gap_bps / realized_loss_bps`` werden
+    JE ROUND-TRIP gebildet und DANN medianisiert (``stop_distance_share_median``/``trigger_to_fill_
+    gap_share_median``) — sie summieren sich per Konstruktion auf 1 (bis auf Rundung). Dieser Check
+    bewacht GENAU diese Konstruktions-Eigenschaft: FAIL (severity ``medium`` — eine Diagnose-/
+    Report-Korrektheitsfrage, kein Risiko-Urteil), wenn ``|stop_distance_share_median +
+    trigger_to_fill_gap_share_median − 1| > max_sum_deviation`` (Default 0,02). Studies ohne beide
+    Felder werden uebersprungen; keine Study mit beiden Feldern ⇒ nicht anwendbar (kein Fail-open,
+    aber auch kein Urteil auf einer nicht-blockierenden Diagnose-Groesse)."""
+    candidates = [
+        r for r in study_records
+        if r.get("stop_distance_share_median") is not None
+        and r.get("trigger_to_fill_gap_share_median") is not None
+    ]
+    if not candidates:
+        return InvariantResult(
+            name="check_stop_loss_share_decomposition",
+            passed=True,
+            expected=f"|stop_distance_share_median + trigger_to_fill_gap_share_median - 1| <= "
+                     f"{max_sum_deviation}",
+            actual=None,
+            severity="medium",
+            detail="Keine Study mit beiden Anteilsfeldern — nicht anwendbar.",
+        )
+    offenders: dict[str, dict] = {}
+    for r in candidates:
+        stop_share = float(r["stop_distance_share_median"])
+        gap_share = float(r["trigger_to_fill_gap_share_median"])
+        deviation = round(abs(stop_share + gap_share - 1.0), 4)
+        if deviation > max_sum_deviation:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "stop_distance_share_median": round(stop_share, 4),
+                "trigger_to_fill_gap_share_median": round(gap_share, 4),
+                "sum_deviation": deviation,
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_stop_loss_share_decomposition",
+        passed=passed,
+        expected=f"|stop_distance_share_median + trigger_to_fill_gap_share_median - 1| <= "
+                 f"{max_sum_deviation}",
+        actual=offenders if offenders else None,
+        severity="medium",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_candidates": len(candidates)},
+        detail=("OK" if passed else
+                f"{len(offenders)} von {len(candidates)} Studies weichen um mehr als "
+                f"{max_sum_deviation} von der erwarteten Anteilssumme 1 ab: {offenders} — die "
+                "Anteile werden je Round-Trip gebildet, sollten sich also per Konstruktion (bis "
+                "auf Rundung) auf 1 summieren (#1082/#1230)."),
+    )
+
+
 def check_symbol_bar_quality_cache_availability(
     study_records: list[dict], *, cache_path: str | None = None, cache_found: bool = False,
 ) -> InvariantResult:

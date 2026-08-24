@@ -4233,6 +4233,13 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     stop_distance_bps_values: list[float] = []
     trigger_to_fill_gap_bps_values: list[float] = []
     realized_loss_bps_values: list[float] = []
+    # Issue #1082/#1230 (P1, Katalog #1247+) — Anteile PRO ROUND-TRIP (nicht die Summe der drei
+    # getrennten Mediane oben, siehe _aggregate_exit_telemetry-Docstring): Median einer Summe ist
+    # nicht die Summe der Mediane, und beide Summanden sind rechtsschief und positiv korreliert —
+    # die §2.4-Tabelle behauptete Additivitaet, die die gezeigten Zahlen (Residuum Median +12,00
+    # bps = 16,17% des Median-Verlusts, 151/154 Studies) nicht erfuellten.
+    stop_distance_share_values: list[float] = []
+    trigger_to_fill_gap_share_values: list[float] = []
     # Issue #1080/#1228 — der bisher unsichtbare Ratschenbetrag zwischen Ausloesung und
     # tatsaechlichem Absetzen, dieselbe TRAILING_STOP-Population wie die drei Serien oben.
     stop_ratchet_between_trigger_and_submit_bps_values: list[float] = []
@@ -4317,6 +4324,15 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             _identity_rhs = float(m["stop_distance_bps"]) + float(m["trigger_to_fill_gap_bps"])
             if abs(_identity_lhs - _identity_rhs) >= 1e-6:
                 n_stop_loss_identity_violations += 1
+            # Issue #1082/#1230 (P1, Katalog #1247+) Fix Punkt 1 — die Anteile werden PRO ROUND-
+            # TRIP gebildet (derselbe Nenner ``realized_loss_bps`` wie die Identitaetspruefung
+            # oben), NICHT aus den getrennt medianisierten absoluten Groessen — Median einer Summe
+            # ist nicht die Summe der Mediane. ``_identity_lhs`` (realized_loss_bps) != 0 ist hier
+            # bereits durch die Round-Trip-Konstruktion positiv (ein Verlust-Exit).
+            if _identity_lhs != 0:
+                stop_distance_share_values.append(float(m["stop_distance_bps"]) / _identity_lhs)
+                trigger_to_fill_gap_share_values.append(
+                    float(m["trigger_to_fill_gap_bps"]) / _identity_lhs)
         if m.get("bar_range_median_bps") is not None:
             bar_range_medians.append(float(m["bar_range_median_bps"]))
         if m.get("bar_range_p75_bps") is not None:
@@ -4376,6 +4392,12 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # stop_distance_bps + trigger_to_fill_gap_bps", je Ebene medianisiert; siehe
         # _finalize_round_trip fuer die Herleitung mit gemeinsamem Nenner (Akzeptanzkriterium 1
         # dieses Issues: Identitaet <1e-6 fuer >=99,9% der TRAILING_STOP-Round-Trips).
+        #
+        # Issue #1082/#1230 (P1, Katalog #1247+) — diese DREI Mediane sind bewusst NICHT additiv
+        # (Median einer Summe != Summe der Mediane; beide Summanden sind rechtsschief und positiv
+        # korreliert, Symptom: Residuum Median +12,00 bps = 16,17% des Median-Verlusts in 151/154
+        # Studies). Sie bleiben als Kontext erhalten; die ANTEILE unten (je Round-Trip gebildet,
+        # dann medianisiert) sind die korrekt zerlegte Grösse.
         "stop_distance_bps_median": (
             statistics.median(stop_distance_bps_values) if stop_distance_bps_values else None),
         "trigger_to_fill_gap_bps_median": (
@@ -4383,6 +4405,15 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             if trigger_to_fill_gap_bps_values else None),
         "realized_loss_bps_median": (
             statistics.median(realized_loss_bps_values) if realized_loss_bps_values else None),
+        # Issue #1082/#1230 Fix Punkt 1 — ``stop_distance_bps / realized_loss_bps`` UND
+        # ``trigger_to_fill_gap_bps / realized_loss_bps`` je Round-Trip gebildet, DANN
+        # medianisiert; summieren sich per Konstruktion auf 1 (bis auf Rundung/Ausreisser-Drift),
+        # siehe invariants.check_stop_loss_share_decomposition.
+        "stop_distance_share_median": (
+            statistics.median(stop_distance_share_values) if stop_distance_share_values else None),
+        "trigger_to_fill_gap_share_median": (
+            statistics.median(trigger_to_fill_gap_share_values)
+            if trigger_to_fill_gap_share_values else None),
         # Issue #1080/#1228 (Katalog #1247+, P0) Fix Punkt 5 — Median des bisher unsichtbaren
         # Ratschenbetrags zwischen Ausloesung und Absetzen, plus die Stichprobengroesse dahinter
         # (Akzeptanzkriterium: >= 95% der TRAILING_STOP-Round-Trips gestempelt).

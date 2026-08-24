@@ -734,26 +734,39 @@ def _section_2_monetary_result(report: dict) -> str:
     # stop_distance_bps + trigger_to_fill_gap_bps" (drei Spalten statt einer einzelnen
     # Verlustzahl), damit ein Leser sieht, welcher Anteil des Stop-Verlusts aus der konfigurierten
     # Distanz (k · ATR) und welcher aus der Absetzen-zu-Fill-Latenz stammt (#1203-Root-Cause).
+    #
+    # Issue #1082/#1230 (P1, Katalog #1247+) — Root-Cause: die drei Spalten sind DREI UNABHAENGIG
+    # medianisierte Groessen (backtest_runner._aggregate_exit_telemetry) — die Tabelle behauptete
+    # bislang implizit ``realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps`` FUER
+    # DIESE ZAHLEN, was nicht galt (Median einer Summe != Summe der Mediane; Residuum Median +12,00
+    # bps = 16,17% des Median-Verlusts in 151/154 Studies). Die drei absoluten Mediane bleiben als
+    # Kontext; die beiden neuen ANTEILSSPALTEN (je Round-Trip gebildet, dann medianisiert) sind die
+    # korrekt zerlegte Groesse und summieren sich per Konstruktion auf 1 (bis auf Rundung, siehe
+    # `invariants.check_stop_loss_share_decomposition`).
     _decomp_rows = [r for r in studies if r.get("realized_loss_bps") is not None]
     if _decomp_rows:
         lines.append("")
         lines.append(
-            "**Verlust-Zerlegung bei TRAILING_STOP-Exits** (Median je Study, bps, advers=+; "
-            "`realized_loss_bps = stop_distance_bps + trigger_to_fill_gap_bps`, siehe "
-            "`invariants.check_stop_loss_decomposition_identity`):"
+            "**Verlust-Zerlegung bei TRAILING_STOP-Exits** — Median je Grösse (NICHT additiv, "
+            "siehe Anteilsspalten; Median einer Summe ≠ Summe der Mediane, #1082/#1230), bps, "
+            "advers=+; die Anteile werden je Round-Trip gebildet und summieren sich per "
+            "Konstruktion auf 1 (bis auf Rundung), siehe "
+            "`invariants.check_stop_loss_share_decomposition`:"
         )
         lines.append("")
         lines.append(
             "| Strategie | Symbol | Stopdistanz (bps) | Absetzen-zu-Fill-Gap (bps) | "
-            "Realisierter Verlust (bps) |"
+            "Realisierter Verlust (bps) | Anteil Stopdistanz | Anteil Absetzen-zu-Fill-Gap |"
         )
-        lines.append("|---|---|---:|---:|---:|")
+        lines.append("|---|---|---:|---:|---:|---:|---:|")
         for r in sorted(_decomp_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | "
                 f"{_fmt_num(r.get('stop_distance_bps_measured'), digits=2)} | "
                 f"{_fmt_num(r.get('trigger_to_fill_gap_bps'), digits=2)} | "
-                f"{_fmt_num(r.get('realized_loss_bps'), digits=2)} |"
+                f"{_fmt_num(r.get('realized_loss_bps'), digits=2)} | "
+                f"{_fmt_pct(r.get('stop_distance_share_median'))} | "
+                f"{_fmt_pct(r.get('trigger_to_fill_gap_share_median'))} |"
             )
     # Issue #1076/#1224 (Katalog #1247+, P0) Fix Punkt 3 — die Kostenstress-Leiter
     # (``invariants.check_cost_stress_monotonicity``) erhielt mit #987/#1141 eine vierte, additive

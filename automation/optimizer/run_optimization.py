@@ -3439,6 +3439,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_n_stop_loss_identity_checked", metrics.oos_n_stop_loss_identity_checked)
         trial.set_user_attr(
             "oos_n_stop_loss_identity_violations", metrics.oos_n_stop_loss_identity_violations)
+        # Issue #1082/#1230 (P1, Katalog #1247+) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_stop_distance_share_median is not None:
+            trial.set_user_attr(
+                "oos_stop_distance_share_median", metrics.oos_stop_distance_share_median)
+        if metrics.oos_trigger_to_fill_gap_share_median is not None:
+            trial.set_user_attr(
+                "oos_trigger_to_fill_gap_share_median",
+                metrics.oos_trigger_to_fill_gap_share_median)
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         trial.set_user_attr("oos_n_losses", metrics.oos_n_losses)
         # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als

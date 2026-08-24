@@ -1875,6 +1875,17 @@ def _study_record(proposal: dict, study,
             int(a.get("oos_n_stop_loss_identity_checked") or 0) for a in trial_attrs),
         "n_stop_loss_identity_violations": sum(
             int(a.get("oos_n_stop_loss_identity_violations") or 0) for a in trial_attrs),
+        # Issue #1082/#1230 (P1, Katalog #1247+) — die Anteile werden PRO ROUND-TRIP gebildet
+        # (backtest_runner._aggregate_exit_telemetry), dann je Trial und je Study medianisiert —
+        # NICHT aus stop_distance_bps_measured/realized_loss_bps oben ableitbar (Median einer
+        # Summe != Summe der Mediane; Symptom: Residuum Median +12,00 bps = 16,17% des Median-
+        # Verlusts in 151/154 Studies). Rohmaterial fuer Report §2.4 und
+        # invariants.check_stop_loss_share_decomposition; summieren sich per Konstruktion auf 1
+        # (bis auf Rundung).
+        "stop_distance_share_median": _median_of_trial_field(
+            trial_attrs, "oos_stop_distance_share_median"),
+        "trigger_to_fill_gap_share_median": _median_of_trial_field(
+            trial_attrs, "oos_trigger_to_fill_gap_share_median"),
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
         # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. Issue #1046/#1195 — fehlt der
@@ -4184,6 +4195,11 @@ def _build_report(
     # TRAILING_STOP-Round-Trips halten; ein FAIL hier entwertet #1204/#1205 (Kostenkalibrierung),
     # die auf denselben Feldern aufbauen.
     all_checks.append(("global", _inv.check_stop_loss_decomposition_identity(studies_out)))
+
+    # Issue #1082/#1230 (P1, Katalog #1247+) — die Report-Zerlegung darf nicht drei unabhaengig
+    # medianisierte Groessen addieren (Median einer Summe != Summe der Mediane); die Anteile
+    # (je Round-Trip gebildet, dann medianisiert) muessen sich per Konstruktion auf 1 summieren.
+    all_checks.append(("global", _inv.check_stop_loss_share_decomposition(studies_out)))
 
     # Issue #973/#1127 (Pitfall #406 in AGENTS.md) — alarmiert VON SICH AUS, wenn ein Telemetriefeld
     # ueber die gesamte Grundgesamtheit konstant null ist (z. B. der 112/112-bar_range_median_bps-

@@ -309,6 +309,11 @@ class TournamentMetrics:
     oos_realized_loss_bps_median: float | None = None
     oos_n_stop_loss_identity_checked: int = 0
     oos_n_stop_loss_identity_violations: int = 0
+    # Issue #1082/#1230 (P1, Katalog #1247+) — Anteile PRO ROUND-TRIP (dann medianisiert), NICHT
+    # aus den drei absoluten Medianen oben ableitbar (Median einer Summe != Summe der Mediane,
+    # siehe backtest_runner._aggregate_exit_telemetry-Docstring).
+    oos_stop_distance_share_median: float | None = None
+    oos_trigger_to_fill_gap_share_median: float | None = None
     # Issue #1097 (Katalog #930) — Stichprobengroesse HINTER oos_gross_loss_mean_bps (ALLE
     # Verlust-Trades dieses Trials, nicht nur Stop-Exits); Grundlage fuer den trade-gewichteten
     # (statt medianbasierten) Study-Pool-Mittelwert, siehe report._pooled_mean_of_trial_field.
@@ -480,6 +485,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_realized_loss_bps_median = oos_metrics.get("realized_loss_bps_median")
     oos_n_stop_loss_identity_checked = oos_metrics.get("n_stop_loss_identity_checked") or 0
     oos_n_stop_loss_identity_violations = oos_metrics.get("n_stop_loss_identity_violations") or 0
+    # Issue #1082/#1230 — siehe TournamentMetrics-Docstring.
+    oos_stop_distance_share_median = oos_metrics.get("stop_distance_share_median")
+    oos_trigger_to_fill_gap_share_median = oos_metrics.get("trigger_to_fill_gap_share_median")
     # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
     oos_stop_exit_lag_bars_median = oos_metrics.get("stop_exit_lag_bars_median")
     # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
@@ -778,6 +786,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             if oos_realized_loss_bps_median is not None else None),
         oos_n_stop_loss_identity_checked=int(oos_n_stop_loss_identity_checked or 0),
         oos_n_stop_loss_identity_violations=int(oos_n_stop_loss_identity_violations or 0),
+        # Issue #1082/#1230 — siehe TournamentMetrics-Docstring.
+        oos_stop_distance_share_median=(
+            float(oos_stop_distance_share_median)
+            if oos_stop_distance_share_median is not None else None),
+        oos_trigger_to_fill_gap_share_median=(
+            float(oos_trigger_to_fill_gap_share_median)
+            if oos_trigger_to_fill_gap_share_median is not None else None),
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         oos_n_losses=int(oos_n_losses) if oos_n_losses is not None else 0,
         oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
