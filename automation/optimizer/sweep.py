@@ -4268,18 +4268,25 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
         written_report = json.loads(Path(report_path).read_text("utf-8"))
         blocking_fails = [
             c for c in (written_report.get("invariant_checks") or [])
-            if c.get("severity") == "blocking" and not c.get("passed", True)
+            if c.get("severity") == "blocking" and c.get("passed", True) is False
         ]
-        if not blocking_fails:
+        blocking_inconclusive = [
+            c for c in (written_report.get("invariant_checks") or [])
+            if c.get("severity") == "blocking" and c.get("passed", True) is None
+        ]
+        if not blocking_fails and not blocking_inconclusive:
             return "complete"
         run_status = "completed_invalid"
         written_report["run_status"] = run_status
         write_json_atomic(report_path, written_report)
         logging.getLogger("optimizer").warning(
-            "[#1016/#1037] %d blockierende Invarianten-FAIL(s) (%s) — run_status auf "
-            "'completed_invalid' korrigiert (kein Lauf mit blockierenden FAILs darf als "
-            "'complete' erscheinen).", len(blocking_fails),
+            "[#1016/#1037/#1248] %d blockierende Invarianten-FAIL(s) (%s), %d blockierend "
+            "nicht auswertbar (%s) — run_status auf 'completed_invalid' korrigiert (kein Lauf "
+            "mit blockierenden FAILs oder unauswertbaren Blockern darf als 'complete' erscheinen).",
+            len(blocking_fails),
             ", ".join(sorted({c.get("name") or c.get("check") for c in blocking_fails})),
+            len(blocking_inconclusive),
+            ", ".join(sorted({c.get("name") or c.get("check") for c in blocking_inconclusive})),
         )
         return run_status
     except Exception:

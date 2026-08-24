@@ -4662,13 +4662,19 @@ def _build_report(
         # laufen alle IN ``_build_report`` selbst (Report-Prozess).
         d["source"] = "report"
         invariant_checks.append(d)
-        if not result.passed:
+        if result.passed is False:
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
                 "scope": label, "check": result.name,
                 "expected": result.expected, "actual": result.actual, "detail": result.detail,
                 # Issue #1083 — welche Auswertungswelle dieses Event traegt (siehe Docstring oben).
                 "report_source": report_source,
             }, level=logging.ERROR)
+        elif result.passed is None:
+            emit_execution_event(_log, "INVARIANT_CHECK_INCONCLUSIVE", {
+                "scope": label, "check": result.name,
+                "expected": result.expected, "actual": result.actual, "detail": result.detail,
+                "report_source": report_source,
+            }, level=logging.WARNING)
 
     # Issue #985/#1139 (Katalog #986, Pitfall #411 in AGENTS.md) — die Preflight-Check-Ergebnisse
     # (``sweep.assert_required_config_keys_valid``/``assert_instrument_metadata_coherence``, bereits
@@ -4684,12 +4690,19 @@ def _build_report(
         # valid/assert_instrument_metadata_coherence) laufen im SWEEP-Prozess, VOR jedem Worker.
         d.setdefault("source", "sweep")
         invariant_checks.append(d)
-        if not d.get("passed", True):
+        val = d.get("passed", True)
+        if val is False:
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
                 "scope": d.get("scope", "preflight"), "check": d.get("name"),
                 "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
                 "report_source": report_source,
             }, level=logging.ERROR)
+        elif val is None:
+            emit_execution_event(_log, "INVARIANT_CHECK_INCONCLUSIVE", {
+                "scope": d.get("scope", "preflight"), "check": d.get("name"),
+                "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
+                "report_source": report_source,
+            }, level=logging.WARNING)
 
     # Issue #1015/#1167 (Katalog #1170) — Ergebnisse der AUSSERHALB von ``_build_report`` laufenden
     # Checks (Sweep-Hauptschleife/``run_optimization.py``, siehe ``_read_external_invariant_
@@ -4699,12 +4712,19 @@ def _build_report(
     # pruefen keine Study-Population dieses Reports, sondern Sweep-/Study-weite Bedingungen).
     for d in _read_external_invariant_results():
         invariant_checks.append(d)
-        if not d.get("passed", True):
+        val = d.get("passed", True)
+        if val is False:
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
                 "scope": d.get("scope"), "check": d.get("name"),
                 "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
                 "report_source": report_source,
             }, level=logging.ERROR)
+        elif val is None:
+            emit_execution_event(_log, "INVARIANT_CHECK_INCONCLUSIVE", {
+                "scope": d.get("scope"), "check": d.get("name"),
+                "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
+                "report_source": report_source,
+            }, level=logging.WARNING)
 
     # Issue #942/#1108/#1037 (Katalog #960/#1186) — zwei der VIER orthogonalen Achsen VORAB
     # berechnet (haengen nur an Funktionsparametern, nicht an ``invariant_checks``), damit der
