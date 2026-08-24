@@ -45,6 +45,10 @@ def _study(strategy, symbol, *, atr_bps, k, loss_bps_trailing_stop, n_ts_losses=
         "oos_n_trailing_stop_losses": n_ts_losses,
         "exit_reason_histogram": histogram,
         "oos_total_trades_with_exit_telemetry": n_total_exits,
+        # Issue #1081/#1229 — Kriterium 2 konsumiert seither die GEMESSENE Distanz statt eines
+        # lokal rekonstruierten k*ATR-Produkts; fuer diese Fixtures bewusst identisch zu
+        # ``atr_bps * k`` gesetzt (bit-identische Testerwartungen, kein Bedeutungswechsel).
+        "stop_distance_bps_measured": atr_bps * k,
         # Issue #1056/#1205 — WITHIN-STUDY-Kalibrierungs-Rohmaterial fuer Kriterium 1 (siehe
         # report._within_study_stop_calibration_spearman); n_pairs=0/spearman=None simuliert eine
         # Study OHNE ausreichende Trial-Evidenz (wird von der Aggregation ausgeschlossen).

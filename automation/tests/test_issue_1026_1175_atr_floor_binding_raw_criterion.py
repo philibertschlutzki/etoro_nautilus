@@ -15,13 +15,13 @@ from automation.optimizer import report as rpt
 
 
 def _study(strategy, symbol, *, atr_raw=None, atr_floor_derived=None, atr_median_bps=None,
-          stop_distance_bps=None, realized_stop_loss_ratio=None):
+          stop_distance_bps_modelled=None, realized_stop_loss_ratio=None):
     return {
         "strategy": strategy, "symbol": symbol,
         "atr_raw_median_bps": atr_raw,
         "atr_floor_bps_derived": atr_floor_derived,
         "atr_median_bps": atr_median_bps,
-        "stop_distance_bps": stop_distance_bps,
+        "stop_distance_bps_modelled": stop_distance_bps_modelled,
         "realized_stop_loss_ratio": realized_stop_loss_ratio,
     }
 
@@ -33,7 +33,7 @@ def test_raw_below_floor_binds_even_when_effective_atr_sits_above_the_floor_via_
     des Fensters."""
     records = [
         _study("DynamicBreakoutStrategy", "TSLA.ETORO", atr_raw=0.1627, atr_floor_derived=7.9820,
-              atr_median_bps=9.5, stop_distance_bps=9.22, realized_stop_loss_ratio=7.67),
+              atr_median_bps=9.5, stop_distance_bps_modelled=9.22, realized_stop_loss_ratio=7.67),
         _study("OpeningRangeBreakoutStrategy", "TSLA.ETORO", atr_raw=27.665,
               atr_floor_derived=7.9820, atr_median_bps=27.665),
     ]
@@ -69,9 +69,10 @@ def test_evaluable_false_when_neither_raw_nor_derived_floor_is_present_anywhere(
     assert result.provenance["atr_floor_binding_studies"] == []
 
 
-def test_stop_distance_bps_is_exported_as_a_first_class_study_field():
+def test_stop_distance_bps_modelled_is_exported_as_a_first_class_study_field():
     """Rohmaterial fuer die atr_floor_binding_studies-Provenance (stopdistanz_bps) — vorher nur
-    lokal in _study_record berechnet, nirgends exportiert."""
+    lokal in _study_record berechnet, nirgends exportiert. Issue #1081/#1229 — umbenannt von
+    ``stop_distance_bps`` zu ``stop_distance_bps_modelled`` (die MODELLIERTE k*ATR-Groesse)."""
     import optuna
 
     class _T:
@@ -91,4 +92,4 @@ def test_stop_distance_bps_is_exported_as_a_first_class_study_field():
 
     proposal = {"symbol": "TSLA.ETORO", "strategy": "A"}
     record, _checks = rpt._study_record(proposal, _S())
-    assert record["stop_distance_bps"] == 3.0  # 2.0 * 1.5
+    assert record["stop_distance_bps_modelled"] == 3.0  # 2.0 * 1.5

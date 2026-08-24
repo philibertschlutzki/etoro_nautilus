@@ -80,16 +80,17 @@ def test_source_is_none_when_neither_floor_is_computable():
 
 
 def test_check_stop_distance_microstructure_floor_fails_when_stop_is_inside_bar_noise():
-    r = {"strategy": "A", "symbol": "B.ETORO", "stop_distance_bps": 9.22,
+    # Issue #1081/#1229 — umbenannt von ``stop_distance_bps`` zu ``stop_distance_bps_modelled``.
+    r = {"strategy": "A", "symbol": "B.ETORO", "stop_distance_bps_modelled": 9.22,
         "bar_range_median_bps": 50.16}
     result = inv.check_stop_distance_microstructure_floor([r])
     assert result.passed is False
     assert result.severity == "high"
-    assert result.actual["A/B.ETORO"]["stop_distance_bps"] == 9.22
+    assert result.actual["A/B.ETORO"]["stop_distance_bps_modelled"] == 9.22
 
 
 def test_check_stop_distance_microstructure_floor_passes_when_stop_exceeds_bar_noise():
-    r = {"strategy": "A", "symbol": "B.ETORO", "stop_distance_bps": 60.0,
+    r = {"strategy": "A", "symbol": "B.ETORO", "stop_distance_bps_modelled": 60.0,
         "bar_range_median_bps": 50.16}
     result = inv.check_stop_distance_microstructure_floor([r])
     assert result.passed is True

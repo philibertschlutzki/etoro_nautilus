@@ -60,6 +60,8 @@ def test_check_effective_stop_distance_carries_the_pooled_variant_under_its_new_
         "oos_gross_loss_mean_bps_trailing_stop_pooled": 16.0,
         "gross_loss_median_bps_trailing_stop": 16.0,
         "oos_n_trailing_stop_losses": 50,
+        # Issue #1081/#1229 — der Legacy-Fallback konsumiert seither die GEMESSENE Distanz.
+        "stop_distance_bps_measured": 40.0,
     }]
     result = inv.check_effective_stop_distance(records)
     assert result.passed is True

@@ -4669,7 +4669,10 @@ def check_atr_scale_homogeneity(
                 floor_binding_provenance[label] = {
                     "raw": round(float(raw), 4), "floor": round(float(effective_floor), 4),
                     "faktor": (round(float(effective_floor) / float(raw), 2) if raw else None),
-                    "stopdistanz_bps": r.get("stop_distance_bps"),
+                    # Issue #1081/#1229 — umbenannt von ``stop_distance_bps``: die MODELLIERTE
+                    # (k · ATR) Distanz, konsistent mit dem ATR-Floor-Bindungs-Kontext dieser
+                    # Provenance (kein Konsum als Nenner einer Risiko-Ratio, siehe dortiger Fix).
+                    "stopdistanz_bps": r.get("stop_distance_bps_modelled"),
                     "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
                     "criterion": "atr_raw_median_bps_below_floor",
                 }
@@ -4682,7 +4685,7 @@ def check_atr_scale_homogeneity(
                 floor_binding_studies.append(label)
                 floor_binding_provenance[label] = {
                     "floor": round(float(effective_floor), 4), "atr_median_bps": round(float(val), 4),
-                    "stopdistanz_bps": r.get("stop_distance_bps"),
+                    "stopdistanz_bps": r.get("stop_distance_bps_modelled"),
                     "realized_stop_loss_ratio": r.get("realized_stop_loss_ratio"),
                     "criterion": "legacy_effective_atr_equals_floor",
                 }
@@ -4762,8 +4765,8 @@ def check_atr_floor_enforcement(
 
     Root-Cause (zu verifizieren je Study, nicht pauschal behauptet): entweder wird der Floor auf
     ``atr_raw_median_bps`` angewendet, während der SIMULIERTE, effektive Stop (``atr_median_bps ·
-    atr_trailing_multiplier_median``, dasselbe ``stop_distance_bps``-Feld, das ``check_stop_cost_
-    ratio`` konsumiert) eine VOR dem Floor bestimmte Distanz trägt, oder das ``k`` in
+    atr_trailing_multiplier_median``, dasselbe ``stop_distance_bps_modelled``-Feld, das ``check_
+    stop_cost_ratio`` konsumiert) eine VOR dem Floor bestimmte Distanz trägt, oder das ``k`` in
     ``atr_floor_bps_derived · k`` unterscheidet sich vom ``k`` der Ausführung, oder die
     Floor-Bindungs-Erkennung (``check_atr_scale_homogeneity``) und ``check_stop_cost_ratio`` bilden
     ihre Kohorten unterschiedlich. Dieser Check macht den Widerspruch selbst zu einem benannten
@@ -4803,7 +4806,10 @@ def check_atr_floor_enforcement(
         if not floor_binding:
             continue
         k = r.get("atr_trailing_multiplier_median")
-        effective_stop_distance_bps = r.get("stop_distance_bps")
+        # Issue #1081/#1229 — umbenannt von ``stop_distance_bps``: die MODELLIERTE (k · ATR)
+        # Distanz ist hier korrekt, da dieser Check die Floor-KONSTRUKTION (nicht die Ausfuehrung)
+        # gegen die Kostenbasis prueft (siehe Docstring).
+        effective_stop_distance_bps = r.get("stop_distance_bps_modelled")
         c_rt = r.get("round_trip_cost_bps")
         if k is None or effective_stop_distance_bps is None or c_rt is None or c_rt <= 0:
             continue
@@ -5883,7 +5889,19 @@ def check_effective_stop_distance(study_records: list[dict], *,
     ausgewiesen hatte — zwei entkoppelte Taxonomien fuer "darf einen Sweep abbrechen" (Pitfall #410
     in AGENTS.md). ``severity='blocking'`` IMPLIZIERT seither fail-fast-Faehigkeit; siehe
     ``check_fail_fast_invariants_are_blocking`` fuer den neuen Regressionswaechter gegen ein
-    erneutes Auseinanderlaufen."""
+    erneutes Auseinanderlaufen.
+
+    Issue #1081/#1229 (P0, Katalog #1247+) — sowohl der primaere Kohorten-Pfad (``report.
+    _effective_stop_ratio_for_trial``) als auch der Legacy-Fallback unten konsumieren seither die
+    GEMESSENE Stopdistanz (``stop_distance_bps_measured``/``oos_stop_distance_bps_median``,
+    #1054/#1203), NICHT mehr das MODELLIERTE ``k · ATR``: Median eines Produkts ≠ Produkt der
+    Mediane, UND ``k``/``ATR_eff`` sind ueber den kostengekoppelten Floor korreliert (B-5: die
+    modellierte Distanz weicht Faktor 0,525-3,543 (Median 1,290) von der gemessenen ab). Fehlt die
+    gemessene Distanz (Legacy-Report vor #1054/#1203), ist die Study INCONCLUSIVE statt eines
+    stillen Rueckfalls auf die modellierte Groesse — die modellierte Distanz bleibt unter
+    ``stop_distance_bps_modelled``/``realized_stop_loss_ratio_vs_modelled`` erhalten (siehe
+    ``report._study_record``-Docstring), konsumiert aber KEINE Invariante mehr als primaeren
+    Risiko-Nenner."""
     candidates = [
         r for r in study_records
         if r.get("effective_stop_ratio_cohort_median") is not None
@@ -5899,8 +5917,8 @@ def check_effective_stop_distance(study_records: list[dict], *,
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=None,
-            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
-                     f"<= {max_ratio} je Study",
+            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
+                     f"(stop_distance_bps_measured) <= {max_ratio} je Study",
             actual=None,
             detail="Keine Studies mit Exit-Telemetrie (Issue #899) — nicht auswertbar "
                    "(n_candidates=0, n_measured=0).",
@@ -5939,9 +5957,8 @@ def check_effective_stop_distance(study_records: list[dict], *,
                 offenders_high[key] = ratio
             continue
         # Issue #1053/#1202 — FALLBACK fuer Studies OHNE die neuen Kohorten-Felder (Legacy-Reports,
-        # Test-Fixtures vor diesem Fix): unveraendertes Vor-#1202-Verhalten, kein zweiter,
-        # abweichender Berechnungspfad fuer echte Report-Daten (die IMMER die Kohorten-Felder
-        # tragen, sobald report._study_record sie berechnet hat).
+        # Test-Fixtures vor diesem Fix), abweichender Berechnungspfad fuer echte Report-Daten (die
+        # IMMER die Kohorten-Felder tragen, sobald report._study_record sie berechnet hat).
         n_stop_exits = int(r.get("oos_n_trailing_stop_losses") or 0)
         loss_bps = r.get("gross_loss_median_bps_trailing_stop")
         if loss_bps is None or n_stop_exits < min_trailing_stop_exits:
@@ -5950,17 +5967,20 @@ def check_effective_stop_distance(study_records: list[dict], *,
             # statt eines FAILs auf einer nicht nachweislich richtigen Zahl.
             inconclusive_studies[key] = n_stop_exits
             continue
-        if r.get("atr_median_bps") is None or r.get("atr_trailing_multiplier_median") is None:
+        # Issue #1081/#1229 (P0, Katalog #1247+) — der Nenner ist seither die GEMESSENE Distanz
+        # (``stop_distance_bps_measured``, #1054/#1203), NICHT mehr das MODELLIERTE ``k · ATR``:
+        # Median eines Produkts ≠ Produkt der Mediane. Fehlt die gemessene Distanz (z. B. ein
+        # Report vor #1054/#1203), ist die Study INCONCLUSIVE statt eines stillen Rueckfalls auf
+        # die modellierte Groesse.
+        measured_distance_bps = r.get("stop_distance_bps_measured")
+        if measured_distance_bps is None or float(measured_distance_bps) <= 0:
             inconclusive_studies[key] = n_stop_exits
             continue
         with_data.append(r)
-        configured_distance_bps = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
-        if configured_distance_bps <= 0:
-            continue
-        ratio = round(float(loss_bps) / configured_distance_bps, 4)
+        ratio = round(float(loss_bps) / float(measured_distance_bps), 4)
         _pooled_mean_loss = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
         _pooled_ratio = (
-            round(float(_pooled_mean_loss) / configured_distance_bps, 4)
+            round(float(_pooled_mean_loss) / float(measured_distance_bps), 4)
             if _pooled_mean_loss is not None else None)
         # Issue #1042/#1191 (Katalog #1191) — umbenannt von ``ratio_pooled_mean``: dieses Feld
         # quotientiert ``oos_gross_loss_mean_bps_trailing_stop_pooled`` (ein EINZIGER, trade-
@@ -5982,8 +6002,8 @@ def check_effective_stop_distance(study_records: list[dict], *,
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=None,
-            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
-                     f"<= {max_ratio} je Study",
+            expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
+                     f"(stop_distance_bps_measured) <= {max_ratio} je Study",
             actual=inconclusive_studies if inconclusive_studies else None,
             severity="blocking",
             detail=f"Keine Study mit >= {min_cohort_trials} eligiblen Kohorten-Trials (bzw. Legacy: "
@@ -6009,14 +6029,92 @@ def check_effective_stop_distance(study_records: list[dict], *,
     return InvariantResult(
         name="check_effective_stop_distance",
         passed=passed,
-        expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
-                 f"<= {max_ratio} je Study",
+        expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
+                 f"(stop_distance_bps_measured) <= {max_ratio} je Study",
         actual=all_ratios,
         severity="blocking",
         detail=("OK (n_studies_measured=%d)" % len(with_data) if passed else " ".join(detail_parts)),
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None,
                       "n_candidates": len(candidates), "n_measured": len(with_data)},
+    )
+
+
+def check_stop_distance_model_fidelity(
+    study_records: list[dict], *,
+    max_relative_deviation: float = 0.25,
+    max_offending_fraction: float = 0.25,
+) -> InvariantResult:
+    """Issue #1081/#1229 (P0, Katalog #1247+) Fix Punkt 3 — misst, wie weit die MODELLIERTE
+    Stopdistanz (``stop_distance_bps_modelled``, ``atr_trailing_multiplier_median · atr_median_bps``
+    — die Größe, die im Suchraum GETUNT wird) von der tatsächlich AUSGEFÜHRTEN, gemessenen Distanz
+    (``stop_distance_bps_measured``, #1054/#1203) abweicht.
+
+    Symptom (B-5): auf dem archivierten Batch weicht das Verhältnis um Faktor 0,525-3,543 (Median
+    1,290) ab — Median eines Produkts (``k_median · ATR_median``) ≠ Produkt der Mediane, UND ``k``
+    und ``ATR_eff`` sind über den kostengekoppelten Floor korreliert (#1096). Ohne diesen Check blieb
+    diese Divergenz unbeobachtet, obwohl seit #1081/#1229 KEINE Risiko-Invariante mehr die
+    modellierte Größe als Nenner konsumiert — ``check_stop_distance_model_fidelity`` macht
+    stattdessen die Diskrepanz SELBST zu einem benannten, geprüften Befund: ein Sampler, der primär
+    gegen die modellierte Größe tunt (``atr_trailing_multiplier`` ist der gesampelte Parameter),
+    während die tatsächlich risikorelevante Größe die gemessene ist, braucht eine explizite Wache
+    gegen ein zu weites Auseinanderlaufen beider Größen.
+
+    FAIL (severity ``high``, diagnostisch — keine Simulationsänderung erforderlich), wenn
+    ``|stop_distance_bps_measured / stop_distance_bps_modelled − 1| > max_relative_deviation``
+    (Default 0,25) für mehr als ``max_offending_fraction`` (Default 0,25 = 25 %) der Studies mit
+    beiden Feldern. Studies ohne beide Felder werden übersprungen; keine Study mit beiden Feldern
+    ⇒ ``passed=None``/``evaluable=False`` (INCONCLUSIVE, kein Fail-open auf fehlender Evidenz)."""
+    candidates = [
+        r for r in study_records
+        if r.get("stop_distance_bps_measured") is not None
+        and r.get("stop_distance_bps_modelled")
+    ]
+    if not candidates:
+        return InvariantResult(
+            name="check_stop_distance_model_fidelity",
+            passed=None,
+            expected=f"|stop_distance_bps_measured / stop_distance_bps_modelled - 1| <= "
+                     f"{max_relative_deviation:.0%} für >= {1 - max_offending_fraction:.0%} der Studies",
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_studies_with_both_fields",
+                          "n_candidates": 0},
+            detail="Keine Study mit gemessener UND modellierter Stopdistanz — nicht auswertbar "
+                   "(INCONCLUSIVE).",
+        )
+    offenders: dict[str, dict] = {}
+    for r in candidates:
+        measured = float(r["stop_distance_bps_measured"])
+        modelled = float(r["stop_distance_bps_modelled"])
+        rel_dev = round(abs(measured / modelled - 1.0), 4)
+        if rel_dev > max_relative_deviation:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "stop_distance_bps_measured": round(measured, 4),
+                "stop_distance_bps_modelled": round(modelled, 4),
+                "relative_deviation": rel_dev,
+            }
+    offending_fraction = round(len(offenders) / len(candidates), 4)
+    passed = offending_fraction <= max_offending_fraction
+    return InvariantResult(
+        name="check_stop_distance_model_fidelity",
+        passed=passed,
+        expected=f"|stop_distance_bps_measured / stop_distance_bps_modelled - 1| <= "
+                 f"{max_relative_deviation:.0%} für >= {1 - max_offending_fraction:.0%} der Studies",
+        actual=offenders if offenders else None,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_candidates": len(candidates)},
+        detail=("OK (n_candidates=%d, offending_fraction=%.1f%%)"
+                % (len(candidates), offending_fraction * 100) if passed else
+                f"{len(offenders)} von {len(candidates)} Studies ({offending_fraction:.1%}) weichen "
+                f"um mehr als {max_relative_deviation:.0%} zwischen gemessener und modellierter "
+                f"Stopdistanz ab (> {max_offending_fraction:.0%}-Schwelle) — die im Suchraum "
+                "getunte (modellierte) Größe ist auf diesem Anteil kein verlässlicher Proxy für die "
+                f"tatsächlich ausgeführte Distanz (#1081/#1229): {offenders}"),
+        provenance={"offending_fraction": offending_fraction, "n_candidates": len(candidates)},
     )
 
 
@@ -6281,7 +6379,16 @@ def check_trailing_stop_risk_calibration_acceptance(
     sondern je Study unabhängig gegen ein festes Band geprüft wird) — Kandidaten-Gate unverändert
     (>= 3 Studies mit >= ``min_trailing_stop_exits`` nachweislichen TRAILING_STOP-Exits, sonst
     ``INCONCLUSIVE`` für den GESAMTEN Check, da Kriterien 2 und 3 nicht unabhängig von Kriterium 1
-    beurteilt werden können, siehe Pitfall #413)."""
+    beurteilt werden können, siehe Pitfall #413).
+
+    Issue #1081/#1229 (P0, Katalog #1247+) — Root-Cause: ``ratio_by_study`` berechnete den Quotienten
+    bislang LOKAL aus ``atr_trailing_multiplier_median · atr_median_bps`` (dem MODELLIERTEN Nenner),
+    UNABHAENGIG vom im Study-Record gestempelten ``realized_stop_loss_ratio`` — trotz Docstring-
+    Behauptung "derselbe Quotient wie check_effective_stop_distance" ein ZWEITER, abweichender
+    Berechnungspfad (#1005/#1157-Namenskollisionsklasse: gleicher Name, andere Grundgesamtheit).
+    Der Nenner ist seither die GEMESSENE Distanz (``stop_distance_bps_measured``, #1054/#1203); eine
+    Study ohne sie traegt keinen Eintrag in ``ratio_by_study`` (kein Rueckfall auf die modellierte
+    Groesse) statt eines Quotienten auf einer anderen Basis als Kriterium 1."""
     candidates = [
         r for r in study_records
         if r.get("atr_median_bps")
@@ -6291,12 +6398,14 @@ def check_trailing_stop_risk_calibration_acceptance(
     ]
     ratio_by_study: dict[str, float] = {}
     for r in candidates:
-        k_atr = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
-        if k_atr <= 0:
+        # Issue #1081/#1229 — GEMESSENE Distanz statt des lokal rekonstruierten k·ATR-Produkts
+        # (siehe Docstring oben); fehlt sie, traegt diese Study keinen Eintrag.
+        measured_distance_bps = r.get("stop_distance_bps_measured")
+        if measured_distance_bps is None or float(measured_distance_bps) <= 0:
             continue
         loss = float(r["gross_loss_median_bps_trailing_stop"])
         key = f"{r.get('strategy')}/{r.get('symbol')}"
-        ratio_by_study[key] = round(loss / k_atr, 4)
+        ratio_by_study[key] = round(loss / float(measured_distance_bps), 4)
 
     # Issue #1056/#1205 Fix Punkt a) — WITHIN-STUDY-Paare (aus report._study_record vorberechnet),
     # NICHT mehr die STUDY-MEDIANE aus `candidates` oben (dort weiterhin fuer Kriterium 2 verwendet).
@@ -7857,28 +7966,28 @@ def check_stop_distance_microstructure_floor(study_records: list[dict]) -> Invar
 
     FAIL (severity ``high`` — diagnostisch, siehe ``report._stamp_atr_floor_bps_derived``-
     Docstring: die Mikrostruktur-Untergrenze ist additive Report-Telemetrie, noch nicht in die
-    Simulation zurückgespeist), wenn ``stop_distance_bps < bar_range_median_bps`` für eine Study
-    mit beiden Feldern — die tatsächlich SIMULIERTE Stopdistanz lag unter der beobachteten
-    Median-Bar-Spanne. Studies ohne beide Felder werden übersprungen (fail-open auf fehlender
-    Evidenz)."""
+    Simulation zurückgespeist), wenn ``stop_distance_bps_modelled < bar_range_median_bps`` für eine
+    Study mit beiden Feldern — die tatsächlich SIMULIERTE (Issue #1081/#1229: umbenannt von
+    ``stop_distance_bps``) Stopdistanz lag unter der beobachteten Median-Bar-Spanne. Studies ohne
+    beide Felder werden übersprungen (fail-open auf fehlender Evidenz)."""
     offenders: dict[str, dict] = {}
     n_measured = 0
     for r in study_records:
-        stop_distance = r.get("stop_distance_bps")
+        stop_distance = r.get("stop_distance_bps_modelled")
         bar_range = r.get("bar_range_median_bps")
         if stop_distance is None or bar_range is None:
             continue
         n_measured += 1
         if float(stop_distance) < float(bar_range):
             offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
-                "stop_distance_bps": round(float(stop_distance), 4),
+                "stop_distance_bps_modelled": round(float(stop_distance), 4),
                 "bar_range_median_bps": round(float(bar_range), 4),
             }
     passed = not offenders
     return InvariantResult(
         name="check_stop_distance_microstructure_floor",
         passed=passed,
-        expected="stop_distance_bps >= bar_range_median_bps je Study",
+        expected="stop_distance_bps_modelled >= bar_range_median_bps je Study",
         actual=offenders or None,
         severity="high",
         detail=("OK" if passed else

@@ -971,14 +971,20 @@ def _within_study_stop_calibration_spearman(trial_attrs: list[dict]) -> tuple[fl
 def _effective_stop_ratio_for_trial(trial_attrs_entry: dict) -> float | None:
     """Issue #1053/#1202 — ``realized_stop_loss_ratio`` aus DEMSELBEN Trial (kein Quotient aus zwei
     UNABHAENGIG über verschiedene Trial-Teilmengen gebildeten Aggregaten): (dieses Trials gemessener
-    mittlerer Stop-Verlust) / ((dieses Trials gesampelter ``atr_trailing_multiplier``) × (dieses
-    Trials gemessenes ``atr_median_bps``))."""
-    k = (trial_attrs_entry.get("sampled_params") or {}).get("atr_trailing_multiplier")
-    atr = trial_attrs_entry.get("oos_atr_median_bps")
+    mittlerer Stop-Verlust) / (dieses Trials Stopdistanz).
+
+    Issue #1081/#1229 (P0, Katalog #1247+) — der Nenner ist die GEMESSENE, getaggte Stopdistanz
+    DIESES Trials (``oos_stop_distance_bps_median``, #1054/#1203), NICHT mehr das MODELLIERTE
+    ``k · ATR``: Median eines Produkts ≠ Produkt der Mediane, UND ``k``/``ATR_eff`` sind über den
+    kostengekoppelten Floor korreliert (B-5: die modellierte Distanz weicht Faktor 0,525-3,543 von
+    der tatsächlich getaggten ab). ``None`` ohne gemessene Distanz DIESES Trials — kein stiller
+    Rückfall auf die modellierte Größe (siehe ``invariants.check_effective_stop_distance``, dessen
+    Legacy-Zweig aus demselben Grund seither ebenfalls INCONCLUSIVE statt eines Rückfalls liefert)."""
+    distance = trial_attrs_entry.get("oos_stop_distance_bps_median")
     loss = trial_attrs_entry.get("oos_gross_loss_mean_bps_trailing_stop")
-    if k is None or atr is None or loss is None:
+    if distance is None or loss is None:
         return None
-    denom = float(k) * float(atr)
+    denom = float(distance)
     if denom <= 0:
         return None
     return float(loss) / denom
@@ -2231,36 +2237,62 @@ def _study_record(proposal: dict, study,
     # Namenskollisions-Fehlerklasse (zwei GETRENNTE Aggregationen unter kaum unterscheidbaren
     # Namen). Der Suffix ``_per_trial`` macht die tatsaechliche Aggregationsebene DIESES Feldes
     # jetzt Teil seines Namens.
+    #
+    # Issue #1081/#1229 (P0, Katalog #1247+) — Root-Cause: der bisherige Nenner
+    # (``atr_trailing_multiplier_median · atr_median_bps``) ist ein PRODUKT zweier UNABHAENGIG
+    # medianisierter Groessen — Median eines Produkts ≠ Produkt der Mediane, UND ``k``/``ATR_eff``
+    # sind über den kostengekoppelten Floor korreliert (B-5: die so KONFIGURIERTE/MODELLIERTE
+    # Distanz weicht Faktor 0,525-3,543 (Median 1,290) von der seit #1054/#1203 tatsaechlich
+    # GEMESSENEN, getaggten Distanz ab). ``realized_stop_loss_ratio`` ist seither ``gross_loss_
+    # median_bps_trailing_stop / stop_distance_bps_measured`` (DIREKT gemessen); die vormalige
+    # MODELLIERTE Distanz bleibt unter ``stop_distance_bps_modelled`` (umbenannt von
+    # ``stop_distance_bps``, weiterhin Rohmaterial fuer die ``atr_floor_binding_studies``-
+    # Provenance) als Suchraum-Referenz erhalten, der alte Quotient unter ``realized_stop_loss_
+    # ratio_vs_modelled`` (Zero-Regression fuer Konsumenten, die explizit den MODELLIERTEN
+    # Quotienten wollen). ``realized_stop_loss_ratio_mean_per_trial`` bleibt bewusst auf der
+    # MODELLIERTEN Basis — sonst wuerde die direkt anschliessende Mittel/Median-Ausreisser-
+    # Diagnose den gemessen/modelliert-Unterschied mit dem Mittel/Median-Unterschied vermischen;
+    # ihr Vergleichspartner ist deshalb seither ``realized_stop_loss_ratio_vs_modelled``, nicht
+    # mehr das primaere (jetzt gemessene) Feld.
     _rt_atr = record.get("atr_median_bps")
     _rt_k = record.get("atr_trailing_multiplier_median")
-    _rt_configured_distance = (
+    _rt_modelled_distance = (
         float(_rt_k) * float(_rt_atr)
         if (_rt_atr and _rt_k is not None) else None)
-    # Issue #1026/#1175 (Katalog #866-2) — die konfigurierte Stopdistanz (k_median · ATR_median,
-    # bps) als eigenstaendiges Report-Feld: Rohmaterial fuer die ``atr_floor_binding_studies``-
-    # Provenance (siehe invariants.check_atr_scale_homogeneity), vorher nur lokal in dieser
-    # Funktion berechnet und nirgends exportiert.
-    record["stop_distance_bps"] = (
-        round(_rt_configured_distance, 4) if _rt_configured_distance is not None else None)
+    # Issue #1026/#1175 (Katalog #866-2) — die konfigurierte/modellierte Stopdistanz (k_median ·
+    # ATR_median, bps) als eigenstaendiges Report-Feld: Rohmaterial fuer die
+    # ``atr_floor_binding_studies``-Provenance (siehe invariants.check_atr_scale_homogeneity).
+    record["stop_distance_bps_modelled"] = (
+        round(_rt_modelled_distance, 4) if _rt_modelled_distance is not None else None)
+    _rt_measured_distance = record.get("stop_distance_bps_measured")
     _rt_loss_median = record.get("gross_loss_median_bps_trailing_stop")
-    if _rt_loss_median is not None and _rt_configured_distance and _rt_configured_distance > 0:
-        record["realized_stop_loss_ratio"] = round(float(_rt_loss_median) / _rt_configured_distance, 4)
+    if (_rt_loss_median is not None and _rt_measured_distance is not None
+            and float(_rt_measured_distance) > 0):
+        record["realized_stop_loss_ratio"] = round(
+            float(_rt_loss_median) / float(_rt_measured_distance), 4)
     else:
         record["realized_stop_loss_ratio"] = None
+    if _rt_loss_median is not None and _rt_modelled_distance and _rt_modelled_distance > 0:
+        record["realized_stop_loss_ratio_vs_modelled"] = round(
+            float(_rt_loss_median) / _rt_modelled_distance, 4)
+    else:
+        record["realized_stop_loss_ratio_vs_modelled"] = None
     _rt_loss_mean = record.get("oos_gross_loss_mean_bps_trailing_stop")
-    if _rt_loss_mean is not None and _rt_configured_distance and _rt_configured_distance > 0:
+    if _rt_loss_mean is not None and _rt_modelled_distance and _rt_modelled_distance > 0:
         record["realized_stop_loss_ratio_mean_per_trial"] = round(
-            float(_rt_loss_mean) / _rt_configured_distance, 4)
+            float(_rt_loss_mean) / _rt_modelled_distance, 4)
     else:
         record["realized_stop_loss_ratio_mean_per_trial"] = None
     # Issue #972/#1126 Akzeptanzkriterium 3 — relative Abweichung Mittel<->Median; > 0,5 markiert die
     # Study explizit als ausreissergetrieben (der Mittelwert wird durch wenige extreme Trades
-    # dominiert, statt die typische Beobachtung wiederzugeben).
-    if (record["realized_stop_loss_ratio"] not in (None, 0)
+    # dominiert, statt die typische Beobachtung wiederzugeben). Issue #1081/#1229 — der Vergleich
+    # bleibt auf der MODELLIERTEN Basis (beide Seiten), siehe Kommentar oben.
+    if (record["realized_stop_loss_ratio_vs_modelled"] not in (None, 0)
             and record["realized_stop_loss_ratio_mean_per_trial"] is not None):
         _rel_dev = round(
-            abs(record["realized_stop_loss_ratio_mean_per_trial"] - record["realized_stop_loss_ratio"])
-            / abs(record["realized_stop_loss_ratio"]), 4)
+            abs(record["realized_stop_loss_ratio_mean_per_trial"]
+                - record["realized_stop_loss_ratio_vs_modelled"])
+            / abs(record["realized_stop_loss_ratio_vs_modelled"]), 4)
         record["realized_stop_loss_ratio_mean_median_rel_dev"] = _rel_dev
         record["realized_stop_loss_ratio_outlier_driven"] = _rel_dev > 0.5
     else:
@@ -4093,6 +4125,11 @@ def _build_report(
     effective_stop_distance_check = _inv.check_effective_stop_distance(
         studies_out, min_ratio=stop_distance_min_ratio, max_ratio=stop_distance_max_ratio)
     all_checks.append(("global", effective_stop_distance_check))
+
+    # Issue #1081/#1229 (P0, Katalog #1247+) Fix Punkt 3 — misst, wie weit die MODELLIERTE (im
+    # Suchraum getunte) Stopdistanz von der tatsächlich AUSGEFÜHRTEN, gemessenen Distanz abweicht,
+    # jetzt, da check_effective_stop_distance oben ausschliesslich die gemessene Groesse konsumiert.
+    all_checks.append(("global", _inv.check_stop_distance_model_fidelity(studies_out)))
 
     # Issue #1072 (Wiederkehr #1050/#1051) — die Stopdistanz muss ein Mindestvielfaches der
     # Round-Trip-Kosten betragen, sonst kann eine Position den Stop strukturell nicht überleben,

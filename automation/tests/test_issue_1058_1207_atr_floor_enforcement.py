@@ -15,14 +15,15 @@ from automation.optimizer import invariants as inv
 
 
 def _study(strategy, symbol, *, atr_raw, atr_median, floor, k, c_rt):
-    stop_distance_bps = atr_median * k
+    # Issue #1081/#1229 — umbenannt von ``stop_distance_bps`` zu ``stop_distance_bps_modelled``.
+    stop_distance_bps_modelled = atr_median * k
     return {
         "strategy": strategy, "symbol": symbol,
         "atr_raw_median_bps": atr_raw,
         "atr_median_bps": atr_median,
         "atr_floor_bps_derived": floor,
         "atr_trailing_multiplier_median": k,
-        "stop_distance_bps": stop_distance_bps,
+        "stop_distance_bps_modelled": stop_distance_bps_modelled,
         "round_trip_cost_bps": c_rt,
     }
 

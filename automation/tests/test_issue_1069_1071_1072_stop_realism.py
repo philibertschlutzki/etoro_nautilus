@@ -31,6 +31,9 @@ class _T:
             "oos_gross_loss_median_bps_trailing_stop": 124.22,
             "oos_n_trailing_stop_losses": 50,
             "sampled_params": {"atr_trailing_multiplier": 1.694},
+            # Issue #1081/#1229 — die GEMESSENE, getaggte Stopdistanz (#1054/#1203): seit diesem Fix
+            # der primaere Nenner von realized_stop_loss_ratio, nicht mehr k*ATR (siehe unten).
+            "oos_stop_distance_bps_median": 3.39,
         }
 
 
@@ -44,8 +47,13 @@ def test_realized_stop_loss_ratio_is_a_first_class_study_field():
     proposal = {"symbol": "TSLA.ETORO", "strategy": "DynamicBreakoutStrategy"}
     record, _checks = _study_record(proposal, _S())
     assert record["realized_stop_loss_ratio"] is not None
-    # 124.22 / (2.0 * 1.694) ≈ 36.67 — Beweis B-3 im #866-Katalog (DynamicBreakout, 36,66).
+    # 124.22 / 3.39 (gemessene Distanz, #1054/#1203) ≈ 36.64 — Beweis B-3 im #866-Katalog
+    # (DynamicBreakout, 36,66), seit #1081/#1229 gegen die GEMESSENE statt der modellierten Distanz.
     assert record["realized_stop_loss_ratio"] > 30.0
+    # Issue #1081/#1229 — die vormalige, MODELLIERTE Basis (124.22 / (2.0 * 1.694) ≈ 36.67) bleibt
+    # unter dem neuen Namen erhalten (Zero-Regression fuer Konsumenten, die sie explizit wollen).
+    assert record["realized_stop_loss_ratio_vs_modelled"] is not None
+    assert record["realized_stop_loss_ratio_vs_modelled"] > 30.0
 
 
 def test_realized_stop_loss_ratio_is_none_without_full_telemetry():
