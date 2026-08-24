@@ -2,7 +2,7 @@ import json
 import shutil
 import datetime as dt
 from pathlib import Path
-from automation.optimizer.manifest import git_commit, catalog_fingerprint, sha256_file, WORK
+from automation.optimizer.manifest import git_commit, catalog_fingerprint, sha256_file, WORK, PROJECT_ROOT
 from automation.optimizer.resolve import resolve_params
 
 def config_dir() -> Path:
@@ -10,8 +10,7 @@ def config_dir() -> Path:
     import os
     if "ETORO_CONFIG_DIR" in os.environ:
         return Path(os.environ["ETORO_CONFIG_DIR"])
-    # Default to automation/config from WORK parent
-    return WORK.parent.parent / "automation" / "config"
+    return PROJECT_ROOT / "automation" / "config"
 
 
 def compute_walk_forward_window(
@@ -305,8 +304,7 @@ def build_trial(
 
     # Resolve catalog_path from config or fallback to default
     raw_catalog_path = bt_data.get("catalog_path", "data/nautilus")
-    # WORK is PROJECT_ROOT / "data" / "optimizer", so WORK.parent.parent is PROJECT_ROOT
-    catalog_path = (WORK.parent.parent / raw_catalog_path).resolve()
+    catalog_path = (PROJECT_ROOT / raw_catalog_path).resolve()
 
     # Manifest payload
     tournament_file = base_cfg / "tournament.json"
