@@ -3630,6 +3630,18 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Issue #625 — familienweise Multiple-Testing-Zahl je Symbol (Σ eligibler Trials über die
     # Strategien-Studies desselben Symbols). Siehe _family_n_from_proposals.
     family_n = _family_n_from_proposals(proposals)
+    # Issue #1254 (GH #1124) — dieselbe eingefrorene, PER-STRATEGIE-max-dann-symbolweit-summierte
+    # Aggregation wie ``report.py``'s ``cross_study['n_family']['frozen']``/
+    # ``n_family_stage1_sum_frozen`` (siehe ``report.family_n_frozen_stage1_from_proposals``-
+    # Docstring) — GENAU DIESELBE Funktion, damit dieses Ereignis-Feld strukturell nicht mehr von
+    # der Report-Zahl divergieren kann (Root-Cause #1254: ``family_n`` oben zaehlt UEBERLEBENDE
+    # (``deflation_n_eligible``, seit #784/#822 veraltete Multiplizitaets-Grundgesamtheit), waehrend
+    # der Report ATTEMPTED zaehlt — Faktor 813 im Symptom, 2 vs. 1627 fuer TSLA.ETORO).
+    try:
+        from automation.optimizer.report import family_n_frozen_stage1_from_proposals
+        _, n_family_attempted_frozen = family_n_frozen_stage1_from_proposals(proposals)
+    except Exception:
+        n_family_attempted_frozen = {}
 
     emit_execution_event(_log, "sweep_completed", {
         "pairs": len(pairs),
@@ -3645,13 +3657,28 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #625 — familienweise N_eff je Symbol (Σ eligibler Trials über die Strategien-Studies).
         # Issue #1005/#1157 (Katalog #1170) — umbenannt von ``deflation_n_family``: derselbe
         # Feldname trug im selben Lauf DREI numerisch verschiedene Groessen (dieses Sweep-Ereignis,
-        # ``cross_study.n_family.frozen`` und ``.observed_at_report_time``, siehe report.py). Dieses
-        # Feld ist die im ATTEMPTED-Sinn gezaehlte Multiplizitaet (``_family_n_from_proposals``,
-        # #1102-Grundgesamtheit ``deflation_n_eligible`` — enger als die Stage1-Summe unten).
+        # ``cross_study.n_family.frozen`` und ``.observed_at_report_time``, siehe report.py).
+        # Issue #1254 (GH #1124) — Root-Cause: TROTZ der #1157-Umbenennung blieb dieses Feld
+        # (``_family_n_from_proposals``, Σ ``deflation_n_eligible`` — die UEBERLEBENDEN, seit
+        # #784/#822 veraltete Multiplizitaets-Grundgesamtheit) numerisch die FALSCHE Zahl fuer eine
+        # Multiple-Testing-Korrektur (die die VERSUCHE zaehlen muss, nicht die Ueberlebenden) —
+        # der Name behauptete "attempted", die Quelle lieferte "eligible". Reine
+        # Rueckwaerts-kompat-Telemetrie (siehe ``_family_n_from_proposals``-Docstring); fuer JEDE
+        # Entscheidungs-/Report-Kennzahl ist ``n_family_attempted_frozen`` unten massgeblich.
         "n_family_attempted": family_n,
-        # Konvention #1081 — Uebergangs-Alias eine Sitzung lang: alte Konsumenten lesen denselben,
-        # unveraenderten Wert unter dem alten Namen weiter.
-        "deflation_n_family": family_n,
+        # Issue #1254 (GH #1124) Fix Punkt 2 — dieselbe eingefrorene ATTEMPTED-Aggregation wie
+        # ``report.py``'s ``cross_study['n_family']['frozen']`` (siehe
+        # ``family_n_frozen_stage1_from_proposals``-Docstring oben) — GENAU DIE Zahl, gegen die
+        # ``invariants.check_family_n_event_report_agreement`` diesen Wert vergleicht.
+        "n_family_attempted_frozen": n_family_attempted_frozen,
+        # Issue #1254 (GH #1124) Fix Punkt 1 — umbenannt von ``deflation_n_family`` (Konvention
+        # #1081s "Uebergangs-Alias eine Sitzung lang" ist damit beendet): der alte Name behauptete
+        # "familienweite Multiplizitaet", die Quelle liefert tatsaechlich die UEBERLEBENDEN
+        # (``deflation_n_eligible``, siehe oben) — derselbe Name-vs-Semantik-Fehlmatch, den #1005/
+        # #1157 fuer die REPORT-Seite bereits behoben hat, hier auf der EREIGNIS-Seite. Kein
+        # Konsument im Repo liest mehr ``deflation_n_family`` aus diesem Ereignis (Grep-Test,
+        # test_issue_1254_family_n_naming.py).
+        "deflation_n_eligible_legacy": family_n,
     })
     if strategies_skipped:
         _log.warning("[#595] %d von %d angeforderten Strategien NICHT enumeriert: %s",

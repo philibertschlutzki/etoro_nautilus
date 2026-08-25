@@ -2773,7 +2773,46 @@ def _structural_zero_eligible_diagnosed_pairs(
     return out
 
 
-def _diagnosed_pairs_section(studies_out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def _atr_floor_dominant_diagnosed_pairs(
+    studies_out: list[dict[str, Any]], *,
+    freeze_threshold: float = 0.60,
+    min_trials: int = 30,
+) -> list[dict[str, Any]]:
+    """Issue #1263 (GH #1133) Fix Punkt 3 — dieselbe LIVE (cache-unabhängige), report-sichtbare
+    Ableitung wie ``_structural_zero_eligible_diagnosed_pairs`` (#1045/#1194-Konvention), aber für
+    eine ANDERE Ursachen-Achse: eine Study, deren ``atr_floor_binding_trial_fraction`` über
+    ``freeze_threshold`` liegt (bei >= ``min_trials`` abgeschlossenen Trials, siehe
+    ``invariants.check_atr_floor_dimension_freeze_candidates``-Docstring für den Scope dieses
+    Fixes), verschwendet Suchbudget auf eine strukturell wirkungslose Dimension — dieselbe
+    "Diagnose ohne Rückschrieb"-Fehlerklasse wie #1244, hier für ``binding_cause=
+    'atr_floor_dominant'``. ``action='none'`` (keine Denylist-Konsequenz — die Studie selbst bleibt
+    gültig, nur eine EINZELNE Suchdimension ist betroffen)."""
+    out = []
+    for r in studies_out:
+        symbol, strategy = r.get("symbol"), r.get("strategy")
+        if not symbol or not strategy:
+            continue
+        fraction = r.get("atr_floor_binding_trial_fraction")
+        n_trials = r.get("n_trials_completed")
+        if fraction is None or n_trials is None or int(n_trials) < min_trials:
+            continue
+        if float(fraction) <= freeze_threshold:
+            continue
+        out.append({
+            "strategy": strategy, "symbol": symbol, "action": "none",
+            "binding_cause": "atr_floor_dominant",
+            "n_runs_confirmed": None, "expires_after_runs": None,
+            "budget_executed_fraction": r.get("budget_executed_fraction"),
+            "atr_floor_binding_trial_fraction": fraction,
+            "source": "live_derivation",
+        })
+    return out
+
+
+def _diagnosed_pairs_section(
+    studies_out: list[dict[str, Any]] | None = None, *,
+    atr_floor_dimension_freeze_threshold: float = 0.60,
+) -> list[dict[str, Any]]:
     """Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Einträge (nicht nur die ``'denylist'``-
     Teilmenge von ``_diagnosed_pairs_skipped_section``) mit ``action``, ``binding_cause``,
     ``n_runs_confirmed`` und ``expires_after_runs`` je Eintrag: die Deaktivierungs-/Deprioritisierungs-
@@ -2785,11 +2824,20 @@ def _diagnosed_pairs_section(studies_out: list[dict[str, Any]] | None = None) ->
     ``_structural_zero_eligible_diagnosed_pairs``-Docstring) — derselbe "primär aus studies_out,
     Cache als Anreicherung"-Vertrag wie ``_boundary_solutions_section`` (#1039/#1188). Ein
     Cache-Eintrag (mehr Historie: ``n_runs_confirmed``/``expires_after_runs``) überschreibt den
-    Live-Befund für dasselbe (strategy, symbol)-Paar, falls beide existieren."""
+    Live-Befund für dasselbe (strategy, symbol)-Paar, falls beide existieren.
+
+    Issue #1263 (GH #1133) — ZUSÄTZLICH gemergt mit ``_atr_floor_dominant_diagnosed_pairs`` (eine
+    von STRUCTURAL_ZERO_ELIGIBLE unabhängige Ursachen-Achse — eine Study kann beide, eine, oder
+    keine der beiden Live-Ableitungen gleichzeitig tragen, da sie unterschiedliche (strategy,
+    symbol)-Paare ODER dieselbe Study aus unterschiedlichem Grund treffen können; im seltenen Fall
+    identischer Paare gewinnt die zuletzt gemergte Quelle, siehe Merge-Reihenfolge unten)."""
     by_key: dict[tuple[Any, Any], dict[str, Any]] = {
         (e["strategy"], e["symbol"]): e
         for e in _structural_zero_eligible_diagnosed_pairs(studies_out or [])
     }
+    for e in _atr_floor_dominant_diagnosed_pairs(
+            studies_out or [], freeze_threshold=atr_floor_dimension_freeze_threshold):
+        by_key[(e["strategy"], e["symbol"])] = e
     for entry in _diagnosed_pairs_all():
         by_key[(entry.get("strategy"), entry.get("symbol"))] = {
             "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
@@ -3511,6 +3559,36 @@ def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[
         if n1 > 0:
             stage2[symbol] += 1
     return stage1, stage2
+
+
+def family_n_frozen_stage1_from_proposals(
+    proposals: list[dict],
+) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    """Issue #977/#1131 (Katalog #986) — die EINGEFRORENE Sicht traegt den PER-STRATEGIE-Wert je
+    Proposal (siehe ``sweep._run_confirm_and_export``-Stempel-Docstring), NICHT eine bereits
+    symbolweit summierte Konstante — MAX PRO STRATEGIE (eine fehlende Study liefert 0 Beitrag, ein
+    doppeltes Proposal DERSELBEN Strategie zaehlt nicht doppelt), dann SUMME ueber die Strategien
+    je Symbol.
+
+    Issue #1254 (GH #1124) — extrahiert aus ``_build_report`` (vormals inline), damit ``sweep.py``
+    dieselbe Aggregation fuer ``sweep_completed.n_family_attempted_frozen`` OHNE einen zweiten,
+    unabhaengig gepflegten Berechnungspfad wiederverwenden kann — GENAU die Divergenz-Fehlerklasse
+    (zwei Quellen fuer denselben Begriff, hier ``sweep_completed.deflation_n_family`` vs.
+    ``run_json.cross_study.n_family.frozen``, Faktor 813 im #1254-Symptom), die dieses Issue an
+    anderer Stelle aufdeckt. Gibt ``(stage1, by_symbol)`` zurueck: ``stage1`` ist die
+    PER-(Symbol,Strategie)-Zerlegung (Rohmaterial fuer ``invariants.check_family_scope_coherence``
+    und den #1091-Stabilitaets-Vergleich), ``by_symbol`` die Summe je Symbol (== ``cross_study
+    ['n_family']['frozen']``/``n_family_stage1_sum_frozen``)."""
+    stage1: dict[str, dict[str, int]] = {}
+    for _p in proposals:
+        _frozen = _p.get("deflation_n_family_frozen")
+        _sym = _p.get("symbol")
+        _strat = _p.get("strategy")
+        if _sym and _strat and isinstance(_frozen, (int, float)) and not isinstance(_frozen, bool):
+            _per_strategy_frozen = stage1.setdefault(_sym, {})
+            _per_strategy_frozen[_strat] = max(_per_strategy_frozen.get(_strat, 0), int(_frozen))
+    by_symbol = {symbol: sum(per_strategy.values()) for symbol, per_strategy in stage1.items()}
+    return stage1, by_symbol
 
 
 def parse_proposal_payloads(proposals: Iterable[Path | dict]) -> list[dict]:
@@ -4245,25 +4323,11 @@ def _build_report(
     _n_family_by_symbol = {
         symbol: sum(per_strategy.values()) for symbol, per_strategy in n_family_stage1.items()
     }
-    # Issue #977/#1131 (Katalog #986) — die EINGEFRORENE Sicht traegt seit diesem Fix den
-    # PER-STRATEGIE-Wert je Proposal (siehe sweep._run_confirm_and_export-Stempel-Docstring), NICHT
-    # mehr eine bereits symbolweit summierte Konstante — MAX PRO STRATEGIE (dieselbe Idempotenz-
-    # Absicherung wie vorher: eine fehlende Study liefert 0 Beitrag, ein doppeltes Proposal
-    # DERSELBEN Strategie zaehlt nicht doppelt), dann SUMME ueber die Strategien je Symbol —
-    # dieselbe Aggregations-Arithmetik wie ``_n_family_by_symbol`` oben, damit beide Seiten des
-    # #1091-Stabilitaets-Vergleichs (``check_family_n_stability``) auf demselben Skalentyp stehen.
-    _n_family_frozen_stage1: dict[str, dict[str, int]] = {}
-    for _p in filtered_proposals:
-        _frozen = _p.get("deflation_n_family_frozen")
-        _sym = _p.get("symbol")
-        _strat = _p.get("strategy")
-        if _sym and _strat and isinstance(_frozen, (int, float)) and not isinstance(_frozen, bool):
-            _per_strategy_frozen = _n_family_frozen_stage1.setdefault(_sym, {})
-            _per_strategy_frozen[_strat] = max(_per_strategy_frozen.get(_strat, 0), int(_frozen))
-    _n_family_frozen_by_symbol: dict[str, int] = {
-        symbol: sum(per_strategy.values())
-        for symbol, per_strategy in _n_family_frozen_stage1.items()
-    }
+    # Issue #977/#1131/#1254 (GH #1124) — siehe family_n_frozen_stage1_from_proposals-Docstring
+    # (dieselbe Aggregations-Arithmetik wie ``_n_family_by_symbol`` oben, damit beide Seiten des
+    # #1091-Stabilitaets-Vergleichs, ``check_family_n_stability``, auf demselben Skalentyp stehen).
+    _n_family_frozen_stage1, _n_family_frozen_by_symbol = family_n_frozen_stage1_from_proposals(
+        filtered_proposals)
 
     registry_check = _inv.check_config_key_registry(tournament_cfg)
     all_checks.append(("global", registry_check))
@@ -4296,6 +4360,18 @@ def _build_report(
             _n_family_frozen_by_symbol, _n_family_by_symbol,
             frozen_stage1=_n_family_frozen_stage1, observed_stage1=n_family_stage1,
             sweep_completed=(run_status != "in_progress") if run_status is not None else None)))
+
+    # Issue #1254 (GH #1124) — vergleicht das In-Prozess-``sweep_completed``-Ereignis (VOR jeder
+    # Report-Generierung emittiert, siehe sweep.py) gegen dieselbe eingefrorene Report-Zahl oben
+    # (``_n_family_frozen_by_symbol``) — beide werden ueber ``family_n_frozen_stage1_from_
+    # proposals`` aus derselben Aggregation berechnet, duerfen strukturell nicht divergieren.
+    _sweep_completed_events = _read_jsonl_events(jsonl_sidecar_path(_log.name), "sweep_completed")
+    _n_family_attempted_frozen_by_event = (
+        _sweep_completed_events[-1].get("n_family_attempted_frozen")
+        if _sweep_completed_events else None
+    )
+    all_checks.append(("global", _inv.check_family_n_event_report_agreement(
+        _n_family_attempted_frozen_by_event, _n_family_frozen_by_symbol)))
 
     # Issue #984/#1138 (Katalog #986, Pitfall #409 in AGENTS.md) — #904-Regressionswaechter: bei
     # promotion_family_scope='per_strategy' muessen zwei Studies DESSELBEN Symbols mit
@@ -4852,9 +4928,21 @@ def _build_report(
     # diagnosed_pairs-Eintrag hinterlassen (siehe check_structural_zero_eligible_has_diagnosis-
     # Docstring). Geprüft gegen dieselbe, gemergte Liste, die der Report unter cross_study.
     # diagnosed_pairs zeigt (_diagnosed_pairs_section, jetzt cache- UND live-derivation-gespeist).
+    # Issue #1263 (GH #1133) — dieselbe Config-Schwelle, mit der _diagnosed_pairs_section unten UND
+    # der neue check_atr_floor_dimension_freeze_candidates-Aufruf ausgewertet werden (eine Kennzahl,
+    # eine Quelle).
+    _atr_floor_freeze_threshold = float(
+        optimizer_cfg.get("atr_floor_dimension_freeze_threshold", 0.60))
     structural_zero_eligible_diagnosis_check = _inv.check_structural_zero_eligible_has_diagnosis(
-        studies_out, _diagnosed_pairs_section(studies_out))
+        studies_out, _diagnosed_pairs_section(
+            studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold))
     all_checks.append(("global", structural_zero_eligible_diagnosis_check))
+
+    # Issue #1263 (GH #1133) Fix Punkt 3/4 — rein diagnostisch (severity 'medium'), siehe dortiger
+    # Docstring fuer den bewusst begrenzten Scope dieses Fixes (Beobachtbarkeit, keine Live-
+    # Intervention).
+    all_checks.append(("global", _inv.check_atr_floor_dimension_freeze_candidates(
+        studies_out, freeze_threshold=_atr_floor_freeze_threshold)))
 
     # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
     # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen
@@ -4911,6 +4999,16 @@ def _build_report(
     # Entfernungsempfehlung (SPERRVERMERK: keine weitere Gate-Entfernung vor #1076).
     all_checks.append(("global", _inv.check_gate_marginal_contribution(
         studies_out, gate_consolidation_protected=tournament_cfg.get("gate_consolidation_protected"))))
+
+    # Issue #1251 (GH #1121) — dieselbe Grenzbeitrags-Aggregation, aber unter
+    # gate_zero_marginal_policy='require_decision' (Default) mit einer KONSEQUENZ statt einer
+    # wiederholt ignorierbaren Empfehlung: ein undokumentierter Nullbefund FAILt blockierend.
+    all_checks.append(("global", _inv.check_gate_zero_marginal_policy(
+        studies_out,
+        policy=tournament_cfg.get("gate_zero_marginal_policy", "require_decision"),
+        min_observations=int(tournament_cfg.get("gate_redundancy_min_observations", 500)),
+        accepted_gates=tournament_cfg.get("gate_zero_marginal_accepted"),
+        gate_consolidation_protected=tournament_cfg.get("gate_consolidation_protected"))))
 
     # Issue #956/#1122 (Katalog #960) — check_gate_inventory_coherence (#1076) entfernt: seit
     # gate_inventory_table die is_rejection_detail_counts-Zaehlung DIREKT uebernimmt (statt
@@ -5388,7 +5486,8 @@ def _build_report(
             "diagnosed_pairs_skipped": _diagnosed_pairs_skipped_section(),
             # Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Eintraege (denylist UND deprioritized
             # UND none-mit-Ursache), nicht nur die uebersprungene Teilmenge oben.
-            "diagnosed_pairs": _diagnosed_pairs_section(studies_out),
+            "diagnosed_pairs": _diagnosed_pairs_section(
+                studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold),
             # Issue #831 Fix Punkt 4 — Randlösungen (boundary_hit_fraction > 0.3) mit ihrem
             # konkreten Bounds-Vorschlag, unabhängig davon, ob die Study eligible Trials hatte.
             # Issue #1039/#1188 — primär aus ``studies_out`` selbst abgeleitet (siehe dortiger

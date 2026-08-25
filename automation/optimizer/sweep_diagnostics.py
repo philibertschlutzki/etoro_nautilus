@@ -82,16 +82,31 @@ _QUALITY_REJECTION_DETAILS = frozenset({
     "REJECT_OOS_MIN_WIN_RATE", "REJECT_OOS_MIN_SORTINO", "REJECT_OOS_MIN_PROFIT_FACTOR",
     "REJECT_OOS_MIN_PSR", "REJECT_OOS_MIN_EXCESS_RETURN",
 })
+# Issue #1264 (GH #1134) — ``REJECT_OOS_MIN_ALPHA_TSTAT`` ist WEDER eine Trade-FREQUENZ-Aussage
+# (wie ``REJECT_OOS_MIN_TRADES``) NOCH eine Aussage ueber die STICHPROBEN-Qualitaet einer bereits
+# stattgefundenen Handelskohorte (wie ``REJECT_OOS_MAX_DRAWDOWN`` etc.) — ein Trial, das dieses Gate
+# 100 % der Zeit verfehlt, hat ein STRUKTURELLES Problem mit der GATE-SCHWELLE selbst relativ zur
+# erreichbaren Alpha-Signifikanz dieser Strategie/dieses Symbols (eine Config-Eigenschaft), nicht mit
+# der Trade-Anzahl oder der gemessenen Performance-Verteilung. Root-Cause #1264-Symptom: 13 Studies,
+# 100 % ``REJECT_OOS_MIN_ALPHA_TSTAT``, ``diagnosed_pairs`` leer, weil ``classify_rejection_detail_
+# gate_type`` fuer diesen Code bislang ``None`` (unklassifiziert) lieferte.
+_GATE_UNREACHABLE_REJECTION_DETAILS = frozenset({"REJECT_OOS_MIN_ALPHA_TSTAT"})
 
 
 def classify_rejection_detail_gate_type(is_rejection_detail: str | None) -> str | None:
-    """Issue #1045/#1194 — ``'frequency'``/``'quality'``/``None`` (unklassifiziert) fuer einen
-    ``is_rejection_detail``-Code (siehe ``run_optimization._OOS_REASON_PREFIX_MAP`` fuer die
-    vollstaendige Enum). Rein, deterministisch, kein I/O."""
+    """Issue #1045/#1194, erweitert #1264 (GH #1134) — ``'frequency'``/``'quality'``/``'gate'``/
+    ``None`` (unklassifiziert) fuer einen ``is_rejection_detail``-Code (siehe
+    ``run_optimization._OOS_REASON_PREFIX_MAP`` fuer die vollstaendige Enum). ``'gate'`` (neu,
+    #1264) markiert ein Eligibility-GATE, dessen Schwelle strukturell (nicht paarspezifisch)
+    unerreichbar sein kann — die Ursache liegt in der KONFIGURIERTEN Schwelle, nicht im (Strategie,
+    Symbol)-Paar selbst (siehe ``diagnose_structural_zero_eligible_gate``s ``gate_unreachable``-
+    Zweig: erzeugt bewusst KEINE Denylist-Empfehlung). Rein, deterministisch, kein I/O."""
     if is_rejection_detail in _FREQUENCY_REJECTION_DETAILS:
         return "frequency"
     if is_rejection_detail in _QUALITY_REJECTION_DETAILS:
         return "quality"
+    if is_rejection_detail in _GATE_UNREACHABLE_REJECTION_DETAILS:
+        return "gate"
     return None
 
 
@@ -162,6 +177,15 @@ def diagnose_structural_zero_eligible_gate(
         binding_cause, proposed_action = "signal_sparse", "search_space_override"
     elif gate_type == "quality":
         binding_cause, proposed_action = "signal_quality", "budget_deprioritization"
+    elif gate_type == "gate":
+        # Issue #1264 (GH #1134) Fix Punkt 2 — ``action='none'`` ist HIER bewusst KEIN "kein
+        # Befund" (anders als der allgemeine ``binding_cause in (None, 'none')``-Fall unten): die
+        # Ursache liegt in der KONFIGURIERTEN Gate-Schwelle (``tournament.json``), nicht im
+        # (Strategie, Symbol)-Paar — eine Denylist/Bounds-Weitung fuer DIESES Paar waere hier keine
+        # sinnvolle Konsequenz (ein anderes Paar mit derselben Config-Schwelle traefe dasselbe
+        # strukturelle Limit). ``check_structural_zero_eligible_has_diagnosis`` akzeptiert
+        # ``binding_cause='gate_unreachable'`` dennoch als vollwertigen Diagnose-Eintrag.
+        binding_cause, proposed_action = "gate_unreachable", "none"
     else:
         binding_cause, proposed_action = "none", "none"
     return {

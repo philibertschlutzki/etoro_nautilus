@@ -2871,6 +2871,52 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
         n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs, run_id=run_id)
 
+    # Issue #1264 (GH #1134) Fix Punkt 1 — Root-Cause: der #681/#829/#830/#831-Rückschriebpfad
+    # (weiter oben in dieser Datei, in den STRUCTURAL_ALL_UNEVALUABLE-/ZERO_ELIGIBLE_PLATEAU-
+    # Fruehstopp-Zweigen) ist auf das strenge sequentielle Fruehstopp-Kriterium ANGEWIESEN — eine
+    # Study, die ihr VOLLES Budget durchlaeuft, OHNE dass die Fruehstopp-Statistik je feuert, erreicht
+    # diesen Code NIE, obwohl ``stop_reason`` (oben berechnet, IMMER fuer jede abgeschlossene Study
+    # bekannt) sie unzweideutig als STRUCTURAL_ZERO_ELIGIBLE/STRUCTURAL_ALL_UNEVALUABLE klassifiziert
+    # (Symptom: 10 Studies ohne diagnosed_pairs-Eintrag, obwohl ``stop_reason`` sie auswies). Dieser
+    # Block laeuft UNBEDINGT fuer JEDE abgeschlossene Study mit einem der beiden ``stop_reason``-Werte
+    # — unabhaengig davon, ob der obige Fruehstopp-Pfad BEREITS geschrieben hat: ``record_diagnosed_
+    # pair``s eigener ``study_fingerprint``-Dedup (#1090) verhindert eine doppelte ``n_runs_confirmed``-
+    # Zaehlung fuer dieselbe Study-Beobachtung, ein zweiter Aufruf ist daher sicher.
+    if strategy is not None and symbol is not None and (
+            budget_execution["stop_reason"] in ("STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE")):
+        try:
+            from automation.optimizer.sweep_diagnostics import (
+                diagnose_structural_zero_eligible_gate, record_diagnosed_pair, study_fingerprint,
+            )
+            _all_rejection_details_for_writeback = [
+                getattr(t, "user_attrs", {}).get("is_rejection_detail") for t in trials
+            ]
+            _rejection_detail_counts_for_writeback: dict[str, int] = {}
+            for _d in _all_rejection_details_for_writeback:
+                if _d:
+                    _rejection_detail_counts_for_writeback[_d] = (
+                        _rejection_detail_counts_for_writeback.get(_d, 0) + 1)
+            _structural_diagnosis = diagnose_structural_zero_eligible_gate(
+                _rejection_detail_counts_for_writeback, stop_reason=budget_execution["stop_reason"])
+            if _structural_diagnosis["binding_cause"] not in (None, "none"):
+                _structural_rec = {
+                    "strategy": strategy, "symbol": symbol,
+                    "action": _structural_diagnosis["proposed_action"],
+                    "binding_cause": _structural_diagnosis["binding_cause"],
+                    "dominant_rejection_detail": _structural_diagnosis["dominant_rejection_detail"],
+                    "dominant_fraction": _structural_diagnosis["dominant_fraction"],
+                    "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+                    "study_fingerprint": study_fingerprint(
+                        getattr(study, "study_name", None),
+                        _study_user_attrs.get("study_started_at_utc"),
+                        budget_execution["n_trials_completed"]),
+                }
+                record_diagnosed_pair(_structural_rec, run_id=run_id)
+        except Exception:
+            logging.getLogger("optimizer").debug(
+                "Issue #1264: unbedingter Struktur-Diagnose-Rueckschrieb fehlgeschlagen (non-fatal).",
+                exc_info=True)
+
     # Issue #930 (Pitfall #303) — die Ausloesebedingung war `gradient_signal is None`, ein PROXY
     # fuer "Basisbudget nicht ausgeschoepft" aus der Zeit, als der Fruehstopp bei
     # `n_startup + 3*dim` griff (#805/#806). Seit #925 kann `budget_executed_fraction` bei einem

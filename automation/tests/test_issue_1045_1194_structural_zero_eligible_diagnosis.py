@@ -165,7 +165,9 @@ def test_invariant_fails_matching_1194_reference_symptom():
     ]
     result = inv.check_structural_zero_eligible_has_diagnosis(studies_out, [])
     assert result.passed is False
-    assert result.severity == "medium"
+    # Issue #1264 (GH #1134) Fix Punkt 3 — von 'medium' auf 'high' gehoben (siehe dortiger
+    # Docstring): derselbe Befund ging zuvor ueber mehrere Laeufe unbemerkt im Ereignisrauschen unter.
+    assert result.severity == "high"
     assert "AdxAtrMomentumStrategy/TSLA.ETORO" in result.actual["missing_diagnosis_for"]
 
 

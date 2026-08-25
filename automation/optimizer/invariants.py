@@ -2781,6 +2781,33 @@ def gate_inventory_table(
     return table
 
 
+def _gate_marginal_totals(study_records: list[dict]) -> dict[str, dict[str, float]]:
+    """Issue #970/#1251 (GH #1121) — je Gate aggregierte ``marginal_delta``/``n_evaluated`` ueber
+    ALLE ``study_records`` (extrahiert aus ``check_gate_marginal_contribution``, damit
+    ``check_gate_zero_marginal_policy`` dieselbe Aggregation OHNE Code-Duplikation wiederverwendet
+    — zwei unabhaengig gepflegte Kopien derselben Summierung waeren genau die Divergenz-Fehlerklasse,
+    die #1254/GH #1124 an anderer Stelle aufdeckt). Siehe ``check_gate_marginal_contribution``-
+    Docstring (#1033/#1182) fuer die ``marginal_delta=None``-Ausschlussregel."""
+    totals: dict[str, dict[str, float]] = {}
+    for r in study_records:
+        for entry in r.get("gate_inventory") or []:
+            gate = entry.get("gate")
+            if not gate:
+                continue
+            agg = totals.setdefault(gate, {
+                "marginal_delta": 0.0, "n_evaluated": 0,
+                "n_entries_total": 0, "n_entries_measured": 0,
+            })
+            agg["n_entries_total"] += 1
+            marginal_delta = entry.get("marginal_delta")
+            if marginal_delta is None:
+                continue
+            agg["n_entries_measured"] += 1
+            agg["marginal_delta"] += float(marginal_delta)
+            agg["n_evaluated"] += int(entry.get("n_evaluated") or 0)
+    return totals
+
+
 def check_gate_marginal_contribution(
     study_records: list[dict], *, min_evaluated: int = 500,
     gate_consolidation_protected: list[str] | None = None,
@@ -2827,23 +2854,7 @@ def check_gate_marginal_contribution(
     ``min_evaluated`` TATSAECHLICH GEMESSENEN Beobachtungen (nach dem Ausschluss) erscheint als
     ``inconclusive_gates`` (mit der Herkunft — Anzahl Zeilen total/gemessen — in ``provenance``),
     NICHT als ``offenders`` ("ohne marginalen Beitrag")."""
-    totals: dict[str, dict[str, float]] = {}
-    for r in study_records:
-        for entry in r.get("gate_inventory") or []:
-            gate = entry.get("gate")
-            if not gate:
-                continue
-            agg = totals.setdefault(gate, {
-                "marginal_delta": 0.0, "n_evaluated": 0,
-                "n_entries_total": 0, "n_entries_measured": 0,
-            })
-            agg["n_entries_total"] += 1
-            marginal_delta = entry.get("marginal_delta")
-            if marginal_delta is None:
-                continue
-            agg["n_entries_measured"] += 1
-            agg["marginal_delta"] += float(marginal_delta)
-            agg["n_evaluated"] += int(entry.get("n_evaluated") or 0)
+    totals = _gate_marginal_totals(study_records)
     if not totals:
         return InvariantResult(
             name="check_gate_marginal_contribution",
@@ -2889,6 +2900,88 @@ def check_gate_marginal_contribution(
         detail=("OK" if (passed and not inconclusive_gates) else
                 (f"{len(offenders)} Gate(s) ohne jeden marginalen Beitrag über eine ausreichend "
                  f"grosse Kohorte: {offenders} — " if offenders else "") + " ".join(detail_parts)),
+    )
+
+
+def check_gate_zero_marginal_policy(
+    study_records: list[dict], *,
+    policy: str = "require_decision",
+    min_observations: int = 500,
+    accepted_gates: list[dict] | None = None,
+    gate_consolidation_protected: list[str] | None = None,
+) -> InvariantResult:
+    """Issue #1251 (GH #1121) — ein Gate mit gemessenem Grenzbeitrag null (``Σ marginal_delta ==
+    0`` über >= ``min_observations`` GEMESSENE Beobachtungen, dieselbe Aggregation wie
+    ``check_gate_marginal_contribution``, siehe ``_gate_marginal_totals``) bekommt unter
+    ``policy='require_decision'`` (DEFAULT, ``tournament.json['gate_zero_marginal_policy']``) eine
+    KONSEQUENZ statt einer wiederholt ignorierbaren Empfehlung.
+
+    Root-Cause: ``check_gate_marginal_contribution`` ist reine Diagnose (``severity='medium'``,
+    unveraendert) — ``oos_min_psr`` erschien ueber mehrere Kataloge hinweg als "Kandidat für
+    Entfernung" (``marginal_delta=0.0``, ``n=1627``), folgenlos. Dieselbe Gewöhnungs-Dynamik, die
+    #907 fuer die Kollinearitäts-Warnung behoben hat (dort: ``check_gate_collinearity_decision_
+    required``), besteht fuer den Grenzbeitrag fort.
+
+    Ein Gate zaehlt als ENTSCHIEDEN (kein FAIL), wenn es entweder (a) in
+    ``gate_consolidation_protected`` steht (dieselbe Ausnahme wie ``check_gate_marginal_
+    contribution`` — eine strukturelle Vorbedingung/harte Risikogrenze braucht keine
+    Redundanz-Begründung), oder (b) einen Eintrag in ``accepted_gates`` traegt (``tournament.json
+    ['gate_zero_marginal_accepted']``, je Eintrag ``{gate, rationale, decided_in_issue}`` — die
+    EXPLIZITE, dokumentierte Entscheidung, das Gate trotz Nullbefund zu behalten). Ein Gate OHNE
+    beides ist ein unentschiedener Nullbefund ⇒ ``severity='blocking'`` FAIL.
+
+    ``policy != 'require_decision'`` (z. B. ``'warn'``) deaktiviert diesen Check vollstaendig
+    (``passed=True``, rein informativ — die bestehende ``severity='medium'``-Telemetrie aus
+    ``check_gate_marginal_contribution`` bleibt in jedem Fall unveraendert aktiv). ``marginal_delta
+    =None``-Zeilen und Gates unter ``min_observations`` GEMESSENEN Beobachtungen sind — wie im
+    Basis-Check — nicht auswertbar (``inconclusive``, kein FAIL): ein fehlender Nachweis ist kein
+    Nachweis der Redundanz."""
+    if policy != "require_decision":
+        return InvariantResult(
+            name="check_gate_zero_marginal_policy",
+            passed=True,
+            expected="jedes Gate mit Σ marginal_delta == 0 traegt entweder gate_consolidation_"
+                     "protected ODER einen gate_zero_marginal_accepted-Eintrag",
+            actual=None,
+            severity="blocking",
+            detail=f"gate_zero_marginal_policy='{policy}' — Check deaktiviert (rein informativ, "
+                   "siehe check_gate_marginal_contribution).",
+        )
+    totals = _gate_marginal_totals(study_records)
+    if not totals:
+        return InvariantResult(
+            name="check_gate_zero_marginal_policy",
+            passed=True,
+            expected="jedes Gate mit Σ marginal_delta == 0 traegt entweder gate_consolidation_"
+                     "protected ODER einen gate_zero_marginal_accepted-Eintrag",
+            actual=None,
+            severity="blocking",
+            detail="Keine Studies mit gate_inventory-Telemetrie — nicht anwendbar.",
+        )
+    protected = set(gate_consolidation_protected or [])
+    accepted = {
+        a.get("gate"): a for a in (accepted_gates or [])
+        if isinstance(a, dict) and a.get("gate")
+    }
+    offenders = {
+        gate: {"marginal_delta": agg["marginal_delta"], "n_evaluated": agg["n_evaluated"]}
+        for gate, agg in totals.items()
+        if agg["n_evaluated"] >= min_observations and agg["marginal_delta"] == 0
+    }
+    undocumented = sorted(g for g in offenders if g not in protected and g not in accepted)
+    passed = not undocumented
+    return InvariantResult(
+        name="check_gate_zero_marginal_policy",
+        passed=passed,
+        expected="jedes Gate mit Σ marginal_delta == 0 traegt entweder gate_consolidation_"
+                 "protected ODER einen gate_zero_marginal_accepted-Eintrag",
+        actual={g: offenders[g] for g in undocumented} if undocumented else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(undocumented)} Gate(s) mit gemessenem Nullbeitrag ohne dokumentierte "
+                f"Entscheidung: {undocumented} — entweder aus eligible_requires_all entfernen "
+                "oder in tournament.json['gate_zero_marginal_accepted'] mit rationale/"
+                "decided_in_issue begründen (#1251)."),
     )
 
 
@@ -3291,6 +3384,59 @@ def check_family_n_stability(
                     f"grund={o['discriminator']})"
                     for sym, o in offenders.items()
                 ) + " — Zwischenreport oder erneute #1158-Filter-Divergenz, siehe 'discriminator'."),
+    )
+
+
+def check_family_n_event_report_agreement(
+    n_family_attempted_frozen_by_event: dict[str, int] | None,
+    n_family_frozen_by_report: dict[str, int],
+) -> InvariantResult:
+    """Issue #1254 (GH #1124) — ``sweep_completed.n_family_attempted_frozen`` (dem In-Prozess-
+    Ereignis, VOR jeder Report-Generierung emittiert) muss je Symbol exakt ``run_json.cross_study
+    .n_family.frozen``/``n_family_stage1_sum_frozen`` (dem spaeter generierten Report) entsprechen
+    — beide werden ueber ``report.family_n_frozen_stage1_from_proposals`` aus derselben Aggregation
+    berechnet (siehe dortiger Docstring), duerfen also strukturell nicht divergieren, AUSSER die
+    zugrundeliegende Proposal-Menge selbst hat sich zwischen Ereignis- und Report-Zeitpunkt
+    geaendert (z. B. ein nachtraeglich um fremde-Lauf-Studies bereinigter Report, siehe
+    ``studies_excluded_foreign_run``) — genau DAS soll dieser Check sichtbar machen, statt es
+    stillschweigend als "beide Zahlen heissen ja Familien-N" zu verschmelzen (die #1254-
+    Symptomklasse: Faktor 813 zwischen zwei Zahlen unter praktisch demselben Namen).
+
+    ``n_family_attempted_frozen_by_event is None`` (kein ``sweep_completed``-Ereignis in diesem
+    Lauf gefunden — ein Zwischenreport/eine Probe VOR Sweep-Abschluss, oder ein Legacy-Report vor
+    #1254) ⇒ ``inconclusive=True``, nicht auswertbar. ``severity='medium'`` (Fix-Vorgabe) — eine
+    Divergenz ist ein Beobachtbarkeits-/Konsistenzbefund, keine Korrektheitsverletzung der
+    Multiple-Testing-Korrektur selbst (die liest ausschliesslich die Report-Seite, nie das
+    Ereignis)."""
+    if n_family_attempted_frozen_by_event is None:
+        return InvariantResult(
+            name="check_family_n_event_report_agreement",
+            passed=True,
+            expected="sweep_completed.n_family_attempted_frozen == "
+                     "run_json.cross_study.n_family.frozen je Symbol",
+            actual=None,
+            severity="medium",
+            detail="Kein sweep_completed-Ereignis in diesem Lauf gefunden (Zwischenreport/Probe "
+                   "vor Sweep-Abschluss, oder Legacy-Report vor #1254) — nicht auswertbar.",
+            inconclusive=True,
+        )
+    mismatches = {
+        sym: {"event": n_family_attempted_frozen_by_event.get(sym),
+             "report": n_family_frozen_by_report.get(sym)}
+        for sym in set(n_family_attempted_frozen_by_event) | set(n_family_frozen_by_report)
+        if n_family_attempted_frozen_by_event.get(sym) != n_family_frozen_by_report.get(sym)
+    }
+    passed = not mismatches
+    return InvariantResult(
+        name="check_family_n_event_report_agreement",
+        passed=passed,
+        expected="sweep_completed.n_family_attempted_frozen == "
+                 "run_json.cross_study.n_family.frozen je Symbol",
+        actual=mismatches or None,
+        severity="medium",
+        detail=("OK" if passed else
+                f"{len(mismatches)} Symbol(e) mit Abweichung zwischen sweep_completed-Ereignis "
+                f"und Report: {mismatches} (#1254)."),
     )
 
 
@@ -4824,6 +4970,64 @@ def check_atr_scale_homogeneity(
     )
 
 
+def check_atr_floor_dimension_freeze_candidates(
+    study_records: list[dict], *,
+    freeze_threshold: float = 0.60,
+    min_trials: int = 30,
+) -> InvariantResult:
+    """Issue #1263 (GH #1133) — identifiziert retrospektiv, WELCHE Studies fuer eine Einfrierung
+    von ``atr_trailing_multiplier`` qualifiziert haetten: ``atr_floor_binding_trial_fraction >
+    freeze_threshold`` (Default 0.60, ``optimizer.json['atr_floor_dimension_freeze_threshold']``)
+    ueber >= ``min_trials`` (Default 30) tatsaechlich abgeschlossene Trials. Symptom (#1263):
+    ``atr_floor_binding_trial_fraction`` 0,768–1,0 in sieben Studies, Spearman(``atr_trailing_
+    multiplier``, gemessene Stopdistanz)=0,2594 — 881 von 1742 Trials (50,6 %) tunten eine
+    Dimension, deren Ergebnis der kostengekoppelte ATR-Floor bereits konstant hielt.
+
+    Bewusster Scope (siehe ``optimizer.json``-Schema-Dokumentation fuer
+    ``atr_floor_dimension_freeze_threshold``): dieser Check implementiert AUSSCHLIESSLICH die
+    Beobachtbarkeits-Seite (GH #1133 Fix Punkt 3/4) — er FRIERT NICHTS EIN und veraendert KEINEN
+    Sampling-Pfad. Die live Intervention (Fix Punkt 1: ``spaces.sample_params`` liest waehrend
+    einer laufenden Study progressive Telemetrie und fixiert die Dimension auf einen Punktwert)
+    ist NICHT umgesetzt — sie braucht neue Live-Per-Trial-Infrastruktur, deren "bit-identisch ohne
+    Bindung"-Anforderung ohne einen echten End-to-End-Lauf (kein ``nautilus_trader`` in dieser
+    Sandbox) nicht verifizierbar waere.
+
+    ``severity='medium'`` (rein diagnostisch, kein Korrektheits- oder Ressourcen-Problem DIESES
+    Laufs selbst — nur ein Hinweis auf verschwendetes Budget). ``atr_floor_binding_trial_fraction
+    is None`` (nicht gemessen) ODER ``n_trials_completed < min_trials`` schliesst eine Study aus
+    den Kandidaten aus (kein Rateversuch auf zu duenner Evidenz), macht sie aber NICHT
+    ``inconclusive`` — Abwesenheit von Kandidaten ist ein vollstaendig bekannter Zustand (0
+    qualifizierende Studies ist ein legitimes PASS)."""
+    candidates: dict[str, dict] = {}
+    for r in study_records:
+        symbol, strategy = r.get("symbol"), r.get("strategy")
+        if not symbol or not strategy:
+            continue
+        fraction = r.get("atr_floor_binding_trial_fraction")
+        n_trials = r.get("n_trials_completed")
+        if fraction is None or n_trials is None:
+            continue
+        if int(n_trials) < min_trials:
+            continue
+        if float(fraction) > freeze_threshold:
+            candidates[f"{strategy}/{symbol}"] = {
+                "atr_floor_binding_trial_fraction": fraction, "n_trials_completed": n_trials,
+            }
+    return InvariantResult(
+        name="check_atr_floor_dimension_freeze_candidates",
+        passed=not candidates,
+        expected=f"Kandidaten fuer eine Einfrierung von atr_trailing_multiplier "
+                 f"(atr_floor_binding_trial_fraction > {freeze_threshold} ueber >= {min_trials} "
+                 "Trials) sind sichtbar, nicht stillschweigend bezahlt.",
+        actual=candidates or None,
+        severity="medium",
+        detail=("Keine Kandidaten." if not candidates else
+                f"{len(candidates)} Study/Studies qualifizieren fuer eine Einfrierung von "
+                f"atr_trailing_multiplier (NICHT umgesetzt, siehe Scope-Dokumentation): "
+                f"{sorted(candidates)} (#1263)."),
+    )
+
+
 def check_atr_floor_enforcement(
     study_records: list[dict], *,
     atr_floor_bps_by_symbol: dict[str, float] | None = None,
@@ -5497,8 +5701,15 @@ def check_structural_zero_eligible_has_diagnosis(
     dadurch in 5/11 Läufen (u. a. AdxAtr/TSLA, VolatilityBreakoutPump/GOOGL), OHNE dass ein einziger
     Report-Konsument je sah, WARUM.
 
-    FAIL (severity ``medium``, Beobachtbarkeits- keine Korrektheitsverletzung — dieselbe Klasse wie
-    ``check_symbol_bar_quality_cache_availability``), wenn mindestens eine STRUCTURAL_ZERO_ELIGIBLE-
+    Issue #1264 (GH #1134) Fix Punkt 3 — Schweregrad von ``medium`` auf ``high`` gehoben: Root-Cause
+    #1264 zeigte, dass ein rein informativer Befund (der Lauf selbst blieb dabei unbeanstandet) den
+    #1244-Rückschriebpfad ueber MEHRERE Läufe hinweg unbemerkt liess — dieselben 10 Studies
+    verbrannten in JEDEM Folgelauf dasselbe Budget (Σ 198 Trials), weil ein ``medium``-Befund im
+    Ereignisrauschen unterging. ``high`` macht den fehlenden Rückschrieb PROMINENT sichtbar, ohne den
+    Lauf zu blockieren (``severity='blocking'`` waere hier unangemessen — die Study-Ergebnisse selbst
+    sind korrekt, nur die Diagnose-Persistenz fehlt).
+
+    FAIL (severity ``high``), wenn mindestens eine STRUCTURAL_ZERO_ELIGIBLE-
     ODER STRUCTURAL_ALL_UNEVALUABLE-Study kein zugehöriges ``diagnosed_pairs``-Element trägt (weder
     aus dem #761-Cache noch aus der #1194/#1244-Live-Ableitung, siehe
     ``report._diagnosed_pairs_section``-Docstring). Ein STRUCTURAL_ZERO_ELIGIBLE-Cohort mit
@@ -5522,11 +5733,11 @@ def check_structural_zero_eligible_has_diagnosis(
         expected="jede Study mit stop_reason in (STRUCTURAL_ZERO_ELIGIBLE, "
                  "STRUCTURAL_ALL_UNEVALUABLE) hat einen diagnosed_pairs-Eintrag",
         actual={"missing_diagnosis_for": affected} if not passed else None,
-        severity="medium",
+        severity="high",
         detail=("OK" if passed else
                 f"{len(affected)} STRUCTURAL_ZERO_ELIGIBLE/STRUCTURAL_ALL_UNEVALUABLE-Study/ies "
                 f"ohne diagnosed_pairs-Eintrag: {affected} — Diagnose ohne Rückschrieb "
-                "(#1194/#1244)."),
+                "(#1194/#1244/#1264)."),
     )
 
 
