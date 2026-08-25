@@ -5912,18 +5912,31 @@ def check_effective_stop_distance(study_records: list[dict], *,
     von 0,84 bis 1,42 bei GLEICHER Trial-Zahl) — der Quotient driftete dadurch RUN-ZU-RUN, obwohl
     sich die Datenlage nicht änderte.
 
-    Fix: dieser Check konsumiert seither PRIMÄR ``effective_stop_ratio_cohort_median``/
+    Fix (#1053/#1202): dieser Check konsumiert seither ``effective_stop_ratio_cohort_median``/
     ``effective_stop_ratio_cohort_n`` (``report._effective_stop_ratio_cohort`` — Median EINES
     PER-TRIAL gebildeten Quotienten über die "eligible Kohorte", Zähler und Nenner IMMER auf
-    demselben Trial) statt des vormaligen Quotienten aus zwei getrennten Aggregaten — das Verdikt
-    ist damit eine STUDY-Eigenschaft (dieselbe Kohorte, deterministisch aus denselben Trials
-    hergeleitet), nicht mehr sensibel gegenüber der Sampler-Explorationsvarianz. Der GEWINNER-Wert
-    (bestbewerteter Trial) bleibt separat unter ``winner_effective_stop_ratio`` telemetriert
-    (Akzeptanzkriterium aus #1202), fliesst aber NICHT mehr in das Verdikt ein — ``passed`` ist
-    seither eine Eigenschaft der Study-Kohorte, nicht des jeweils gewählten Gewinner-Trials.
+    demselben Trial) statt des vormaligen Quotienten aus zwei getrennten Aggregaten — DIESER Teil
+    des Fixes bleibt bestehen (kein Populations-Mismatch, keine Sampler-Explorationsvarianz mehr im
+    NENNER-Bezug).
+
+    Issue #1262 (GH #1132), Pitfall #455 in AGENTS.md — KORREKTUR von #1202: das VERDIKT selbst
+    (``passed``) wird seither auf ``winner_effective_stop_ratio`` (dem GEWINNER-Trial, der
+    tatsächlich promotiert wird) statt auf ``effective_stop_ratio_cohort_median`` gebildet. Symptom:
+    in 3 von 13 Studies lag der Gewinner auf der ANDEREN Seite der Schwelle als der Kohorten-Median
+    (Donchian: Median 2,3869 PASS / Gewinner 26,3075 FAIL; Rsi2/TrendPullback umgekehrt) — beide
+    Werte standen im selben Event bereits nebeneinander, wurden aber nie ausgewertet. Ein
+    blockierender Wächter, der über den Median urteilt, während die Promotion den Gewinner betrifft,
+    urteilt über die falsche Entität. Der Kohorten-Median bleibt als KONTEXT-Telemetrie in
+    ``actual[key]['effective_stop_ratio_cohort_median']`` erhalten. Fehlt ``winner_effective_stop_
+    ratio`` (kein ``best_trial`` mit nachweislichen TRAILING_STOP-Exits), fällt das Urteil auf den
+    Kohorten-Median zurück — AUSGEWIESEN unter ``actual[key]['ratio_source'] ==
+    'NO_WINNER_COHORT_FALLBACK'``, nicht stillschweigend.
+
     ``min_cohort_trials`` (Default 5) ist die Mindestzahl an eligiblen Trials (je >= 3 nachweisliche
     TRAILING_STOP-Exits IN DIESEM Trial, siehe ``report._effective_stop_ratio_cohort``) für ein
-    Urteil; ``min_trailing_stop_exits`` bleibt als Fallback-Schwelle für Studies OHNE die neuen
+    Urteil (weiterhin Voraussetzung für ``effective_stop_ratio_cohort_median`` als Nenner-Basis,
+    unabhängig davon, ob am Ende der Gewinner- oder der Fallback-Wert entscheidet);
+    ``min_trailing_stop_exits`` bleibt als Fallback-Schwelle für Studies OHNE die neuen
     #1202-Kohorten-Felder (Legacy-Reports/Test-Fixtures) erhalten, siehe unten.
 
     Issue #1035 (Katalog #866) — Root-Cause: der Zähler mass bislang über ALLE Verlust-Trades
@@ -6040,11 +6053,27 @@ def check_effective_stop_distance(study_records: list[dict], *,
                 inconclusive_studies[key] = _cohort_n
                 continue
             with_data.append(r)
-            ratio = round(float(_cohort_median), 4)
+            # Issue #1262 (GH #1132) — die Entscheidung MUSS den promotierten GEWINNER beurteilen,
+            # nicht den Kohorten-Median: in 3/13 Studies lag der Gewinner auf der ANDEREN Seite der
+            # Schwelle als der Median (Donchian: Median 2,3869 PASS / Gewinner 26,3075 FAIL) —
+            # promotiert wird der Gewinner, ein Wächter, der ueber den Median urteilt, urteilt ueber
+            # die falsche Entitaet (Pitfall #455 in AGENTS.md). Der Kohorten-Median bleibt als
+            # Kontext-Telemetrie in ``all_ratios`` erhalten. Fehlt der Gewinner-Wert (kein
+            # ``best_trial``/keine TRAILING_STOP-Exits IM Gewinner), gilt der Kohorten-Median als
+            # AUSGEWIESENER Fallback (``NO_WINNER_COHORT_FALLBACK``), nicht stillschweigend.
+            cohort_ratio = round(float(_cohort_median), 4)
+            if _winner_ratio is not None:
+                ratio = round(float(_winner_ratio), 4)
+                ratio_source = "winner"
+            else:
+                ratio = cohort_ratio
+                ratio_source = "NO_WINNER_COHORT_FALLBACK"
             all_ratios[key] = {
                 "ratio_median": ratio, "effective_stop_ratio_cohort_n": _cohort_n,
+                "effective_stop_ratio_cohort_median": cohort_ratio,
                 "winner_effective_stop_ratio": (
-                    round(float(_winner_ratio), 4) if _winner_ratio is not None else None)}
+                    round(float(_winner_ratio), 4) if _winner_ratio is not None else None),
+                "ratio_source": ratio_source}
             if ratio < min_ratio:
                 offenders_low[key] = ratio
             elif ratio > max_ratio:
@@ -6123,14 +6152,143 @@ def check_effective_stop_distance(study_records: list[dict], *,
     return InvariantResult(
         name="check_effective_stop_distance",
         passed=passed,
-        expected=f"{min_ratio} <= Median-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
-                 f"(stop_distance_bps_measured) <= {max_ratio} je Study",
+        # Issue #1262 (GH #1132) — das Verdikt beurteilt den GEWINNER (winner_effective_stop_ratio),
+        # den Kohorten-Median NUR als ausgewiesenen Fallback (siehe actual[key]['ratio_source']).
+        expected=f"{min_ratio} <= Gewinner-Bruttoverlust (Stop-Exits) / gemessene Stopdistanz "
+                 f"(stop_distance_bps_measured) <= {max_ratio} je Study "
+                 "(Kohorten-Median-Fallback bei fehlendem Gewinner-Wert, siehe actual)",
         actual=all_ratios,
         severity="blocking",
         detail=("OK (n_studies_measured=%d)" % len(with_data) if passed else " ".join(detail_parts)),
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None,
                       "n_candidates": len(candidates), "n_measured": len(with_data)},
+    )
+
+
+def check_effective_stop_ratio_coverage(study_records: list[dict], *,
+                                        min_coverage_fraction: float = 0.8) -> InvariantResult:
+    """Issue #1262 (GH #1132) — ``effective_stop_ratio_cohort_n`` (die "eligible Kohorte", je >= 3
+    nachweisliche TRAILING_STOP-Exits IM Trial, siehe ``report._effective_stop_ratio_cohort``) kann
+    ``min_cohort_trials`` (Default 5, siehe ``check_effective_stop_distance``) erreichen und trotzdem
+    nur einen KLEINEN Bruchteil der insgesamt evaluierbaren Trials dieser Study (``n_evaluable``)
+    abdecken — der Kohorten-Median (bzw. sein Fallback-Einsatz, siehe dortiger Docstring) beruht dann
+    auf einer nicht-repräsentativen Teilmenge. Symptom: FlashCrash deckt 52 von 141 evaluierbaren
+    Trials ab (36,9 %).
+
+    FAIL (severity ``high`` — ein Abdeckungsdefizit ist ein Stichproben-Warnsignal, keine
+    Korrektheitsverletzung des Verdikts selbst; ``check_effective_stop_distance`` bleibt ``blocking``)
+    je Study mit ``effective_stop_ratio_cohort_n / n_evaluable < min_coverage_fraction`` (Default
+    0.8). Nur Studies mit BEIDEN Feldern (``effective_stop_ratio_cohort_n``, ``n_evaluable`` > 0)
+    werden geprüft — INCONCLUSIVE sonst (dieselbe Konvention wie die übrigen Kohorten-Checks)."""
+    offenders: dict[str, float] = {}
+    all_coverage: dict[str, dict] = {}
+    n_measured = 0
+    for r in study_records:
+        cohort_n = r.get("effective_stop_ratio_cohort_n")
+        n_evaluable = r.get("n_evaluable")
+        if cohort_n is None or not n_evaluable:
+            continue
+        n_measured += 1
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        coverage = round(int(cohort_n) / int(n_evaluable), 4)
+        all_coverage[key] = {"effective_stop_ratio_cohort_n": int(cohort_n),
+                             "n_evaluable": int(n_evaluable), "coverage_fraction": coverage}
+        if coverage < min_coverage_fraction:
+            offenders[key] = coverage
+    passed = not offenders
+    if n_measured == 0:
+        return InvariantResult(
+            name="check_effective_stop_ratio_coverage",
+            passed=None,
+            expected=f"effective_stop_ratio_cohort_n / n_evaluable >= {min_coverage_fraction} je Study",
+            actual=None,
+            severity="high",
+            detail="Keine Study mit effective_stop_ratio_cohort_n UND n_evaluable > 0 — nicht "
+                   "auswertbar (n_measured=0).",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_cohort_coverage_data",
+                         "n_candidates": 0, "n_measured": 0},
+        )
+    return InvariantResult(
+        name="check_effective_stop_ratio_coverage",
+        passed=passed,
+        expected=f"effective_stop_ratio_cohort_n / n_evaluable >= {min_coverage_fraction} je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK (n_studies_measured=%d)" % n_measured if passed else
+                f"{len(offenders)} von {n_measured} Study/Studies mit Kohorten-Abdeckung unter "
+                f"{min_coverage_fraction}: {offenders} — das Kohorten-Verdikt (und sein Fallback-"
+                "Einsatz in check_effective_stop_distance) beruht dort auf einer nicht "
+                f"repräsentativen Teilmenge der evaluierbaren Trials (#1262). Details: {all_coverage}."),
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_candidates": n_measured, "n_measured": n_measured},
+    )
+
+
+def check_cost_stress_discriminates(study_records: list[dict], *,
+                                    min_stddev: float = 1e-6) -> InvariantResult:
+    """Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — ein Kostenstress, der jede Study eines
+    Symbols um denselben Betrag verschiebt, ist kein Stress: die Rangfolge unter Stress ist dann
+    per Konstruktion identisch zur Rangfolge ohne Stress. Symptom: Δ(2×−1×) (``holdout_expectancy_
+    cost_stress_2x - holdout_expectancy_capital_weighted``) war in 13/13 Studies EINES Symbols
+    bit-identisch, weil die Stufengrösse aus einem symbolweiten (bzw. sogar asset-class-weiten)
+    Pool-Median stammte, statt je (Strategie, Symbol) zu kalibrieren (siehe backtest_runner.
+    resolve_slippage_bps-Docstring).
+
+    FAIL (severity ``high`` — ein Diagnosewert; die eigentliche Kalibrierung ist die
+    Konsequenz, nicht dieser Wächter selbst) je Symbol mit ``stddev(Δ(2×−1×)) < min_stddev``
+    (Default 1e-6) über >= 2 Studies MIT beiden Feldern. Symbole mit < 2 messbaren Studies werden
+    übersprungen (Streuung ist mit einem einzigen Punkt nicht definiert)."""
+    by_symbol: dict[str, list[float]] = {}
+    for r in study_records:
+        baseline = r.get("holdout_expectancy_capital_weighted")
+        stressed = r.get("holdout_expectancy_cost_stress_2x")
+        if baseline is None or stressed is None:
+            continue
+        symbol = r.get("symbol")
+        if not symbol:
+            continue
+        by_symbol.setdefault(symbol, []).append(float(stressed) - float(baseline))
+    offenders: dict[str, float] = {}
+    n_symbols_measured = 0
+    for symbol, deltas in by_symbol.items():
+        if len(deltas) < 2:
+            continue
+        n_symbols_measured += 1
+        sd = statistics.stdev(deltas)
+        if sd < min_stddev:
+            offenders[symbol] = round(sd, 10)
+    if n_symbols_measured == 0:
+        return InvariantResult(
+            name="check_cost_stress_discriminates",
+            passed=None,
+            expected=f"stddev(Δ(2×−1×)) >= {min_stddev} je Symbol (über >= 2 Studies)",
+            actual=None,
+            severity="high",
+            detail="Kein Symbol mit >= 2 Studies mit beiden Kostenstress-Feldern — nicht "
+                   "auswertbar.",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "insufficient_studies",
+                         "n_candidates": 0, "n_measured": 0},
+        )
+    passed = not offenders
+    return InvariantResult(
+        name="check_cost_stress_discriminates",
+        passed=passed,
+        expected=f"stddev(Δ(2×−1×)) >= {min_stddev} je Symbol (über >= 2 Studies)",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK (n_symbols_measured=%d)" % n_symbols_measured if passed else
+                f"{len(offenders)} von {n_symbols_measured} Symbol(en) mit Δ(2×−1×)-Streuung unter "
+                f"{min_stddev}: {offenders} — ein Kostenstress, der jede Study gleich trifft, "
+                "prüft nichts (#1266, Pitfall #453)."),
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_candidates": n_symbols_measured, "n_measured": n_symbols_measured},
     )
 
 
@@ -6846,6 +7004,18 @@ def check_stop_loss_vs_bar_range(
     # verlangt genau fuer diesen Fall explizit ``passed=False`` mit einem benannten Grund statt
     # INCONCLUSIVE ODER eines stillen PASS.
     if candidates and not all_ratios:
+        # Issue #1259 (GH #1129), Pitfall #452 — ``bar_range_population_n`` (neu, siehe
+        # HourlyStrategyBase._bar_range_bps_tags-Docstring) unterscheidet jetzt PRAEZISE zwei
+        # Ursachen fuer denselben leeren-Ratio-Befund: (a) ALLE Kandidaten tragen einen bestaetigten
+        # Populationszaehler von 0 (100 % Nullspannen-Bars — die Spanne WURDE gemessen, ist aber
+        # degeneriert) ⇒ 'DEGENERATE_ZERO_RANGE'; (b) der Populationszaehler ist unbekannt (aeltere
+        # Emissionskette ohne dieses Feld) ⇒ das Alt-Verhalten 'POPULATION_UNAVAILABLE_AFTER_FIX'
+        # bleibt bit-identisch erhalten (Regressionsschutz fuer #1057/#1206).
+        _population_ns = [r.get("bar_range_population_n") for r in candidates]
+        _confirmed_degenerate = (
+            all(n is not None for n in _population_ns)
+            and all(int(n) == 0 for n in _population_ns))
+        _reason = "DEGENERATE_ZERO_RANGE" if _confirmed_degenerate else "POPULATION_UNAVAILABLE_AFTER_FIX"
         return InvariantResult(
             name="check_stop_loss_vs_bar_range",
             passed=False,
@@ -6856,15 +7026,19 @@ def check_stop_loss_vs_bar_range(
             evaluable=True,
             evaluability={
                 "evaluable": True,
-                "inconclusive_reason": "POPULATION_UNAVAILABLE_AFTER_FIX",
+                "inconclusive_reason": _reason,
                 "n_studies_measured": len(candidates),
                 "n_candidates": len(candidates), "n_measured": 0,
             },
             detail=(f"{len(candidates)} Study/Studies hatten hinreichend TRAILING_STOP-Exits UND "
-                    "definierte bar_range_median_bps-Telemetrie, aber ALLE mit bar_range_median_bps "
-                    "<= 0 — kein einziges Verhaeltnis war bildbar (POPULATION_UNAVAILABLE_AFTER_FIX). "
-                    "Das ist selbst ein FAIL, kein INCONCLUSIVE: die Emissionskette liefert Werte, "
-                    "die keine Bar-Spanne repraesentieren koennen — Bar-Achse/Datenquelle pruefen."),
+                    f"definierte bar_range_median_bps-Telemetrie, aber ALLE mit bar_range_median_bps "
+                    f"<= 0 — kein einziges Verhaeltnis war bildbar ({_reason}). Das ist selbst ein "
+                    "FAIL, kein INCONCLUSIVE: " + (
+                        "die Population ist bestaetigt leer (100% Nullspannen-Bars, bar_range_"
+                        "population_n=0 fuer alle Kandidaten) — Bar-Achse/Datenquelle pruefen "
+                        "(#1259/#1260)." if _confirmed_degenerate else
+                        "die Emissionskette liefert Werte, die keine Bar-Spanne repraesentieren "
+                        "koennen — Bar-Achse/Datenquelle pruefen.")),
             provenance=None,
         )
     passed = not offenders

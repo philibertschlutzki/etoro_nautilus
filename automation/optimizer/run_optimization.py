@@ -93,6 +93,7 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_f_realized_peak_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_max, #1085/#1233 check_sizing_cap_enforcement)",
     "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
+    "oos_slippage_calibration_scope": "holdout-only (confirm.py-Re-Evaluation, siehe report.py slippage_calibration_scope, #1266/GH #1136 check_cost_stress_discriminates)",
     "oos_selection_cost_basis": "holdout-only (confirm.py-Re-Evaluation, siehe report.py selection_cost_basis, #1078/#1226 check_selection_cost_basis_contract)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
@@ -3494,6 +3495,11 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
         if metrics.oos_bar_range_p75_bps is not None:
             trial.set_user_attr("oos_bar_range_p75_bps", metrics.oos_bar_range_p75_bps)
+        # Issue #1259 (GH #1129) — siehe TournamentMetrics-Docstring. 0 ist ein GUELTIGER Wert
+        # (DEGENERATE_ZERO_RANGE), daher explizit "is not None", nicht Wahrheitswert.
+        if metrics.oos_bar_range_population_n is not None:
+            trial.set_user_attr(
+                "oos_bar_range_population_n", metrics.oos_bar_range_population_n)
         if metrics.oos_zero_range_bar_fraction is not None:
             trial.set_user_attr(
                 "oos_zero_range_bar_fraction", metrics.oos_zero_range_bar_fraction)
@@ -3511,6 +3517,18 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_n_stop_loss_identity_checked", metrics.oos_n_stop_loss_identity_checked)
         trial.set_user_attr(
             "oos_n_stop_loss_identity_violations", metrics.oos_n_stop_loss_identity_violations)
+        # Issue #1259 (GH #1129), Pitfall #442 — bislang berechnet (backtest_runner.
+        # _aggregate_exit_telemetry), geparst (parsing.TournamentMetrics), aber nie gestempelt.
+        trial.set_user_attr(
+            "oos_n_trailing_stop_exits_with_lag_telemetry",
+            metrics.oos_n_trailing_stop_exits_with_lag_telemetry)
+        if metrics.oos_stop_ratchet_between_trigger_and_submit_bps_median is not None:
+            trial.set_user_attr(
+                "oos_stop_ratchet_between_trigger_and_submit_bps_median",
+                metrics.oos_stop_ratchet_between_trigger_and_submit_bps_median)
+        trial.set_user_attr(
+            "oos_n_trailing_stop_exits_with_ratchet_telemetry",
+            metrics.oos_n_trailing_stop_exits_with_ratchet_telemetry)
         # Issue #1082/#1230 (P1, Katalog #1247+) — siehe TournamentMetrics-Docstring.
         if metrics.oos_stop_distance_share_median is not None:
             trial.set_user_attr(

@@ -1258,7 +1258,9 @@ def resolve_financing_bps_per_day(inst_id_str: str,
 
 def resolve_slippage_bps(inst_id_str: str,
                          slippage_bps_by_asset_class: dict | None,
-                         asset_class_key: str = "DEFAULT") -> float:
+                         asset_class_key: str = "DEFAULT", *,
+                         strategy: str | None = None,
+                         min_observations: int = 30) -> float:
     """Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 2 — asset-class-
     aufgelöster konstanter Slippage-Aufschlag (bps) auf Marktaufträge, Auflösung analog
     ``resolve_financing_bps_per_day`` (fail-open: fehlende Config/unbekannte Asset-Class ⇒ 0.0,
@@ -1267,12 +1269,62 @@ def resolve_slippage_bps(inst_id_str: str,
     Dies ist die 'mindestens'-Variante aus der Issue (konstanter Aufschlag); die 'besser'-Variante
     (Aufschlag proportional zur Bar-Spanne der Ausführungs-Bar) ist NICHT implementiert — siehe
     AGENTS.md-Eintrag zu diesem Fix für die Begründung (zusätzliche Order-Tag-Plumbing für beide
-    Legs, in dieser Sitzung nicht mehr im Scope)."""
+    Legs, in dieser Sitzung nicht mehr im Scope).
+
+    Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — RÜCKWÄRTSKOMPATIBLE Erweiterung: der Wert
+    unter ``slippage_bps_by_asset_class[asset_class_key]`` ist entweder die ALTE Form (ein reiner
+    ``float`` — statische ``backtest.json``-Konstante ODER die vormalige, asset-class-WEITE
+    Kalibrierung) oder die NEUE, SKALIERTE Form (ein ``dict`` mit ``'value'`` als Asset-Class-
+    Fallback und optional ``'by_symbol'``/``'by_strategy_symbol'`` — feinere, aus
+    ``sweep.calibrate_and_write_slippage_cache`` kalibrierte Werte samt ``n_observations``, siehe
+    dortiger Docstring). Root-Cause #1266: ein additiver, STRATEGIE-UNABHÄNGIGER Stress-Term kann
+    keine Strategie gegen eine andere stressen (Δ(2×−1×) war in 13/13 Studies eines Symbols
+    bit-identisch) — die Auflösung bevorzugt daher IMMER die feinste verfügbare Ebene mit
+    ausreichender Stichprobe (``min_observations``, Default 30): (Strategie, Symbol) > Symbol >
+    Asset-Klasse."""
     if not slippage_bps_by_asset_class:
         return 0.0
-    if asset_class_key not in slippage_bps_by_asset_class:
+    entry = slippage_bps_by_asset_class.get(asset_class_key)
+    if entry is None:
         return 0.0
-    return float(slippage_bps_by_asset_class[asset_class_key])
+    if not isinstance(entry, dict) or "value" not in entry:
+        return float(entry)  # Alte Form: reiner Skalar.
+    if strategy:
+        rec = (entry.get("by_strategy_symbol") or {}).get(f"{strategy}|{inst_id_str}")
+        if (rec and rec.get("value") is not None
+                and int(rec.get("n_observations") or 0) >= min_observations):
+            return float(rec["value"])
+    rec = (entry.get("by_symbol") or {}).get(inst_id_str)
+    if (rec and rec.get("value") is not None
+            and int(rec.get("n_observations") or 0) >= min_observations):
+        return float(rec["value"])
+    return float(entry.get("value") or 0.0)
+
+
+def resolve_slippage_calibration_scope(inst_id_str: str,
+                                       slippage_bps_by_asset_class: dict | None,
+                                       asset_class_key: str = "DEFAULT", *,
+                                       strategy: str | None = None,
+                                       min_observations: int = 30) -> str:
+    """Issue #1266 (GH #1136) — Telemetrie-Begleiter zu ``resolve_slippage_bps``: WELCHE Ebene hat
+    tatsächlich aufgelöst (``'strategy_symbol'``/``'symbol'``/``'asset_class'``)? Dieselbe
+    Fallback-Reihenfolge wie ``resolve_slippage_bps``, hier separat gehalten, um dessen
+    Rückgabetyp (``float``, von jedem bestehenden Aufrufer erwartet) nicht zu ändern."""
+    if not slippage_bps_by_asset_class:
+        return "asset_class"
+    entry = slippage_bps_by_asset_class.get(asset_class_key)
+    if not isinstance(entry, dict) or "value" not in entry:
+        return "asset_class"
+    if strategy:
+        rec = (entry.get("by_strategy_symbol") or {}).get(f"{strategy}|{inst_id_str}")
+        if (rec and rec.get("value") is not None
+                and int(rec.get("n_observations") or 0) >= min_observations):
+            return "strategy_symbol"
+    rec = (entry.get("by_symbol") or {}).get(inst_id_str)
+    if (rec and rec.get("value") is not None
+            and int(rec.get("n_observations") or 0) >= min_observations):
+        return "symbol"
+    return "asset_class"
 
 
 def merge_calibrated_slippage_into_config(
@@ -1297,6 +1349,49 @@ def merge_calibrated_slippage_into_config(
         if _static_val is not None and float(_static_val) != 0.0:
             continue
         merged[asset_class] = float(calibration[percentile])
+    return merged
+
+
+def merge_calibrated_slippage_into_config_scoped(
+    static_slippage_bps_by_asset_class: dict | None,
+    calibrated_slippage_by_asset_class: dict | None,
+    *, percentile: str = "p90",
+) -> dict:
+    """Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — wie ``merge_calibrated_slippage_into_
+    config``, aber SKALIERT: ``calibrated_slippage_by_asset_class`` trägt seit
+    ``sweep.calibrate_and_write_slippage_cache`` neben der asset-class-weiten Kalibrierung
+    (``{'p50','p90','n_observations'}``) auch feinere Ebenen (``'by_symbol'``/
+    ``'by_strategy_symbol'``, dieselben drei Schlüssel je Eintrag). Das Ergebnis ist die
+    ``resolve_slippage_bps``-SKALIERTE Form (``{asset_class: {'value': float, 'by_symbol': {...},
+    'by_strategy_symbol': {...}}}``) — dieselbe Operator-Vorrang-Regel wie im Original: eine
+    EXPLIZIT konfigurierte, nicht-null Konstante übersteuert JEDE Kalibrierungsebene (der Operator
+    hat bewusst einen Wert gesetzt) und wird dann OHNE die feineren Ebenen durchgereicht (ein
+    reiner ``float``, identisch zum Vor-#1266-Verhalten)."""
+    merged: dict = dict(static_slippage_bps_by_asset_class or {})
+    for asset_class, calibration in (calibrated_slippage_by_asset_class or {}).items():
+        if not isinstance(calibration, dict) or percentile not in calibration:
+            continue
+        _static_val = merged.get(asset_class)
+        if _static_val is not None and float(_static_val) != 0.0:
+            continue
+
+        def _pick(rec: dict | None) -> dict | None:
+            if not isinstance(rec, dict) or percentile not in rec:
+                return None
+            return {"value": float(rec[percentile]),
+                   "n_observations": int(rec.get("n_observations") or 0)}
+
+        merged[asset_class] = {
+            "value": float(calibration[percentile]),
+            "by_symbol": {
+                sym: picked for sym, rec in (calibration.get("by_symbol") or {}).items()
+                if (picked := _pick(rec)) is not None
+            },
+            "by_strategy_symbol": {
+                key: picked for key, rec in (calibration.get("by_strategy_symbol") or {}).items()
+                if (picked := _pick(rec)) is not None
+            },
+        }
     return merged
 
 
@@ -4063,6 +4158,12 @@ def _parse_exit_order_tags(tags) -> dict:
             elif key == "BAR_RANGE_P75_BPS":
                 # Issue #1079/#1227 — P75 derselben bereinigten Population wie BAR_RANGE_MEDIAN_BPS.
                 meta["bar_range_p75_bps"] = float(value)
+            elif key == "BAR_RANGE_POPULATION_N":
+                # Issue #1259 (GH #1129), Pitfall #452 — Groesse der um Nullspannen-Bars bereinigten
+                # Population, aus der BAR_RANGE_MEDIAN_BPS/_P75_BPS gebildet wurden. n=0 bei
+                # bar_count>0 unterscheidet "Median 0 ueber 0 Bars" (DEGENERATE_ZERO_RANGE, ein
+                # eigenstaendiges FAIL) von "kein Tag ueberhaupt" (POPULATION_UNAVAILABLE).
+                meta["bar_range_population_n"] = int(value)
             elif key == "ZERO_RANGE_BAR_FRACTION":
                 # Issue #1079/#1227 (Katalog #1247+, P0, Pitfall #446-Klasse) — Anteil der
                 # Nullspannen-Bars (``high == low``) an ALLEN Bars dieser Position; Rohmaterial fuer
@@ -4325,6 +4426,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     bar_range_medians: list[float] = []
     # Issue #1079/#1227 — dieselbe Population wie bar_range_medians, siehe dortiger Kommentar.
     bar_range_p75s: list[float] = []
+    # Issue #1259 (GH #1129) — Populationsgroesse je Position (aus BAR_RANGE_POPULATION_N); gepoolt
+    # als Summe fuer den Study-Report (Gesamtzahl der NICHT-degenerierten Bars ueber alle Positionen
+    # dieser Study), getrennt von n_positions_with_bar_range (Anzahl Positionen, die zum Median
+    # beitragen — siehe Filter unten, Pitfall #446).
+    bar_range_population_ns: list[int] = []
     zero_range_bar_fractions: list[float] = []
     # Issue #989/#1143 (Katalog #986) — UNBEDINGT (nicht auf TRAILING_STOP beschraenkt): der
     # DIREKT gemessene Sizing-Anteil je Round-Trip (siehe _finalize_round_trip-Kommentar). Issue
@@ -4393,9 +4499,25 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
                 stop_distance_share_values.append(float(m["stop_distance_bps"]) / _identity_lhs)
                 trigger_to_fill_gap_share_values.append(
                     float(m["trigger_to_fill_gap_bps"]) / _identity_lhs)
-        if m.get("bar_range_median_bps") is not None:
+        # Issue #1259 (GH #1129), Pitfall #452/#446 — der Median/P75 wird weiterhin NUR ueber
+        # Positionen mit einer NICHT-leeren bereinigten Population gebildet (population_n > 0);
+        # eine Position mit population_n == 0 traegt jetzt zwar IMMER einen Tag (0.0000, siehe
+        # HourlyStrategyBase._bar_range_bps_tags), ginge aber unfiltert in den Study-Median ein und
+        # zoege ihn strukturell in Richtung 0 (exakt das Pitfall-#446-Muster, das #1227 fuer die
+        # Bar-Ebene bereits vermied) — der Populationszaehler ersetzt hier die vorherige
+        # (jetzt entfallene) "Tag fehlt" = "kein Beitrag"-Heuristik 1:1.
+        _bar_range_n = m.get("bar_range_population_n")
+        if _bar_range_n is not None:
+            bar_range_population_ns.append(int(_bar_range_n))
+        # Ein EXPLIZIT bestaetigter Populationszaehler von 0 schliesst den Beitrag aus (Pitfall
+        # #446); FEHLT der Zaehler (kein BAR_RANGE_POPULATION_N-Tag, z. B. aeltere Meta-Objekte vor
+        # #1259 oder synthetische Test-Fixtures) faellt das Verhalten auf die Pre-#1259-Regel
+        # zurueck ("bar_range_median_bps is not None" allein genuegt) — Zero-Regression fuer jeden
+        # bestehenden Aufrufer, der das neue Feld (noch) nicht mitfuehrt.
+        _bar_range_excluded = _bar_range_n is not None and int(_bar_range_n) <= 0
+        if m.get("bar_range_median_bps") is not None and not _bar_range_excluded:
             bar_range_medians.append(float(m["bar_range_median_bps"]))
-        if m.get("bar_range_p75_bps") is not None:
+        if m.get("bar_range_p75_bps") is not None and not _bar_range_excluded:
             bar_range_p75s.append(float(m["bar_range_p75_bps"]))
         if m.get("zero_range_bar_fraction") is not None:
             zero_range_bar_fractions.append(float(m["zero_range_bar_fraction"]))
@@ -4501,15 +4623,28 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # je-Position-Bar-Spannen-Mediane (bps); Referenzgroesse fuer
         # invariants.check_stop_loss_vs_bar_range (Verlust = adverse Bewegung EINER Bar vs.
         # Verlust = Stopdistanz + Ueberschiessen).
+        # Issue #1259 (GH #1129), Pitfall #452 — UNBEDINGT 0.0 (statt None), sobald MINDESTENS EIN
+        # Round-Trip ueberhaupt einen BAR_RANGE_POPULATION_N-Tag trug (``_bar_range_measured``),
+        # auch wenn ALLE Positionen eine leere bereinigte Population hatten (100% Nullspannen-Bars
+        # ⇒ ``bar_range_medians`` leer). ``None`` bleibt reserviert fuer "kein einziger Round-Trip
+        # trug je die Bar-Spannen-Telemetrie" (echtes POPULATION_UNAVAILABLE, z. B. 0 Trades).
         "bar_range_median_bps": (
-            statistics.median(bar_range_medians) if bar_range_medians else None),
+            statistics.median(bar_range_medians) if bar_range_medians
+            else (0.0 if bar_range_population_ns else None)),
+        # Issue #1259 (GH #1129) — Summe der je-Position-Populationsgroessen dieses Trials
+        # (Gesamtzahl der NICHT-degenerierten Bars, ueber die bar_range_median_bps gebildet wurde);
+        # 0 unterscheidet "Median 0 ueber 0 Bars" (DEGENERATE_ZERO_RANGE) von "nie gemessen"
+        # (POPULATION_UNAVAILABLE, None). Siehe invariants.check_stop_loss_vs_bar_range.
+        "bar_range_population_n": (
+            sum(bar_range_population_ns) if bar_range_population_ns else None),
         # Issue #1079/#1227 (Katalog #1247+, P0) Fix Punkt 2 — P75 derselben bereinigten Population
         # (macht die Rechtsschiefe zusaetzlich zum Median sichtbar) und der Anteil der Nullspannen-
         # Bars an der VOLLEN Population (Median ueber die Round-Trips dieses Trials, dieselbe
         # Aggregationskonvention wie bar_range_median_bps) — Rohmaterial fuer
         # invariants.check_zero_range_bar_share.
         "bar_range_p75_bps": (
-            statistics.median(bar_range_p75s) if bar_range_p75s else None),
+            statistics.median(bar_range_p75s) if bar_range_p75s
+            else (0.0 if bar_range_population_ns else None)),
         "zero_range_bar_fraction": (
             statistics.median(zero_range_bar_fractions) if zero_range_bar_fractions else None),
         # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-
@@ -4859,7 +4994,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class") -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -5088,6 +5223,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "bar_range_median_bps": meta.get("bar_range_median_bps"),
                 # Issue #1079/#1227 — dieselbe Durchreiche-Konvention wie bar_range_median_bps oben.
                 "bar_range_p75_bps": meta.get("bar_range_p75_bps"),
+                # Issue #1259 (GH #1129) — dieselbe Durchreiche-Konvention; Populationszaehler der
+                # bereinigten Bar-Spannen-Serie DIESER Position.
+                "bar_range_population_n": meta.get("bar_range_population_n"),
                 "zero_range_bar_fraction": meta.get("zero_range_bar_fraction"),
                 "pnl_bps": pnl_bps,
                 # Issue #972/#1126 — das Round-Trip-Notional selbst als Telemetrie (Rohmaterial fuer
@@ -5710,6 +5848,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # zweiter Auflösungspfad).
             _level_metrics["applied_financing_bps_per_day"] = financing_bps_per_day
             _level_metrics["applied_slippage_bps"] = slippage_bps
+            # Issue #1266 (GH #1136) — WELCHE Ebene die p50-Kostenstress-Basis (siehe oben,
+            # _round_trip_cost_bps_for_stress) tatsaechlich aufgeloest hat; macht sichtbar, ob eine
+            # Study von der feineren, diskriminierenden Kalibrierung profitiert oder auf den
+            # Asset-Class-Fallback zurueckfiel.
+            _level_metrics["slippage_calibration_scope"] = slippage_calibration_scope
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -6730,11 +6873,19 @@ def run_single_backtest_worker(
             # (siehe resolve_financing_bps_per_day/resolve_slippage_bps-Docstrings).
             financing_bps_per_day_resolved = resolve_financing_bps_per_day(
                 inst_id_str, overnight_financing_bps_per_day_by_asset_class, asset_class_key)
+            # Issue #1266 (GH #1136) — ``strategy`` erlaubt resolve_slippage_bps die feinste
+            # verfuegbare kalibrierte Ebene (Strategie+Symbol > Symbol > Asset-Klasse) zu waehlen,
+            # siehe dortiger Docstring; scope wird separat fuer die Report-Telemetrie aufgeloest.
             slippage_bps_resolved = resolve_slippage_bps(
-                inst_id_str, slippage_bps_by_asset_class, asset_class_key)
+                inst_id_str, slippage_bps_by_asset_class, asset_class_key,
+                strategy=strategy_class_name)
             # Issue #1055/#1204 — siehe Signatur-Kommentar (p50, getrennt von der p90 oben).
             slippage_bps_p50_resolved = resolve_slippage_bps(
-                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key)
+                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key,
+                strategy=strategy_class_name)
+            slippage_calibration_scope_resolved = resolve_slippage_calibration_scope(
+                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key,
+                strategy=strategy_class_name)
             # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe cost_coupled_atr_floor_bps-Docstring.
             atr_floor_bps_resolved = cost_coupled_atr_floor_bps(
                 atr_floor_bps_resolved,
@@ -6961,7 +7112,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -7210,9 +7361,14 @@ def run_backtest() -> None:
         _calibrated = (read_calibrated_slippage_cache(_optimizer_work_dir) or {}).get(
             "slippage_bps_by_asset_class") or {}
         if _calibrated:
-            slippage_bps_by_asset_class = merge_calibrated_slippage_into_config(
+            # Issue #1266 (GH #1136) — die SKALIERTE Zusammenführung (Strategie+Symbol > Symbol >
+            # Asset-Klasse, siehe merge_calibrated_slippage_into_config_scoped-Docstring) ersetzt
+            # die vormals asset-class-WEITE Zusammenführung; resolve_slippage_bps/
+            # resolve_slippage_calibration_scope loesen die feinste verfuegbare Ebene je Worker auf
+            # (der Worker kennt strategy_class_name/inst_id_str, hier im Elternprozess noch nicht).
+            slippage_bps_by_asset_class = merge_calibrated_slippage_into_config_scoped(
                 slippage_bps_by_asset_class, _calibrated, percentile="p90")
-            slippage_bps_p50_by_asset_class = merge_calibrated_slippage_into_config(
+            slippage_bps_p50_by_asset_class = merge_calibrated_slippage_into_config_scoped(
                 {}, _calibrated, percentile="p50")
     except Exception:
         pass

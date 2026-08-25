@@ -606,6 +606,19 @@ def _metrics_dict(m) -> dict:
         # Rohmaterial fuer invariants.check_applied_cost_components_resolved.
         "oos_applied_financing_bps_per_day": getattr(m, "oos_applied_financing_bps_per_day", None),
         "oos_applied_slippage_bps": getattr(m, "oos_applied_slippage_bps", None),
+        # Issue #1266 (GH #1136) — siehe parsing.TournamentMetrics-Docstring; Rohmaterial fuer
+        # invariants.check_cost_stress_discriminates.
+        "oos_slippage_calibration_scope": getattr(m, "oos_slippage_calibration_scope", None),
+        # Issue #1268 (GH #1138), siebte Instanz von Pitfall #442 (Brücken-Fehlerklasse) — die
+        # Exit-Telemetrie ist im HOLDOUT-Re-Evaluationspfad genau wie im regulären OOS-Pfad bereits
+        # via ``m = parse_tournament(...)`` korrekt geparst (dieselbe Pipeline), erreichte aber
+        # NIE diese kuratierte Teilmenge — ``check_selection_cost_basis_contract`` meldete deshalb
+        # in 13/13 Studies ``CLAIMED_ADJUSTMENT_WITHOUT_MEASURED_SLIPPAGE``, obwohl der Holdout
+        # 32–121 Trades und TRAILING_STOP-Exits enthielt.
+        "oos_stop_exit_slippage_bps_median": getattr(m, "oos_stop_exit_slippage_bps_median", None),
+        "oos_n_trailing_stop_losses": getattr(m, "oos_n_trailing_stop_losses", 0),
+        "oos_trigger_to_fill_gap_bps_median": getattr(m, "oos_trigger_to_fill_gap_bps_median", None),
+        "oos_realized_loss_bps_median": getattr(m, "oos_realized_loss_bps_median", None),
         "oos_cvar_95": getattr(m, "oos_cvar_95", None),
         "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),

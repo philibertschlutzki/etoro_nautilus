@@ -637,7 +637,16 @@ def calibrate_and_write_slippage_cache(
     except Exception:
         return {}
     observations_by_asset_class: dict[str, list[float]] = {}
-    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+    # Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — dieselben Beobachtungen ZUSAeTZLICH auf
+    # zwei feineren Ebenen gesammelt (Symbol; Strategie+Symbol), damit die Kostenstress-Leiter eine
+    # STRATEGIE gegen eine ANDERE stressen kann (ein asset-class-weiter Pool-Median verschiebt nur
+    # das Niveau, diskriminiert nicht — Symptom: Δ(2×−1×) war in 13/13 Studies bit-identisch).
+    # Keys werden ueber "||" kodiert (kein Symbol/Strategie-Name enthaelt dieses Trennzeichen) und
+    # unten wieder in die verschachtelte Form entpackt, um calibrate_slippage_bps_by_asset_class
+    # (eine reine Perzentil-ueber-flachem-Namensraum-Funktion) unveraendert dreifach wiederzuverwenden.
+    observations_by_symbol: dict[str, list[float]] = {}
+    observations_by_strategy_symbol: dict[str, list[float]] = {}
+    for (strategy, symbol, _reason), study in zip(pairs, studies):
         try:
             asset_class = _resolve_asset_class_for_symbol(symbol)
         except Exception:
@@ -652,7 +661,22 @@ def calibrate_and_write_slippage_cache(
             # Wert, ein guenstigerer Fill als der Stop-Level, ist keine Kostenposition).
             adverse = max(0.0, float(val))
             observations_by_asset_class.setdefault(asset_class, []).append(adverse)
+            observations_by_symbol.setdefault(f"{asset_class}||{symbol}", []).append(adverse)
+            observations_by_strategy_symbol.setdefault(
+                f"{asset_class}||{strategy}||{symbol}", []).append(adverse)
     calibration = calibrate_slippage_bps_by_asset_class(observations_by_asset_class)
+    _calibration_by_symbol = calibrate_slippage_bps_by_asset_class(observations_by_symbol)
+    _calibration_by_strategy_symbol = calibrate_slippage_bps_by_asset_class(
+        observations_by_strategy_symbol)
+    for _key, _rec in _calibration_by_symbol.items():
+        _asset_class, _symbol = _key.split("||", 1)
+        calibration.setdefault(_asset_class, {})
+        calibration[_asset_class].setdefault("by_symbol", {})[_symbol] = _rec
+    for _key, _rec in _calibration_by_strategy_symbol.items():
+        _asset_class, _strategy, _symbol = _key.split("||", 2)
+        calibration.setdefault(_asset_class, {})
+        calibration[_asset_class].setdefault("by_strategy_symbol", {})[
+            f"{_strategy}|{_symbol}"] = _rec
     if work_dir is None:
         work_dir = WORK
     try:

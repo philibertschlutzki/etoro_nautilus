@@ -1024,6 +1024,39 @@ class HourlyStrategyBase(Strategy):
 
         self._execute_market_close(pos)
 
+    def _bar_range_bps_tags(self) -> list[str]:
+        """Issue #1259 (GH #1129), Pitfall #452 in AGENTS.md — ``BAR_RANGE_MEDIAN_BPS``/
+        ``BAR_RANGE_P75_BPS`` MUESSEN emittiert werden, sobald ``_position_bar_count > 0``, auch
+        wenn die um Nullspannen-Bars bereinigte Population (``_position_bar_range_bps_readings``,
+        seit #1079/#1227) LEER ist. Root-Cause: bei 100 % Nullspannen-Bars (``zero_range_bar_
+        fraction == 1.0``) war die bereinigte Liste leer, der Tag wurde NIE gesetzt, und der
+        blockierende ``invariants.check_stop_loss_vs_bar_range`` blieb permanent
+        ``POPULATION_UNAVAILABLE`` — obwohl die Spanne sehr wohl gemessen wurde (Median 0 ueber n
+        Bars ist ein GUELTIGES Ergebnis, kein fehlender Messwert). Der Fix #1227 hatte die
+        Eingangsgroesse seines eigenen blockierenden Checks entfernt.
+
+        Zusaetzlich ``BAR_RANGE_POPULATION_N`` (Groesse der bereinigten Population), damit
+        „Median ueber 0 Bars" (degenerierte Nullspanne) von „Median 0 ueber n Bars" unterscheidbar
+        bleibt (``invariants.check_stop_loss_vs_bar_range`` wertet das als eigenstaendigen
+        ``DEGENERATE_ZERO_RANGE``-Ausgang statt ``INCONCLUSIVE``).
+
+        Rueckgabe leer, wenn ``_position_bar_count == 0`` (keine Bar waehrend der Position
+        beobachtet — dieselbe Bedingung wie ``ZERO_RANGE_BAR_FRACTION`` an den Aufrufstellen)."""
+        if self._position_bar_count <= 0:
+            return []
+        readings = self._position_bar_range_bps_readings
+        if readings:
+            median_bps = statistics.median(readings)
+            p75_bps = _nearest_rank_percentile(sorted(readings), 0.75)
+        else:
+            median_bps = 0.0
+            p75_bps = 0.0
+        return [
+            f"BAR_RANGE_MEDIAN_BPS:{median_bps:.4f}",
+            f"BAR_RANGE_P75_BPS:{p75_bps:.4f}",
+            f"BAR_RANGE_POPULATION_N:{len(readings)}",
+        ]
+
     def _execute_market_close(self, pos=None) -> None:
         if pos is None:
             positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -1049,15 +1082,9 @@ class HourlyStrategyBase(Strategy):
             # Issue #953/#1119 (Katalog #960) — Median der Bar-Spannen dieser Position; siehe
             # HourlyStrategyBase._position_bar_range_bps_readings-Docstring. Seit #1079/#1227 ueber
             # der um Nullspannen-Bars BEREINIGTEN Population (die Serie selbst wird bereits gefiltert
-            # befuellt, siehe dortiger Docstring).
-            if self._position_bar_range_bps_readings:
-                tag_list.append(
-                    f"BAR_RANGE_MEDIAN_BPS:{statistics.median(self._position_bar_range_bps_readings):.4f}")
-                # Issue #1079/#1227 Fix Punkt 2 — P75 derselben bereinigten Population, macht die
-                # rechtsschiefe Verteilung der Bar-Spanne zusaetzlich zum Median sichtbar.
-                _sorted_bar_ranges = sorted(self._position_bar_range_bps_readings)
-                tag_list.append(
-                    f"BAR_RANGE_P75_BPS:{_nearest_rank_percentile(_sorted_bar_ranges, 0.75):.4f}")
+            # befuellt, siehe dortiger Docstring). Issue #1259 (GH #1129) — UNBEDINGT emittiert
+            # (siehe _bar_range_bps_tags-Docstring), auch wenn die bereinigte Population leer ist.
+            tag_list.extend(self._bar_range_bps_tags())
             # Issue #1079/#1227 Fix Punkt 2/4 — Anteil der Nullspannen-Bars an der VOLLEN Population
             # dieser Position; Rohmaterial fuer invariants.check_zero_range_bar_share. Nur gesetzt,
             # wenn mindestens eine Bar waehrend der Position beobachtet wurde (close > 0-Guard oben).
@@ -1200,12 +1227,8 @@ class HourlyStrategyBase(Strategy):
             tag_list.append(f"ATR_MIN_BPS:{min(self._position_atr_bps_readings):.4f}")
         # Issue #953/#1119 (Katalog #960) — siehe _execute_market_close, dieselbe Tag-Konvention.
         # Issue #1079/#1227 — ebenso ueber der bereinigten Population + P75/ZERO_RANGE_BAR_FRACTION.
-        if self._position_bar_range_bps_readings:
-            tag_list.append(
-                f"BAR_RANGE_MEDIAN_BPS:{statistics.median(self._position_bar_range_bps_readings):.4f}")
-            _sorted_bar_ranges = sorted(self._position_bar_range_bps_readings)
-            tag_list.append(
-                f"BAR_RANGE_P75_BPS:{_nearest_rank_percentile(_sorted_bar_ranges, 0.75):.4f}")
+        # Issue #1259 (GH #1129) — UNBEDINGT emittiert, siehe _bar_range_bps_tags-Docstring.
+        tag_list.extend(self._bar_range_bps_tags())
         if self._position_bar_count > 0:
             tag_list.append(
                 "ZERO_RANGE_BAR_FRACTION:"

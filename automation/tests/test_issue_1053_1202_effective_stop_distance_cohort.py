@@ -16,10 +16,17 @@ Fix:
 2. ``report._effective_stop_ratio_cohort`` -- Median dieser PER-TRIAL-Ratio ueber die "eligible
    Kohorte" (Trials mit >= 3 nachweislichen TRAILING_STOP-Exits IN DIESEM Trial), gespeichert als
    ``effective_stop_ratio_cohort_median``/``effective_stop_ratio_cohort_n``.
-3. ``winner_effective_stop_ratio`` -- der GEWINNER-Wert (bestbewerteter Trial) bleibt SEPARAT
-   telemetriert, fliesst aber NICHT mehr in das Verdikt ein.
+3. ``winner_effective_stop_ratio`` -- der GEWINNER-Wert (bestbewerteter Trial) wird SEPARAT
+   telemetriert.
 4. ``invariants.check_effective_stop_distance`` konsumiert die Kohorten-Felder PRIMAER (mit
    Fallback auf die alte Berechnung fuer Legacy-Records ohne die neuen Felder).
+
+Korrektur (Issue #1262/GH #1132, Pitfall #455 in AGENTS.md): Punkt 3 oben war die Root-Cause eines
+FOLGE-Symptoms — das Verdikt (``passed``) beurteilte den Kohorten-Median, waehrend PROMOTIERT wird
+der Gewinner-Trial. In 3/13 Studies stand das Verdikt auf der falschen Seite der Schwelle fuer den
+tatsaechlich promotierten Kandidaten. Seit #1262 entscheidet ``winner_effective_stop_ratio``
+(Kohorten-Median bleibt Kontext-Telemetrie, Fallback bei fehlendem Gewinner-Wert). Die Tests unten
+sind entsprechend aktualisiert.
 
 Akzeptanzkriterien: zwei Laeufe auf demselben Store und Symbol liefern dasselbe ``passed``; Delta
 des Kohorten-Medians < 5 %.
@@ -130,21 +137,40 @@ def _study(strategy, symbol, *, cohort_median, cohort_n, winner_ratio=None):
 
 def test_cohort_path_passes_within_band():
     result = inv.check_effective_stop_distance([
-        _study("A", "X.ETORO", cohort_median=1.5, cohort_n=10, winner_ratio=0.2),
+        _study("A", "X.ETORO", cohort_median=1.5, cohort_n=10, winner_ratio=2.0),
     ])
     assert result.passed is True
-    assert result.actual["A/X.ETORO"]["ratio_median"] == 1.5
+    # Issue #1262 (GH #1132) — die Entscheidung folgt dem GEWINNER (2.0), der Kohorten-Median
+    # (1.5) bleibt als Kontext-Telemetrie unter einem eigenen Schluessel erhalten.
+    assert result.actual["A/X.ETORO"]["ratio_median"] == 2.0
+    assert result.actual["A/X.ETORO"]["effective_stop_ratio_cohort_median"] == 1.5
+    assert result.actual["A/X.ETORO"]["ratio_source"] == "winner"
 
 
-def test_winner_ratio_is_telemetried_but_does_not_drive_the_verdict():
-    """Der Gewinner-Wert liegt AUSSERHALB beider Schranken (0.1 < min_ratio), der Kohorten-Median
-    liegt IM Band -- das Verdikt folgt der Kohorte, nicht dem Gewinner (Akzeptanzkriterium #1202:
-    ``winner_effective_stop_ratio`` ist Telemetrie, kein Veto)."""
+def test_winner_ratio_drives_the_verdict_not_the_cohort_median():
+    """Issue #1262 (GH #1132), Pitfall #455 — Kern-Akzeptanzkriterium: der Gewinner-Wert liegt
+    AUSSERHALB beider Schranken (0.05 < min_ratio), der Kohorten-Median liegt IM Band -- das
+    Verdikt folgt seit #1262 dem GEWINNER (promotiert wird der Gewinner, nicht die Kohorte),
+    nicht mehr dem Kohorten-Median (Umkehrung des #1202-Verhaltens)."""
     result = inv.check_effective_stop_distance([
         _study("A", "X.ETORO", cohort_median=1.5, cohort_n=10, winner_ratio=0.05),
     ])
-    assert result.passed is True
+    assert result.passed is False
+    assert result.actual["A/X.ETORO"]["ratio_median"] == 0.05
     assert result.actual["A/X.ETORO"]["winner_effective_stop_ratio"] == 0.05
+    assert result.actual["A/X.ETORO"]["effective_stop_ratio_cohort_median"] == 1.5
+    assert result.actual["A/X.ETORO"]["ratio_source"] == "winner"
+
+
+def test_missing_winner_ratio_falls_back_to_cohort_median_explicitly():
+    """Fehlt winner_effective_stop_ratio (kein Gewinner-Trial mit nachweislichen TRAILING_STOP-
+    Exits), gilt der Kohorten-Median — AUSGEWIESEN unter ratio_source, nicht stillschweigend."""
+    result = inv.check_effective_stop_distance([
+        _study("A", "X.ETORO", cohort_median=1.5, cohort_n=10),  # winner_ratio=None (Default)
+    ])
+    assert result.passed is True
+    assert result.actual["A/X.ETORO"]["ratio_median"] == 1.5
+    assert result.actual["A/X.ETORO"]["ratio_source"] == "NO_WINNER_COHORT_FALLBACK"
 
 
 def test_cohort_path_fails_low_and_high_offenders():

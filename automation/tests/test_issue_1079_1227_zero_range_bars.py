@@ -70,10 +70,16 @@ def test_zero_range_bar_count_and_total_bar_count_are_tracked():
 
 
 def test_three_new_tags_emitted_on_closing_order():
-    source = _execute_market_close_source()
-    assert "BAR_RANGE_MEDIAN_BPS:" in source
-    assert "BAR_RANGE_P75_BPS:" in source
-    assert "ZERO_RANGE_BAR_FRACTION:" in source
+    # Issue #1259 (GH #1129) — BAR_RANGE_MEDIAN_BPS/_P75_BPS wurden in die gemeinsame Hilfsfunktion
+    # ``_bar_range_bps_tags`` extrahiert (zweite Aufrufstelle: der Dyn-TP-Limit-Order-Pfad,
+    # #1034); ``_execute_market_close`` ruft sie auf, statt die Tags selbst zu bilden.
+    close_source = _execute_market_close_source()
+    assert "self._bar_range_bps_tags()" in close_source
+    assert "ZERO_RANGE_BAR_FRACTION:" in close_source
+    tags_source = inspect.getsource(hsb.HourlyStrategyBase._bar_range_bps_tags)
+    assert "BAR_RANGE_MEDIAN_BPS:" in tags_source
+    assert "BAR_RANGE_P75_BPS:" in tags_source
+    assert "BAR_RANGE_POPULATION_N:" in tags_source
 
 
 def test_nearest_rank_percentile_matches_backtest_runner_methodology():

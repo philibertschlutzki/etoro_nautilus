@@ -1861,6 +1861,10 @@ def _study_record(proposal: dict, study,
         "dust_round_trips_filtered": sum(
             int(a.get("oos_dust_round_trips_filtered_count") or 0) for a in trial_attrs),
         "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
+        # Issue #1259 (GH #1129), Pitfall #442 — bislang gestempelt, aber nie gelesen (analog
+        # atr_median_bps, dieselbe Trial-Median-Konvention).
+        "atr_min_bps": _median_of_trial_field(trial_attrs, "oos_atr_min_bps"),
+        "gross_win_mean_bps": _median_of_trial_field(trial_attrs, "oos_gross_win_mean_bps"),
         # Issue #1095 (Katalog #928) — Median (über die Trials dieser Study) der je-Trial-Mediane
         # der Bars zwischen Trailing-Stop-Signal und tatsaechlichem Markt-Close-Fill. Macht den in
         # #1092/#1094 quantifizierten Fill-Verzoegerungs-Anteil auf Study-Ebene sichtbar.
@@ -1878,6 +1882,12 @@ def _study_record(proposal: dict, study,
         # invariants.check_zero_range_bar_share.
         "bar_range_p75_bps": _median_of_trial_field(
             trial_attrs, "oos_bar_range_p75_bps"),
+        # Issue #1259 (GH #1129), Pitfall #452 — Populationszaehler derselben bereinigten Serie wie
+        # bar_range_median_bps; 0 (nicht None) unterscheidet "Median 0 ueber 0 Bars"
+        # (DEGENERATE_ZERO_RANGE, ein eigenstaendiges FAIL fuer check_stop_loss_vs_bar_range) von
+        # "nie gemessen" (POPULATION_UNAVAILABLE, None bleibt None ueber _median_of_trial_field).
+        "bar_range_population_n": _median_of_trial_field(
+            trial_attrs, "oos_bar_range_population_n"),
         "zero_range_bar_fraction": _median_of_trial_field(
             trial_attrs, "oos_zero_range_bar_fraction"),
         # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung "realized_loss_bps =
@@ -1899,6 +1909,15 @@ def _study_record(proposal: dict, study,
             int(a.get("oos_n_stop_loss_identity_checked") or 0) for a in trial_attrs),
         "n_stop_loss_identity_violations": sum(
             int(a.get("oos_n_stop_loss_identity_violations") or 0) for a in trial_attrs),
+        # Issue #1259 (GH #1129), Pitfall #442 — dieselbe gepoolte Summenkonvention wie
+        # n_stop_loss_identity_checked; Stichprobengroesse HINTER stop_exit_lag_bars (oben).
+        "n_trailing_stop_exits_with_lag_telemetry": sum(
+            int(a.get("oos_n_trailing_stop_exits_with_lag_telemetry") or 0) for a in trial_attrs),
+        "stop_ratchet_between_trigger_and_submit_bps": _median_of_trial_field(
+            trial_attrs, "oos_stop_ratchet_between_trigger_and_submit_bps_median"),
+        "n_trailing_stop_exits_with_ratchet_telemetry": sum(
+            int(a.get("oos_n_trailing_stop_exits_with_ratchet_telemetry") or 0)
+            for a in trial_attrs),
         # Issue #1082/#1230 (P1, Katalog #1247+) — die Anteile werden PRO ROUND-TRIP gebildet
         # (backtest_runner._aggregate_exit_telemetry), dann je Trial und je Study medianisiert —
         # NICHT aus stop_distance_bps_measured/realized_loss_bps oben ableitbar (Median einer
@@ -2103,6 +2122,17 @@ def _study_record(proposal: dict, study,
         # Symbole dadurch nie, ohne dass das im Report je sichtbar war.
         "applied_financing_bps_per_day": holdout_metrics.get("oos_applied_financing_bps_per_day"),
         "applied_slippage_bps": holdout_metrics.get("oos_applied_slippage_bps"),
+        # Issue #1266 (GH #1136), Pitfall #453 — welche Kalibrierungsebene tatsaechlich aufgeloest
+        # hat; Rohmaterial fuer invariants.check_cost_stress_discriminates.
+        "slippage_calibration_scope": holdout_metrics.get("oos_slippage_calibration_scope"),
+        # Issue #1268 (GH #1138), Pitfall #442 (siebte Instanz) — Holdout-Exit-Telemetrie: war im
+        # Holdout-Re-Evaluationspfad (confirm.py) bereits korrekt GEPARST, erreichte aber nie den
+        # Study-Record; Rohmaterial fuer invariants.check_selection_cost_basis_contract.
+        "holdout_stop_exit_slippage_bps": holdout_metrics.get("oos_stop_exit_slippage_bps_median"),
+        "holdout_n_trailing_stop_exits": holdout_metrics.get("oos_n_trailing_stop_losses"),
+        "holdout_trigger_to_fill_gap_bps": holdout_metrics.get(
+            "oos_trigger_to_fill_gap_bps_median"),
+        "holdout_realized_loss_bps": holdout_metrics.get("oos_realized_loss_bps_median"),
         # Issue #945/#1111 — die KANONISCHE Grösse: dieselbe Basis, aus der die Kostenstress-Werte
         # abgeleitet werden UND die seither berichtet/sortiert wird (summary_de.py Abschnitt 2.1).
         "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),
@@ -4301,6 +4331,14 @@ def _build_report(
     effective_stop_distance_check = _inv.check_effective_stop_distance(
         studies_out, min_ratio=stop_distance_min_ratio, max_ratio=stop_distance_max_ratio)
     all_checks.append(("global", effective_stop_distance_check))
+
+    # Issue #1262 (GH #1132) — die Kohorten-Abdeckung (effective_stop_ratio_cohort_n / n_evaluable)
+    # als eigenständiger Wächter neben dem Verdikt selbst; siehe dortiger Docstring.
+    all_checks.append(("global", _inv.check_effective_stop_ratio_coverage(studies_out)))
+
+    # Issue #1266 (GH #1136) — ein Kostenstress, der jede Study eines Symbols gleich trifft, ist
+    # kein Stress (Pitfall #453 in AGENTS.md); siehe dortiger Docstring.
+    all_checks.append(("global", _inv.check_cost_stress_discriminates(studies_out)))
 
     # Issue #1081/#1229 (P0, Katalog #1247+) Fix Punkt 3 — misst, wie weit die MODELLIERTE (im
     # Suchraum getunte) Stopdistanz von der tatsächlich AUSGEFÜHRTEN, gemessenen Distanz abweicht,
