@@ -179,12 +179,16 @@ def _capture_sweep_completed_event(monkeypatch, tmp_path, pairs, family_n_by_sym
     return [e for e in handler.events if e.get("event_type") == "sweep_completed"][0]
 
 
-def test_sweep_completed_carries_n_family_attempted_and_the_old_alias(monkeypatch, tmp_path):
+def test_sweep_completed_carries_n_family_attempted_and_the_legacy_alias(monkeypatch, tmp_path):
     evt = _capture_sweep_completed_event(
         monkeypatch, tmp_path, [("S1", "A.ETORO", "OK")], {"A.ETORO": 581})
     assert evt["n_family_attempted"] == {"A.ETORO": 581}
-    # Konvention #1081 — Uebergangs-Alias eine Sitzung lang, bit-identischer Wert.
-    assert evt["deflation_n_family"] == evt["n_family_attempted"]
+    # Issue #1254 (GH #1124) — die Konvention-#1081-Uebergangsfrist ist beendet: der alte Name
+    # (``deflation_n_family``, behauptete "familienweite Multiplizitaet") ist umbenannt in
+    # ``deflation_n_eligible_legacy`` (benennt die tatsaechliche, ENGERE Grundgesamtheit, die diese
+    # Funktion seit jeher liefert), bit-identischer Wert.
+    assert evt["deflation_n_eligible_legacy"] == evt["n_family_attempted"]
+    assert "deflation_n_family" not in evt
 
 
 # ── Akzeptanzkriterium: Namensdisjunktheit ueber run.json UND den Ereignisstrom ────────────────────

@@ -18,18 +18,27 @@ TCFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 
 def test_shipped_config_moves_risk_adjusted_gate_to_requires_all():
-    # Issue #614 — das HARTE risikoadjustierte Kriterium ist seit #614 die PSR (min_psr), nicht mehr
-    # der annualisierte Sortino (min_sortino, jetzt Telemetrie). Es bleibt in eligible_requires_all
-    # (die #593-Anti-ODER-Bypass-Invariante gilt für die PSR statt den Sortino).
+    # Issue #614 — das HARTE risikoadjustierte Kriterium war seit #614 die PSR (min_psr), nicht mehr
+    # der annualisierte Sortino (min_sortino, jetzt Telemetrie).
     # Issue #649 — die ausgelieferte Config schreibt die Klausel PRÄFIGIERT (``oos_min_psr``); ein
     # Vergleich gegen den blanken Namen ``min_psr`` (wie vor #649) prüft NIE die tatsächlich
     # ausgelieferte Config und wäre selbst ein Exemplar des #649-Fixture-vs-Produktion-Drifts (der
     # Grund, warum die vier Gates in Produktion still tot waren, während der #614-Test grün blieb).
     # Nach ``_canonical_gate_key``-Normalisierung ist die Schreibweise (mit/ohne ``oos_``-Präfix)
     # äquivalent — dieser Test prüft die kanonische Form gegen die ECHTE Datei.
+    #
+    # Issue #1248 (GH #1118), Pitfall #451 — 'oos_min_psr' wurde SEIT DIESEM FIX aus
+    # eligible_requires_all entfernt (gemessener marginaler Eigenbeitrag 0.0 gegenueber dem
+    # schaerferen oos_min_alpha_tstat-Gate, #1093/#1241 — siehe tournament.json-Schema-Kommentar zu
+    # oos_min_psr). DAS harte risikoadjustierte Kriterium der #593-Anti-ODER-Bypass-Invariante ist
+    # seither oos_min_alpha_tstat, nicht mehr min_psr — dieser Test prüft die AKTUELLE
+    # Gate-Zusammensetzung gegen die ECHTE Datei, statt die #1248-Entscheidung stillschweigend zu
+    # unterlaufen (Pitfall #449: ein Test, der production config lädt, aber eine veraltete Erwartung
+    # behauptet, ist genauso ein Drift-Risiko wie ein handgeschriebenes Fixture).
     canonical_all = {_canonical_gate_key(k) for k in TCFG["eligible_requires_all"]}
-    assert "min_psr" in canonical_all
+    assert "min_alpha_tstat" in canonical_all
     assert "min_sortino" not in canonical_all
+    assert "min_psr" not in canonical_all
     assert "min_psr" not in TCFG["eligible_requires_any"]
     # Issue #848 — min_win_rate wurde aus eligible_requires_any entfernt (5. Katalog derselben
     # Fehlerklasse: der Arm war ueber fuenf Laeufe strukturell unerreichbar).
@@ -60,9 +69,13 @@ def test_any_condition_parity_fails_loud_on_unknown_clause():
 
 
 def test_negative_edge_trial_is_not_eligible():
-    """Issue #614 — kein Trial mit niedriger PSR (negativer Edge) ist oos_eligible (min_psr in
-    eligible_requires_all). Ein PF > 1.1 rettet ihn NICHT (die #593-Anti-ODER-Bypass-Invariante gilt
-    jetzt für die PSR). Ein negativer per-Perioden-Sortino ⇒ PSR < 0.5 < oos_min_psr(0.75)."""
+    """Issue #614 — kein Trial mit negativem Edge ist oos_eligible. Ein PF > 1.1 rettet ihn NICHT
+    (die #593-Anti-ODER-Bypass-Invariante gilt fuer das harte risikoadjustierte Gate).
+
+    Issue #1248 (GH #1118), Pitfall #451 — 'oos_min_psr' ist seither KEIN hartes Gate mehr
+    (gemessener Grenzbeitrag 0.0 gegenueber oos_min_alpha_tstat, siehe tournament.json-Schema);
+    dieser Test isoliert die risikoadjustierte Ablehnung daher ueber ein schwaches t(alpha) statt
+    eines niedrigen PSR (analog test_issue_650_return_gate_not_binding.py)."""
     cfg = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
     oos = {
         "total_trades": 300, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1,
@@ -70,7 +83,8 @@ def test_negative_edge_trial_is_not_eligible():
         "profit_factor": 1.169, "median_position_notional": 1000.0,
         "oos_folds_total": 4, "oos_fold_sortinos": [-6.5, -5.0, -7.0, -6.0],
         "oos_excess_return": 0.02,
+        "oos_alpha_tstat": 0.2,  # negativer Edge ⇒ kein signifikantes Alpha
     }
     ev = _evaluate_oos_eligibility(oos, cfg)
     assert ev["oos_eligible"] is False
-    assert any("oos_min_psr" in r for r in ev["oos_rejection_reasons"])
+    assert any("oos_min_alpha_tstat" in r for r in ev["oos_rejection_reasons"])

@@ -19,6 +19,34 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # umschaltbar).
 WORK = Path(os.environ.get("OPTIMIZER_WORK_DIR", str(PROJECT_ROOT / "data" / "optimizer")))
 
+# Issue #1270 (GH #1140), Pitfall #447-Klasse in AGENTS.md — Root-Cause: ``champions._champions_
+# dir() = WORK / "champions"`` lag im WEGWERF-Verzeichnis, das ``logs/executor.sh`` je Lauf FRISCH
+# anlegt (Empfehlung E-1 aus Issue #1142, ertragswirksam belegt, p = 0,046) — E-1 und der
+# #702-Closed-Loop (Champion-Store als Gedaechtnis ueber Laeufe hinweg) schliessen einander
+# KONSTRUKTIV aus, solange ein persistenter Zustand unter ``WORK`` liegt. ``CHAMPION_ROOT`` ist
+# DESHALB explizit NICHT relativ zu ``WORK`` (der Bug-Klasse, die Pitfall #447 beschreibt),
+# sondern an ``PROJECT_ROOT`` verankert — ein Wechsel von ``OPTIMIZER_WORK_DIR`` zwischen zwei
+# Laeufen aendert diesen Pfad NICHT. Ueberschreibbar per ``OPTIMIZER_CHAMPION_DIR`` (derselbe
+# Override-Mechanismus wie ``OPTIMIZER_WORK_DIR`` fuer ``WORK``, fuer Tests/Multi-Instanz-Betrieb).
+CHAMPION_ROOT = Path(
+    os.environ.get("OPTIMIZER_CHAMPION_DIR", str(PROJECT_ROOT / "data" / "optimizer" / "champions")))
+
+# Issue #1252 (GH #1122) — derselbe Verankerungsgrund wie ``CHAMPION_ROOT``: der Lauf-
+# Fingerabdruck-Index muss Duplikate ueber genau die WORK-Recycling-Grenze hinweg erkennen, die
+# ihn sonst bei jedem Lauf leeren wuerde.
+RUN_FINGERPRINT_INDEX_PATH = Path(os.environ.get(
+    "OPTIMIZER_RUN_FINGERPRINT_INDEX", str(PROJECT_ROOT / "data" / "optimizer" / "run_fingerprints.jsonl")))
+
+# Issue #1270 (GH #1140) Fix Punkt 3 — dieselbe Root-Cause-Klasse traf zusaetzlich den Symbol-Bar-
+# Qualitaets-Cache (``sweep.write_symbol_bar_quality_cache``), den kalibrierten-Slippage-Cache
+# (``sweep.calibrate_and_write_slippage_cache``) UND den Annualisierungsfaktor-Cache
+# (``backtest_runner._annualization_factor_cache_path``) — alle drei lasen/schrieben bislang unter
+# ``WORK`` (Symptom: ``symbol_bar_quality_cache.cache_found = false`` in 3/3 Laeufen, dieselbe
+# Ursache wie der Champion-Store). ``PERSISTENT_CACHE_ROOT`` buendelt sie an EINER, ebenfalls
+# ``PROJECT_ROOT``-verankerten Stelle. Ueberschreibbar per ``OPTIMIZER_PERSISTENT_CACHE_DIR``.
+PERSISTENT_CACHE_ROOT = Path(os.environ.get(
+    "OPTIMIZER_PERSISTENT_CACHE_DIR", str(PROJECT_ROOT / "data" / "optimizer" / "cache")))
+
 def git_commit() -> str:
     """Returns the current git short hash, or 'unknown' if not available."""
     try:
@@ -57,6 +85,52 @@ def write_json_atomic(path: Path, data: Any, *, indent: int = 2) -> None:
         except OSError:
             pass
         raise
+
+
+def append_jsonl_atomic(path: Path, record: dict) -> None:
+    """Issue #1252 (GH #1122) — haengt ``record`` als EINE JSON-Zeile an eine JSONL-Datei an, mit
+    derselben Sicherheitsgarantie wie ``write_json_atomic`` (kein Leser sieht jemals einen
+    Teilzustand), aber ueber das dafuer passende Primitiv: ein JSONL-Index ist ein WACHSENDES
+    Append-Only-Log, kein einzelnes, bei jeder Aenderung komplett ersetztes Dokument — das
+    Temp-Datei-plus-``os.replace``-Muster von ``write_json_atomic`` wuerde hier einen echten
+    Read-Modify-Write-Race zwischen mehreren gleichzeitigen Schreibern einfuehren (Leser A liest
+    den Stand, Leser B haengt an, Leser A schreibt seinen (jetzt veralteten) Gesamtstand zurueck
+    und ueberschreibt B's Eintrag). ``O_APPEND`` (POSIX) ist stattdessen das korrekte Primitiv fuer
+    genau diesen Anwendungsfall: ein Schreibvorgang unterhalb ``PIPE_BUF`` (typischerweise 4096
+    Byte, ein Fingerabdruck-Eintrag liegt weit darunter) ist auf jedem POSIX-System ATOMAR — kein
+    Leser sieht jemals eine ineinander verschraenkte Zeile zweier gleichzeitiger Schreiber."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, default=str) + "\n"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    """Issue #1252 (GH #1122) — liest eine JSONL-Datei (siehe ``append_jsonl_atomic``) als Liste
+    von Dicts. Fehlt die Datei ⇒ leere Liste (frischer Index, kein Fehler). Eine einzelne kaputte
+    Zeile (z. B. durch einen abgebrochenen Schreibvorgang VOR diesem Fix, oder Datenkorruption)
+    wird uebersprungen statt den gesamten Index unlesbar zu machen — dieselbe Fail-Open-Konvention
+    wie ``champions._read_entry``."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict):
+                    out.append(obj)
+    except OSError:
+        return []
+    return out
 
 
 def library_versions() -> dict:

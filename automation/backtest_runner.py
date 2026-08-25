@@ -805,7 +805,16 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     # UNDEFINIERTER t(α) (< 3 Perioden für die Regression, ``_alpha_beta_regression`` liefert dann
     # None) ist NICHT eligible — kein impliziter Pass.
     req_alpha_tstat = t_overrides.get("oos_min_alpha_tstat", tournament_cfg.get("oos_min_alpha_tstat"))
-    alpha_tstat = oos_metrics.get("oos_alpha_tstat")
+    # Issue #1255 (GH #1125), Pitfall #454-Klasse in AGENTS.md — das Gate konsumiert SEIT DIESEM FIX
+    # den HC3-robusten Schaetzer (``oos_alpha_tstat_hc3``, ``_alpha_regression_diagnostics``): die
+    # klassische ``SE(alpha)``-Formel unterstellt homoskedastische Residuen, eine auf der Mehrheit
+    # der Bars strukturell verletzte Annahme (Zero-Range-/Nicht-im-Markt-Baren). ``oos_alpha_tstat``
+    # (klassisch) bleibt UNVERAENDERT gestempelt (Ruecksichtsvergleich/Telemetrie,
+    # ``invariants.check_alpha_tstat_estimator_agreement``) — Fallback auf die klassische Statistik
+    # nur fuer Legacy-Metrics-Dicts ohne das neue Feld (z. B. vor #1255 archivierte Trials/Tests, die
+    # ``_evaluate_oos_eligibility`` direkt mit einem handgeschriebenen ``oos_metrics``-Dict
+    # aufrufen), NICHT als Produktionspfad.
+    alpha_tstat = oos_metrics.get("oos_alpha_tstat_hc3", oos_metrics.get("oos_alpha_tstat"))
     alpha_tstat_valid = True
     alpha_tstat_reason = ""
     if req_alpha_tstat is not None:
@@ -1258,7 +1267,9 @@ def resolve_financing_bps_per_day(inst_id_str: str,
 
 def resolve_slippage_bps(inst_id_str: str,
                          slippage_bps_by_asset_class: dict | None,
-                         asset_class_key: str = "DEFAULT") -> float:
+                         asset_class_key: str = "DEFAULT", *,
+                         strategy: str | None = None,
+                         min_observations: int = 30) -> float:
     """Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 2 — asset-class-
     aufgelöster konstanter Slippage-Aufschlag (bps) auf Marktaufträge, Auflösung analog
     ``resolve_financing_bps_per_day`` (fail-open: fehlende Config/unbekannte Asset-Class ⇒ 0.0,
@@ -1267,12 +1278,62 @@ def resolve_slippage_bps(inst_id_str: str,
     Dies ist die 'mindestens'-Variante aus der Issue (konstanter Aufschlag); die 'besser'-Variante
     (Aufschlag proportional zur Bar-Spanne der Ausführungs-Bar) ist NICHT implementiert — siehe
     AGENTS.md-Eintrag zu diesem Fix für die Begründung (zusätzliche Order-Tag-Plumbing für beide
-    Legs, in dieser Sitzung nicht mehr im Scope)."""
+    Legs, in dieser Sitzung nicht mehr im Scope).
+
+    Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — RÜCKWÄRTSKOMPATIBLE Erweiterung: der Wert
+    unter ``slippage_bps_by_asset_class[asset_class_key]`` ist entweder die ALTE Form (ein reiner
+    ``float`` — statische ``backtest.json``-Konstante ODER die vormalige, asset-class-WEITE
+    Kalibrierung) oder die NEUE, SKALIERTE Form (ein ``dict`` mit ``'value'`` als Asset-Class-
+    Fallback und optional ``'by_symbol'``/``'by_strategy_symbol'`` — feinere, aus
+    ``sweep.calibrate_and_write_slippage_cache`` kalibrierte Werte samt ``n_observations``, siehe
+    dortiger Docstring). Root-Cause #1266: ein additiver, STRATEGIE-UNABHÄNGIGER Stress-Term kann
+    keine Strategie gegen eine andere stressen (Δ(2×−1×) war in 13/13 Studies eines Symbols
+    bit-identisch) — die Auflösung bevorzugt daher IMMER die feinste verfügbare Ebene mit
+    ausreichender Stichprobe (``min_observations``, Default 30): (Strategie, Symbol) > Symbol >
+    Asset-Klasse."""
     if not slippage_bps_by_asset_class:
         return 0.0
-    if asset_class_key not in slippage_bps_by_asset_class:
+    entry = slippage_bps_by_asset_class.get(asset_class_key)
+    if entry is None:
         return 0.0
-    return float(slippage_bps_by_asset_class[asset_class_key])
+    if not isinstance(entry, dict) or "value" not in entry:
+        return float(entry)  # Alte Form: reiner Skalar.
+    if strategy:
+        rec = (entry.get("by_strategy_symbol") or {}).get(f"{strategy}|{inst_id_str}")
+        if (rec and rec.get("value") is not None
+                and int(rec.get("n_observations") or 0) >= min_observations):
+            return float(rec["value"])
+    rec = (entry.get("by_symbol") or {}).get(inst_id_str)
+    if (rec and rec.get("value") is not None
+            and int(rec.get("n_observations") or 0) >= min_observations):
+        return float(rec["value"])
+    return float(entry.get("value") or 0.0)
+
+
+def resolve_slippage_calibration_scope(inst_id_str: str,
+                                       slippage_bps_by_asset_class: dict | None,
+                                       asset_class_key: str = "DEFAULT", *,
+                                       strategy: str | None = None,
+                                       min_observations: int = 30) -> str:
+    """Issue #1266 (GH #1136) — Telemetrie-Begleiter zu ``resolve_slippage_bps``: WELCHE Ebene hat
+    tatsächlich aufgelöst (``'strategy_symbol'``/``'symbol'``/``'asset_class'``)? Dieselbe
+    Fallback-Reihenfolge wie ``resolve_slippage_bps``, hier separat gehalten, um dessen
+    Rückgabetyp (``float``, von jedem bestehenden Aufrufer erwartet) nicht zu ändern."""
+    if not slippage_bps_by_asset_class:
+        return "asset_class"
+    entry = slippage_bps_by_asset_class.get(asset_class_key)
+    if not isinstance(entry, dict) or "value" not in entry:
+        return "asset_class"
+    if strategy:
+        rec = (entry.get("by_strategy_symbol") or {}).get(f"{strategy}|{inst_id_str}")
+        if (rec and rec.get("value") is not None
+                and int(rec.get("n_observations") or 0) >= min_observations):
+            return "strategy_symbol"
+    rec = (entry.get("by_symbol") or {}).get(inst_id_str)
+    if (rec and rec.get("value") is not None
+            and int(rec.get("n_observations") or 0) >= min_observations):
+        return "symbol"
+    return "asset_class"
 
 
 def merge_calibrated_slippage_into_config(
@@ -1297,6 +1358,49 @@ def merge_calibrated_slippage_into_config(
         if _static_val is not None and float(_static_val) != 0.0:
             continue
         merged[asset_class] = float(calibration[percentile])
+    return merged
+
+
+def merge_calibrated_slippage_into_config_scoped(
+    static_slippage_bps_by_asset_class: dict | None,
+    calibrated_slippage_by_asset_class: dict | None,
+    *, percentile: str = "p90",
+) -> dict:
+    """Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — wie ``merge_calibrated_slippage_into_
+    config``, aber SKALIERT: ``calibrated_slippage_by_asset_class`` trägt seit
+    ``sweep.calibrate_and_write_slippage_cache`` neben der asset-class-weiten Kalibrierung
+    (``{'p50','p90','n_observations'}``) auch feinere Ebenen (``'by_symbol'``/
+    ``'by_strategy_symbol'``, dieselben drei Schlüssel je Eintrag). Das Ergebnis ist die
+    ``resolve_slippage_bps``-SKALIERTE Form (``{asset_class: {'value': float, 'by_symbol': {...},
+    'by_strategy_symbol': {...}}}``) — dieselbe Operator-Vorrang-Regel wie im Original: eine
+    EXPLIZIT konfigurierte, nicht-null Konstante übersteuert JEDE Kalibrierungsebene (der Operator
+    hat bewusst einen Wert gesetzt) und wird dann OHNE die feineren Ebenen durchgereicht (ein
+    reiner ``float``, identisch zum Vor-#1266-Verhalten)."""
+    merged: dict = dict(static_slippage_bps_by_asset_class or {})
+    for asset_class, calibration in (calibrated_slippage_by_asset_class or {}).items():
+        if not isinstance(calibration, dict) or percentile not in calibration:
+            continue
+        _static_val = merged.get(asset_class)
+        if _static_val is not None and float(_static_val) != 0.0:
+            continue
+
+        def _pick(rec: dict | None) -> dict | None:
+            if not isinstance(rec, dict) or percentile not in rec:
+                return None
+            return {"value": float(rec[percentile]),
+                   "n_observations": int(rec.get("n_observations") or 0)}
+
+        merged[asset_class] = {
+            "value": float(calibration[percentile]),
+            "by_symbol": {
+                sym: picked for sym, rec in (calibration.get("by_symbol") or {}).items()
+                if (picked := _pick(rec)) is not None
+            },
+            "by_strategy_symbol": {
+                key: picked for key, rec in (calibration.get("by_strategy_symbol") or {}).items()
+                if (picked := _pick(rec)) is not None
+            },
+        }
     return merged
 
 
@@ -1386,6 +1490,60 @@ def resolve_opening_range_session_open_hour(inst_id_str: str,
             f"({sorted(session_open_hour_by_asset_class)}) — Issue #922, analog #898."
         )
     return int(session_open_hour_by_asset_class[asset_class_key])
+
+
+def resolve_session_hours_by_asset_class(
+    asset_class_key: str, session_hours_by_asset_class: dict | None,
+) -> tuple[str, str] | None:
+    """Issue #1260 (GH #1130) Fix Punkt 1 — löst je Asset-Class das UTC-Handelszeit-Fenster auf
+    (``backtest.json['session_hours_by_asset_class']``, Single Source of Truth analog
+    ``resolve_opening_range_session_open_hour``). Rückgabe ``(open_utc, close_utc)`` (Strings
+    ``'HH:MM'``) oder ``None`` — ``None`` bedeutet "kein Fenster", entweder weil der Key fehlt
+    (rückwärtskompatibel: kein Fenster konfiguriert ⇒ keine Maske) oder weil der Asset-Class-Eintrag
+    explizit ``null`` ist (ein echter 24/7-Markt wie FOREX/CRYPTO — die Abwesenheit einer Maske ist
+    hier eine bewusste Aussage, kein fehlender Wert).
+
+    BEWUSSTER SCOPE (siehe ``backtest.json``-Schema-Dokumentation für ``session_hours_by_asset_
+    class``): diese Funktion ist eine reine, unit-testbare Konfigurationsauflösung — sie wird
+    aktuell an KEINER Call-Site aufgerufen, die den Tick-Lade-/Bar-Aufbau-Pfad tatsächlich
+    beeinflusst (``load_ticks_from_catalog``/``engine.add_data(ticks)`` bleiben unverändert). Die
+    Verdrahtung braucht einen echten Marktdaten-Katalog zur End-to-End-Verifikation, die in dieser
+    Sandbox nicht möglich ist."""
+    if not session_hours_by_asset_class:
+        return None
+    entry = session_hours_by_asset_class.get(asset_class_key)
+    if entry is None:
+        return None
+    return entry["open_utc"], entry["close_utc"]
+
+
+def is_within_session_hours(
+    ts_ns: int, open_utc: str, close_utc: str, *, weekdays_only: bool = True,
+) -> bool:
+    """Issue #1260 (GH #1130) Fix Punkt 2 — reines Filter-Primitiv: ist der UTC-Zeitpunkt
+    ``ts_ns`` (Nanosekunden seit Epoch, dieselbe Einheit wie ``QuoteTick.ts_event``) innerhalb des
+    Handelszeit-Fensters ``[open_utc, close_utc)`` (Strings ``'HH:MM'``, UTC-Uhrzeit-of-Day, OHNE
+    Datumsanteil — das Fenster gilt für JEDEN Handelstag identisch, DST-ungenau wie
+    ``resolve_opening_range_session_open_hour``)? ``weekdays_only=True`` (Default) schliesst
+    zusätzlich Samstag/Sonntag aus (Montag=0 .. Sonntag=6, ``datetime.weekday()``) — EQUITY-/
+    COMMODITY-Märkte sind an Wochenenden UNABHÄNGIG vom Tagesfenster geschlossen; anders als das
+    Tagesfenster selbst ist das keine je-Asset-Class-konfigurierbare Grösse (jeder Markt mit einem
+    deklarierten Tagesfenster ist auch am Wochenende geschlossen — Zero-Hardcoding hier wäre
+    Overengineering ohne einen einzigen erwarteten abweichenden Fall).
+
+    Reine Funktion, kein I/O — unit-testbar mit synthetischen Zeitstempeln, ohne einen echten
+    Marktdaten-Katalog oder ``nautilus_trader``-Tick-Objekte zu benötigen (dieselbe Testbarkeits-
+    Absicht wie ``resolve_effective_bar_cap``/``compute_trial_timebox_violations``)."""
+    from datetime import datetime, timezone
+    dt = datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=timezone.utc)
+    if weekdays_only and dt.weekday() >= 5:
+        return False
+    open_h, open_m = (int(x) for x in open_utc.split(":"))
+    close_h, close_m = (int(x) for x in close_utc.split(":"))
+    time_of_day = dt.hour * 60 + dt.minute
+    open_minutes = open_h * 60 + open_m
+    close_minutes = close_h * 60 + close_m
+    return open_minutes <= time_of_day < close_minutes
 
 
 def load_ticks_from_catalog(
@@ -2894,7 +3052,12 @@ def _bars_per_calendar_day_from_mtm_series(mtm_series) -> float | None:
 
 def _annualization_factor_cache_path(work_dir: "Path | None" = None) -> "Path":
     if work_dir is None:
-        from automation.optimizer.manifest import WORK as work_dir
+        # Issue #1270 (GH #1140), Pitfall #447-Klasse — PERSISTENT_CACHE_ROOT, NICHT WORK: dieser
+        # Cache ist per Docstring oben EXPLIZIT dafuer gedacht, "sowohl Worker- als auch
+        # Lauf-Grenzen" zu ueberleben — unter dem je Lauf frisch angelegten WORK (Empfehlung E-1
+        # aus Issue #1142) war das strukturell nie der Fall, dieselbe Root-Cause-Klasse wie der
+        # Champion-Store/Symbol-Bar-Qualitaets-/Slippage-Cache.
+        from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT as work_dir
     return Path(work_dir) / "annualization_factor_by_symbol.json"
 
 
@@ -3083,7 +3246,7 @@ def _bar_calendar_telemetry(mtm_series: "pd.Series | None") -> dict:
     }
 
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None, symbol: str | None = None) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None, symbol: str | None = None, pnl_list_gross: list[float] | None = None, mtm_series_gross: pd.Series | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -3227,9 +3390,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     #   - ``expectancy_outlier_count``: Trades mit ``|pnl/notional| > 10 · median(|pnl/notional|)``
     #     innerhalb derselben gefilterten Liste.
     expectancy_capital_weighted = None
+    expectancy_capital_weighted_gross = None
     expectancy_winsorized = None
     expectancy_outlier_count = 0
     expectancy_notional_degenerate_count = 0
+    # Issue #1257 (GH #1127) — ``pnl_list_gross`` (optional, index-parallel zu ``pnl_list``) traegt
+    # dieselben Round-Trips VOR der #1078/#1226-kalibrierten-Slippage-Korrektur. Der Nennerboden
+    # (``nz``/``_notional_floor``) haengt AUSSCHLIESSLICH vom Notional ab, nie vom PnL — dieselbe
+    # Kandidatenmenge (kept indices) gilt daher fuer BEIDE Kostenbasen; nur der Zaehler (Σpnl)
+    # unterscheidet sich. Keine zweite, potenziell divergierende Nennerboden-Berechnung noetig.
+    _use_gross = pnl_list_gross is not None and len(pnl_list_gross) == len(pnl_list)
     if notional_list is not None and len(notional_list) == len(pnl_list):
         per_trade = [v / nz for v, nz in zip(pnl_list, notional_list) if nz and nz > 0.0]
         expectancy = statistics.mean(per_trade) if per_trade else 0.0
@@ -3238,7 +3408,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         _median_notional = statistics.median(_positive_notionals) if _positive_notionals else 0.0
         _notional_floor = 0.05 * _median_notional
         _pnl_floored, _notional_floored, _per_trade_floored = [], [], []
-        for v, nz in zip(pnl_list, notional_list):
+        _pnl_gross_floored = [] if _use_gross else None
+        for _idx, (v, nz) in enumerate(zip(pnl_list, notional_list)):
             if not nz or nz <= 0.0:
                 continue
             if nz < _notional_floor:
@@ -3254,9 +3425,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             _pnl_floored.append(v)
             _notional_floored.append(nz)
             _per_trade_floored.append(v / nz)
+            if _use_gross:
+                _pnl_gross_floored.append(pnl_list_gross[_idx])
 
         if _notional_floored:
             expectancy_capital_weighted = sum(_pnl_floored) / sum(_notional_floored)
+            if _pnl_gross_floored is not None:
+                expectancy_capital_weighted_gross = sum(_pnl_gross_floored) / sum(_notional_floored)
         _w_lo, _w_hi = _read_fold_winsorize()
         _winsorized_returns = _winsorize(_per_trade_floored, _w_lo, _w_hi)
         expectancy_winsorized = (
@@ -3332,6 +3507,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         for v in pnl_list:
             comp *= (1.0 + v / starting_capital)
         total_return = comp - 1.0
+
+    # Issue #1257 (GH #1127) — ``total_return_gross`` (Kostenbasis VOR der #1078/#1226-kalibrierten-
+    # Slippage-Korrektur), dieselbe Level-Ratio-Formel wie ``total_return`` oben, angewendet auf die
+    # parallele, unkorrigierte ``mtm_series_gross``. Nur bei vorliegender Equity-Kurve berechenbar
+    # (kein Nachbau des ``mtm_frames``-Fallback-Pfads fuer die Gross-Seite — reine
+    # Traceability-Telemetrie, kein Selektionsgroesse, siehe Docstring am Funktionsende).
+    total_return_gross = None
+    if (mtm_series_gross is not None and not mtm_series_gross.empty and len(mtm_series_gross) > 1
+            and float(mtm_series_gross.iloc[0]) != 0.0):
+        total_return_gross = float(mtm_series_gross.iloc[-1]) / float(mtm_series_gross.iloc[0]) - 1.0
 
     if mtm_series is not None and not mtm_series.empty:
         import numpy as np
@@ -3948,10 +4133,27 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
+        # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — ``total_return`` selbst ist SEIT
+        # DIESEM FIX bereits die kostenbereinigte (Slippage-korrigierte) Groesse, sobald eine
+        # kalibrierte p50-Slippage vorlag (``extract_metrics`` uebergibt jetzt eine an der Quelle
+        # korrigierte ``mtm_series``, siehe dortiger Kommentar) — ``total_return_net`` ist ein
+        # EXPLIZITER Alias desselben Werts (Namensparitaet zu ``expectancy_capital_weighted_net``
+        # unten und zum Akzeptanzkriterium des Issues), ``total_return_gross`` die Kostenbasis DAVOR
+        # (Traceability, siehe Berechnungsblock oben — None ohne Equity-Kurve).
+        "total_return_net": float(total_return),
+        "total_return_gross": (
+            float(total_return_gross) if total_return_gross is not None else None),
         "expectancy":    float(expectancy),
         # Issue #1031 (Katalog #866) — siehe Docstring am Berechnungsblock oben.
         "expectancy_capital_weighted": (
             float(expectancy_capital_weighted) if expectancy_capital_weighted is not None else None),
+        # Issue #1257 (GH #1127) — Alias/Gross-Pendant analog total_return_net/_gross oben, dieselbe
+        # Kandidatenmenge (Nennerboden haengt nur vom Notional ab, siehe Berechnungsblock).
+        "expectancy_capital_weighted_net": (
+            float(expectancy_capital_weighted) if expectancy_capital_weighted is not None else None),
+        "expectancy_capital_weighted_gross": (
+            float(expectancy_capital_weighted_gross)
+            if expectancy_capital_weighted_gross is not None else None),
         "expectancy_winsorized": (
             float(expectancy_winsorized) if expectancy_winsorized is not None else None),
         "expectancy_outlier_count": int(expectancy_outlier_count),
@@ -4063,6 +4265,12 @@ def _parse_exit_order_tags(tags) -> dict:
             elif key == "BAR_RANGE_P75_BPS":
                 # Issue #1079/#1227 — P75 derselben bereinigten Population wie BAR_RANGE_MEDIAN_BPS.
                 meta["bar_range_p75_bps"] = float(value)
+            elif key == "BAR_RANGE_POPULATION_N":
+                # Issue #1259 (GH #1129), Pitfall #452 — Groesse der um Nullspannen-Bars bereinigten
+                # Population, aus der BAR_RANGE_MEDIAN_BPS/_P75_BPS gebildet wurden. n=0 bei
+                # bar_count>0 unterscheidet "Median 0 ueber 0 Bars" (DEGENERATE_ZERO_RANGE, ein
+                # eigenstaendiges FAIL) von "kein Tag ueberhaupt" (POPULATION_UNAVAILABLE).
+                meta["bar_range_population_n"] = int(value)
             elif key == "ZERO_RANGE_BAR_FRACTION":
                 # Issue #1079/#1227 (Katalog #1247+, P0, Pitfall #446-Klasse) — Anteil der
                 # Nullspannen-Bars (``high == low``) an ALLEN Bars dieser Position; Rohmaterial fuer
@@ -4246,6 +4454,87 @@ def _alpha_beta_regression(
     return alpha, float(beta), float(alpha_tstat)
 
 
+def _alpha_regression_diagnostics(
+    strategy_log_returns: "np.ndarray", benchmark_log_returns: "np.ndarray",
+) -> dict | None:
+    """Issue #1255 (GH #1125), Issue #1258 (GH #1128) — ADDITIVE Diagnostik neben
+    ``_alpha_beta_regression`` (bewusst eine SEPARATE Funktion statt einer Signaturänderung dort:
+    ``_alpha_beta_regression`` gibt seit #986/#1140 ein striktes 3-Tupel ``(alpha, beta,
+    alpha_tstat)`` zurück, das mehrere bestehende Tests per ``a, b, c = result`` entpacken — ein
+    laengeres Tupel würde diese mit ``ValueError: too many values to unpack`` brechen). Rechnet
+    dieselbe OLS-Anpassung eigenständig nach (identische geschlossene Form, trivialer Zusatzaufwand
+    gegenüber der Haupt-Regression), um zwei weitere, ADDITIVE Diagnosen zu liefern:
+
+    1. Issue #1255 — ``alpha_tstat`` (die Haupt-Regression) ist HOMOSKEDASTISCH: ``SE(alpha)^2 =
+       (RSS/(n-2))·(1/n + mean(x)²/Sxx)`` unterstellt eine über alle Bars KONSTANTE
+       Residualvarianz. Auf einer Bar-Serie mit ueberwiegend Zero-Range-/Nicht-im-Markt-Baren
+       (``zero_range_bar_fraction``/1-``session_coverage_fraction``) ist die Residualvarianz
+       strukturell bimodal (nahe 0 auf inaktiven Bars, groesser auf aktiven) — die Homoskedastie-
+       Annahme ist verletzt. HC3 (MacKinnon/White, geschlossene Form, kein neues Dependency) ist
+       der Sandwich-Schaetzer, der KEINE konstante Residualvarianz unterstellt: für die Intercept-
+       (Alpha-)Zeile der Regression ist das Alpha-Gewicht je Beobachtung
+       ``w_i = 1/n - mean(x)·(x_i - mean(x))/Sxx`` (dieselbe geschlossene Form, die auch
+       ``alpha = Σ w_i·y_i`` ergibt — die klassische OLS-Alpha-Formel), die HC3-Varianz ist
+       ``Var_HC3(alpha) = Σ w_i²·e_i²/(1-h_i)²`` mit dem Leverage ``h_i = 1/n + (x_i-mean(x))²/Sxx``
+       (derselbe Leverage-Wert wie in der klassischen SE-Formel, hier PRO BEOBACHTUNG statt
+       gepoolt). ``alpha_tstat_df`` = ``n_informative - 2`` (statt ``n - 2``, siehe Punkt 2) macht
+       eine spaetere t-Verteilungs-Nachschlagestelle konsistent mit der TATSAECHLICHEN Zahl
+       oekonomischer Ereignisse, nicht der Kalender-Bar-Zaehlung.
+
+    2. Issue #1258 — die Regressions-Grundgesamtheit auditierbar: ``n_total`` (== der bereits
+       gestempelte ``oos_alpha_n_periods``, hier als expliziter Alias fuer die Akzeptanzkriterien-
+       Feldliste), ``n_informative`` (``y_i != 0 ODER x_i != 0`` — mindestens EINE Seite trug
+       Information), ``n_y_nonzero``/``n_x_nonzero`` (Strategie- bzw. Benchmark-Seite einzeln),
+       ``n_both_zero`` (``n_total - n_informative``, exakte Partition — Akzeptanzkriterium
+       ``n_both_zero + n_informative == n_total``).
+
+    ``None`` unter DENSELBEN Bedingungen wie ``_alpha_beta_regression`` (< 3 Perioden, Var(x) == 0)
+    — beide Funktionen werden IMMER auf demselben ``(strategy_log_returns, benchmark_log_returns)``-
+    Paar aufgerufen, ``None``/nicht-``None`` faellt daher stets zusammen (kein Fall, in dem eine
+    Funktion einen Wert liefert und die andere ``None``)."""
+    import numpy as np
+    x = np.asarray(benchmark_log_returns, dtype=float)
+    y = np.asarray(strategy_log_returns, dtype=float)
+    n = len(x)
+    if n < 3 or len(y) != n:
+        return None
+    x_mean = x.mean()
+    y_mean = y.mean()
+    sxx = float(((x - x_mean) ** 2).sum())
+    if sxx <= 0.0:
+        return None
+    sxy = float(((x - x_mean) * (y - y_mean)).sum())
+    beta = sxy / sxx
+    alpha = float(y_mean - beta * x_mean)
+    residuals = y - (alpha + beta * x)
+
+    n_y_nonzero = int((y != 0.0).sum())
+    n_x_nonzero = int((x != 0.0).sum())
+    n_informative = int(((y != 0.0) | (x != 0.0)).sum())
+    n_both_zero = n - n_informative
+
+    leverage = 1.0 / n + (x - x_mean) ** 2 / sxx
+    one_minus_h = np.clip(1.0 - leverage, 1e-12, None)
+    w_alpha = 1.0 / n - x_mean * (x - x_mean) / sxx
+    var_alpha_hc3 = float(((w_alpha ** 2) * (residuals ** 2) / (one_minus_h ** 2)).sum())
+    if var_alpha_hc3 > 0.0:
+        alpha_tstat_hc3 = alpha / math.sqrt(var_alpha_hc3)
+    else:
+        # Dieselbe degenerierte-Fit-Konvention wie _alpha_beta_regression (Rausch-nahe Residuen).
+        alpha_tstat_hc3 = (
+            math.copysign(_ALPHA_TSTAT_DEGENERATE_MAGNITUDE, alpha) if alpha != 0.0 else 0.0)
+
+    return {
+        "alpha_tstat_hc3": float(alpha_tstat_hc3),
+        "alpha_tstat_df": max(0, n_informative - 2),
+        "n_total": n,
+        "n_informative": n_informative,
+        "n_y_nonzero": n_y_nonzero,
+        "n_x_nonzero": n_x_nonzero,
+        "n_both_zero": n_both_zero,
+    }
+
+
 def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     """Issue #899 — reine Aggregationsfunktion über eine Liste von Round-Trip-Exit-Telemetrie-
     Dicts (``{"exit_reason", "atr_median_bps", "atr_min_bps", "pnl_bps"}``, siehe
@@ -4325,6 +4614,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     bar_range_medians: list[float] = []
     # Issue #1079/#1227 — dieselbe Population wie bar_range_medians, siehe dortiger Kommentar.
     bar_range_p75s: list[float] = []
+    # Issue #1259 (GH #1129) — Populationsgroesse je Position (aus BAR_RANGE_POPULATION_N); gepoolt
+    # als Summe fuer den Study-Report (Gesamtzahl der NICHT-degenerierten Bars ueber alle Positionen
+    # dieser Study), getrennt von n_positions_with_bar_range (Anzahl Positionen, die zum Median
+    # beitragen — siehe Filter unten, Pitfall #446).
+    bar_range_population_ns: list[int] = []
     zero_range_bar_fractions: list[float] = []
     # Issue #989/#1143 (Katalog #986) — UNBEDINGT (nicht auf TRAILING_STOP beschraenkt): der
     # DIREKT gemessene Sizing-Anteil je Round-Trip (siehe _finalize_round_trip-Kommentar). Issue
@@ -4393,9 +4687,25 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
                 stop_distance_share_values.append(float(m["stop_distance_bps"]) / _identity_lhs)
                 trigger_to_fill_gap_share_values.append(
                     float(m["trigger_to_fill_gap_bps"]) / _identity_lhs)
-        if m.get("bar_range_median_bps") is not None:
+        # Issue #1259 (GH #1129), Pitfall #452/#446 — der Median/P75 wird weiterhin NUR ueber
+        # Positionen mit einer NICHT-leeren bereinigten Population gebildet (population_n > 0);
+        # eine Position mit population_n == 0 traegt jetzt zwar IMMER einen Tag (0.0000, siehe
+        # HourlyStrategyBase._bar_range_bps_tags), ginge aber unfiltert in den Study-Median ein und
+        # zoege ihn strukturell in Richtung 0 (exakt das Pitfall-#446-Muster, das #1227 fuer die
+        # Bar-Ebene bereits vermied) — der Populationszaehler ersetzt hier die vorherige
+        # (jetzt entfallene) "Tag fehlt" = "kein Beitrag"-Heuristik 1:1.
+        _bar_range_n = m.get("bar_range_population_n")
+        if _bar_range_n is not None:
+            bar_range_population_ns.append(int(_bar_range_n))
+        # Ein EXPLIZIT bestaetigter Populationszaehler von 0 schliesst den Beitrag aus (Pitfall
+        # #446); FEHLT der Zaehler (kein BAR_RANGE_POPULATION_N-Tag, z. B. aeltere Meta-Objekte vor
+        # #1259 oder synthetische Test-Fixtures) faellt das Verhalten auf die Pre-#1259-Regel
+        # zurueck ("bar_range_median_bps is not None" allein genuegt) — Zero-Regression fuer jeden
+        # bestehenden Aufrufer, der das neue Feld (noch) nicht mitfuehrt.
+        _bar_range_excluded = _bar_range_n is not None and int(_bar_range_n) <= 0
+        if m.get("bar_range_median_bps") is not None and not _bar_range_excluded:
             bar_range_medians.append(float(m["bar_range_median_bps"]))
-        if m.get("bar_range_p75_bps") is not None:
+        if m.get("bar_range_p75_bps") is not None and not _bar_range_excluded:
             bar_range_p75s.append(float(m["bar_range_p75_bps"]))
         if m.get("zero_range_bar_fraction") is not None:
             zero_range_bar_fractions.append(float(m["zero_range_bar_fraction"]))
@@ -4501,15 +4811,28 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # je-Position-Bar-Spannen-Mediane (bps); Referenzgroesse fuer
         # invariants.check_stop_loss_vs_bar_range (Verlust = adverse Bewegung EINER Bar vs.
         # Verlust = Stopdistanz + Ueberschiessen).
+        # Issue #1259 (GH #1129), Pitfall #452 — UNBEDINGT 0.0 (statt None), sobald MINDESTENS EIN
+        # Round-Trip ueberhaupt einen BAR_RANGE_POPULATION_N-Tag trug (``_bar_range_measured``),
+        # auch wenn ALLE Positionen eine leere bereinigte Population hatten (100% Nullspannen-Bars
+        # ⇒ ``bar_range_medians`` leer). ``None`` bleibt reserviert fuer "kein einziger Round-Trip
+        # trug je die Bar-Spannen-Telemetrie" (echtes POPULATION_UNAVAILABLE, z. B. 0 Trades).
         "bar_range_median_bps": (
-            statistics.median(bar_range_medians) if bar_range_medians else None),
+            statistics.median(bar_range_medians) if bar_range_medians
+            else (0.0 if bar_range_population_ns else None)),
+        # Issue #1259 (GH #1129) — Summe der je-Position-Populationsgroessen dieses Trials
+        # (Gesamtzahl der NICHT-degenerierten Bars, ueber die bar_range_median_bps gebildet wurde);
+        # 0 unterscheidet "Median 0 ueber 0 Bars" (DEGENERATE_ZERO_RANGE) von "nie gemessen"
+        # (POPULATION_UNAVAILABLE, None). Siehe invariants.check_stop_loss_vs_bar_range.
+        "bar_range_population_n": (
+            sum(bar_range_population_ns) if bar_range_population_ns else None),
         # Issue #1079/#1227 (Katalog #1247+, P0) Fix Punkt 2 — P75 derselben bereinigten Population
         # (macht die Rechtsschiefe zusaetzlich zum Median sichtbar) und der Anteil der Nullspannen-
         # Bars an der VOLLEN Population (Median ueber die Round-Trips dieses Trials, dieselbe
         # Aggregationskonvention wie bar_range_median_bps) — Rohmaterial fuer
         # invariants.check_zero_range_bar_share.
         "bar_range_p75_bps": (
-            statistics.median(bar_range_p75s) if bar_range_p75s else None),
+            statistics.median(bar_range_p75s) if bar_range_p75s
+            else (0.0 if bar_range_population_ns else None)),
         "zero_range_bar_fraction": (
             statistics.median(zero_range_bar_fractions) if zero_range_bar_fractions else None),
         # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-
@@ -4752,10 +5075,19 @@ def _apply_calibrated_slippage_deduction(
     (``_full_realism_expectancy``, eine reine Nachverarbeitung, die die primäre Simulation nicht
     berührt). Diese Funktion zieht denselben VOLLEN (nicht nur den ``(multiplier-1)``-Anteil)
     Slippage-Betrag ab wie ``_full_realism_expectancy``, aber AN DER QUELLE der PnL-Serie SELBST —
-    dadurch propagiert der Abzug automatisch in JEDE downstream abgeleitete Grösse (Expectancy,
-    Total Return, Profit-Faktor, Sortino-Eingang, Reward, Gates, Deflation), OHNE eine zweite,
-    separat gepflegte Konsumstelle zu brauchen (Akzeptanzkriterium 4: kein Pfad, der die alte
-    Kostenbasis weiterverwendet — es gibt nach diesem Fix nur noch EINE PnL-Serie).
+    dadurch propagiert der Abzug automatisch in JEDE downstream aus ``rt_pnls_with_ts`` abgeleitete
+    Grösse (Expectancy, Profit-Faktor, Win-Rate), OHNE eine zweite, separat gepflegte Konsumstelle
+    zu brauchen.
+
+    KORREKTUR (Issue #1257/GH #1127, Pitfall #454 in AGENTS.md): die urspruengliche Formulierung
+    hier behauptete zusaetzlich "Total Return, ... Sortino-Eingang" — das war FALSCH fuer den
+    Normalfall (jeder Lauf mit einer ``mtm_series``-Equity-Kurve, siehe ``_calculate_stats``): dort
+    entstehen ``total_return``/``sortino_ratio``/PSR/die α/β-Regression NICHT aus
+    ``rt_pnls_with_ts``, sondern aus der separaten ``mtm_series``/``mtm_frames``-Kurve (#465/#771-
+    Prioritaet). Diese Kurve blieb bis #1257 unkorrigiert — ``_apply_calibrated_slippage_to_
+    mtm_series`` (unten) schliesst genau diese Luecke, an derselben Stelle in ``extract_metrics``
+    aufgerufen. ERST seit #1257 gilt Akzeptanzkriterium 4 (kein Pfad mit der alten Kostenbasis)
+    tatsaechlich vollstaendig.
 
     ``rt_pnls_with_ts`` ist ``[(pnl, exit_ts, holding_ns, qty), ...]``, ``rt_notionals_with_ts`` ist
     ``[(notional, exit_ts), ...]`` — beide index-parallel zu ``rt_exit_meta`` (dieselbe Konvention
@@ -4777,6 +5109,68 @@ def _apply_calibrated_slippage_deduction(
                 n_adjusted += 1
         adjusted.append((pnl, exit_ts, holding_ns, qty))
     return adjusted, n_adjusted
+
+
+def _apply_calibrated_slippage_to_mtm_series(
+    mtm_series: "pd.Series | None", rt_notionals_with_ts: list, rt_exit_meta: list, *,
+    slippage_bps_p50: float,
+) -> "tuple[pd.Series | None, int]":
+    """Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md Fix Punkt 1 — dieselbe kalibrierte p50-
+    Slippage wie ``_apply_calibrated_slippage_deduction``, aber auf die MtM-Equity-KURVE selbst
+    angewendet, an EXAKT demselben Exit-Bar jedes TRAILING_STOP-Round-Trips.
+
+    Root-Cause (#1127-Symptom, ComboTrendVwap): ``_apply_calibrated_slippage_deduction`` (#1078/
+    #1226) korrigiert AUSSCHLIESSLICH ``rt_pnls_with_ts`` — die Round-Trip-PnL-Liste, aus der
+    ``expectancy``/``expectancy_capital_weighted``/Profit-Faktor/Win-Rate entstehen. ``total_return``,
+    ``sortino_ratio``/PSR (ueber ``period_rets``) UND die α/β-Regression (``_alpha_beta_regression``,
+    #986/#1140) entstehen dagegen NICHT aus ``rt_pnls_with_ts``, sondern aus ``mtm_series``/
+    ``mtm_frames`` — der von ``_calculate_stats`` seit #465/#771 PRIORITAERE Pfad, sobald eine
+    Equity-Kurve vorliegt (der Normalfall in jedem Walk-Forward-Lauf). Die #1078-Docstring-Behauptung
+    "propagiert automatisch in JEDE downstream abgeleitete Groesse (... Total Return ...)" war damit
+    für genau diesen (Standard-)Pfad FALSCH — zwei Kostenbasen liefen parallel, ohne dass eine
+    einzige Konsumstelle das bemerkt hätte (``oos_min_expectancy`` slippage-bereinigt,
+    ``oos_min_alpha_tstat`` nicht).
+
+    Diese Funktion schliesst die Luecke AN DER QUELLE (dasselbe Muster): fuer jeden TRAILING_STOP-
+    Round-Trip wird der EXAKT selbe Slippage-Betrag (``slippage_bps_p50/10000 · notional``) als
+    STUFENFUNKTION ab dem Exit-Bar (``mtm_series.index.searchsorted``, erster Bar >= ``exit_ts``)
+    KUMULATIV von der Equity-Kurve abgezogen — eine Kontostand-Kurve ist ein LEVEL (kein periodischer
+    Return), ein am Exit-Bar realisierter zusätzlicher Kosten-Abzug senkt den Kontostand ab diesem
+    Zeitpunkt DAUERHAFT, nicht nur an genau diesem Bar. ``total_return`` (Level-Ratio erster/letzter
+    Bar), ``sortino_ratio``/PSR (Bar-zu-Bar-Log-Returns der korrigierten Kurve) UND die α/β-
+    Regression (dieselbe korrigierte Kurve als Regressand) teilen sich damit ab diesem Fix DIESELBE
+    Kostenbasis wie ``expectancy`` — GENAU EINE PnL-/Renditeserie fuer die gesamte Selektion
+    (Akzeptanzkriterium 3 des Issues).
+
+    ``rt_notionals_with_ts``/``rt_exit_meta`` sind dieselben index-parallelen Listen wie in
+    ``_apply_calibrated_slippage_deduction`` (NICHT ``rt_pnls_with_ts`` selbst — nur Notional/
+    Exit-Zeitstempel/Exit-Grund werden benoetigt, unabhaengig davon, ob dessen PnL bereits korrigiert
+    wurde). ``slippage_bps_p50 <= 0`` ODER eine leere/fehlende ``mtm_series`` ⇒ No-Op (Fail-Open,
+    identisch zur Schwesterfunktion). Ein Exit-Bar NACH dem letzten Bar der Kurve (Exit ausserhalb
+    des Fensters) wird sicher uebersprungen statt einen IndexError zu werfen. Rueckgabe:
+    ``(angepasste mtm_series, Anzahl tatsaechlich angepasster Round-Trips)`` — bei 0 angepassten
+    Round-Trips wird die IDENTISCHE (nicht kopierte) Eingabe-Serie zurueckgegeben (Zero-Regression,
+    Akzeptanzkriterium 1 analog #1078/#1226)."""
+    if mtm_series is None or mtm_series.empty or not slippage_bps_p50 or slippage_bps_p50 <= 0.0:
+        return mtm_series, 0
+    slippage_rate = slippage_bps_p50 / 10000.0
+    shift = pd.Series(0.0, index=mtm_series.index)
+    n_adjusted = 0
+    n_index = len(mtm_series.index)
+    for i, (notional, exit_ts) in enumerate(rt_notionals_with_ts):
+        meta = rt_exit_meta[i] if i < len(rt_exit_meta) else {}
+        if not isinstance(meta, dict) or meta.get("exit_reason") != "TRAILING_STOP":
+            continue
+        if not notional or notional <= 0.0:
+            continue
+        pos = mtm_series.index.searchsorted(pd.to_datetime(exit_ts, unit="ns"), side="left")
+        if pos >= n_index:
+            continue
+        shift.iloc[pos] -= slippage_rate * notional
+        n_adjusted += 1
+    if n_adjusted == 0:
+        return mtm_series, 0
+    return mtm_series + shift.cumsum(), n_adjusted
 
 
 def _filter_dust_round_trips(
@@ -4859,7 +5253,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class") -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -5088,6 +5482,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "bar_range_median_bps": meta.get("bar_range_median_bps"),
                 # Issue #1079/#1227 — dieselbe Durchreiche-Konvention wie bar_range_median_bps oben.
                 "bar_range_p75_bps": meta.get("bar_range_p75_bps"),
+                # Issue #1259 (GH #1129) — dieselbe Durchreiche-Konvention; Populationszaehler der
+                # bereinigten Bar-Spannen-Serie DIESER Position.
+                "bar_range_population_n": meta.get("bar_range_population_n"),
                 "zero_range_bar_fraction": meta.get("zero_range_bar_fraction"),
                 "pnl_bps": pnl_bps,
                 # Issue #972/#1126 — das Round-Trip-Notional selbst als Telemetrie (Rohmaterial fuer
@@ -5263,6 +5660,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # (Akzeptanzkriterium 1).
         selection_cost_basis = "round_trip_only"
         n_slippage_adjusted_round_trips = 0
+        # Issue #1257 (GH #1127) — Kostenbasis VOR der #1078-Korrektur, ausschliesslich fuer die
+        # parallele ``*_gross``-Traceability-Telemetrie (siehe ``_calculate_stats``-Aufrufe unten).
+        rt_pnls_with_ts_gross = rt_pnls_with_ts
         if _read_apply_calibrated_slippage_in_selection():
             rt_pnls_with_ts, n_slippage_adjusted_round_trips = _apply_calibrated_slippage_deduction(
                 rt_pnls_with_ts, rt_notionals_with_ts, rt_exit_meta,
@@ -5273,6 +5673,27 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     log_fn(f"[Metriken] #1078: kalibrierte p50-Slippage ({slippage_bps_p50:.2f} bps) "
                            f"auf {n_slippage_adjusted_round_trips} TRAILING_STOP-Round-Trip(s) "
                            "an der Quelle abgezogen.")
+
+        # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — DIESELBE kalibrierte p50-Slippage
+        # ZUSAETZLICH auf die MtM-Equity-Kurve selbst (``_apply_calibrated_slippage_to_mtm_series``-
+        # Docstring fuer die Root-Cause: der Abzug oben propagiert NICHT in total_return/sortino/
+        # PSR/die α/β-Regression, die alle aus ``mtm_series``/``mtm_frames`` statt aus
+        # ``rt_pnls_with_ts`` entstehen). DASSELBE Gate (``_read_apply_calibrated_slippage_in_
+        # selection``), DIESELBEN Notional-/Exit-Meta-Listen (Zeitstempel/Notional aendern sich durch
+        # die #1078-PnL-Korrektur NICHT). ``mtm_series_gross`` bleibt die unkorrigierte Kurve fuer
+        # die ``*_gross``-Telemetrie; ab hier bezeichnet der Name ``mtm_series`` — wie ueberall sonst
+        # in dieser Funktion — die tatsaechlich zu verwendende (jetzt kostenbereinigte) Kurve, kein
+        # Konsument unterhalb dieser Zeile muss geaendert werden (Fix an der Quelle).
+        mtm_series_gross = mtm_series
+        n_slippage_adjusted_mtm_events = 0
+        if _read_apply_calibrated_slippage_in_selection():
+            mtm_series, n_slippage_adjusted_mtm_events = _apply_calibrated_slippage_to_mtm_series(
+                mtm_series, rt_notionals_with_ts, rt_exit_meta, slippage_bps_p50=slippage_bps_p50)
+            if n_slippage_adjusted_mtm_events > 0 and log_fn:
+                log_fn(f"[Metriken] #1257: kalibrierte p50-Slippage ({slippage_bps_p50:.2f} bps) "
+                       f"auf {n_slippage_adjusted_mtm_events} TRAILING_STOP-Exit-Bar(s) der "
+                       "MtM-Equity-Kurve an der Quelle abgezogen (total_return/sortino/PSR/α(t) "
+                       "teilen sich damit dieselbe Kostenbasis wie expectancy).")
 
         # Issue #448/#444 — beobachtete Fill-ts-Spanne (min/max der Round-Trip-Exit-ts über alle
         # Instrumente). Wird in die Worker-/Tournament-Telemetrie gehoben (data_window.fill_ts_*),
@@ -5360,10 +5781,17 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_mtm = None
         oos_mtm = None
         oos_frames = None
+        # Issue #1257 (GH #1127) — parallele, UNKORRIGIERTE Slices von ``mtm_series_gross`` (reine
+        # ``*_gross``-Traceability-Telemetrie, siehe ``_calculate_stats``-Aufrufe unten).
+        is_mtm_gross = None
+        oos_mtm_gross = None
         oos_buyhold_return = None  # Issue #552 — Buy&Hold-Benchmark-Return über das OOS-Fenster.
         # Issue #986/#1140 — α/β-Regression der Perioden-Returns gegen die Benchmark-Perioden-
         # Returns (None, solange keine indexgleiche Benchmark-Serie vorlag).
         oos_alpha = oos_beta = oos_alpha_tstat = oos_alpha_n_periods = None
+        # Issue #1255/#1258 (GH #1125/#1128) — additive Regressions-Diagnostik (HC3-SE + Populations-
+        # Auszaehlung), siehe _alpha_regression_diagnostics-Docstring.
+        oos_alpha_diagnostics: dict | None = None
         if mtm_series is not None and not mtm_series.empty and _wf:
             # Issue #551 — Equity-Slices HALB-OFFEN [s, e), konsistent zur Trade-Klassifikation
             # (``any(s <= ts < e ...)``). ``pandas.loc[a:b]`` ist auf BEIDEN Seiten geschlossen; da
@@ -5404,6 +5832,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
             oos_frames = _fold_segments_half_open(mtm_series, fold_boundaries)
             oos_mtm = _concat_half_open(oos_frames)
+
+            # Issue #1257 (GH #1127) — dieselbe Fold-Geometrie auf ``mtm_series_gross`` (die
+            # unkorrigierte Kurve), fuer die parallele ``*_gross``-Traceability-Telemetrie.
+            if mtm_series_gross is not None and not mtm_series_gross.empty:
+                is_mtm_gross = _slice_half_open(mtm_series_gross, start_ns, start_ns + is_window_ns)
+                oos_mtm_gross = _concat_half_open(
+                    _fold_segments_half_open(mtm_series_gross, fold_boundaries))
 
             # Issue #552/#772 — Buy&Hold-Benchmark-Return des Symbols über EXAKT dieselbe (halb-
             # offene, konkatenierte, deduplizierte) OOS-Fensterung wie der Strategie-Return —
@@ -5458,8 +5893,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             # gesamte Fenster). ``n`` ist hier IDENTISCH zur Regressions-
                             # Stichprobengroesse (``len(_strat_log_rets) == len(_bench_log_rets)``).
                             oos_alpha_n_periods = len(_strat_log_rets)
+                            # Issue #1255/#1258 (GH #1125/#1128) — dieselben Perioden-Log-Returns,
+                            # additiv (siehe _alpha_regression_diagnostics-Docstring).
+                            oos_alpha_diagnostics = _alpha_regression_diagnostics(
+                                _strat_log_rets, _bench_log_rets)
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
+            # Issue #1257 (GH #1127) — analog zum WF-Zweig oben, Nicht-Walk-Forward-Pfad.
+            if mtm_series_gross is not None and not mtm_series_gross.empty:
+                is_mtm_gross = mtm_series_gross
 
         def _empty_level_metrics() -> dict[str, Any]:
             return {
@@ -5471,7 +5913,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "median_position_notional": 0.0,
             }
 
-        def _split_and_stats(records: list, notionals: list, exit_meta: list[dict] | None = None) -> tuple[dict, dict]:
+        def _split_and_stats(records: list, notionals: list, exit_meta: list[dict] | None = None,
+                            records_gross: list | None = None) -> tuple[dict, dict]:
             """IS/OOS-Split einer Record-Liste (Round-Trip ODER Fill-Match) + ``_calculate_stats``
             je Ebene (Issue #508). Beide Ebenen teilen sich die IDENTISCHE Fold-Geometrie; der
             einzige Unterschied ist die Aggregations-Granularität der übergebenen Records. Jeder
@@ -5481,11 +5924,19 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             Issue #899 — ``exit_meta`` (optional, parallel zu ``records``) liefert die Exit-
             Telemetrie (exit_reason/ATR/pnl_bps) je Record; wird nur für die Round-Trip-Ebene
             übergeben (die Fill-Match-Ebene bleibt reine Execution-Diagnostik, siehe #508-Docstring
-            oben im Modul)."""
+            oben im Modul).
+
+            Issue #1257 (GH #1127) — ``records_gross`` (optional, index-parallel zu ``records``)
+            traegt dieselben Records VOR der #1078/#1226-Slippage-Korrektur, ausschliesslich fuer
+            die ``*_gross``-Traceability-Felder in ``_calculate_stats`` (Zeitstempel/Notional/
+            IS-OOS-Klassifikation sind zwischen Gross/Net IDENTISCH — nur das PnL-Feld unterscheidet
+            sich — daher genuegt EINE gemeinsame Split-Schleife statt einer zweiten Iteration)."""
             split_is_pnls, split_oos_pnls = [], []
+            split_is_pnls_gross, split_oos_pnls_gross = [], []
             split_is_holds, split_oos_holds = [], []
             split_is_notionals, split_oos_notionals = [], []
             split_is_meta, split_oos_meta = [], []
+            _has_gross = records_gross is not None and len(records_gross) == len(records)
             for rec_idx, (pnl, ts, ht, rec_qty) in enumerate(records):
                 notional = notionals[rec_idx][0]
                 if _wf:
@@ -5499,19 +5950,23 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     split_oos_notionals.append(notional)
                     if exit_meta is not None:
                         split_oos_meta.append(exit_meta[rec_idx])
+                    if _has_gross:
+                        split_oos_pnls_gross.append(records_gross[rec_idx][0])
                 elif is_in_sample:
                     split_is_pnls.append(pnl)
                     split_is_holds.append((ht, rec_qty))
                     split_is_notionals.append(notional)
                     if exit_meta is not None:
                         split_is_meta.append(exit_meta[rec_idx])
+                    if _has_gross:
+                        split_is_pnls_gross.append(records_gross[rec_idx][0])
             is_mn = statistics.median(split_is_notionals) if split_is_notionals else 0.0
             oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
             # Issue #546 — die parallelen Per-Trade-Notionals durchreichen ⇒ sizing-invariante
             # (notional-relative) Expectancy statt Normierung auf das fixe starting_capital.
-            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol)
+            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol, pnl_list_gross=split_is_pnls_gross if _has_gross else None, mtm_series_gross=is_mtm_gross)
             if split_oos_pnls:
-                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol)
+                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol, pnl_list_gross=split_oos_pnls_gross if _has_gross else None, mtm_series_gross=oos_mtm_gross)
             else:
                 level_oos = _empty_level_metrics()
             # Issue #613 — Aggregationsebene des Sortino EXPLIZIT stempeln. IS UND OOS werden aus ihrer
@@ -5554,7 +6009,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             return level_is, level_oos
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
-        is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta)
+        is_metrics, oos_metrics = _split_and_stats(
+            rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta,
+            records_gross=rt_pnls_with_ts_gross)
         # Issue #1078/#1226 (P1, Semantik-Bump) Fix Punkt 2 — welche Kostenbasis DIESE Study
         # tatsaechlich gespeist hat (``round_trip_only``/``round_trip_plus_calibrated_slippage``),
         # gestempelt auf BEIDE Ebenen (IS/OOS lesen dieselbe rt_pnls_with_ts, siehe oben) — kein
@@ -5710,6 +6167,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # zweiter Auflösungspfad).
             _level_metrics["applied_financing_bps_per_day"] = financing_bps_per_day
             _level_metrics["applied_slippage_bps"] = slippage_bps
+            # Issue #1266 (GH #1136) — WELCHE Ebene die p50-Kostenstress-Basis (siehe oben,
+            # _round_trip_cost_bps_for_stress) tatsaechlich aufgeloest hat; macht sichtbar, ob eine
+            # Study von der feineren, diskriminierenden Kalibrierung profitiert oder auf den
+            # Asset-Class-Fallback zurueckfiel.
+            _level_metrics["slippage_calibration_scope"] = slippage_calibration_scope
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -5782,6 +6244,20 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 # ``α·n`` (das oekonomisch lesbare Holdout-Alpha, Akzeptanzkriterium #1038) im
                 # Report berechenbar.
                 oos_metrics["oos_alpha_n_periods"] = oos_alpha_n_periods
+                # Issue #1255/#1258 (GH #1125/#1128) — additive HC3-SE-/Populations-Diagnostik,
+                # siehe _alpha_regression_diagnostics-Docstring. ``None`` nur, falls die
+                # Haupt-Regression selbst ``None`` geblieben waere (siehe dortiger Docstring: beide
+                # Funktionen laufen auf demselben Eingabepaar, fallen daher stets zusammen) —
+                # dieser Zweig ist bereits an ``oos_alpha is not None`` gated, daher hier defensiv
+                # geprueft statt blind indiziert.
+                if oos_alpha_diagnostics is not None:
+                    oos_metrics["oos_alpha_tstat_hc3"] = oos_alpha_diagnostics["alpha_tstat_hc3"]
+                    oos_metrics["oos_alpha_tstat_df"] = oos_alpha_diagnostics["alpha_tstat_df"]
+                    oos_metrics["oos_alpha_n_total"] = oos_alpha_diagnostics["n_total"]
+                    oos_metrics["oos_alpha_n_informative"] = oos_alpha_diagnostics["n_informative"]
+                    oos_metrics["oos_alpha_n_y_nonzero"] = oos_alpha_diagnostics["n_y_nonzero"]
+                    oos_metrics["oos_alpha_n_x_nonzero"] = oos_alpha_diagnostics["n_x_nonzero"]
+                    oos_metrics["oos_alpha_n_both_zero"] = oos_alpha_diagnostics["n_both_zero"]
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt
@@ -6730,11 +7206,19 @@ def run_single_backtest_worker(
             # (siehe resolve_financing_bps_per_day/resolve_slippage_bps-Docstrings).
             financing_bps_per_day_resolved = resolve_financing_bps_per_day(
                 inst_id_str, overnight_financing_bps_per_day_by_asset_class, asset_class_key)
+            # Issue #1266 (GH #1136) — ``strategy`` erlaubt resolve_slippage_bps die feinste
+            # verfuegbare kalibrierte Ebene (Strategie+Symbol > Symbol > Asset-Klasse) zu waehlen,
+            # siehe dortiger Docstring; scope wird separat fuer die Report-Telemetrie aufgeloest.
             slippage_bps_resolved = resolve_slippage_bps(
-                inst_id_str, slippage_bps_by_asset_class, asset_class_key)
+                inst_id_str, slippage_bps_by_asset_class, asset_class_key,
+                strategy=strategy_class_name)
             # Issue #1055/#1204 — siehe Signatur-Kommentar (p50, getrennt von der p90 oben).
             slippage_bps_p50_resolved = resolve_slippage_bps(
-                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key)
+                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key,
+                strategy=strategy_class_name)
+            slippage_calibration_scope_resolved = resolve_slippage_calibration_scope(
+                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key,
+                strategy=strategy_class_name)
             # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe cost_coupled_atr_floor_bps-Docstring.
             atr_floor_bps_resolved = cost_coupled_atr_floor_bps(
                 atr_floor_bps_resolved,
@@ -6961,7 +7445,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -7206,13 +7690,21 @@ def run_backtest() -> None:
     slippage_bps_p50_by_asset_class: dict = {}
     try:
         from automation.optimizer.sweep import read_calibrated_slippage_cache
-        from automation.optimizer.manifest import WORK as _optimizer_work_dir
+        # Issue #1270 (GH #1140) Fix Punkt 3 — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortige
+        # manifest.py-Docstring), derselbe Store, den sweep.calibrate_and_write_slippage_cache seit
+        # diesem Fix auch dort schreibt.
+        from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT as _optimizer_work_dir
         _calibrated = (read_calibrated_slippage_cache(_optimizer_work_dir) or {}).get(
             "slippage_bps_by_asset_class") or {}
         if _calibrated:
-            slippage_bps_by_asset_class = merge_calibrated_slippage_into_config(
+            # Issue #1266 (GH #1136) — die SKALIERTE Zusammenführung (Strategie+Symbol > Symbol >
+            # Asset-Klasse, siehe merge_calibrated_slippage_into_config_scoped-Docstring) ersetzt
+            # die vormals asset-class-WEITE Zusammenführung; resolve_slippage_bps/
+            # resolve_slippage_calibration_scope loesen die feinste verfuegbare Ebene je Worker auf
+            # (der Worker kennt strategy_class_name/inst_id_str, hier im Elternprozess noch nicht).
+            slippage_bps_by_asset_class = merge_calibrated_slippage_into_config_scoped(
                 slippage_bps_by_asset_class, _calibrated, percentile="p90")
-            slippage_bps_p50_by_asset_class = merge_calibrated_slippage_into_config(
+            slippage_bps_p50_by_asset_class = merge_calibrated_slippage_into_config_scoped(
                 {}, _calibrated, percentile="p50")
     except Exception:
         pass

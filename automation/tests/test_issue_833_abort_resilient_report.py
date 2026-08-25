@@ -47,18 +47,20 @@ def _reset_guards():
 
 
 # ── report._build_report / generate_sweep_report / generate_report_for_run: neue Felder ────────────
-def test_build_report_defaults_to_complete_status():
+def test_build_report_defaults_to_complete_status(tmp_path):
     report = _report._build_report(
-        [], run_id="r1", started_at_utc=None, wallclock_s=None, cli_args=None)
+        [], run_id="r1", started_at_utc=None, wallclock_s=None, cli_args=None,
+        reports_dir=tmp_path)
     assert report["run_status"] == "complete"
     assert report["symbols_completed"] is None
     assert report["symbols_planned"] is None
 
 
-def test_build_report_carries_explicit_abort_status():
+def test_build_report_carries_explicit_abort_status(tmp_path):
     report = _report._build_report(
         [], run_id="r1", started_at_utc=None, wallclock_s=None, cli_args=None,
-        run_status="aborted_wallclock", symbols_completed=12, symbols_planned=69)
+        run_status="aborted_wallclock", symbols_completed=12, symbols_planned=69,
+        reports_dir=tmp_path)
     assert report["run_status"] == "aborted_wallclock"
     assert report["symbols_completed"] == 12
     assert report["symbols_planned"] == 69
@@ -135,6 +137,7 @@ def _isolate_main(monkeypatch, sweep_mod, tmp_path):
     (tmp_path / "optimizer.json").write_text(json.dumps({}), "utf-8")
     monkeypatch.setattr(_report, "WORK", tmp_path)
     monkeypatch.setattr(_report, "REPORTS_DIR", tmp_path / "reports")
+    monkeypatch.setattr(_report, "RUN_FINGERPRINT_INDEX_PATH", Path(tmp_path / "reports") / "run_fingerprints.jsonl")
 
 
 def test_main_generates_a_report_and_reraises_on_unexpected_exception(monkeypatch, tmp_path):

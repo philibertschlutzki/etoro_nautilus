@@ -61,7 +61,7 @@ def _opt_data(*, simulation_version: int, reward_version: int = 19) -> dict:
 # ── Akzeptanzkriterium: zweiter Lauf desselben Paares erreicht corroboration_count=2, written_back ─
 def test_second_run_after_simulation_semantics_bump_reaches_corroboration_2_and_writes_back(
         tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     study = _FakeOptunaStudy()
 
     # Lauf 1: unter simulation_semantics_version=0.
@@ -94,7 +94,7 @@ def test_store_empty_no_longer_triggered_by_a_single_simulation_semantics_bump(t
     bleibt der Store-Eintrag AKTIV (nicht in _stale/), also existiert weiterhin mindestens ein
     champion_*.json -- load_champion_entry_with_reason kann fuer ANDERE Paare nie mehr faelschlich
     STORE_EMPTY (statt NO_ENTRY_FOR_PAIR) melden, nur weil DIESES Paar einen Bump ueberlebt hat."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     study = _FakeOptunaStudy()
     champions.store_champion(
         study, "SmaCrossoverStrategy", "TSLA.ETORO", _PROMOTION,
@@ -125,7 +125,7 @@ def _write_champion(champions_dir, strategy, symbol, *, simulation_version, para
 
 
 def test_find_stale_champion_entries_flags_simulation_mismatch(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     champions_dir = tmp_path / "champions"
     champions_dir.mkdir()
     _write_champion(champions_dir, "SmaCrossoverStrategy", "TSLA.ETORO", simulation_version=0)
@@ -137,7 +137,7 @@ def test_find_stale_champion_entries_flags_simulation_mismatch(tmp_path, monkeyp
 
 
 def test_find_stale_champion_entries_ignores_current_entries(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     champions_dir = tmp_path / "champions"
     champions_dir.mkdir()
     _write_champion(champions_dir, "SmaCrossoverStrategy", "TSLA.ETORO", simulation_version=1)
@@ -147,7 +147,7 @@ def test_find_stale_champion_entries_ignores_current_entries(tmp_path, monkeypat
 
 
 def test_quarantine_stale_champion_entries_moves_files_and_preserves_history(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     champions_dir = tmp_path / "champions"
     champions_dir.mkdir()
     entry_path = _write_champion(
@@ -163,7 +163,7 @@ def test_quarantine_stale_champion_entries_moves_files_and_preserves_history(tmp
 
 
 def test_quarantine_stale_champion_entries_dry_run_does_not_move_files(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     champions_dir = tmp_path / "champions"
     champions_dir.mkdir()
     entry_path = _write_champion(

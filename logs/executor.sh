@@ -23,6 +23,11 @@ run_sweep() {
 }
 
 # Sequential Sweep Execution
+# Issue #1142 (Stufe 0, Sperrvermerk §5.2 / Empfehlung E-1) — zwei der drei Läufe eines
+# Batches waren bit-identische Kopien (208/218 Study-Felder identisch): ohne --seed-salt
+# (#1123/#1253) ist ein zweiter/dritter Lauf auf derselben Eingangsmenge keine Stichprobe,
+# sondern eine Wiederholung, die nur Wallclock kostet (Ersparnis 0,92 h/Batch). Genau EIN
+# TSLA-Lauf, bis Wiederholungsläufe wieder mit --seed-salt gefahren werden.
 #run_sweep GOOGL.ETORO
 run_sweep TSLA.ETORO
 #run_sweep PLTR.ETORO
@@ -31,6 +36,6 @@ run_sweep TSLA.ETORO
 #run_sweep KRYS.ETORO
 #run_sweep LULU.ETORO
 #run_sweep GOOGL.ETORO
-run_sweep TSLA.ETORO
-run_sweep TSLA.ETORO
+#run_sweep TSLA.ETORO
+#run_sweep TSLA.ETORO
 #run_sweep NATGAS.ETORO

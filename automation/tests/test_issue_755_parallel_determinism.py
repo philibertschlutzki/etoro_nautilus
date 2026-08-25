@@ -201,6 +201,7 @@ def test_generate_sweep_report_cli_args_carry_n_jobs(monkeypatch, tmp_path):
 
     monkeypatch.setattr(report_mod, "config_dir", lambda: Path("automation/config"))
     monkeypatch.setattr(report_mod, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(tmp_path) / "run_fingerprints.jsonl")
     monkeypatch.setattr(sweep, "run_per_symbol_sweep", lambda *a, **k: [])
 
     captured = {}

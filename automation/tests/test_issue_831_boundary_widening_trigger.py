@@ -199,10 +199,11 @@ def test_report_boundary_solutions_section_projects_expected_fields():
     assert section[0]["proposed_bounds"] == {"cooldown_bars": [1.0, 50.0]}
 
 
-def test_report_boundary_solutions_is_wired_into_cross_study(monkeypatch):
+def test_report_boundary_solutions_is_wired_into_cross_study(monkeypatch, tmp_path):
     monkeypatch.setattr("automation.optimizer.sweep_diagnostics.load_diagnosed_pairs_cache",
                         lambda *a, **k: {})
     report_dict = _report._build_report(
-        [], run_id="testrun", started_at_utc=None, wallclock_s=None, cli_args=None)
+        [], run_id="testrun", started_at_utc=None, wallclock_s=None, cli_args=None,
+        reports_dir=tmp_path)
     assert "boundary_solutions" in report_dict["cross_study"]
     assert report_dict["cross_study"]["boundary_solutions"] == []

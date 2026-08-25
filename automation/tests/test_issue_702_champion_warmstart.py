@@ -101,7 +101,7 @@ def _entry(*, params=None, r_symbol=0.5, r_global=0.0,
 
 def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(ro, "WORK", tmp_path)
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: CFG_DIR)
     monkeypatch.setattr(trial_config, "config_dir", lambda: CFG_DIR)
@@ -557,7 +557,7 @@ def test_optimize_symbol_enqueues_champion_seed_when_no_global_best(tmp_path, mo
 # unabhängig vom ``base_cfg``-Parameter (der nur ``strategy_symbol_seeds.json`` betrifft) — ohne
 # Isolation würde jeder dieser Tests das REALE ``data/optimizer/champions/`` verschmutzen.
 def test_writeback_ready_for_pr_is_immediate(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     seeds_cfg = tmp_path
     entry = _entry(status_at_store="READY_FOR_PR", corroboration_count=1)
     ok = champions.maybe_write_back(entry, OPT_DATA, base_cfg=seeds_cfg)
@@ -568,7 +568,7 @@ def test_writeback_ready_for_pr_is_immediate(tmp_path, monkeypatch):
 
 
 def test_writeback_requires_corroboration_below_threshold_fails(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
                    corroboration_count=1)  # champion_promote_after_runs=2
     ok = champions.maybe_write_back(entry, OPT_DATA, base_cfg=tmp_path)
@@ -581,7 +581,7 @@ def test_writeback_corroborated_but_identical_window_fails_snooping_guard_under_
     """Scenario #6 — unter dem STRIKTEN champion_corroboration_mode='window_advance' (bit-
     identisch zum Pre-#910-Verhalten) darf auf IDENTISCHEM Datenfenster (kein Fensterfortschritt)
     trotz erreichter Korroboration KEIN Writeback erfolgen (Snooping-Schutz)."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
                    corroboration_count=2, catalog_newest_ns=1_000_000_000_000,
                    first_seen_catalog_newest_ns=1_000_000_000_000)  # advance_days == 0
@@ -598,7 +598,7 @@ def test_writeback_corroborated_on_identical_window_succeeds_under_default_eithe
     erfolgreich zurückgeschrieben werden: zwei unabhängige Läufe derselben Datenbasis
     korroborieren einen Parametervektor auch ohne Fensterfortschritt (independent_search-Route).
     Das ist exakt der ea4c409d-Deadlock (14/14 Writebacks NO_ADMISSIBLE_ENTRY), den #910 behebt."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
                    corroboration_count=2, catalog_newest_ns=1_000_000_000_000,
                    first_seen_catalog_newest_ns=1_000_000_000_000)  # advance_days == 0
@@ -621,7 +621,7 @@ def test_writeback_independent_search_mode_ignores_window_advance_entirely(tmp_p
 def test_writeback_window_advance_mode_still_succeeds_when_window_advanced(tmp_path, monkeypatch):
     """Alle drei Modi promoten, wenn der Kandidat sowohl korroboriert ist ALS AUCH das Fenster
     vorgerückt ist — der Modus unterscheidet nur, WELCHE Route ALLEIN genügt."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     forty_days_ns = 40 * 86400 * 1_000_000_000
     entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
                    corroboration_count=2, catalog_newest_ns=1_000_000_000_000 + forty_days_ns,
@@ -644,7 +644,7 @@ def test_writeback_unknown_corroboration_mode_is_fail_loud(tmp_path, monkeypatch
 
 def test_writeback_corroborated_and_window_advanced_succeeds(tmp_path, monkeypatch):
     """champion_min_advance_days=30 -> 40 Tage Fortschritt genügt."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     forty_days_ns = 40 * 86400 * 1_000_000_000
     entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
                    corroboration_count=2, catalog_newest_ns=1_000_000_000_000 + forty_days_ns,
@@ -656,7 +656,7 @@ def test_writeback_corroborated_and_window_advanced_succeeds(tmp_path, monkeypat
 def test_writeback_never_touches_strategy_defaults_json(tmp_path, monkeypatch):
     """Scenario #7 (Symbol-Scope) — landet AUSSCHLIESSLICH in strategy_symbol_seeds.json[strategy]
     [symbol], NIE in strategy_defaults.json."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     (tmp_path / "strategy_defaults.json").write_text(
         json.dumps({"SmaCrossoverStrategy": {"sma_period": 5}}), "utf-8")
     entry = _entry(status_at_store="READY_FOR_PR", corroboration_count=1)
@@ -668,7 +668,7 @@ def test_writeback_never_touches_strategy_defaults_json(tmp_path, monkeypatch):
 
 
 def test_writeback_disabled_via_kill_switch(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     entry = _entry(status_at_store="READY_FOR_PR")
     ok = champions.maybe_write_back(entry, {**OPT_DATA, "champion_enabled": False}, base_cfg=tmp_path)
     assert ok is False
@@ -676,7 +676,7 @@ def test_writeback_disabled_via_kill_switch(tmp_path, monkeypatch):
 
 def test_writeback_reward_version_mismatch_fails(tmp_path, monkeypatch):
     """Issue #819 — ein quality_stale Eintrag bleibt SEED-fähig, aber NICHT writeback-fähig."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     entry = _entry(status_at_store="READY_FOR_PR", reward_version=1)
     ok = champions.maybe_write_back(entry, OPT_DATA, base_cfg=tmp_path)
     assert ok is False

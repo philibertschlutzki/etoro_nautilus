@@ -1,0 +1,14 @@
+{
+  "_comment": "Issue #1250 (GH #1120), Pitfall #451 in AGENTS.md — Monte-Carlo-Kalibrierlauf fuer oos_min_alpha_tstat_mode='multiplicity_adjusted' (automation.optimizer.calibration.calibrate_alpha_tstat_gate). Der Kalibrierpunkt spiegelt die im Issue dokumentierte reale Beobachtung (B-3): n_configs=280 (Kandidaten je Study auf dem betroffenen Symbol/Strategie-Paar, aus dem #1120-Symptom '13/14 Studies mit n_eligible=0'), n_periods=1079 (beobachteter oos_n_periods_median derselben Kohorte). threshold=3.5666 bestaetigt die Šidaek-Handrechnung des Issues (t ~ 3.57 fuer eine echte 5%-Winner-Fehlerrate bei N=280 statt der bisherigen unkorrigierten Konstante 2.0). Erzeugt via: calibrate_alpha_tstat_gate(n_configs=280, n_periods=1079, target_fpr=0.05, n_reps=2000, seed=42) — rein, deterministisch, reproduzierbar (siehe dortiger Docstring UND test_issue_1250_alpha_tstat_calibration.py::test_calibrate_alpha_tstat_gate_reproducible_and_above_2). NICHT automatisch aktiv: tournament.json['oos_min_alpha_tstat_mode'] bleibt 'static' (Default) — die tatsaechliche Trial-Gate-Entscheidung (backtest_runner._evaluate_oos_eligibility) liest weiterhin unbedingt die statische Config-Konstante, und run_optimization.py uebergibt resolve_alpha_tstat_gate_threshold() bewusst OHNE calibration_fixture/n_family_stage1/oos_n_periods_median (diese Familien-Groessen sind erst NACH Abschluss aller Studies eines Symbols bekannt, siehe dortiger Kommentar) — dieses Fixture dokumentiert das Kalibrierergebnis fuer eine kuenftige, bewusste Aktivierung (Config-only: oos_min_alpha_tstat_mode='multiplicity_adjusted' PLUS Verdrahtung des Fixtures an der Gate-Entscheidungsstelle selbst), ist aber selbst kein Aktivierungsschalter.",
+  "calibration_points": [
+    {
+      "n_configs": 280,
+      "n_periods": 1079,
+      "period_std": 0.01,
+      "target_fpr": 0.05,
+      "n_reps": 2000,
+      "seed": 42,
+      "threshold": 3.5666
+    }
+  ]
+}

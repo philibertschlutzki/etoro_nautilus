@@ -37,6 +37,57 @@ from automation.optimizer.deflation import (
 )
 
 
+def calibrate_alpha_tstat_gate(
+    *, n_configs: int, n_periods: int, period_std: float = 0.01,
+    target_fpr: float = 0.05, n_reps: int = 2000, seed: int = 42,
+) -> dict:
+    """Issue #1250 (GH #1120), Pitfall #451 in AGENTS.md — Monte-Carlo-Kalibrierung der
+    ``oos_min_alpha_tstat``-Schwelle unter H0 (kein echter Alpha).
+
+    Root-Cause: die Schwelle 2.0 wurde als "5%-Signifikanzniveau" für EINEN t-Test gesetzt, ohne
+    Bezug auf ``N`` (die Zahl der je Study gezogenen Kandidaten) UND die anschliessende
+    Maximum-Auswahl (TPE waehlt den besten Trial). Ein Ein-Trial-Test bei N Ziehungen mit
+    nachfolgendem argmax hat unter H0 KEINE ``target_fpr``-Fehlerrate mehr (Šidák-äquivalent:
+    fuer N=280 waere t ≈ 3,57 fuer eine echte 5%-WINNER-Fehlerrate noetig, nicht 2,0).
+
+    Unter H0 (``n_reps`` unabhaengige Kohorten von je ``n_configs`` i.i.d. N(0, period_std²)-
+    "Alpha"-Renditepfaden mit ``n_periods`` Beobachtungen) wird je Konfiguration ein
+    Ein-Stichproben-t-Wert gebildet (``t = mean / (std/sqrt(n))``, dieselbe Statistik wie
+    ``backtest_runner._alpha_beta_regression``s ``alpha_tstat`` fuer eine Regression ohne Beta-
+    Freiheitsgrad) und je Kohorte das MAXIMUM ueber die ``n_configs`` Konfigurationen genommen
+    (das Analogon zu "TPE waehlt den besten Trial"). Die Schwelle wird als das empirische
+    ``(1 - target_fpr)``-Quantil dieser ``n_reps`` Maxima gesetzt — bei dieser Schwelle liegt die
+    realisierte False-Positive-WINNER-Rate je Study auf ``target_fpr``.
+
+    Rein & deterministisch (geseedeter RNG), KEIN I/O — dieselbe Kalibrier-Infrastruktur wie
+    ``calibrate_promotion_correction_mode``/``calibrate_psr_gate`` oben. Ein Kalibrierlauf auf der
+    REALEN OOS-Renditeserie-Volatilitaet/-Laenge des Ziel-Symbols bleibt die verbindliche Vorstufe
+    fuer eine PRODUKTIVE Aktivierung von ``oos_min_alpha_tstat_mode='multiplicity_adjusted'``
+    (siehe ``tournament.json``-Schema) — diese Funktion liefert dafuer die wiederverwendbare,
+    reproduzierbare Infrastruktur, keinen Ersatz fuer den Lauf auf echten Daten.
+
+    Rueckgabe: ``{'n_configs', 'n_periods', 'period_std', 'target_fpr', 'n_reps', 'seed',
+    'threshold'}``. ``threshold`` ist per Konstruktion > 2.0 fuer jedes ``n_configs`` > 1 (das
+    Maximum mehrerer t-Werte uebersteigt den Erwartungswert eines einzelnen)."""
+    rng = np.random.default_rng(seed)
+    max_ts: list[float] = []
+    for _ in range(n_reps):
+        cohort = _simulate_h0_cohort(rng, n_configs, n_periods, period_std)
+        t_values = []
+        for c in cohort:
+            std = float(np.std(c, ddof=1))
+            se = std / math.sqrt(n_periods) if std > 0.0 else 0.0
+            t_values.append(float(np.mean(c)) / se if se > 0.0 else 0.0)
+        max_ts.append(max(t_values))
+    max_ts.sort()
+    idx = max(0, min(len(max_ts) - 1, round((1.0 - target_fpr) * (len(max_ts) - 1))))
+    return {
+        "n_configs": n_configs, "n_periods": n_periods, "period_std": period_std,
+        "target_fpr": target_fpr, "n_reps": n_reps, "seed": seed,
+        "threshold": round(max_ts[idx], 4),
+    }
+
+
 def _simulate_h0_cohort(rng: np.random.Generator, n_configs: int, n_periods: int,
                         period_std: float) -> list[np.ndarray]:
     """``n_configs`` i.i.d. N(0, period_std²)-Renditepfade — die Nullhypothese "kein echter Edge"."""

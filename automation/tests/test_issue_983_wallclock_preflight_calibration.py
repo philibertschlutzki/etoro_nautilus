@@ -17,6 +17,7 @@ Diese Tests decken die drei eingeführten Korrekturen ab:
    completed``/im #742-Report, statt nur bei aktivem Degrade sichtbar zu sein.
 """
 import json
+from pathlib import Path
 
 from automation.optimizer import wallclock_guard
 from automation.optimizer import sweep
@@ -92,6 +93,7 @@ def test_read_last_backtest_ms_mean_weights_by_n_trials(tmp_path, monkeypatch):
 
     import automation.optimizer.report as report_mod
     monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir, raising=False)
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(reports_dir) / "run_fingerprints.jsonl")
 
     mean = sweep._read_last_backtest_ms_mean()
     # gewichteter Mittelwert: (100*10000 + 300*6000) / 400 = 7000.0
@@ -103,6 +105,7 @@ def test_read_last_backtest_ms_mean_none_when_no_reports(tmp_path, monkeypatch):
     reports_dir.mkdir()
     import automation.optimizer.report as report_mod
     monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir, raising=False)
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(reports_dir) / "run_fingerprints.jsonl")
     assert sweep._read_last_backtest_ms_mean() is None
 
 
@@ -115,4 +118,5 @@ def test_read_last_backtest_ms_mean_ignores_studies_without_the_field(tmp_path, 
     (reports_dir / "run_1.json").write_text(json.dumps(report), encoding="utf-8")
     import automation.optimizer.report as report_mod
     monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir, raising=False)
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(reports_dir) / "run_fingerprints.jsonl")
     assert sweep._read_last_backtest_ms_mean() is None

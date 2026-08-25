@@ -147,7 +147,10 @@ def test_optimizer_json_carries_the_switch_and_the_bumped_version():
     with open(backtest_runner.config_dir() / "optimizer.json", "r", encoding="utf-8") as f:
         cfg = json.load(f)
     assert cfg.get("apply_calibrated_slippage_in_selection") is True
-    assert cfg.get("reward_semantics_version") == 25
+    # Issue #1248/#1250/#1257 (GH #1118/#1120/#1127) — reward_semantics_version seither weiter auf
+    # 26 gebumpt (siehe test_issue_637_reward_semantics_bump.py); die #1078/#1226-Bump-Schwelle war
+    # 25, dies bleibt eine strikte Untergrenze, keine exakte Pin-Stelle mehr.
+    assert cfg.get("reward_semantics_version") >= 25
 
 
 # --- Zero-Regression (Akzeptanzkriterium 1): extract_metrics gates the deduction ------------------

@@ -92,18 +92,18 @@ def test_readback_downgrade_path_produces_the_canonical_completed_invalid_string
 
 
 # ── Akzeptanzkriterium 2: kein Feldname mit "fail_fast" ohne echten Abbruch ─────────────────────
-def test_build_report_no_longer_carries_a_fail_fast_named_field():
+def test_build_report_no_longer_carries_a_fail_fast_named_field(tmp_path):
     report = _build_report(
         [], run_id="run-x", started_at_utc="2026-08-19T00:00:00Z", wallclock_s=10.0,
         cli_args={}, run_status="complete", symbols_completed=1, symbols_planned=1,
-        blocking_invariant_triggered=None,
+        blocking_invariant_triggered=None, reports_dir=tmp_path,
     )
     assert not any("fail_fast" in k for k in report.keys())
     assert "blocking_invariant_triggered" in report
     assert "work_aborted" in report
 
 
-def test_build_report_exposes_work_aborted_and_blocking_invariant_triggered_consistently():
+def test_build_report_exposes_work_aborted_and_blocking_invariant_triggered_consistently(tmp_path):
     """Kernszenario aus #1037: die Fail-Fast-Probe feuerte (blocking_invariant_triggered gesetzt),
     aber der Lauf war NICHT abgebrochen (run_status='complete', alle Symbole fertig) -- work_aborted
     muss dennoch False bleiben, obwohl der Name des Feldes 'blocking_invariant_triggered' nahelegen
@@ -111,26 +111,28 @@ def test_build_report_exposes_work_aborted_and_blocking_invariant_triggered_cons
     report = _build_report(
         [], run_id="run-y", started_at_utc="2026-08-19T00:00:00Z", wallclock_s=10.0,
         cli_args={}, run_status="complete", symbols_completed=14, symbols_planned=14,
-        blocking_invariant_triggered="check_effective_stop_distance",
+        blocking_invariant_triggered="check_effective_stop_distance", reports_dir=tmp_path,
     )
     assert report["work_aborted"] is False
     assert report["work_completed"] is True
     assert report["blocking_invariant_triggered"] == "check_effective_stop_distance"
 
 
-def test_build_report_derives_work_aborted_true_for_a_genuine_abort():
+def test_build_report_derives_work_aborted_true_for_a_genuine_abort(tmp_path):
     report = _build_report(
         [], run_id="run-z", started_at_utc="2026-08-19T00:00:00Z", wallclock_s=10.0,
         cli_args={}, run_status="aborted_disk", symbols_completed=2, symbols_planned=14,
+        reports_dir=tmp_path,
     )
     assert report["work_aborted"] is True
     assert report["work_completed"] is False
 
 
-def test_build_report_wires_the_new_axes_coherence_check_into_the_stream():
+def test_build_report_wires_the_new_axes_coherence_check_into_the_stream(tmp_path):
     report = _build_report(
         [], run_id="run-w", started_at_utc="2026-08-19T00:00:00Z", wallclock_s=10.0,
         cli_args={}, run_status="complete", symbols_completed=1, symbols_planned=1,
+        reports_dir=tmp_path,
     )
     names = {c.get("name") for c in report["invariant_checks"]}
     assert "check_run_status_axes_coherence" in names

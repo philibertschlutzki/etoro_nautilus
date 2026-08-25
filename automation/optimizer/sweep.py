@@ -29,7 +29,8 @@ from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
-from automation.optimizer.manifest import WORK, write_json_atomic, catalog_fingerprint, library_versions
+from automation.optimizer.manifest import (
+    WORK, PERSISTENT_CACHE_ROOT, write_json_atomic, catalog_fingerprint, library_versions)
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
     load_global_best,
@@ -68,6 +69,15 @@ sweep_fail_fast_invariant: str | None = None
 # Report-Scan-Kohorte desselben Laufs vergleichen kann (Root-Cause #1107: beide Pfade meldeten
 # denselben Check-Namen mit zwei verschiedenen, undeklarierten Grundgesamtheiten).
 sweep_fail_fast_probe_invariant_checks: list[dict] | None = None
+
+# Issue #1269 (GH #1139) — die verstrichene Sweep-Wallclock (Sekunden seit ``sweep_t0``) IM
+# MOMENT, in dem die #839-Fail-Fast-Probe zuletzt AUSGEWERTET wurde (nicht nur, wenn sie FEUERTE —
+# das Akzeptanzkriterium braucht den Zeitpunkt der Probe selbst, um die Rechtzeitigkeit zu
+# beurteilen, unabhaengig vom Ergebnis). ``None`` = in diesem Lauf lief nie eine Probe (kein
+# ``fail_fast_invariants`` konfiguriert, oder das Symbol-/Study-Minimum wurde nie erreicht). Analog
+# ``sweep_fail_fast_invariant`` gesetzt/gelesen — ``report._build_report`` berechnet daraus den
+# Wallclock-ANTEIL (``elapsed / wallclock_s``, erst am Laufende bekannt), siehe dortiger Kommentar.
+sweep_fail_fast_probe_triggered_at_wallclock_s: float | None = None
 
 # Issue #985/#1139 (Katalog #986) — die ``InvariantResult``-Objekte der Preflight-Checks
 # (``assert_required_config_keys_valid``/``assert_instrument_metadata_coherence``), die VOR dem
@@ -390,13 +400,21 @@ def _assert_gate_reward_parity() -> None:
     Eintrag in ``tournament.json['gate_consolidation_priority']`` haben (Root-Cause #810: ein
     fehlender Eintrag fiel bislang auf einen stillen Sentinel, der den Redundanz-Alarm zur
     Entfernung einer harten Risikogrenze verleitete, statt den Sweep-Start abzubrechen)."""
-    from automation.optimizer.reward import assert_any_condition_parity, assert_gate_priority_coverage
+    from automation.optimizer.reward import (
+        assert_any_condition_parity, assert_gate_priority_coverage,
+        assert_live_threshold_registry_coverage,
+    )
     try:
         cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
     except (OSError, ValueError):
         return
     assert_any_condition_parity(cfg)
     assert_gate_priority_coverage(cfg)
+    # Issue #1247 (GH #1117) — Registry-Wächter neben der #810-Prioritäts-Pflicht: eine
+    # Präfix-Normalisierungslücke (Pitfall #448) darf den Sweep nicht erst nach voller Rechenzeit
+    # sichtbar werden lassen (vgl. #1117-Symptom: check_mandatory_gate_reachability_live lief 13
+    # Studies lang unbemerkt leer).
+    assert_live_threshold_registry_coverage(cfg)
 
 
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:
@@ -629,7 +647,16 @@ def calibrate_and_write_slippage_cache(
     except Exception:
         return {}
     observations_by_asset_class: dict[str, list[float]] = {}
-    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+    # Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — dieselben Beobachtungen ZUSAeTZLICH auf
+    # zwei feineren Ebenen gesammelt (Symbol; Strategie+Symbol), damit die Kostenstress-Leiter eine
+    # STRATEGIE gegen eine ANDERE stressen kann (ein asset-class-weiter Pool-Median verschiebt nur
+    # das Niveau, diskriminiert nicht — Symptom: Δ(2×−1×) war in 13/13 Studies bit-identisch).
+    # Keys werden ueber "||" kodiert (kein Symbol/Strategie-Name enthaelt dieses Trennzeichen) und
+    # unten wieder in die verschachtelte Form entpackt, um calibrate_slippage_bps_by_asset_class
+    # (eine reine Perzentil-ueber-flachem-Namensraum-Funktion) unveraendert dreifach wiederzuverwenden.
+    observations_by_symbol: dict[str, list[float]] = {}
+    observations_by_strategy_symbol: dict[str, list[float]] = {}
+    for (strategy, symbol, _reason), study in zip(pairs, studies):
         try:
             asset_class = _resolve_asset_class_for_symbol(symbol)
         except Exception:
@@ -644,9 +671,28 @@ def calibrate_and_write_slippage_cache(
             # Wert, ein guenstigerer Fill als der Stop-Level, ist keine Kostenposition).
             adverse = max(0.0, float(val))
             observations_by_asset_class.setdefault(asset_class, []).append(adverse)
+            observations_by_symbol.setdefault(f"{asset_class}||{symbol}", []).append(adverse)
+            observations_by_strategy_symbol.setdefault(
+                f"{asset_class}||{strategy}||{symbol}", []).append(adverse)
     calibration = calibrate_slippage_bps_by_asset_class(observations_by_asset_class)
+    _calibration_by_symbol = calibrate_slippage_bps_by_asset_class(observations_by_symbol)
+    _calibration_by_strategy_symbol = calibrate_slippage_bps_by_asset_class(
+        observations_by_strategy_symbol)
+    for _key, _rec in _calibration_by_symbol.items():
+        _asset_class, _symbol = _key.split("||", 1)
+        calibration.setdefault(_asset_class, {})
+        calibration[_asset_class].setdefault("by_symbol", {})[_symbol] = _rec
+    for _key, _rec in _calibration_by_strategy_symbol.items():
+        _asset_class, _strategy, _symbol = _key.split("||", 2)
+        calibration.setdefault(_asset_class, {})
+        calibration[_asset_class].setdefault("by_strategy_symbol", {})[
+            f"{_strategy}|{_symbol}"] = _rec
     if work_dir is None:
-        work_dir = WORK
+        # Issue #1270 (GH #1140) — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortige
+        # manifest.py-Docstring): dieselbe Root-Cause-Klasse wie der Champion-Store/Symbol-Bar-
+        # Qualitaets-Cache — ein je Lauf frisches WORK liess auch diesen Cache nie einen Lauf
+        # ueberleben, obwohl die Kalibrierung explizit STORE-WEIT (nicht run_id-gescopt) gedacht ist.
+        work_dir = PERSISTENT_CACHE_ROOT
     try:
         write_calibrated_slippage_cache(work_dir, calibration, run_id=run_id)
     except OSError:
@@ -2391,7 +2437,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                           exc_info=True)
         if _quality_by_symbol:
             try:
-                write_symbol_bar_quality_cache(WORK, _quality_by_symbol)
+                # Issue #1270 (GH #1140) — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortige
+                # manifest.py-Docstring): ein je Lauf frisches WORK liess diesen Cache nie einen
+                # Lauf ueberleben (Symptom: cache_found=false in 3/3 Laeufen).
+                write_symbol_bar_quality_cache(PERSISTENT_CACHE_ROOT, _quality_by_symbol)
             except Exception:
                 _log.debug("[#923] symbol_bar_quality-Cache-Schreiben fehlgeschlagen (non-fatal).",
                           exc_info=True)
@@ -2882,6 +2931,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     sweep_fail_fast_invariant = None
     global sweep_fail_fast_probe_invariant_checks
     sweep_fail_fast_probe_invariant_checks = None
+    global sweep_fail_fast_probe_triggered_at_wallclock_s
+    sweep_fail_fast_probe_triggered_at_wallclock_s = None
     # Issue #985/#1139 — NICHT auf None zurueckgesetzt: der Preflight-Block lief bereits VOR
     # diesem Reset-Abschnitt (weiter oben in dieser Funktion), ``preflight_invariant_checks``
     # traegt bereits das reale Ergebnis dieses Aufrufs.
@@ -3395,6 +3446,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         if (using_real_optimize and _fail_fast_invariants
                 and len(completed_symbols) >= _fail_fast_min_symbols
                 and sweep_fail_fast_invariant is None):
+            # Issue #1269 (GH #1139) — Zeitpunkt DIESER Probe-Auswertung (unabhaengig davon, ob sie
+            # gleich feuert), damit report._build_report am Laufende den Wallclock-ANTEIL berechnen
+            # kann (siehe check_fail_fast_probe_timeliness-Docstring). Wird bei jeder erneuten
+            # Auswertung ueberschrieben — der LETZTE (i. d. R. der feuernde) Zeitpunkt zaehlt.
+            sweep_fail_fast_probe_triggered_at_wallclock_s = time.perf_counter() - sweep_t0
             _probe_invariant_checks = None
             try:
                 from automation.optimizer import report as _report_probe_mod
@@ -3574,6 +3630,18 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Issue #625 — familienweise Multiple-Testing-Zahl je Symbol (Σ eligibler Trials über die
     # Strategien-Studies desselben Symbols). Siehe _family_n_from_proposals.
     family_n = _family_n_from_proposals(proposals)
+    # Issue #1254 (GH #1124) — dieselbe eingefrorene, PER-STRATEGIE-max-dann-symbolweit-summierte
+    # Aggregation wie ``report.py``'s ``cross_study['n_family']['frozen']``/
+    # ``n_family_stage1_sum_frozen`` (siehe ``report.family_n_frozen_stage1_from_proposals``-
+    # Docstring) — GENAU DIESELBE Funktion, damit dieses Ereignis-Feld strukturell nicht mehr von
+    # der Report-Zahl divergieren kann (Root-Cause #1254: ``family_n`` oben zaehlt UEBERLEBENDE
+    # (``deflation_n_eligible``, seit #784/#822 veraltete Multiplizitaets-Grundgesamtheit), waehrend
+    # der Report ATTEMPTED zaehlt — Faktor 813 im Symptom, 2 vs. 1627 fuer TSLA.ETORO).
+    try:
+        from automation.optimizer.report import family_n_frozen_stage1_from_proposals
+        _, n_family_attempted_frozen = family_n_frozen_stage1_from_proposals(proposals)
+    except Exception:
+        n_family_attempted_frozen = {}
 
     emit_execution_event(_log, "sweep_completed", {
         "pairs": len(pairs),
@@ -3589,13 +3657,28 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #625 — familienweise N_eff je Symbol (Σ eligibler Trials über die Strategien-Studies).
         # Issue #1005/#1157 (Katalog #1170) — umbenannt von ``deflation_n_family``: derselbe
         # Feldname trug im selben Lauf DREI numerisch verschiedene Groessen (dieses Sweep-Ereignis,
-        # ``cross_study.n_family.frozen`` und ``.observed_at_report_time``, siehe report.py). Dieses
-        # Feld ist die im ATTEMPTED-Sinn gezaehlte Multiplizitaet (``_family_n_from_proposals``,
-        # #1102-Grundgesamtheit ``deflation_n_eligible`` — enger als die Stage1-Summe unten).
+        # ``cross_study.n_family.frozen`` und ``.observed_at_report_time``, siehe report.py).
+        # Issue #1254 (GH #1124) — Root-Cause: TROTZ der #1157-Umbenennung blieb dieses Feld
+        # (``_family_n_from_proposals``, Σ ``deflation_n_eligible`` — die UEBERLEBENDEN, seit
+        # #784/#822 veraltete Multiplizitaets-Grundgesamtheit) numerisch die FALSCHE Zahl fuer eine
+        # Multiple-Testing-Korrektur (die die VERSUCHE zaehlen muss, nicht die Ueberlebenden) —
+        # der Name behauptete "attempted", die Quelle lieferte "eligible". Reine
+        # Rueckwaerts-kompat-Telemetrie (siehe ``_family_n_from_proposals``-Docstring); fuer JEDE
+        # Entscheidungs-/Report-Kennzahl ist ``n_family_attempted_frozen`` unten massgeblich.
         "n_family_attempted": family_n,
-        # Konvention #1081 — Uebergangs-Alias eine Sitzung lang: alte Konsumenten lesen denselben,
-        # unveraenderten Wert unter dem alten Namen weiter.
-        "deflation_n_family": family_n,
+        # Issue #1254 (GH #1124) Fix Punkt 2 — dieselbe eingefrorene ATTEMPTED-Aggregation wie
+        # ``report.py``'s ``cross_study['n_family']['frozen']`` (siehe
+        # ``family_n_frozen_stage1_from_proposals``-Docstring oben) — GENAU DIE Zahl, gegen die
+        # ``invariants.check_family_n_event_report_agreement`` diesen Wert vergleicht.
+        "n_family_attempted_frozen": n_family_attempted_frozen,
+        # Issue #1254 (GH #1124) Fix Punkt 1 — umbenannt von ``deflation_n_family`` (Konvention
+        # #1081s "Uebergangs-Alias eine Sitzung lang" ist damit beendet): der alte Name behauptete
+        # "familienweite Multiplizitaet", die Quelle liefert tatsaechlich die UEBERLEBENDEN
+        # (``deflation_n_eligible``, siehe oben) — derselbe Name-vs-Semantik-Fehlmatch, den #1005/
+        # #1157 fuer die REPORT-Seite bereits behoben hat, hier auf der EREIGNIS-Seite. Kein
+        # Konsument im Repo liest mehr ``deflation_n_family`` aus diesem Ereignis (Grep-Test,
+        # test_issue_1254_family_n_naming.py).
+        "deflation_n_eligible_legacy": family_n,
     })
     if strategies_skipped:
         _log.warning("[#595] %d von %d angeforderten Strategien NICHT enumeriert: %s",
@@ -3686,7 +3769,19 @@ def main(argv: list[str] | None = None) -> list[Path]:
                                     "dagegen. Fehlt der Checkpoint oder weicht sein "
                                     "strategies_fingerprint ab ⇒ Exit-Code 2 (fail-loud statt "
                                     "stiller Neustart).")
+    # Issue #1253 (GH #1123) — macht einen Wiederholungslauf zu einer UNABHAENGIGEN TPE-Ziehung
+    # statt einer bit-identischen Kopie (siehe run_optimization.seed_effective-Docstring). Fehlt
+    # das Flag ⇒ bit-identisch zum Pre-#1253-Verhalten (kein Lauf-Anteil im Seed). Setzt
+    # OPTIMIZER_SEED_SALT NOCH VOR dem ersten Worker-Start, damit jeder gespawnte Sweep-/Study-
+    # Prozess (die den Wert per os.environ.get liest, siehe dortiger Kommentar) ihn per
+    # Environment-Vererbung erbt — derselbe Mechanismus wie OPTIMIZER_WORK_DIR (manifest.py).
+    parser.add_argument("--seed-salt", metavar="SALT", default=None,
+                        help="Zusaetzlicher Lauf-Anteil im Sampler-Seed jeder Study (macht einen "
+                             "Wiederholungslauf zu einer unabhaengigen Stichprobe der Suchvarianz "
+                             "statt einer Kopie). Aequivalent zu OPTIMIZER_SEED_SALT.")
     args = parser.parse_args(argv)
+    if args.seed_salt:
+        os.environ["OPTIMIZER_SEED_SALT"] = args.seed_salt
 
     if args.report_only:
         from automation.optimizer import report as _report
@@ -3964,6 +4059,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # ``using_real_optimize``), analog ``_prior_probe_checks`` als globales Signal aus
         # ``run_per_symbol_sweep`` durchgereicht.
         _preflight_checks = sweep_preflight_invariant_checks
+        # Issue #1269 (GH #1139) Fix Punkt 3 — Wallclock-Zeitpunkt der In-Prozess-Fail-Fast-Probe
+        # (sofern sie in DIESEM Lauf feuerte), analog ``_prior_probe_checks`` als globales Signal aus
+        # ``run_per_symbol_sweep`` durchgereicht.
+        _probe_triggered_at_wallclock_s = sweep_fail_fast_probe_triggered_at_wallclock_s
         if run_status == "complete":
             report_path = _report.generate_sweep_report(
                 proposals, run_id=run_id, started_at_utc=started_at_utc,
@@ -3974,6 +4073,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 prior_probe_invariant_checks=_prior_probe_checks,
                 blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
+                probe_triggered_at_wallclock_s=_probe_triggered_at_wallclock_s,
             )
         else:
             # Issue #833 — die IN-MEMORY proposals-Liste kann bei einer Exception mitten im
@@ -3990,6 +4090,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 prior_probe_invariant_checks=_prior_probe_checks,
                 blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
+                probe_triggered_at_wallclock_s=_probe_triggered_at_wallclock_s,
             )
         _report_written = True
         # Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — ein Lauf mit mindestens einer

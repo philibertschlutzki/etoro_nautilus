@@ -31,8 +31,13 @@ def _load_optimizer_cfg() -> dict:
 
 
 def test_simulation_semantics_version_is_5():
+    """Issue #1259/#1129 (Katalog #1247+) bumpte weiter auf 6 (siehe test_issue_1259_1129_
+    simulation_version_bump.py) — dieser Test prueft weiterhin, dass v5 NICHT UNTERSCHRITTEN wird
+    (die #952/#1118-Bump-Historie bleibt gueltig), nicht mehr die exakte Gleichheit (derselbe
+    Musterwechsel wie test_issue_936_version_bumps.py::test_simulation_semantics_version_is_3
+    beim v3->v4-Uebergang)."""
     cfg = _load_optimizer_cfg()
-    assert cfg["simulation_semantics_version"] == 5
+    assert cfg["simulation_semantics_version"] >= 5
 
 
 def test_simulation_schema_v5_names_its_actual_triggers():
@@ -91,11 +96,16 @@ def test_simulation_schema_v5_describes_only_implemented_behaviour():
 
 def test_champion_admissibility_rejects_stale_v4_entries():
     """Akzeptanzkriterium #952 — kein Champion-Eintrag mit simulation_semantics_version=4 (der
-    alten Trailing-Stop-Semantik) darf nach dem Bump noch als Seed verwendet werden."""
+    alten Trailing-Stop-Semantik) darf nach dem Bump noch als Seed verwendet werden.
+
+    ``entry_fresh`` liest die aktuell konfigurierte Version DYNAMISCH aus ``opt_data`` (statt sie
+    als Literal ``5`` zu wiederholen) — sonst wird dieser Test bei jedem KUENFTIGEN Bump (z. B.
+    #1259/#1129 -> 6) selbst wieder zum stale-Fall, den er eigentlich pruefen soll."""
     from automation.optimizer import champions
 
     opt_data = _load_optimizer_cfg()
     entry_stale = {"integrity": {"simulation_semantics_version": 4}}
-    entry_fresh = {"integrity": {"simulation_semantics_version": 5}}
+    entry_fresh = {"integrity": {
+        "simulation_semantics_version": opt_data["simulation_semantics_version"]}}
     assert champions.champion_simulation_stale(entry_stale, opt_data) is True
     assert champions.champion_simulation_stale(entry_fresh, opt_data) is False

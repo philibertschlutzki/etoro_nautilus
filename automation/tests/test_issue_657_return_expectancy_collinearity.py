@@ -11,8 +11,13 @@ Profitabilitäts-Gate bestehen (kostenrelativ via `oos_min_expectancy_k_alpha`, 
 Issue #697 — SUPERSEDIERT diesen Zwischenstand: `min_expectancy` selbst war zu ~96% kollinear mit
 `oos_min_psr` (|ρ|=0.961) und wurde ebenfalls aus der Konjunktion entfernt (bleibt als WEICHE
 Near-Miss-Distanz über `reward._normalized_gate_distances` erhalten). Es existiert seither KEIN
-hartes absolutes Return-/Expectancy-Gate mehr — `oos_min_psr` (risikoadjustiert, skalenfrei) ist
+hartes absolutes Return-/Expectancy-Gate mehr — `oos_min_psr` (risikoadjustiert, skalenfrei) war
 das alleinige harte Netto-Edge-Gate.
+
+Issue #1248 (GH #1118) — `oos_min_psr` SELBST wurde inzwischen aus derselben Grund (gemessener
+Grenzbeitrag 0.0 gegenüber dem neueren `oos_min_alpha_tstat`-Gate, #1093/#1241) aus der Konjunktion
+entfernt. `oos_min_alpha_tstat` (exposure-bereinigtes t(α), risikoadjustiert) ist seither das
+alleinige harte Netto-Edge-Gate.
 """
 import json
 from pathlib import Path
@@ -23,14 +28,16 @@ TCFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 def test_no_absolute_profitability_gate_remains_after_697():
     """Akzeptanzkriterium (#697, supersediert die #657-Zwischenlage): nach der weiteren
     Konsolidierung existiert KEIN absolutes Return-/Expectancy-Gate mehr in eligible_requires_all —
-    das risikoadjustierte oos_min_psr trägt die Netto-Edge-Entscheidung allein."""
+    das risikoadjustierte Gate trägt die Netto-Edge-Entscheidung allein. Issue #1248 (GH #1118) —
+    dieses Gate ist seither oos_min_alpha_tstat (oos_min_psr wurde aus DEMSELBEN Konsolidierungs-
+    Grund entfernt, siehe Moduldocstring)."""
     req_all = set(TCFG["eligible_requires_all"])
     absolute_return_gates = req_all & {"min_total_return", "min_expectancy"}
     assert absolute_return_gates == set(), (
         f"Erwartet KEIN absolutes Profitabilitäts-Gate mehr (seit #697), gefunden: "
         f"{absolute_return_gates}"
     )
-    assert "oos_min_psr" in req_all
+    assert "oos_min_alpha_tstat" in req_all
 
 
 def test_min_total_return_and_min_expectancy_are_not_both_hard_gates():

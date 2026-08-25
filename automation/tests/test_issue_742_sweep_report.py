@@ -141,8 +141,15 @@ def test_second_process_reconstructs_same_report_from_sqlite_and_proposals(wired
     (proposals_dir / "proposal_TestStrat_A.ETORO.json").write_text(
         json.dumps(_proposal()), encoding="utf-8")
 
+    # Issue #1252 (GH #1122) — eigener reports_dir (statt des vom Live-Aufruf oben bereits
+    # geschriebenen), damit der DORT abgelegte run_fingerprints.jsonl-Index (siehe
+    # report._build_report-Docstring zur reports_dir-Isolationskonvention) den Fingerabdruck von
+    # "live_run" nicht als Duplikat unter dem hier bewusst ABWEICHENDEN synthetischen
+    # "standalone_run"-Namen zurueckmeldet — dieser Test prueft Bit-Identitaet der REKONSTRUKTION,
+    # nicht Duplikat-Erkennung ueber zwei echte, unabhaengige Sweeps derselben Eingangsmenge.
     standalone_out = report.generate_report_for_run(
-        run_id="standalone_run", proposals_dir=proposals_dir, reports_dir=wired_storage / "reports",
+        run_id="standalone_run", proposals_dir=proposals_dir,
+        reports_dir=wired_storage / "reports_standalone",
     )
     standalone_data = json.loads(standalone_out.read_text("utf-8"))
 

@@ -284,6 +284,10 @@ class TournamentMetrics:
     # invariants.check_applied_cost_components_resolved.
     oos_applied_financing_bps_per_day: float | None = None
     oos_applied_slippage_bps: float | None = None
+    # Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — welche Kalibrierungsebene
+    # (``'strategy_symbol'``/``'symbol'``/``'asset_class'``) die p50-Kostenstress-Basis dieser
+    # Study tatsaechlich aufgeloest hat (siehe backtest_runner.resolve_slippage_calibration_scope).
+    oos_slippage_calibration_scope: str | None = None
     # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (Bars) und Slippage (bps), NUR ueber nachweisliche
     # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe backtest_runner.
     # _aggregate_exit_telemetry-Docstring).
@@ -303,6 +307,11 @@ class TournamentMetrics:
     # Population wie oos_bar_range_median_bps, und der Anteil der Nullspannen-Bars (``high == low``)
     # an ALLEN Bars, ueber die eine Position lief (Median ueber die Round-Trips dieses Trials).
     oos_bar_range_p75_bps: float | None = None
+    # Issue #1259 (GH #1129), Pitfall #452 — Populationsgroesse (Summe ueber Round-Trips) der um
+    # Nullspannen-Bars bereinigten Serie, aus der oos_bar_range_median_bps/_p75_bps gebildet
+    # wurden. 0 (nicht None) unterscheidet "Median 0 ueber 0 Bars" (DEGENERATE_ZERO_RANGE) von
+    # "kein Round-Trip trug je die Telemetrie" (None, POPULATION_UNAVAILABLE).
+    oos_bar_range_population_n: int | None = None
     oos_zero_range_bar_fraction: float | None = None
     # Issue #1054/#1203 (Katalog #1196-1221) — Verlust-Zerlegung, NUR ueber nachweisliche
     # TRAILING_STOP-Exits mit vollstaendiger Anker-/Stop-Level-Telemetrie (siehe backtest_runner.
@@ -314,6 +323,15 @@ class TournamentMetrics:
     oos_realized_loss_bps_median: float | None = None
     oos_n_stop_loss_identity_checked: int = 0
     oos_n_stop_loss_identity_violations: int = 0
+    # Issue #1259 (GH #1129), Pitfall #442 (Bruecken-Test schliesst diese Instanz) — Stichproben-
+    # groesse HINTER oos_stop_exit_lag_bars_median (analog oos_n_trailing_stop_exits_with_fill_lag_
+    # telemetry fuer den Fill-Lag); war in backtest_runner._aggregate_exit_telemetry berechnet, aber
+    # nie bis hierher durchgereicht.
+    oos_n_trailing_stop_exits_with_lag_telemetry: int = 0
+    # Issue #1080/#1228 — Median des Ratschenbetrags zwischen Ausloesung und Absetzen plus die
+    # Stichprobengroesse dahinter; ebenfalls berechnet, aber (Pitfall #442) nie durchgereicht.
+    oos_stop_ratchet_between_trigger_and_submit_bps_median: float | None = None
+    oos_n_trailing_stop_exits_with_ratchet_telemetry: int = 0
     # Issue #1082/#1230 (P1, Katalog #1247+) — Anteile PRO ROUND-TRIP (dann medianisiert), NICHT
     # aus den drei absoluten Medianen oben ableitbar (Median einer Summe != Summe der Mediane,
     # siehe backtest_runner._aggregate_exit_telemetry-Docstring).
@@ -327,6 +345,33 @@ class TournamentMetrics:
     # von invariants.compute_trial_timebox_violations. Leeres Tuple ⇒ Pre-#899-JSON (rückwärts-
     # kompatibel; der Konsument fällt dann auf den Trial-Maximum-Punkt zurück).
     oos_holding_times_s: tuple = ()
+    # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — ``total_return``/``expectancy_capital_
+    # weighted`` teilen sich SEIT DIESEM FIX dieselbe (kalibrierte-Slippage-korrigierte) Kostenbasis
+    # (backtest_runner._apply_calibrated_slippage_to_mtm_series); die ``_net``-Felder sind explizite
+    # Aliase der bereits korrigierten ``oos_total_return``/``oos_expectancy_capital_weighted`` oben
+    # (Namensparitaet zum Akzeptanzkriterium des Issues UND zu invariants.check_cost_basis_
+    # coherence), die ``_gross``-Felder die Kostenbasis DAVOR (reine Traceability-Telemetrie, None
+    # ohne Equity-Kurve ODER ohne aktive Kalibrierung — siehe backtest_runner._calculate_stats).
+    # Defaults rueckwaertskompatibel (Legacy-JSONs vor #1257).
+    oos_total_return_net: float | None = None
+    oos_total_return_gross: float | None = None
+    oos_expectancy_capital_weighted_net: float | None = None
+    oos_expectancy_capital_weighted_gross: float | None = None
+    # Issue #1255 (GH #1125), Pitfall #454-Klasse — HC3-robuster Standardfehler-Schaetzer der
+    # Alpha-Regression (siehe backtest_runner._alpha_regression_diagnostics-Docstring) neben dem
+    # bestehenden, homoskedastie-unterstellenden ``oos_alpha_tstat``; ``oos_alpha_tstat_df`` die
+    # AUF DIE INFORMATIVE Zeilenzahl (statt der Kalender-Bar-Zaehlung) gesetzten Freiheitsgrade.
+    # Issue #1258 (GH #1128) — Regressions-Grundgesamtheit auditierbar: ``oos_alpha_n_total`` (Alias
+    # von ``oos_alpha_n_periods``, expliziter Feldname fuer die Akzeptanzkriterien-Liste),
+    # ``oos_alpha_n_informative``/``oos_alpha_n_y_nonzero``/``oos_alpha_n_x_nonzero``/
+    # ``oos_alpha_n_both_zero``. Defaults rueckwaertskompatibel (Legacy-JSONs vor #1255/#1258).
+    oos_alpha_tstat_hc3: float | None = None
+    oos_alpha_tstat_df: int | None = None
+    oos_alpha_n_total: int | None = None
+    oos_alpha_n_informative: int | None = None
+    oos_alpha_n_y_nonzero: int | None = None
+    oos_alpha_n_x_nonzero: int | None = None
+    oos_alpha_n_both_zero: int | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -482,6 +527,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
     oos_applied_financing_bps_per_day = oos_metrics.get("applied_financing_bps_per_day")
     oos_applied_slippage_bps = oos_metrics.get("applied_slippage_bps")
+    # Issue #1266 (GH #1136) — siehe TournamentMetrics-Docstring.
+    oos_slippage_calibration_scope = oos_metrics.get("slippage_calibration_scope")
     # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
     oos_stop_exit_fill_lag_bars_median = oos_metrics.get("stop_exit_fill_lag_bars_median")
     oos_stop_exit_slippage_bps_median = oos_metrics.get("stop_exit_slippage_bps_median")
@@ -493,6 +540,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_realized_loss_bps_median = oos_metrics.get("realized_loss_bps_median")
     oos_n_stop_loss_identity_checked = oos_metrics.get("n_stop_loss_identity_checked") or 0
     oos_n_stop_loss_identity_violations = oos_metrics.get("n_stop_loss_identity_violations") or 0
+    # Issue #1259 (GH #1129), Pitfall #442 — siehe TournamentMetrics-Docstring.
+    oos_n_trailing_stop_exits_with_lag_telemetry = (
+        oos_metrics.get("n_trailing_stop_exits_with_lag_telemetry") or 0)
+    oos_stop_ratchet_between_trigger_and_submit_bps_median = (
+        oos_metrics.get("stop_ratchet_between_trigger_and_submit_bps_median"))
+    oos_n_trailing_stop_exits_with_ratchet_telemetry = (
+        oos_metrics.get("n_trailing_stop_exits_with_ratchet_telemetry") or 0)
     # Issue #1082/#1230 — siehe TournamentMetrics-Docstring.
     oos_stop_distance_share_median = oos_metrics.get("stop_distance_share_median")
     oos_trigger_to_fill_gap_share_median = oos_metrics.get("trigger_to_fill_gap_share_median")
@@ -502,6 +556,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_bar_range_median_bps = oos_metrics.get("bar_range_median_bps")
     # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
     oos_bar_range_p75_bps = oos_metrics.get("bar_range_p75_bps")
+    # Issue #1259 (GH #1129) — siehe TournamentMetrics-Docstring.
+    oos_bar_range_population_n = oos_metrics.get("bar_range_population_n")
     oos_zero_range_bar_fraction = oos_metrics.get("zero_range_bar_fraction")
     # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
     oos_n_losses = oos_metrics.get("n_losses")
@@ -514,6 +570,22 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_expectancy = oos_metrics.get("expectancy")
     # Issue #1031 (Katalog #866) — siehe TournamentMetrics-Docstring.
     oos_expectancy_capital_weighted = oos_metrics.get("expectancy_capital_weighted")
+    # Issue #1257 (GH #1127), Pitfall #454 — siehe TournamentMetrics-Docstring.
+    oos_total_return_net = oos_metrics.get("total_return_net")
+    oos_total_return_gross = oos_metrics.get("total_return_gross")
+    oos_expectancy_capital_weighted_net = oos_metrics.get("expectancy_capital_weighted_net")
+    oos_expectancy_capital_weighted_gross = oos_metrics.get("expectancy_capital_weighted_gross")
+    # Issue #1255/#1258 (GH #1125/#1128) — siehe TournamentMetrics-Docstring. Diese Gruppe von
+    # oos_metrics-Schluesseln traegt (anders als z. B. 'total_return'/'expectancy_capital_weighted'
+    # oben) das 'oos_'-Praefix bereits IM DICT-KEY selbst — dieselbe Konvention wie das bestehende
+    # 'oos_alpha_n_periods' (Zeile oben), nicht die der #1257-Kostenbasis-Felder.
+    oos_alpha_tstat_hc3 = oos_metrics.get("oos_alpha_tstat_hc3")
+    oos_alpha_tstat_df = oos_metrics.get("oos_alpha_tstat_df")
+    oos_alpha_n_total = oos_metrics.get("oos_alpha_n_total")
+    oos_alpha_n_informative = oos_metrics.get("oos_alpha_n_informative")
+    oos_alpha_n_y_nonzero = oos_metrics.get("oos_alpha_n_y_nonzero")
+    oos_alpha_n_x_nonzero = oos_metrics.get("oos_alpha_n_x_nonzero")
+    oos_alpha_n_both_zero = oos_metrics.get("oos_alpha_n_both_zero")
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
@@ -763,6 +835,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             if oos_applied_financing_bps_per_day is not None else None),
         oos_applied_slippage_bps=(
             float(oos_applied_slippage_bps) if oos_applied_slippage_bps is not None else None),
+        # Issue #1266 (GH #1136) — siehe TournamentMetrics-Docstring.
+        oos_slippage_calibration_scope=(
+            str(oos_slippage_calibration_scope)
+            if oos_slippage_calibration_scope is not None else None),
         # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
         oos_stop_exit_fill_lag_bars_median=(
             float(oos_stop_exit_fill_lag_bars_median)
@@ -783,6 +859,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
         oos_bar_range_p75_bps=(
             float(oos_bar_range_p75_bps) if oos_bar_range_p75_bps is not None else None),
+        # Issue #1259 (GH #1129) — siehe TournamentMetrics-Docstring.
+        oos_bar_range_population_n=(
+            int(oos_bar_range_population_n) if oos_bar_range_population_n is not None else None),
         oos_zero_range_bar_fraction=(
             float(oos_zero_range_bar_fraction) if oos_zero_range_bar_fraction is not None else None),
         # Issue #1054/#1203 — siehe TournamentMetrics-Docstring.
@@ -797,6 +876,14 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             if oos_realized_loss_bps_median is not None else None),
         oos_n_stop_loss_identity_checked=int(oos_n_stop_loss_identity_checked or 0),
         oos_n_stop_loss_identity_violations=int(oos_n_stop_loss_identity_violations or 0),
+        # Issue #1259 (GH #1129), Pitfall #442 — siehe TournamentMetrics-Docstring.
+        oos_n_trailing_stop_exits_with_lag_telemetry=int(
+            oos_n_trailing_stop_exits_with_lag_telemetry or 0),
+        oos_stop_ratchet_between_trigger_and_submit_bps_median=(
+            float(oos_stop_ratchet_between_trigger_and_submit_bps_median)
+            if oos_stop_ratchet_between_trigger_and_submit_bps_median is not None else None),
+        oos_n_trailing_stop_exits_with_ratchet_telemetry=int(
+            oos_n_trailing_stop_exits_with_ratchet_telemetry or 0),
         # Issue #1082/#1230 — siehe TournamentMetrics-Docstring.
         oos_stop_distance_share_median=(
             float(oos_stop_distance_share_median)
@@ -807,6 +894,31 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         oos_n_losses=int(oos_n_losses) if oos_n_losses is not None else 0,
         oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
+        # Issue #1257 (GH #1127), Pitfall #454 — siehe TournamentMetrics-Docstring.
+        oos_total_return_net=(
+            float(oos_total_return_net) if oos_total_return_net is not None else None),
+        oos_total_return_gross=(
+            float(oos_total_return_gross) if oos_total_return_gross is not None else None),
+        oos_expectancy_capital_weighted_net=(
+            float(oos_expectancy_capital_weighted_net)
+            if oos_expectancy_capital_weighted_net is not None else None),
+        oos_expectancy_capital_weighted_gross=(
+            float(oos_expectancy_capital_weighted_gross)
+            if oos_expectancy_capital_weighted_gross is not None else None),
+        # Issue #1255/#1258 (GH #1125/#1128) — siehe TournamentMetrics-Docstring.
+        oos_alpha_tstat_hc3=(
+            float(oos_alpha_tstat_hc3) if oos_alpha_tstat_hc3 is not None else None),
+        oos_alpha_tstat_df=(
+            int(oos_alpha_tstat_df) if oos_alpha_tstat_df is not None else None),
+        oos_alpha_n_total=(int(oos_alpha_n_total) if oos_alpha_n_total is not None else None),
+        oos_alpha_n_informative=(
+            int(oos_alpha_n_informative) if oos_alpha_n_informative is not None else None),
+        oos_alpha_n_y_nonzero=(
+            int(oos_alpha_n_y_nonzero) if oos_alpha_n_y_nonzero is not None else None),
+        oos_alpha_n_x_nonzero=(
+            int(oos_alpha_n_x_nonzero) if oos_alpha_n_x_nonzero is not None else None),
+        oos_alpha_n_both_zero=(
+            int(oos_alpha_n_both_zero) if oos_alpha_n_both_zero is not None else None),
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,

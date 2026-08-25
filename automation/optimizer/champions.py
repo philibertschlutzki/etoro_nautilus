@@ -110,7 +110,7 @@ import json
 import logging
 from pathlib import Path
 
-from automation.optimizer.manifest import WORK, catalog_fingerprint
+from automation.optimizer.manifest import CHAMPION_ROOT, catalog_fingerprint
 from automation.log_manager import emit_execution_event
 
 # Issue #703 (Gate, Punkt 2) — Rejections, die bedeuten, dass der Kandidat den Holdout nie erreicht
@@ -188,7 +188,9 @@ def _sanitize(symbol: str) -> str:
 
 
 def _champions_dir() -> Path:
-    d = WORK / "champions"
+    # Issue #1270 (GH #1140) — CHAMPION_ROOT, NICHT WORK (siehe dortige manifest.py-Docstring):
+    # ein Champion-Store unter dem je Lauf frisch angelegten WORK ueberlebt keinen einzigen Lauf.
+    d = CHAMPION_ROOT
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -932,7 +934,9 @@ def store_status() -> dict:
     meldeten identisch ``{stored: 0, ..., skipped_by_reason: {STORE_EMPTY: 14}}`` — aus den
     Artefakten allein war NICHT entscheidbar, ob der Store zwischen Läufen tatsächlich geleert
     wird, oder ob der Folgelauf schlicht in einem anderen ``WORK`` liest (zwei strukturell
-    verschiedene Ursachen, siehe Issue-Text).
+    verschiedene Ursachen, siehe Issue-Text). Issue #1270 (GH #1140) — DIE ZWEITE Ursache ist seit
+    diesem Fix strukturell ausgeschlossen: der Store liegt unter ``CHAMPION_ROOT``
+    (``PROJECT_ROOT``-verankert), nicht mehr unter ``WORK``.
 
     BEWUSST kein Aufruf von ``_champions_dir()`` hier — dessen ``mkdir(parents=True,
     exist_ok=True)``-Seiteneffekt würde den einzigen Moment vernichten, in dem "das Verzeichnis
@@ -947,7 +951,8 @@ def store_status() -> dict:
     Konvention wie überall im Champion-Store."""
     import datetime as dt
 
-    path = WORK / "champions"
+    # Issue #1270 (GH #1140) — CHAMPION_ROOT, NICHT WORK (siehe _champions_dir-Kommentar oben).
+    path = CHAMPION_ROOT
     try:
         store_found = path.is_dir()
     except OSError:
@@ -1035,7 +1040,8 @@ def load_champion_seed(strategy: str, symbol: str, base_cfg: Path | None = None,
 
     ``base_cfg``/``catalog_newest_ns`` werden für Signatur-Parität zu ``load_global_best``/
     ``load_strategy_defaults_params`` akzeptiert, aber intern nicht gebraucht: der Champion-Store
-    liegt unter ``WORK`` (nicht config-relativ), und der ENQUEUE-Pfad braucht KEIN Fenster-Gate —
+    liegt unter ``CHAMPION_ROOT`` (nicht config-relativ, seit #1270/GH #1140 auch nicht mehr
+    WORK-relativ), und der ENQUEUE-Pfad braucht KEIN Fenster-Gate —
     der Seed wird auf den AKTUELLEN Daten voll neu durch alle Gates re-evaluiert. Das Fenster-Gate
     (``catalog_newest_ns`` vs. Erst-Sichtung) betrifft ausschliesslich den Writeback (#706,
     ``maybe_write_back``), nicht das Enqueue. Issue #819 — liefert die ``params`` AUCH für einen

@@ -29,7 +29,8 @@ from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
     check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
     gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
-    check_mandatory_gate_reachability_live,
+    check_mandatory_gate_reachability_live, _normalize_clause as _reward_normalize_clause,
+    resolve_alpha_tstat_gate_threshold,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
@@ -69,6 +70,14 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_profit_factor_censored": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_censored)",
     "oos_profit_factor_raw": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_raw)",
     "oos_expectancy_capital_weighted": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted)",
+    # Issue #1257 (GH #1127), Pitfall #454 — analog oos_expectancy_capital_weighted direkt oben:
+    # reine Traceability-/Kohaerenz-Check-Felder (invariants.check_cost_basis_coherence), die nur
+    # am promotierten Holdout-Kandidaten (report.py holdout_total_return_net/_gross,
+    # holdout_expectancy_capital_weighted_net/_gross) gebraucht werden, nicht je Sweep-Trial.
+    "oos_total_return_net": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_total_return_net, #1257)",
+    "oos_total_return_gross": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_total_return_gross, #1257)",
+    "oos_expectancy_capital_weighted_net": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted_net, #1257)",
+    "oos_expectancy_capital_weighted_gross": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted_gross, #1257)",
     "oos_expectancy_winsorized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_winsorized)",
     "oos_expectancy_outlier_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_outlier_count)",
     "oos_expectancy_cost_stress_1_5x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_1_5x)",
@@ -87,12 +96,23 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     # Stempelstelle oben, neben oos_win_rate) — Grundlage fuer reward.check_mandatory_gate_
     # reachability_live. oos_alpha/oos_beta bleiben holdout-only (kein Gate braucht sie live).
     "oos_alpha_n_periods": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #1038/#1187)",
+    # Issue #1255/#1258 (GH #1125/#1128) — additive Audit-/Diagnostik-Felder der Alpha-Regression
+    # (backtest_runner._alpha_regression_diagnostics), holdout-only wie oos_alpha_n_periods direkt
+    # oben (kein Gate braucht sie live — anders als oos_alpha_tstat_hc3 selbst, das per Sweep-Trial
+    # gestempelt wird, siehe Stempelstelle neben oos_alpha_tstat).
+    "oos_alpha_tstat_df": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1255)",
+    "oos_alpha_n_total": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_informative": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_y_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_x_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_both_zero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_f_turnover_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_median, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_turnover_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_max, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_realized_peak_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_median, #1085/#1233 check_sizing_identity_coherence)",
     "oos_f_realized_peak_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_max, #1085/#1233 check_sizing_cap_enforcement)",
     "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
+    "oos_slippage_calibration_scope": "holdout-only (confirm.py-Re-Evaluation, siehe report.py slippage_calibration_scope, #1266/GH #1136 check_cost_stress_discriminates)",
     "oos_selection_cost_basis": "holdout-only (confirm.py-Re-Evaluation, siehe report.py selection_cost_basis, #1078/#1226 check_selection_cost_basis_contract)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
@@ -285,7 +305,7 @@ def _stop_study_safely(study, logger: logging.Logger) -> None:
         logger.debug("study.stop() außerhalb eines optimize()-Kontexts ignoriert (Issue #456).")
 
 
-def seed_effective(seed, study_name: str) -> int | None:
+def seed_effective(seed, study_name: str, run_salt: str | None = None) -> int | None:
     """Issue #755 — deterministischer PER-STUDY-Seed statt sweep-weiter Serialisierung.
 
     Root-Cause #755: ``sweep.main`` erzwang bislang ``n_jobs=1`` fuer den GESAMTEN Sweep, sobald
@@ -299,15 +319,34 @@ def seed_effective(seed, study_name: str) -> int | None:
     ``study_name`` konstant — ueber Prozessgrenzen und unabhaengig von der Ausfuehrungsreihenfolge —
     und fuer verschiedene ``study_name`` unterschiedlich (kein sweep-weit identischer Sampler-Seed
     mehr, der die Studies bei identischer Trial-Struktur korreliert haette). ``seed is None`` (kein
-    Determinismus verlangt) bleibt ``None`` (Optuna waehlt einen echten Zufalls-Seed)."""
+    Determinismus verlangt) bleibt ``None`` (Optuna waehlt einen echten Zufalls-Seed).
+
+    Issue #1253 (GH #1123) — ``run_salt`` (Default ``None``) erweitert die Formel auf
+    ``seed XOR stable_hash(study_name) XOR stable_hash(run_salt)``: ein Wiederholungslauf OHNE
+    Salt zieht denselben TPE-Sampler-Pfad wie sein Vorlauf und ist damit eine reine KOPIE, keine
+    unabhaengige STICHPROBE der Suchvarianz (Root-Cause #1253: ``seed_effective`` war eine reine
+    Funktion von (``seed``, ``study_name``) — kein Lauf-Anteil, ``best_eligible_reward`` liess sich
+    dadurch nie von einer stabilen Optimumsschaetzung gegenueber einer einzelnen TPE-Ziehung
+    unterscheiden). ``run_salt=None`` (Default) ist BIT-IDENTISCH zum Pre-#1253-Verhalten (der
+    zweite XOR-Term entfaellt vollstaendig, nicht nur numerisch neutral) — ein Wiederholungslauf
+    OHNE ``--seed-salt``/``OPTIMIZER_SEED_SALT`` bleibt exakt reproduzierbar, wie vor diesem Fix.
+    Mit gesetztem ``run_salt`` zieht JEDE Study desselben Laufs denselben Salt-Beitrag (sweep-weit
+    konstant), aber XOR-verknuepft mit dem je Study bereits unterschiedlichen ``stable_hash(
+    study_name)`` — der Salt allein macht daher NICHT alle Studies eines Laufs identisch
+    verschoben (die Verschiebung ist studyabhaengig durch die bereits vorhandene XOR-Kette)."""
     if seed is None:
         return None
     import hashlib
     h = int.from_bytes(hashlib.blake2b(study_name.encode("utf-8"), digest_size=8).digest(), "big")
+    effective = int(seed) ^ h
+    if run_salt:
+        h_salt = int.from_bytes(
+            hashlib.blake2b(str(run_salt).encode("utf-8"), digest_size=8).digest(), "big")
+        effective ^= h_salt
     # numpy.random.RandomState (Optuna-Sampler-Backend) verlangt einen Seed in [0, 2**32 - 1] — der
     # volle 64-Bit-Hash wird daher maskiert, NICHT nur XOR-verknuepft (sonst ValueError bei Studies,
     # deren Hash das obere Byte setzt).
-    return (int(seed) ^ h) & 0xFFFFFFFF
+    return effective & 0xFFFFFFFF
 
 
 def _trial_number(idx: int, t) -> int:
@@ -2832,6 +2871,52 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
         n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs, run_id=run_id)
 
+    # Issue #1264 (GH #1134) Fix Punkt 1 — Root-Cause: der #681/#829/#830/#831-Rückschriebpfad
+    # (weiter oben in dieser Datei, in den STRUCTURAL_ALL_UNEVALUABLE-/ZERO_ELIGIBLE_PLATEAU-
+    # Fruehstopp-Zweigen) ist auf das strenge sequentielle Fruehstopp-Kriterium ANGEWIESEN — eine
+    # Study, die ihr VOLLES Budget durchlaeuft, OHNE dass die Fruehstopp-Statistik je feuert, erreicht
+    # diesen Code NIE, obwohl ``stop_reason`` (oben berechnet, IMMER fuer jede abgeschlossene Study
+    # bekannt) sie unzweideutig als STRUCTURAL_ZERO_ELIGIBLE/STRUCTURAL_ALL_UNEVALUABLE klassifiziert
+    # (Symptom: 10 Studies ohne diagnosed_pairs-Eintrag, obwohl ``stop_reason`` sie auswies). Dieser
+    # Block laeuft UNBEDINGT fuer JEDE abgeschlossene Study mit einem der beiden ``stop_reason``-Werte
+    # — unabhaengig davon, ob der obige Fruehstopp-Pfad BEREITS geschrieben hat: ``record_diagnosed_
+    # pair``s eigener ``study_fingerprint``-Dedup (#1090) verhindert eine doppelte ``n_runs_confirmed``-
+    # Zaehlung fuer dieselbe Study-Beobachtung, ein zweiter Aufruf ist daher sicher.
+    if strategy is not None and symbol is not None and (
+            budget_execution["stop_reason"] in ("STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE")):
+        try:
+            from automation.optimizer.sweep_diagnostics import (
+                diagnose_structural_zero_eligible_gate, record_diagnosed_pair, study_fingerprint,
+            )
+            _all_rejection_details_for_writeback = [
+                getattr(t, "user_attrs", {}).get("is_rejection_detail") for t in trials
+            ]
+            _rejection_detail_counts_for_writeback: dict[str, int] = {}
+            for _d in _all_rejection_details_for_writeback:
+                if _d:
+                    _rejection_detail_counts_for_writeback[_d] = (
+                        _rejection_detail_counts_for_writeback.get(_d, 0) + 1)
+            _structural_diagnosis = diagnose_structural_zero_eligible_gate(
+                _rejection_detail_counts_for_writeback, stop_reason=budget_execution["stop_reason"])
+            if _structural_diagnosis["binding_cause"] not in (None, "none"):
+                _structural_rec = {
+                    "strategy": strategy, "symbol": symbol,
+                    "action": _structural_diagnosis["proposed_action"],
+                    "binding_cause": _structural_diagnosis["binding_cause"],
+                    "dominant_rejection_detail": _structural_diagnosis["dominant_rejection_detail"],
+                    "dominant_fraction": _structural_diagnosis["dominant_fraction"],
+                    "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+                    "study_fingerprint": study_fingerprint(
+                        getattr(study, "study_name", None),
+                        _study_user_attrs.get("study_started_at_utc"),
+                        budget_execution["n_trials_completed"]),
+                }
+                record_diagnosed_pair(_structural_rec, run_id=run_id)
+        except Exception:
+            logging.getLogger("optimizer").debug(
+                "Issue #1264: unbedingter Struktur-Diagnose-Rueckschrieb fehlgeschlagen (non-fatal).",
+                exc_info=True)
+
     # Issue #930 (Pitfall #303) — die Ausloesebedingung war `gradient_signal is None`, ein PROXY
     # fuer "Basisbudget nicht ausgeschoepft" aus der Zeit, als der Fruehstopp bei
     # `n_startup + 3*dim` griff (#805/#806). Seit #925 kann `budget_executed_fraction` bei einem
@@ -2991,8 +3076,18 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                       if getattr(t, "user_attrs", {}).get("oos_win_rate") is not None]
     # Issue #1093/#1241 (P1) — dieselbe Live-Kohorte fuer das neue MANDATORY oos_min_alpha_tstat-
     # Gate (siehe reward.check_mandatory_gate_reachability_live-Docstring).
-    live_alpha_tstats = [getattr(t, "user_attrs", {}).get("oos_alpha_tstat") for t in trials
-                         if getattr(t, "user_attrs", {}).get("oos_alpha_tstat") is not None]
+    # Issue #1255 (GH #1125), Pitfall #454-Klasse — der Handler selbst
+    # (backtest_runner._evaluate_oos_eligibility) konsumiert seit diesem Fix oos_alpha_tstat_hc3
+    # statt der klassischen Statistik; die Live-Kohorte MUSS auf DERSELBEN Groesse sitzen, sonst
+    # diagnostiziert sie die Erreichbarkeit einer Statistik, die gar nicht mehr entscheidet. Fallback
+    # auf die klassische Statistik je Trial nur fuer Legacy-Trials ohne das neue User-Attr.
+    live_alpha_tstats = [
+        (getattr(t, "user_attrs", {}).get("oos_alpha_tstat_hc3")
+         if getattr(t, "user_attrs", {}).get("oos_alpha_tstat_hc3") is not None
+         else getattr(t, "user_attrs", {}).get("oos_alpha_tstat"))
+        for t in trials
+    ]
+    live_alpha_tstats = [v for v in live_alpha_tstats if v is not None]
     any_arm_live_unreachable = []
     # Issue #668 — hebt die reine #660-Warnung auf eine KONFIGURIERTE Policy (warn/drop_arm/
     # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
@@ -3013,9 +3108,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             # dieselbe Telemetrie-Liste gemergt (keine Policy-Wirkung, siehe Docstring dort), damit
             # ``any_arm_live_unreachable`` (Akzeptanzkriterium #1241) auch ein strukturell
             # unerreichbares oos_min_alpha_tstat-Gate erfasst.
+            # Issue #1247 (GH #1117) — der Schlüssel MUSS die normalisierte (unpräfigierte) Form
+            # tragen, unabhängig davon, ob tournament.json['eligible_requires_all'] die Klausel
+            # mit oder ohne 'oos_'-Präfix listet (Pitfall #448): reward._normalize_clause ist die
+            # EINE Stelle, die diese Form definiert.
             any_arm_live_unreachable = list(any_arm_live_unreachable) + [
                 c for c in check_mandatory_gate_reachability_live(
-                    _tcfg_arm, {"min_alpha_tstat": live_alpha_tstats}, n_evaluated=evaluable)
+                    _tcfg_arm,
+                    {_reward_normalize_clause("oos_min_alpha_tstat"): live_alpha_tstats},
+                    n_evaluated=evaluable)
                 if c not in any_arm_live_unreachable
             ]
             _emit_any_arm_reachability_result(
@@ -3025,13 +3126,37 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     except Exception:
         any_arm_live_unreachable = []
 
+    # Issue #1250 (GH #1120), Pitfall #451 — die EFFEKTIVE oos_min_alpha_tstat-Schwelle DIESER
+    # Study (reward.resolve_alpha_tstat_gate_threshold-Docstring). n_family_stage1/
+    # oos_n_periods_median sind FAMILIEN-Groessen, die erst nach Abschluss ALLER Studies eines
+    # Symbols bekannt sind (sweep._family_n_stage1_from_studies/_study_oos_n_periods_median,
+    # confirm.py/report.py) — zur Laufzeit DIESER einzelnen Study liegt weder eine Familiengroesse
+    # noch ein Kalibrier-Fixture vor, daher bleiben beide hier unbesetzt (None). Der Call bleibt
+    # dennoch verdrahtet statt zu entfallen: mode='static' (Default, siehe tournament.json
+    # ['oos_min_alpha_tstat_mode']) ist ohnehin bit-identisch zur rohen Config-Konstante, und
+    # resolve_alpha_tstat_gate_threshold faellt selbst bei mode='multiplicity_adjusted' ohne
+    # Fixture FAIL-OPEN auf 'static' zurueck (siehe dortiger Docstring) — ein zukuenftiger
+    # Kalibrierlauf kann calibration_fixture/n_family_stage1/oos_n_periods_median hier ergaenzen,
+    # ohne diese Call-Site selbst nochmal aendern zu muessen.
+    alpha_tstat_gate_threshold_effective, alpha_tstat_gate_threshold_source = (
+        resolve_alpha_tstat_gate_threshold(_tcfg_arm))
+    try:
+        study.set_user_attr("alpha_tstat_gate_threshold_effective", alpha_tstat_gate_threshold_effective)
+        study.set_user_attr("alpha_tstat_gate_threshold_source", alpha_tstat_gate_threshold_source)
+    except Exception:
+        pass
+
     # Issue #812 — Fingerabdruck der EFFEKTIV wirksamen Gate-Konfiguration DIESER Study (Schwellen
     # inkl. aller #668-Policy-Anpassungen, siehe reward.selection_rule_fingerprint-Docstring) — als
     # study.user_attr gestempelt, damit report._study_record ihn ohne erneute Live-Kohorten-
     # Berechnung auslesen kann (Single Source of Truth: die tatsaechlich wirksame Policy-
     # Entscheidung entsteht HIER, aus der vollen Trial-Kohorte). Voraussetzung fuer eine gueltige
     # familienweite DSR-Multiplizitaetskorrektur (sweep._family_n_from_studies, Pitfall #248).
-    selection_fingerprint = selection_rule_fingerprint(_tcfg_arm, any_arm_policy_decision)
+    # Issue #1250 (GH #1120) — alpha_tstat_gate_threshold_effective fliesst mit ein (siehe oben).
+    selection_fingerprint = selection_rule_fingerprint(
+        _tcfg_arm, any_arm_policy_decision,
+        alpha_tstat_gate_threshold_effective=alpha_tstat_gate_threshold_effective,
+    )
     try:
         study.set_user_attr("selection_rule_fingerprint", selection_fingerprint)
     except Exception:
@@ -3488,6 +3613,11 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Issue #1079/#1227 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
         if metrics.oos_bar_range_p75_bps is not None:
             trial.set_user_attr("oos_bar_range_p75_bps", metrics.oos_bar_range_p75_bps)
+        # Issue #1259 (GH #1129) — siehe TournamentMetrics-Docstring. 0 ist ein GUELTIGER Wert
+        # (DEGENERATE_ZERO_RANGE), daher explizit "is not None", nicht Wahrheitswert.
+        if metrics.oos_bar_range_population_n is not None:
+            trial.set_user_attr(
+                "oos_bar_range_population_n", metrics.oos_bar_range_population_n)
         if metrics.oos_zero_range_bar_fraction is not None:
             trial.set_user_attr(
                 "oos_zero_range_bar_fraction", metrics.oos_zero_range_bar_fraction)
@@ -3505,6 +3635,18 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_n_stop_loss_identity_checked", metrics.oos_n_stop_loss_identity_checked)
         trial.set_user_attr(
             "oos_n_stop_loss_identity_violations", metrics.oos_n_stop_loss_identity_violations)
+        # Issue #1259 (GH #1129), Pitfall #442 — bislang berechnet (backtest_runner.
+        # _aggregate_exit_telemetry), geparst (parsing.TournamentMetrics), aber nie gestempelt.
+        trial.set_user_attr(
+            "oos_n_trailing_stop_exits_with_lag_telemetry",
+            metrics.oos_n_trailing_stop_exits_with_lag_telemetry)
+        if metrics.oos_stop_ratchet_between_trigger_and_submit_bps_median is not None:
+            trial.set_user_attr(
+                "oos_stop_ratchet_between_trigger_and_submit_bps_median",
+                metrics.oos_stop_ratchet_between_trigger_and_submit_bps_median)
+        trial.set_user_attr(
+            "oos_n_trailing_stop_exits_with_ratchet_telemetry",
+            metrics.oos_n_trailing_stop_exits_with_ratchet_telemetry)
         # Issue #1082/#1230 (P1, Katalog #1247+) — siehe TournamentMetrics-Docstring.
         if metrics.oos_stop_distance_share_median is not None:
             trial.set_user_attr(
@@ -3731,6 +3873,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             # (siehe check_mandatory_gate_reachability_live unten).
             if metrics.oos_alpha_tstat is not None:
                 trial.set_user_attr("oos_alpha_tstat", metrics.oos_alpha_tstat)
+            # Issue #1255 (GH #1125), Pitfall #454-Klasse — DIESELBE "nur gesetzt, wenn vorhanden"-
+            # Konvention. Das oos_min_alpha_tstat-Gate konsumiert seit diesem Fix
+            # oos_alpha_tstat_hc3 (backtest_runner._evaluate_oos_eligibility); die LIVE-
+            # Reachability-Kohorte (unten) MUSS auf DERSELBEN Statistik sitzen wie das tatsaechliche
+            # Gate — sonst diagnostiziert sie die Erreichbarkeit einer anderen Groesse als der, die
+            # tatsaechlich entscheidet (exakt die Fehlerklasse aus Pitfall #454/#1257).
+            if metrics.oos_alpha_tstat_hc3 is not None:
+                trial.set_user_attr("oos_alpha_tstat_hc3", metrics.oos_alpha_tstat_hc3)
             if metrics.oos_profit_factor is not None:
                 trial.set_user_attr("oos_profit_factor", metrics.oos_profit_factor)
             if metrics.oos_expectancy is not None:
@@ -3978,7 +4128,13 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # Issue #755 — PER-STUDY-Seed statt eines sweep-weit IDENTISCHEN Seeds (der die Sweep-Level-
     # Serialisierung ``n_jobs=1`` in sweep.main erzwungen hatte). Konstant fuer diesen study_name,
     # unabhaengig von Ausfuehrungsreihenfolge/Parallelitaet.
-    seed_eff = seed_effective(seed, study_name)
+    # Issue #1253 (GH #1123) — der Salt kommt ausschliesslich aus der Umgebungsvariable, DEMSELBEN
+    # Mechanismus wie ``OPTIMIZER_WORK_DIR`` (siehe manifest.py-Docstring): jeder Prozess/Worker
+    # setzt sie VOR dem Start, ``sweep.py``s ``--seed-salt``-CLI-Flag setzt sie fuer den
+    # Eltern-Sweep-Prozess (von dem Worker-Subprozesse sie erben). ``None``/leerer String ⇒
+    # bit-identisch zum Pre-#1253-Verhalten (kein Lauf-Anteil im Seed).
+    run_salt = os.environ.get("OPTIMIZER_SEED_SALT") or None
+    seed_eff = seed_effective(seed, study_name, run_salt)
 
     reward_mode = opt_data.get("reward_mode", "auto")
     directions = None
@@ -4135,6 +4291,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # damit der #742-Report je Study nachvollziehbar macht, WELCHER Seed/WELCHES Budget lief (Voraus-
     # setzung fuer den Determinismus-Nachweis bei n_jobs>1).
     study.set_user_attr("seed_effective", seed_eff)
+    # Issue #1253 (GH #1123) Fix Punkt 2 — der wirksame Salt-Wert (oder None), je Study gestempelt
+    # (macht sichtbar, OB dieser Lauf gesalzen war, ohne seed_effective selbst zu deanonymisieren)
+    # und Eingang des run_fingerprint (report.compute_run_fingerprint).
+    study.set_user_attr("seed_salt", run_salt)
     study.set_user_attr("n_trials_budget", n_trials)
     study.set_user_attr("n_startup_trials", n_startup_trials)
     # Issue #931 Fix 2 — der wallclock_budget_policy='degrade'-Faktor, der bereits in n_trials

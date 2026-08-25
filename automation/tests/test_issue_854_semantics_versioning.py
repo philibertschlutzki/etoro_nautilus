@@ -271,7 +271,7 @@ def test_store_champion_persists_simulation_semantics_version(tmp_path, monkeypa
             self.best_value = best_value
             self.directions = directions or ["maximize"]
 
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     study = _FakeOptunaStudy()
     promotion = {
         "promote": True, "status": "READY_FOR_PR", "is_rejection_detail_override": None,
@@ -306,7 +306,7 @@ def test_store_champion_does_not_quarantine_simulation_stale_entry_when_candidat
             self.best_value = best_value
             self.directions = directions or ["maximize"]
 
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     champions_dir = tmp_path / "champions"
     champions_dir.mkdir()
     stale_entry = _champion_entry(reward_version=19, simulation_version=0, r_symbol=2.0)
@@ -348,7 +348,7 @@ def test_store_champion_migrates_simulation_stale_entry_preserving_corroboration
             self.best_value = best_value
             self.directions = directions or ["maximize"]
 
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     champions_dir = tmp_path / "champions"
     champions_dir.mkdir()
     stale_entry = _champion_entry(reward_version=19, simulation_version=0, r_symbol=0.5)

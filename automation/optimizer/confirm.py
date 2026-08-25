@@ -565,6 +565,15 @@ def _metrics_dict(m) -> dict:
         # Issue #1031 (Katalog #866) — additive, nennerausreisser-robuste Expectancy-Telemetrie
         # neben dem (weiterhin unveraendert definierten) oos_expectancy.
         "oos_expectancy_capital_weighted": getattr(m, "oos_expectancy_capital_weighted", None),
+        # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — total_return/expectancy_capital_
+        # weighted teilen sich seit diesem Fix dieselbe Kostenbasis (siehe backtest_runner.
+        # _apply_calibrated_slippage_to_mtm_series); die _net-Felder sind explizite Aliase, die
+        # _gross-Felder die Kostenbasis DAVOR. Rohmaterial fuer invariants.check_cost_basis_coherence.
+        "oos_total_return_net": getattr(m, "oos_total_return_net", None),
+        "oos_total_return_gross": getattr(m, "oos_total_return_gross", None),
+        "oos_expectancy_capital_weighted_net": getattr(m, "oos_expectancy_capital_weighted_net", None),
+        "oos_expectancy_capital_weighted_gross": getattr(
+            m, "oos_expectancy_capital_weighted_gross", None),
         "oos_expectancy_winsorized": getattr(m, "oos_expectancy_winsorized", None),
         "oos_expectancy_outlier_count": getattr(m, "oos_expectancy_outlier_count", 0),
         "oos_expectancy_notional_degenerate_count": getattr(
@@ -606,6 +615,19 @@ def _metrics_dict(m) -> dict:
         # Rohmaterial fuer invariants.check_applied_cost_components_resolved.
         "oos_applied_financing_bps_per_day": getattr(m, "oos_applied_financing_bps_per_day", None),
         "oos_applied_slippage_bps": getattr(m, "oos_applied_slippage_bps", None),
+        # Issue #1266 (GH #1136) — siehe parsing.TournamentMetrics-Docstring; Rohmaterial fuer
+        # invariants.check_cost_stress_discriminates.
+        "oos_slippage_calibration_scope": getattr(m, "oos_slippage_calibration_scope", None),
+        # Issue #1268 (GH #1138), siebte Instanz von Pitfall #442 (Brücken-Fehlerklasse) — die
+        # Exit-Telemetrie ist im HOLDOUT-Re-Evaluationspfad genau wie im regulären OOS-Pfad bereits
+        # via ``m = parse_tournament(...)`` korrekt geparst (dieselbe Pipeline), erreichte aber
+        # NIE diese kuratierte Teilmenge — ``check_selection_cost_basis_contract`` meldete deshalb
+        # in 13/13 Studies ``CLAIMED_ADJUSTMENT_WITHOUT_MEASURED_SLIPPAGE``, obwohl der Holdout
+        # 32–121 Trades und TRAILING_STOP-Exits enthielt.
+        "oos_stop_exit_slippage_bps_median": getattr(m, "oos_stop_exit_slippage_bps_median", None),
+        "oos_n_trailing_stop_losses": getattr(m, "oos_n_trailing_stop_losses", 0),
+        "oos_trigger_to_fill_gap_bps_median": getattr(m, "oos_trigger_to_fill_gap_bps_median", None),
+        "oos_realized_loss_bps_median": getattr(m, "oos_realized_loss_bps_median", None),
         "oos_cvar_95": getattr(m, "oos_cvar_95", None),
         "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),
@@ -622,6 +644,14 @@ def _metrics_dict(m) -> dict:
         # Issue #1038/#1187 — die Regressions-Stichprobengroesse; macht α·n (das oekonomisch
         # lesbare Holdout-Alpha) in report.py berechenbar.
         "oos_alpha_n_periods": getattr(m, "oos_alpha_n_periods", None),
+        # Issue #1255/#1258 (GH #1125/#1128) — siehe parsing.TournamentMetrics-Docstring.
+        "oos_alpha_tstat_hc3": getattr(m, "oos_alpha_tstat_hc3", None),
+        "oos_alpha_tstat_df": getattr(m, "oos_alpha_tstat_df", None),
+        "oos_alpha_n_total": getattr(m, "oos_alpha_n_total", None),
+        "oos_alpha_n_informative": getattr(m, "oos_alpha_n_informative", None),
+        "oos_alpha_n_y_nonzero": getattr(m, "oos_alpha_n_y_nonzero", None),
+        "oos_alpha_n_x_nonzero": getattr(m, "oos_alpha_n_x_nonzero", None),
+        "oos_alpha_n_both_zero": getattr(m, "oos_alpha_n_both_zero", None),
         # Issue #1078/#1226 (P1, Semantik-Bump) — welche Kostenbasis DIESE Holdout-Re-Evaluation
         # tatsaechlich speiste (siehe backtest_runner._apply_calibrated_slippage_deduction). Der
         # Schluessel traegt bewusst den vollen ``oos_``-Feldnamen (Konvention dieses Dicts, siehe
