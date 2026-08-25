@@ -28,10 +28,23 @@ Fix.
    Symbol/eine Strategie strukturell unerreichbar ist (in ``any_arm_live_unreachable`` gemergt,
    run_optimization.py).
 """
+import json
+from pathlib import Path
+
 from automation.backtest_runner import (
     _evaluate_oos_eligibility, OOS_CONDITION_MAP_KEYS, OOS_GATE_DELTA_KEYS,
 )
 from automation.optimizer import reward
+
+
+def _load_production_tournament_cfg() -> dict:
+    """Issue #1247 (GH #1117), Pitfall #449 in AGENTS.md — ein Fixture, das seine eigene Config
+    schreibt, testet den Fix und nicht die Produktion: ``tournament.json`` listet
+    ``'oos_min_alpha_tstat'`` (PRÄFIGIERT) in ``eligible_requires_all``, ein handgeschriebenes
+    Test-Dict mit ``'min_alpha_tstat'`` (UNpräfigiert) wäre grün, obwohl die Produktion an genau
+    dieser Präfix-Differenz scheiterte (#1117-Root-Cause). Tests der LIVE-Reachability-Diagnose
+    laden deshalb die ausgelieferte Config."""
+    return json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 
 _TCFG = {
@@ -128,25 +141,32 @@ def test_production_tournament_json_wires_the_new_gate():
 
 
 # ── Akzeptanzkriterium (#1241, Fix Punkt 4): symbolweite Unerreichbarkeit sichtbar ──────────────
+# Issue #1247 (GH #1117), Pitfall #449 — diese vier Tests laufen gegen die AUSGELIEFERTE
+# tournament.json (``eligible_requires_all`` listet ``'oos_min_alpha_tstat'``, PRÄFIGIERT), nicht
+# gegen ein handgeschriebenes unpräfigiertes Dict. ``observed_values`` bleibt bewusst unter der
+# NORMALISIERTEN Form ('min_alpha_tstat') geschlüsselt — das ist der dokumentierte Vertrag von
+# ``reward._normalize_clause``, unabhängig davon, wie die Klausel in ``eligible_requires_all``
+# geschrieben ist.
 def test_mandatory_gate_reachability_live_flags_structurally_unreachable_alpha_gate():
     """Bleibt t(α) in JEDEM Trial dieser Study unter der Schwelle, macht die neue Diagnose das
     SICHTBAR (analog #660 für eligible_requires_any), statt die Study lautlos auf 0 eligible
     Trials laufen zu lassen."""
-    tcfg = {"oos_min_alpha_tstat": 2.0, "eligible_requires_all": ["min_alpha_tstat"]}
+    tcfg = _load_production_tournament_cfg()
+    assert "oos_min_alpha_tstat" in tcfg["eligible_requires_all"]
     observed = {"min_alpha_tstat": [0.1, 0.3, -0.2, 0.5, 0.4, 0.2, 0.6, 0.1, 0.3, 0.2, 0.4]}
     unreachable = reward.check_mandatory_gate_reachability_live(tcfg, observed, n_evaluated=11)
-    assert unreachable == ["min_alpha_tstat"]
+    assert unreachable == ["oos_min_alpha_tstat"]
 
 
 def test_mandatory_gate_reachability_live_passes_when_reachable():
-    tcfg = {"oos_min_alpha_tstat": 2.0, "eligible_requires_all": ["min_alpha_tstat"]}
+    tcfg = _load_production_tournament_cfg()
     observed = {"min_alpha_tstat": [0.1, 3.0, 2.5, 0.5, 4.0, 0.2, 2.1, 0.1, 3.3, 0.2, 2.9]}
     unreachable = reward.check_mandatory_gate_reachability_live(tcfg, observed, n_evaluated=11)
     assert unreachable == []
 
 
 def test_mandatory_gate_reachability_live_insufficient_data_is_silent():
-    tcfg = {"oos_min_alpha_tstat": 2.0, "eligible_requires_all": ["min_alpha_tstat"]}
+    tcfg = _load_production_tournament_cfg()
     observed = {"min_alpha_tstat": [0.1, 0.2]}  # < any_arm_min_observations (Default 10)
     unreachable = reward.check_mandatory_gate_reachability_live(tcfg, observed, n_evaluated=2)
     assert unreachable == []
@@ -155,8 +175,42 @@ def test_mandatory_gate_reachability_live_insufficient_data_is_silent():
 def test_mandatory_gate_reachability_live_does_not_affect_any_arm_policy():
     """Die neue Diagnose ist READ-ONLY: sie darf resolve_any_arm_policy (die den OR-Arm 'droppen'
     kann) nicht beeinflussen, da min_alpha_tstat kein eligible_requires_any-Mitglied ist."""
-    tcfg = {"oos_min_alpha_tstat": 2.0, "eligible_requires_all": ["min_alpha_tstat"],
-           "eligible_requires_any": [], "any_arm_unreachable_policy": "drop_arm"}
+    tcfg = dict(_load_production_tournament_cfg())
+    tcfg["eligible_requires_any"] = []
+    tcfg["any_arm_unreachable_policy"] = "drop_arm"
     decision = reward.resolve_any_arm_policy(
         tcfg, {"min_alpha_tstat": [0.1] * 11}, n_evaluated=11)
     assert decision["dropped_clauses"] == []
+
+
+# ── Akzeptanzkriterium (#1247, GH #1117): Registry-Wächter ──────────────────────────────────────
+def test_live_threshold_registry_covers_production_config():
+    """``assert_live_threshold_registry_coverage`` MUSS auf der ausgelieferten tournament.json
+    klaglos durchlaufen — jede live-check-fähige Klausel mit einer konfigurierten Schwelle
+    (hier: 'min_alpha_tstat') löst in der jeweiligen Registry auf."""
+    tcfg = _load_production_tournament_cfg()
+    reward.assert_live_threshold_registry_coverage(tcfg)  # kein ValueError
+
+
+def test_live_threshold_registry_coverage_fails_loud_on_removed_map_entry(monkeypatch):
+    """Wird der Registry-Eintrag für 'min_alpha_tstat' künstlich entfernt (z. B. ein versehentlich
+    gelöschter Dict-Eintrag), MUSS der Wächter fail-loud abbrechen, statt die Klausel lautlos
+    ungeprüft zu lassen (Pitfall #448)."""
+    tcfg = _load_production_tournament_cfg()
+    monkeypatch.setattr(reward, "_ALL_CLAUSE_LIVE_THRESHOLD_KEYS", {})
+    try:
+        reward.assert_live_threshold_registry_coverage(tcfg)
+        assert False, "erwartetes ValueError blieb aus"
+    except ValueError as exc:
+        assert "min_alpha_tstat" in str(exc)
+
+
+def test_live_threshold_registry_coverage_ignores_non_live_checkable_clauses():
+    """Eine Klausel OHNE Live-Beobachtungsquelle (nicht Teil von ``_LIVE_CHECKABLE_ALL_CLAUSES``,
+    z. B. weil sie — wie ``oos_min_psr`` seit #1248 — nie ``observed_values`` aus Trial-User-Attrs
+    erhält) darf den Wächter nicht fail-loud auslösen, auch wenn ihre Config-Schwelle gesetzt und
+    die Klausel aktiv ist — nur die explizit registrierte Grundmenge ist geprüft-pflichtig."""
+    tcfg = dict(_load_production_tournament_cfg())
+    tcfg["eligible_requires_all"] = list(tcfg["eligible_requires_all"]) + ["oos_min_hypothetical"]
+    tcfg["oos_min_hypothetical"] = 1.23
+    reward.assert_live_threshold_registry_coverage(tcfg)  # kein ValueError

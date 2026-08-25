@@ -29,7 +29,7 @@ from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
     check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
     gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
-    check_mandatory_gate_reachability_live,
+    check_mandatory_gate_reachability_live, _normalize_clause as _reward_normalize_clause,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
@@ -3013,9 +3013,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             # dieselbe Telemetrie-Liste gemergt (keine Policy-Wirkung, siehe Docstring dort), damit
             # ``any_arm_live_unreachable`` (Akzeptanzkriterium #1241) auch ein strukturell
             # unerreichbares oos_min_alpha_tstat-Gate erfasst.
+            # Issue #1247 (GH #1117) — der Schlüssel MUSS die normalisierte (unpräfigierte) Form
+            # tragen, unabhängig davon, ob tournament.json['eligible_requires_all'] die Klausel
+            # mit oder ohne 'oos_'-Präfix listet (Pitfall #448): reward._normalize_clause ist die
+            # EINE Stelle, die diese Form definiert.
             any_arm_live_unreachable = list(any_arm_live_unreachable) + [
                 c for c in check_mandatory_gate_reachability_live(
-                    _tcfg_arm, {"min_alpha_tstat": live_alpha_tstats}, n_evaluated=evaluable)
+                    _tcfg_arm,
+                    {_reward_normalize_clause("oos_min_alpha_tstat"): live_alpha_tstats},
+                    n_evaluated=evaluable)
                 if c not in any_arm_live_unreachable
             ]
             _emit_any_arm_reachability_result(

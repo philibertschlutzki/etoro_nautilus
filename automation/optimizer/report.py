@@ -4607,6 +4607,15 @@ def _build_report(
         _already_evaluated_names, fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
     all_checks.append(("global", fail_fast_wired_check))
 
+    # Issue #1249 (GH #1119) — Schema-vs-Config-Drift-Wächter: jede check_*-Funktion, deren
+    # Config-Schema-Dokumentation eine Mitgliedschaft in fail_fast_invariants BEHAUPTET, muss die
+    # tatsächliche Liste auch einlösen (Symptom: gate_collinearity_policy's Schema-Text behauptete
+    # dies für check_gate_collinearity_decision_required, obwohl der Check fehlte).
+    fail_fast_schema_consistency_check = _inv.check_fail_fast_schema_consistency(
+        {"tournament.json": tournament_cfg, "optimizer.json": optimizer_cfg},
+        fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
+    all_checks.append(("global", fail_fast_schema_consistency_check))
+
     # Issue #1063 (Pitfall #370) — Meta-Wächter: jeder FAILende fail_fast_invariants-Check muss
     # seine Offender in der actual-Pair-Konvention tragen, sonst kann
     # sweep._offending_pairs_for_fail_fast_check die #1016-Breitenschwelle nie auswerten (stiller

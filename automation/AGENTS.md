@@ -6971,3 +6971,33 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 
 ### 🔴 Pitfall #447 — Pfad-Arithmetik relativ zu einer laufzeit-konfigurierbaren Variable bricht lautlos [Katalog #1247+, GitHub-Issue #1111]
 **Verbatim (Issue #1111 Abschnitt Pitfall-Ergänzung):** Pfad-Arithmetik, die eine feste Verzeichnistiefe relativ zu einer laufzeit-konfigurierbaren Variable annimmt (`WORK.parent.parent`, dokumentiert als „WORK ist X, also ist WORK.parent.parent Y"), bricht lautlos, sobald sich die Verschachtelungstiefe dieser Variable ändert — auch wenn die Variable selbst weiterhin ihren Zweck erfüllt. Sobald mehr als ein Aufrufer denselben Anker braucht: von einer unveränderlichen Wurzel (`PROJECT_ROOT`) aus verankern, nie von einer Variable aus hochklettern, deren Tiefe anderswo geändert werden kann. Dritte Instanz eines Musters, das `backtest_runner.py`/`daily_orchestrator.py` bereits korrekt vermeiden — bei jeder Änderung an einer von mehreren strukturell parallelen `config_dir()`-Implementierungen die Geschwisterimplementierungen auf dasselbe Muster prüfen.
+
+### 🔴 Pitfall #448 — Präfix-Normalisierung muss an JEDER Registry-Grenze stattfinden, nicht an der ersten [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1247/GH #1117)]
+**Verbatim (Issue #1142 Abschnitt 8):** Ein Klausel-Name, der in der Config präfigiert (`oos_min_x`) und im Code un-präfigiert (`min_x`) geführt wird, verschwindet an jedem `dict.get()` still. Sechste Instanz nach #649, #765, #810, #907, #1093. Die Reparatur einer einzelnen Map schliesst die Klasse nicht — nur ein Fail-Loud-Wächter, der jede aktive Klausel gegen jede Registry auflöst, tut das.
+
+### 🔴 Pitfall #449 — Ein Fixture, das seine eigene Config schreibt, testet den Fix und nicht die Produktion [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1247/GH #1117)]
+**Verbatim (Issue #1142 Abschnitt 8):** `test_issue_1093_1241` setzt `eligible_requires_all: ["min_alpha_tstat"]` und ist grün, während die Produktion `"oos_min_alpha_tstat"` ausliefert. Jeder Test einer Config-abhängigen Registry MUSS die reale `automation/config/*.json` laden. Zweite Instanz nach #649.
+
+### 🟠 Pitfall #450 — Ein Gate mit gemessenem Grenzbeitrag null ist kein konservatives Gate, sondern ein blockierender Alarm ohne Nutzen [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1248/GH #1118)]
+**Verbatim (Issue #1142 Abschnitt 8):** `oos_min_psr` verwarf 160 von 280 Trials, davon 0 solo, `marginal_delta = 0,0`. Es änderte keine Entscheidung und machte über den Kollinearitäts-Check 13 Studies nicht entscheidungsfähig. Gemessene Null-Marginalität ist eine Entfernungs-**Pflicht**, keine Empfehlung.
+
+### 🟠 Pitfall #451 — Eine Multiplizitätskorrektur muss auf der Statistik sitzen, die entscheidet [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1250/GH #1120)]
+**Verbatim (Issue #1142 Abschnitt 8):** Der vollständige Bailey/LdP-Apparat (`deflation_n_family`, E[max_N], CSCV-Declustering) lief auf dem PSR-Pfad, während die Entscheidung zu 100 % über einen unkorrigierten t(α)-Vorfilter fiel. Wechselt das bindende Gate, wandert die Korrekturpflicht mit.
+
+### 🔴 Pitfall #452 — Ein Filter, der die degenerierte Teilmenge entfernt, darf die Kennzahl nicht mit entfernen [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1259/GH #1129)]
+**Verbatim (Issue #1142 Abschnitt 8):** #1227 schloss Nullspannen-Bars korrekt aus der Median-Population aus. Bei 100 % Nullspannen-Bars ist die Population leer, der Tag wird nie emittiert, und der **blockierende** Check, für den die Kennzahl existiert, ist permanent unauswertbar. Eine bereinigte Kennzahl braucht immer einen Populationszähler und einen definierten Wert für die leere Population. Ergänzt Pitfall #446.
+
+### 🟠 Pitfall #453 — Ein Kostenstress, der jede Entität um denselben Betrag verschiebt, ist kein Stress [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1266/GH #1136)]
+**Verbatim (Issue #1142 Abschnitt 8):** Δ(2×−1×) war in 13/13 Studies bit-identisch, weil die Stufengrösse aus einem symbolweiten Pool-Median stammte. Die Rangfolge unter Stress war per Konstruktion identisch zur Rangfolge ohne Stress. Ein Stress-Szenario muss über die Entitäten streuen, sonst prüft es nichts — und die Streuung selbst gehört als Invariante geprüft.
+
+### 🟠 Pitfall #454 — Zwei Kennzahlen aus derselben Trade-Menge müssen dieselbe Kostenbasis tragen [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1257/GH #1127)]
+**Verbatim (Issue #1142 Abschnitt 8):** `total_return = +0,57 %` und `expectancy = −0,52 %/Trade` auf denselben 62 Trades unterscheiden sich um genau die kalibrierte Slippage. Wird eine Kostenkorrektur „an der Quelle" eingeführt, muss sie **jede** aus dieser Quelle abgeleitete Grösse erreichen — sonst sitzen zwei harte Gates auf zwei Kostenbasen. Das Vorzeichen-Kohärenz-Kriterium ist der billigste Wächter dagegen.
+
+### 🟠 Pitfall #455 — Ein Wächter, der über den Median urteilt, während die Entscheidung den Gewinner betrifft, urteilt über die falsche Entität [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1262/GH #1132)]
+**Verbatim (Issue #1142 Abschnitt 8):** `check_effective_stop_distance` gab in 3 von 13 Studies für den promotierten Gewinner das umgekehrte Verdikt wie für den Kohorten-Median — beide Zahlen lagen im selben Event nebeneinander. Eine blockierende Invariante muss auf der Entität ausgewertet werden, deren Promotion sie verhindern soll.
+
+### 🟡 Pitfall #456 — Zwei Empfehlungen können sich konstruktiv ausschliessen [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1270/GH #1140)]
+**Verbatim (Issue #1142 Abschnitt 8):** Frisches Work-Dir je Lauf (ertragswirksam, p = 0,046) und ein Champion-Store unterhalb von `WORK` sind gleichzeitig nicht erfüllbar. Bevor eine Betriebsempfehlung als „umgesetzt" gilt, prüfen, welche persistenten Zustände sie mit löscht. Verwandt mit Pitfall #447 (Pfad-Verankerung).
+
+### 🟡 Pitfall #457 — Eine Fail-Fast-Probe, deren Auslöser erst am Laufende eintritt, ist kein Fail-Fast [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1269/GH #1139)]
+**Verbatim (Issue #1142 Abschnitt 8):** `_fail_fast_min_symbols = 1` bei einem geplanten Symbol klingt nach „sofort" und bedeutet „nach allen 14 Studies". Die Auslöse-Einheit einer Frühabbruch-Probe muss feiner sein als die Einheit, deren Abschluss den Lauf beendet. Die Wallclock-Fraktion des Abbruchs gehört als Kennzahl in den Report.

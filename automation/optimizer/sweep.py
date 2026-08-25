@@ -390,13 +390,21 @@ def _assert_gate_reward_parity() -> None:
     Eintrag in ``tournament.json['gate_consolidation_priority']`` haben (Root-Cause #810: ein
     fehlender Eintrag fiel bislang auf einen stillen Sentinel, der den Redundanz-Alarm zur
     Entfernung einer harten Risikogrenze verleitete, statt den Sweep-Start abzubrechen)."""
-    from automation.optimizer.reward import assert_any_condition_parity, assert_gate_priority_coverage
+    from automation.optimizer.reward import (
+        assert_any_condition_parity, assert_gate_priority_coverage,
+        assert_live_threshold_registry_coverage,
+    )
     try:
         cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
     except (OSError, ValueError):
         return
     assert_any_condition_parity(cfg)
     assert_gate_priority_coverage(cfg)
+    # Issue #1247 (GH #1117) — Registry-Wächter neben der #810-Prioritäts-Pflicht: eine
+    # Präfix-Normalisierungslücke (Pitfall #448) darf den Sweep nicht erst nach voller Rechenzeit
+    # sichtbar werden lassen (vgl. #1117-Symptom: check_mandatory_gate_reachability_live lief 13
+    # Studies lang unbemerkt leer).
+    assert_live_threshold_registry_coverage(cfg)
 
 
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:

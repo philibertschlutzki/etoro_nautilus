@@ -7659,8 +7659,65 @@ def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
     )
 
 
+def check_fail_fast_schema_consistency(config_docs: dict[str, object], *,
+                                       fail_fast_invariants: list[str] | None = None,
+                                       ) -> InvariantResult:
+    """Issue #1249 (GH #1119) — Schema-vs-Config-Drift-Wächter: ``tournament.json``s
+    ``gate_collinearity_policy``-Schema-Dokumentation behauptete, ``invariants.
+    check_gate_collinearity_decision_required`` stehe „in fail_fast_invariants" und breche
+    „VOR Phase 1 ab" — tatsächlich fehlte der Check in ``optimizer.json['fail_fast_invariants']``,
+    ohne dass irgendein Wächter die Doku-Behauptung gegen die tatsächliche Liste geprüft hätte:
+    13 blockierende FAILs entstanden nach voller Rechenzeit statt vor Phase 1.
+
+    ``config_docs``: ``{quellenname: geparster Config-Dict, ...}`` (z. B.
+    ``{"tournament.json": tournament_cfg, "optimizer.json": optimizer_cfg}`` — bereits geladene
+    JSON-Dicts, keine Datei-I/O in dieser reinen Funktion). Jeder STRING-Blattwert wird rekursiv
+    durchsucht: enthält er die Zeichenkette ``'fail_fast_invariants'`` UND einen oder mehrere
+    ``check_*``-Bezeichner, MUSS jeder dieser Bezeichner tatsächlich in
+    ``optimizer.json['fail_fast_invariants']`` stehen — sonst FAIL (die Doku behauptet eine
+    Fail-Fast-Mitgliedschaft, die die Config nicht einlöst)."""
+    import re
+
+    def _iter_strings(obj):
+        if isinstance(obj, str):
+            yield obj
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                yield from _iter_strings(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                yield from _iter_strings(v)
+
+    configured = set(fail_fast_invariants or [])
+    missing: dict[str, list[str]] = {}
+    for source, doc in (config_docs or {}).items():
+        for text in _iter_strings(doc):
+            if "fail_fast_invariants" not in text:
+                continue
+            for name in sorted(set(re.findall(r"check_[a-z0-9_]+", text))):
+                if name not in configured:
+                    missing.setdefault(name, []).append(source)
+    passed = not missing
+    return InvariantResult(
+        name="check_fail_fast_schema_consistency",
+        passed=passed,
+        expected="jede check_*-Funktion, deren Config-Schema-Dokumentation eine Mitgliedschaft in "
+                 "fail_fast_invariants behauptet, steht auch tatsaechlich in "
+                 "optimizer.json['fail_fast_invariants']",
+        actual=missing if missing else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(missing)} check_*-Funktion(en) mit einer Schema-Doku-Behauptung ueber "
+                f"fail_fast_invariants, die die tatsaechliche Liste nicht einloest: "
+                f"{sorted(missing)} (Issue #1249)."),
+    )
+
+
 def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
-                                      fail_fast_invariants: list[str] | None = None) -> InvariantResult:
+                                      fail_fast_invariants: list[str] | None = None,
+                                      global_scope_checks: frozenset = frozenset(
+                                          {"check_gate_collinearity_decision_required"}),
+                                      ) -> InvariantResult:
     """Issue #1063 (Pitfall #370) — Meta-Invariante: JEDER FAILende Check, der in
     ``optimizer.json['fail_fast_invariants']`` steht, muss seine Offender in ``actual`` als
     ``{"<strategy>/<symbol>": wert}`` stempeln (die Konvention, die
@@ -7673,8 +7730,17 @@ def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
 
     Ein PASSender fail_fast-Check ist nie ein Offender (er hat nichts zu melden — ``actual=None``
     ist dort die korrekte, erwartete Form). Nur eine FAILende Auswertung ohne die Pair-Konvention
-    zählt."""
-    configured = set(fail_fast_invariants or [])
+    zählt.
+
+    Issue #1249 (GH #1119) — ``global_scope_checks`` (Default: ``check_gate_collinearity_
+    decision_required``) sind bewusst AUSGENOMMEN: ihr ``actual`` listet naturgemaess Gate-PAARE
+    (``{"pair": [...], "rho": ...}``), keine (Strategie, Symbol)-Offender — eine reine
+    Config-/Telemetrie-Entscheidung betrifft den GESAMTEN Lauf, nicht ein einzelnes Paar.
+    ``sweep._offending_pairs_for_fail_fast_check`` behandelt einen so nicht-parsbaren ``actual``-
+    Wert ohnehin bereits korrekt als globalen Abbruchgrund (Pitfall #349-Kommentar dort) — diese
+    Ausnahme verhindert nur, dass dasselbe, INTENDIERTE Verhalten hier als Konventionsverstoss
+    gemeldet wird."""
+    configured = set(fail_fast_invariants or []) - set(global_scope_checks)
     if not configured:
         return InvariantResult(
             name="check_fail_fast_actual_convention", passed=True,

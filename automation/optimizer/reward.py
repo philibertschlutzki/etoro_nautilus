@@ -297,13 +297,14 @@ def check_any_arm_reachability_live(tournament_cfg: dict | None,
     any_clauses = (tournament_cfg or {}).get("eligible_requires_any", []) or []
     unreachable = []
     for clause in any_clauses:
-        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(clause)
+        norm_clause = _normalize_clause(clause)
+        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(norm_clause)
         if threshold_key is None:
             continue
         threshold = (tournament_cfg or {}).get(threshold_key)
         if threshold is None:
             continue
-        samples = [float(v) for v in (observed_values or {}).get(clause, []) if v is not None]
+        samples = [float(v) for v in (observed_values or {}).get(norm_clause, []) if v is not None]
         if len(samples) < min_observations:
             continue
         sorted_vals = sorted(samples)
@@ -321,6 +322,25 @@ def check_any_arm_reachability_live(tournament_cfg: dict | None,
                 clause, float(threshold), p99, len(samples), threshold_key,
             )
     return unreachable
+
+
+def _normalize_clause(name: str | None) -> str | None:
+    """Issue #1247 (GH #1117), Pitfall #448 in AGENTS.md — kanonische, UNpräfigierte Form einer
+    ``eligible_requires_*``-Klausel. ``tournament.json`` listet Klauseln teils MIT (``oos_min_psr``)
+    und teils OHNE (``min_trades``) ``oos_``-Präfix; JEDE Registry-Lookup-Stelle in diesem Modul
+    (``_ALL_CLAUSE_LIVE_THRESHOLD_KEYS``, ``_ANY_ARM_LIVE_THRESHOLD_KEYS``, sowie jedes
+    ``observed_values``-Dict, dessen Schlüssel von einer dieser beiden Registries stammen) MUSS über
+    diese normalisierte Form gehen — sonst verschwindet die Klausel an EINEM beliebigen ``dict.get()``
+    still, während alle anderen bereits normalisierten Stellen (``_active_gate_collinearity_keys``,
+    ``backtest_runner._canonical_gate_key``) unauffällig bleiben. Sechste Instanz dieser Fehlerklasse
+    nach #649/#765/#810/#907/#1093 — siehe ``backtest_runner._canonical_gate_key`` für die
+    spiegelbildliche Normalisierung (dorthin wird IMMER auf ``oos_``-präfigiert normiert, hierher
+    IMMER auf un-präfigiert; beide Richtungen sind bewusst getrennt gehalten, weil die jeweiligen
+    Zielregistries (``condition_map`` vs. ``_ALL_CLAUSE_LIVE_THRESHOLD_KEYS``) unterschiedliche
+    Konventionen verwenden)."""
+    if name is None:
+        return None
+    return name[4:] if name.startswith("oos_") else name
 
 
 # Issue #1093/#1241 (P1) — clause -> Threshold-Key fuer die LIVE-Reachability eines MANDATORY
@@ -357,13 +377,14 @@ def check_mandatory_gate_reachability_live(tournament_cfg: dict | None,
     all_clauses = (tournament_cfg or {}).get("eligible_requires_all", []) or []
     unreachable = []
     for clause in all_clauses:
-        threshold_key = _ALL_CLAUSE_LIVE_THRESHOLD_KEYS.get(clause)
+        norm_clause = _normalize_clause(clause)
+        threshold_key = _ALL_CLAUSE_LIVE_THRESHOLD_KEYS.get(norm_clause)
         if threshold_key is None:
             continue
         threshold = (tournament_cfg or {}).get(threshold_key)
         if threshold is None:
             continue
-        samples = [float(v) for v in (observed_values or {}).get(clause, []) if v is not None]
+        samples = [float(v) for v in (observed_values or {}).get(norm_clause, []) if v is not None]
         if len(samples) < min_observations:
             continue
         sorted_vals = sorted(samples)
@@ -449,7 +470,8 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
     min_observations = int(tournament_cfg.get("any_arm_min_observations", 10))
     any_clauses = tournament_cfg.get("eligible_requires_any", []) or []
     has_checkable_clause = any(
-        len([v for v in (observed_values or {}).get(c, []) if v is not None]) >= min_observations
+        len([v for v in (observed_values or {}).get(_normalize_clause(c), []) if v is not None])
+        >= min_observations
         for c in any_clauses
     )
     if not has_checkable_clause:
@@ -462,13 +484,15 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
         return result
 
     for clause in unreachable:
-        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(clause)
+        norm_clause = _normalize_clause(clause)
+        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(norm_clause)
         if threshold_key is None:
             continue
         if policy == "drop_arm":
             result["dropped_clauses"].append(clause)
         else:  # 'recalibrate'
-            samples = sorted(float(v) for v in (observed_values or {}).get(clause, []) if v is not None)
+            samples = sorted(float(v) for v in (observed_values or {}).get(norm_clause, [])
+                             if v is not None)
             if not samples:
                 continue
             p99_idx = max(0, min(len(samples) - 1, round(0.99 * (len(samples) - 1))))
@@ -505,7 +529,7 @@ def _effective_gate_thresholds(tournament_cfg: dict | None,
     for k in tournament_cfg.get("eligible_requires_any") or []:
         if k in dropped:
             continue
-        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(k)
+        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(_normalize_clause(k))
         if threshold_key is not None and threshold_key in recalibrated:
             effective[k] = recalibrated[threshold_key]
         else:
@@ -883,6 +907,56 @@ def assert_gate_priority_coverage(tournament_cfg: dict | None) -> None:
             f"GATE_PRIORITY_COVERAGE_MISSING (#810): aktive(s) Gate(s) ohne Eintrag in "
             f"tournament.json['gate_consolidation_priority']: {missing}. Jedes aktive Gate "
             f"braucht eine explizite, begründete Priorität (Pitfall #134)."
+        )
+
+
+# Issue #1247 (GH #1117) — die Grundmenge der Klauseln, für die eine LIVE-Reachability-Diagnose
+# ÜBERHAUPT vorgesehen ist (siehe run_optimization.py: 'oos_alpha_tstat'/'oos_win_rate' werden je
+# Trial gesammelt und als ``observed_values`` durchgereicht — nicht jede ``eligible_requires_*``-
+# Klausel mit einer Config-Schwelle hat eine Live-Beobachtungsquelle, z. B. ``oos_min_psr`` NICHT).
+# Bewusst UNABHÄNGIG von ``_ALL_CLAUSE_LIVE_THRESHOLD_KEYS``/``_ANY_ARM_LIVE_THRESHOLD_KEYS``
+# deklariert (nicht von dort abgeleitet): würde ``assert_live_threshold_registry_coverage`` seine
+# Erwartungsmenge aus denselben Dicts ableiten, die es prüft, verschwände ein versehentlich
+# entfernter Map-Eintrag GEMEINSAM mit der Erwartung, die ihn hätte vermissen müssen — der Wächter
+# wäre blind gegen genau den Fehler, den er verhindern soll.
+_LIVE_CHECKABLE_ALL_CLAUSES = frozenset({"min_alpha_tstat"})
+_LIVE_CHECKABLE_ANY_CLAUSES = frozenset({"min_win_rate"})
+
+
+def assert_live_threshold_registry_coverage(tournament_cfg: dict | None) -> None:
+    """Issue #1247 (GH #1117) — FAIL-LOUD beim Sweep-Start (analog ``assert_gate_priority_coverage``,
+    #810): jede AKTIVE Klausel in ``eligible_requires_all``/``eligible_requires_any``, die zur
+    Grundmenge der live-check-fähigen Klauseln gehört (``_LIVE_CHECKABLE_ALL_CLAUSES``/
+    ``_LIVE_CHECKABLE_ANY_CLAUSES``) UND für die eine Live-Schwelle in der Config existiert
+    (``tournament_cfg['oos_<normalisierte Klausel>']`` ist gesetzt), MUSS nach ``_normalize_clause``
+    in der jeweiligen Registry (``_ALL_CLAUSE_LIVE_THRESHOLD_KEYS``/``_ANY_ARM_LIVE_THRESHOLD_KEYS``)
+    auflösbar sein. Andernfalls ``ValueError`` — schliesst die Fehlerklasse aus Pitfall #448
+    FAIL-LOUD, statt sie lautlos wieder einschleichen zu lassen (z. B. durch eine künftige
+    Umbenennung, die ``_normalize_clause`` selbst nicht mehr betrifft, aber eine Registry-Zeile
+    verwaist)."""
+    tournament_cfg = tournament_cfg or {}
+    problems: list[str] = []
+    for cfg_key, checkable, registry in (
+        ("eligible_requires_all", _LIVE_CHECKABLE_ALL_CLAUSES, _ALL_CLAUSE_LIVE_THRESHOLD_KEYS),
+        ("eligible_requires_any", _LIVE_CHECKABLE_ANY_CLAUSES, _ANY_ARM_LIVE_THRESHOLD_KEYS),
+    ):
+        for clause in tournament_cfg.get(cfg_key) or []:
+            norm = _normalize_clause(clause)
+            if norm not in checkable:
+                continue
+            if tournament_cfg.get(f"oos_{norm}") is None:
+                continue
+            if registry.get(norm) is None:
+                problems.append(
+                    f"{cfg_key}['{clause}'] (normiert '{norm}'): Live-Schwelle oos_{norm} ist "
+                    f"gesetzt, aber keine Registry-Auflösung."
+                )
+    if problems:
+        raise ValueError(
+            "LIVE_THRESHOLD_REGISTRY_COVERAGE_MISSING (#1247): " + "; ".join(problems) +
+            " — jede live-check-fähige Klausel mit einer konfigurierten Schwelle braucht einen "
+            "Eintrag in _ALL_CLAUSE_LIVE_THRESHOLD_KEYS bzw. _ANY_ARM_LIVE_THRESHOLD_KEYS "
+            "(AGENTS.md Pitfall #448)."
         )
 
 
