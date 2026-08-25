@@ -103,10 +103,15 @@ def test_simulation_semantics_version_v5_doc_references_the_bundled_purge():
 
 def test_both_bumps_are_at_their_expected_final_versions():
     """Sanity: die beiden Bumps, deren Purge-Buendelung hier dokumentiert wird, sind tatsaechlich
-    vollzogen (#1078/#1226 -> v25, #1080/#1228 -> v5, bereits vor dieser Session gemergt)."""
+    vollzogen (#1078/#1226 -> v25, #1080/#1228 -> v5, bereits vor dieser Session gemergt).
+
+    ``>=`` statt exakter Gleichheit — spaetere Bumps in DERSELBEN #1099-Merge-Reihenfolge (#1248
+    reward_semantics_version -> 26/27, #1259/#1129 simulation_semantics_version -> 6) duerfen diesen
+    Sanity-Check nicht rueckwirkend brechen (derselbe Musterwechsel wie test_issue_936_version_
+    bumps.py bei jedem spaeteren Bump)."""
     cfg = _optimizer_cfg()
-    assert cfg["reward_semantics_version"] == 25
-    assert cfg["simulation_semantics_version"] == 5
+    assert cfg["reward_semantics_version"] >= 25
+    assert cfg["simulation_semantics_version"] >= 5
 
 
 def test_optimizer_json_still_parses_as_valid_json():
