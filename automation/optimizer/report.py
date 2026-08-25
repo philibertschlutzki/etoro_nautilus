@@ -2154,10 +2154,23 @@ def _study_record(proposal: dict, study,
             int(a.get("oos_total_trades") or 0) for a in trial_attrs
             if a.get("oos_exit_reason_histogram")
         ),
+        # Issue #1265 (GH #1135) — der Nenner, gegen den exit_reason_histogram (und jeder daraus
+        # abgeleitete Anteil, z. B. time_box_exit_fraction) tatsaechlich normiert: Σ der Histogramm-
+        # Werte. Dust-Round-Trips erreichen dieses Histogramm strukturell NIE (an der Quelle in
+        # backtest_runner._filter_dust_round_trips verworfen, VOR jeder Exit-Telemetrie-Erfassung,
+        # siehe dortiger Docstring) — der Nenner ist deshalb bereits bereinigt; dieses Feld macht ihn
+        # nur SICHTBAR (Akzeptanzkriterium #1265: "der Nenner ist im Artefakt ablesbar"), statt ihn
+        # nur implizit ueber sum(exit_reason_histogram.values()) rekonstruierbar zu lassen.
+        "exit_reason_histogram_denominator_n": sum(_study_exit_reason_histogram.values()) or None,
         # Issue #919 — Anteil der Round-Trips, die über die 24-Bar-Zeitbox statt über den
         # Trailing-Stop/Profit-Target/Signal-Reversal schliessen (Eingangsgrösse für die
         # #925-Budgetdiskussion und GR-01, siehe hourly_strategy_base.ExitReason).
         "time_box_exit_fraction": _time_box_exit_fraction(trial_attrs),
+        # Issue #1265 (GH #1135) — derselbe Nenner wie exit_reason_histogram_denominator_n oben
+        # (time_box_exit_fraction ist ein Anteil DESSELBEN Histogramms); als eigenes Feld direkt
+        # neben time_box_exit_fraction gestempelt, damit ein Leser den Nenner nicht aus einem
+        # anderen Abschnitt des Records zusammensuchen muss.
+        "time_box_exit_fraction_denominator_n": sum(_study_exit_reason_histogram.values()) or None,
         # Issue #897 Fix 3 — Median des je-Trial GESAMPELTEN atr_trailing_multiplier (das
         # Konfigurations-Gegenstueck zur realisierten ATR-Telemetrie oben).
         # Issue #997/#1149 — faellt auf den strategy_defaults.json-Eintrag zurueck, wenn die
@@ -2322,6 +2335,19 @@ def _study_record(proposal: dict, study,
         # Issue #945/#1111 — die KANONISCHE Grösse: dieselbe Basis, aus der die Kostenstress-Werte
         # abgeleitet werden UND die seither berichtet/sortiert wird (summary_de.py Abschnitt 2.1).
         "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),
+        # Issue #1265 (GH #1135) — der Nenner von holdout_expectancy_capital_weighted (Σpnl/Σnotional
+        # ueber die Nennerboden-gefilterte Round-Trip-Population, siehe backtest_runner._calculate_
+        # stats-Docstring zu #1031/expectancy_capital_weighted): oos_total_trades ist bereits die
+        # DUST-BEREINIGTE Population (Dust wird AN DER QUELLE verworfen, VOR _calculate_stats,
+        # backtest_runner._filter_dust_round_trips — oos_total_trades zaehlt sie nie mit), abzueglich
+        # des ZUSAETZLICHEN, expectancy-spezifischen 5%-Median-Notional-Bodens
+        # (oos_expectancy_notional_degenerate_count, #1031) — der EINZIGE weitere Ausschluss dieser
+        # Population. Macht den Nenner ABLESBAR (Akzeptanzkriterium #1265), statt ihn nur indirekt
+        # aus zwei anderen Feldern rekonstruieren zu muessen.
+        "holdout_expectancy_capital_weighted_denominator_n": (
+            (int(holdout_metrics.get("oos_total_trades") or 0)
+             - int(holdout_metrics.get("oos_expectancy_notional_degenerate_count") or 0))
+            if holdout_metrics.get("oos_total_trades") is not None else None),
         # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — total_return/expectancy_capital_
         # weighted teilen sich seit diesem Fix dieselbe (kalibrierte-Slippage-korrigierte)
         # Kostenbasis (backtest_runner._apply_calibrated_slippage_to_mtm_series). Die _net-Felder
@@ -2368,7 +2394,15 @@ def _study_record(proposal: dict, study,
         "holdout_cvar_95": holdout_metrics.get("oos_cvar_95"),
         "holdout_es_99": holdout_metrics.get("oos_es_99"),
         "holdout_win_rate": holdout_metrics.get("oos_win_rate"),
+        # Issue #1265 (GH #1135) — der Nenner von holdout_win_rate/holdout_profit_factor ist
+        # DERSELBE bereits dust-bereinigte oos_total_trades (siehe backtest_runner._calculate_stats:
+        # win_rate = wins/n, profit_factor = gross_profit/gross_loss ueber DIESELBE n-grosse
+        # pnl_list, n = len(pnl_list) NACH der Dust-Filterung an der Quelle). Als eigenes Feld direkt
+        # neben den Kennzahlen gestempelt, statt nur indirekt ueber das entfernte holdout_total_trades
+        # (unten im Record) auffindbar zu sein — Akzeptanzkriterium #1265.
+        "holdout_win_rate_denominator_n": holdout_metrics.get("oos_total_trades"),
         "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
+        "holdout_profit_factor_denominator_n": holdout_metrics.get("oos_total_trades"),
         # Issue #1004 (Katalog #858) — Zensur-Telemetrie fuer summary_de.py Abschnitt 2.1 (kein
         # zweiter Datenzugriff, dieselbe holdout_metrics-Quelle wie holdout_profit_factor selbst).
         "holdout_profit_factor_censored": holdout_metrics.get("oos_profit_factor_censored") or False,

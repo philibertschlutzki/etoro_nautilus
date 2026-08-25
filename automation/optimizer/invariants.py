@@ -4840,6 +4840,12 @@ def check_sizing_cap_enforcement(
                 "f_realized_peak_max_pct": round(f_realized_peak_max_pct, 4),
                 "trade_amount_pct": trade_amount_pct,
                 "overshoot_factor": round(f_realized_peak_max_pct / trade_amount_pct, 4),
+                # Issue #1271 (GH #1141) Fix Punkt 3 — machinenlesbarer Befund-Code statt nur des
+                # freien detail-Texts: jeder FAIL dieses Checks IST per Definition eine Ueberschreitung
+                # jenseits von max_overshoot_factor (der Toleranz fuer Quantisierungsreste/Slippage
+                # zwischen Order und Fill, siehe Docstring) — nie eine reine Rundungsdifferenz, die
+                # ware bereits innerhalb der Toleranz und erreichte diesen Zweig nicht.
+                "reason": "LEVERAGE_OVERSHOOT",
             }
             # Issue #1085/#1233 Fix Punkt 3 — Umschlag als Kontext NEBEN dem entscheidenden
             # Peak-Wert, damit ein Befund als Hebelueberschreitung oder als Scale-in-Umschlag
@@ -7385,6 +7391,8 @@ def check_trailing_stop_risk_calibration_acceptance(
             expected=expected,
             actual={"trailing_stop_exit_share": round(trailing_stop_share, 4)
                     if trailing_stop_share is not None else None,
+                    # Issue #1265 (GH #1135) — siehe Kommentar am PASS/FAIL-Zweig unten.
+                    "trailing_stop_exit_share_denominator_n": total_exits,
                     "causal_hypothesis_state": causal_hypothesis_state},
             severity="high",
             inconclusive=True,
@@ -7406,6 +7414,8 @@ def check_trailing_stop_risk_calibration_acceptance(
             actual={
                 "trailing_stop_exit_share": round(trailing_stop_share, 4)
                     if trailing_stop_share is not None else None,
+                # Issue #1265 (GH #1135) — siehe Kommentar am PASS/FAIL-Zweig unten.
+                "trailing_stop_exit_share_denominator_n": total_exits,
                 "stop_calibration_spearman": None,
                 # Issue #1056/#1205 Fix Punkt d) — der Grund wird EXPLIZIT gestempelt, nicht nur
                 # implizit aus einem weggelassenen Feld erschlossen.
@@ -7477,6 +7487,11 @@ def check_trailing_stop_risk_calibration_acceptance(
             "fraction_studies_ratio_in_band": fraction_in_band,
             "trailing_stop_exit_share": round(trailing_stop_share, 4)
                 if trailing_stop_share is not None else None,
+            # Issue #1265 (GH #1135) — der Nenner von trailing_stop_exit_share (total_exits, bereits
+            # dust-bereinigt, siehe Berechnung/Kommentar oben) direkt daneben gestempelt, statt nur
+            # indirekt ueber n_dust_round_trips_excluded rekonstruierbar zu sein — Akzeptanzkriterium
+            # #1265 ("der Nenner ist im Artefakt ablesbar").
+            "trailing_stop_exit_share_denominator_n": total_exits,
             # Issue #1062/#1211 — dieselbe Zahl VOR der Dust-Bereinigung (siehe Kommentar an der
             # Berechnung oben), plus die ausgeschlossene Round-Trip-Zahl, damit die Bereinigung
             # selbst im Artefakt nachvollziehbar bleibt statt stillschweigend vorausgesetzt zu sein.
