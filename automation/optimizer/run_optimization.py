@@ -96,6 +96,16 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     # Stempelstelle oben, neben oos_win_rate) — Grundlage fuer reward.check_mandatory_gate_
     # reachability_live. oos_alpha/oos_beta bleiben holdout-only (kein Gate braucht sie live).
     "oos_alpha_n_periods": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_beta_regression, #1038/#1187)",
+    # Issue #1255/#1258 (GH #1125/#1128) — additive Audit-/Diagnostik-Felder der Alpha-Regression
+    # (backtest_runner._alpha_regression_diagnostics), holdout-only wie oos_alpha_n_periods direkt
+    # oben (kein Gate braucht sie live — anders als oos_alpha_tstat_hc3 selbst, das per Sweep-Trial
+    # gestempelt wird, siehe Stempelstelle neben oos_alpha_tstat).
+    "oos_alpha_tstat_df": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1255)",
+    "oos_alpha_n_total": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_informative": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_y_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_x_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    "oos_alpha_n_both_zero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_f_turnover_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_median, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_turnover_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_max, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_realized_peak_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_median, #1085/#1233 check_sizing_identity_coherence)",
@@ -3001,8 +3011,18 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                       if getattr(t, "user_attrs", {}).get("oos_win_rate") is not None]
     # Issue #1093/#1241 (P1) — dieselbe Live-Kohorte fuer das neue MANDATORY oos_min_alpha_tstat-
     # Gate (siehe reward.check_mandatory_gate_reachability_live-Docstring).
-    live_alpha_tstats = [getattr(t, "user_attrs", {}).get("oos_alpha_tstat") for t in trials
-                         if getattr(t, "user_attrs", {}).get("oos_alpha_tstat") is not None]
+    # Issue #1255 (GH #1125), Pitfall #454-Klasse — der Handler selbst
+    # (backtest_runner._evaluate_oos_eligibility) konsumiert seit diesem Fix oos_alpha_tstat_hc3
+    # statt der klassischen Statistik; die Live-Kohorte MUSS auf DERSELBEN Groesse sitzen, sonst
+    # diagnostiziert sie die Erreichbarkeit einer Statistik, die gar nicht mehr entscheidet. Fallback
+    # auf die klassische Statistik je Trial nur fuer Legacy-Trials ohne das neue User-Attr.
+    live_alpha_tstats = [
+        (getattr(t, "user_attrs", {}).get("oos_alpha_tstat_hc3")
+         if getattr(t, "user_attrs", {}).get("oos_alpha_tstat_hc3") is not None
+         else getattr(t, "user_attrs", {}).get("oos_alpha_tstat"))
+        for t in trials
+    ]
+    live_alpha_tstats = [v for v in live_alpha_tstats if v is not None]
     any_arm_live_unreachable = []
     # Issue #668 — hebt die reine #660-Warnung auf eine KONFIGURIERTE Policy (warn/drop_arm/
     # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
@@ -3788,6 +3808,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             # (siehe check_mandatory_gate_reachability_live unten).
             if metrics.oos_alpha_tstat is not None:
                 trial.set_user_attr("oos_alpha_tstat", metrics.oos_alpha_tstat)
+            # Issue #1255 (GH #1125), Pitfall #454-Klasse — DIESELBE "nur gesetzt, wenn vorhanden"-
+            # Konvention. Das oos_min_alpha_tstat-Gate konsumiert seit diesem Fix
+            # oos_alpha_tstat_hc3 (backtest_runner._evaluate_oos_eligibility); die LIVE-
+            # Reachability-Kohorte (unten) MUSS auf DERSELBEN Statistik sitzen wie das tatsaechliche
+            # Gate — sonst diagnostiziert sie die Erreichbarkeit einer anderen Groesse als der, die
+            # tatsaechlich entscheidet (exakt die Fehlerklasse aus Pitfall #454/#1257).
+            if metrics.oos_alpha_tstat_hc3 is not None:
+                trial.set_user_attr("oos_alpha_tstat_hc3", metrics.oos_alpha_tstat_hc3)
             if metrics.oos_profit_factor is not None:
                 trial.set_user_attr("oos_profit_factor", metrics.oos_profit_factor)
             if metrics.oos_expectancy is not None:

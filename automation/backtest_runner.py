@@ -805,7 +805,16 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     # UNDEFINIERTER t(α) (< 3 Perioden für die Regression, ``_alpha_beta_regression`` liefert dann
     # None) ist NICHT eligible — kein impliziter Pass.
     req_alpha_tstat = t_overrides.get("oos_min_alpha_tstat", tournament_cfg.get("oos_min_alpha_tstat"))
-    alpha_tstat = oos_metrics.get("oos_alpha_tstat")
+    # Issue #1255 (GH #1125), Pitfall #454-Klasse in AGENTS.md — das Gate konsumiert SEIT DIESEM FIX
+    # den HC3-robusten Schaetzer (``oos_alpha_tstat_hc3``, ``_alpha_regression_diagnostics``): die
+    # klassische ``SE(alpha)``-Formel unterstellt homoskedastische Residuen, eine auf der Mehrheit
+    # der Bars strukturell verletzte Annahme (Zero-Range-/Nicht-im-Markt-Baren). ``oos_alpha_tstat``
+    # (klassisch) bleibt UNVERAENDERT gestempelt (Ruecksichtsvergleich/Telemetrie,
+    # ``invariants.check_alpha_tstat_estimator_agreement``) — Fallback auf die klassische Statistik
+    # nur fuer Legacy-Metrics-Dicts ohne das neue Feld (z. B. vor #1255 archivierte Trials/Tests, die
+    # ``_evaluate_oos_eligibility`` direkt mit einem handgeschriebenen ``oos_metrics``-Dict
+    # aufrufen), NICHT als Produktionspfad.
+    alpha_tstat = oos_metrics.get("oos_alpha_tstat_hc3", oos_metrics.get("oos_alpha_tstat"))
     alpha_tstat_valid = True
     alpha_tstat_reason = ""
     if req_alpha_tstat is not None:
@@ -4386,6 +4395,87 @@ def _alpha_beta_regression(
     return alpha, float(beta), float(alpha_tstat)
 
 
+def _alpha_regression_diagnostics(
+    strategy_log_returns: "np.ndarray", benchmark_log_returns: "np.ndarray",
+) -> dict | None:
+    """Issue #1255 (GH #1125), Issue #1258 (GH #1128) — ADDITIVE Diagnostik neben
+    ``_alpha_beta_regression`` (bewusst eine SEPARATE Funktion statt einer Signaturänderung dort:
+    ``_alpha_beta_regression`` gibt seit #986/#1140 ein striktes 3-Tupel ``(alpha, beta,
+    alpha_tstat)`` zurück, das mehrere bestehende Tests per ``a, b, c = result`` entpacken — ein
+    laengeres Tupel würde diese mit ``ValueError: too many values to unpack`` brechen). Rechnet
+    dieselbe OLS-Anpassung eigenständig nach (identische geschlossene Form, trivialer Zusatzaufwand
+    gegenüber der Haupt-Regression), um zwei weitere, ADDITIVE Diagnosen zu liefern:
+
+    1. Issue #1255 — ``alpha_tstat`` (die Haupt-Regression) ist HOMOSKEDASTISCH: ``SE(alpha)^2 =
+       (RSS/(n-2))·(1/n + mean(x)²/Sxx)`` unterstellt eine über alle Bars KONSTANTE
+       Residualvarianz. Auf einer Bar-Serie mit ueberwiegend Zero-Range-/Nicht-im-Markt-Baren
+       (``zero_range_bar_fraction``/1-``session_coverage_fraction``) ist die Residualvarianz
+       strukturell bimodal (nahe 0 auf inaktiven Bars, groesser auf aktiven) — die Homoskedastie-
+       Annahme ist verletzt. HC3 (MacKinnon/White, geschlossene Form, kein neues Dependency) ist
+       der Sandwich-Schaetzer, der KEINE konstante Residualvarianz unterstellt: für die Intercept-
+       (Alpha-)Zeile der Regression ist das Alpha-Gewicht je Beobachtung
+       ``w_i = 1/n - mean(x)·(x_i - mean(x))/Sxx`` (dieselbe geschlossene Form, die auch
+       ``alpha = Σ w_i·y_i`` ergibt — die klassische OLS-Alpha-Formel), die HC3-Varianz ist
+       ``Var_HC3(alpha) = Σ w_i²·e_i²/(1-h_i)²`` mit dem Leverage ``h_i = 1/n + (x_i-mean(x))²/Sxx``
+       (derselbe Leverage-Wert wie in der klassischen SE-Formel, hier PRO BEOBACHTUNG statt
+       gepoolt). ``alpha_tstat_df`` = ``n_informative - 2`` (statt ``n - 2``, siehe Punkt 2) macht
+       eine spaetere t-Verteilungs-Nachschlagestelle konsistent mit der TATSAECHLICHEN Zahl
+       oekonomischer Ereignisse, nicht der Kalender-Bar-Zaehlung.
+
+    2. Issue #1258 — die Regressions-Grundgesamtheit auditierbar: ``n_total`` (== der bereits
+       gestempelte ``oos_alpha_n_periods``, hier als expliziter Alias fuer die Akzeptanzkriterien-
+       Feldliste), ``n_informative`` (``y_i != 0 ODER x_i != 0`` — mindestens EINE Seite trug
+       Information), ``n_y_nonzero``/``n_x_nonzero`` (Strategie- bzw. Benchmark-Seite einzeln),
+       ``n_both_zero`` (``n_total - n_informative``, exakte Partition — Akzeptanzkriterium
+       ``n_both_zero + n_informative == n_total``).
+
+    ``None`` unter DENSELBEN Bedingungen wie ``_alpha_beta_regression`` (< 3 Perioden, Var(x) == 0)
+    — beide Funktionen werden IMMER auf demselben ``(strategy_log_returns, benchmark_log_returns)``-
+    Paar aufgerufen, ``None``/nicht-``None`` faellt daher stets zusammen (kein Fall, in dem eine
+    Funktion einen Wert liefert und die andere ``None``)."""
+    import numpy as np
+    x = np.asarray(benchmark_log_returns, dtype=float)
+    y = np.asarray(strategy_log_returns, dtype=float)
+    n = len(x)
+    if n < 3 or len(y) != n:
+        return None
+    x_mean = x.mean()
+    y_mean = y.mean()
+    sxx = float(((x - x_mean) ** 2).sum())
+    if sxx <= 0.0:
+        return None
+    sxy = float(((x - x_mean) * (y - y_mean)).sum())
+    beta = sxy / sxx
+    alpha = float(y_mean - beta * x_mean)
+    residuals = y - (alpha + beta * x)
+
+    n_y_nonzero = int((y != 0.0).sum())
+    n_x_nonzero = int((x != 0.0).sum())
+    n_informative = int(((y != 0.0) | (x != 0.0)).sum())
+    n_both_zero = n - n_informative
+
+    leverage = 1.0 / n + (x - x_mean) ** 2 / sxx
+    one_minus_h = np.clip(1.0 - leverage, 1e-12, None)
+    w_alpha = 1.0 / n - x_mean * (x - x_mean) / sxx
+    var_alpha_hc3 = float(((w_alpha ** 2) * (residuals ** 2) / (one_minus_h ** 2)).sum())
+    if var_alpha_hc3 > 0.0:
+        alpha_tstat_hc3 = alpha / math.sqrt(var_alpha_hc3)
+    else:
+        # Dieselbe degenerierte-Fit-Konvention wie _alpha_beta_regression (Rausch-nahe Residuen).
+        alpha_tstat_hc3 = (
+            math.copysign(_ALPHA_TSTAT_DEGENERATE_MAGNITUDE, alpha) if alpha != 0.0 else 0.0)
+
+    return {
+        "alpha_tstat_hc3": float(alpha_tstat_hc3),
+        "alpha_tstat_df": max(0, n_informative - 2),
+        "n_total": n,
+        "n_informative": n_informative,
+        "n_y_nonzero": n_y_nonzero,
+        "n_x_nonzero": n_x_nonzero,
+        "n_both_zero": n_both_zero,
+    }
+
+
 def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     """Issue #899 — reine Aggregationsfunktion über eine Liste von Round-Trip-Exit-Telemetrie-
     Dicts (``{"exit_reason", "atr_median_bps", "atr_min_bps", "pnl_bps"}``, siehe
@@ -5640,6 +5730,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #986/#1140 — α/β-Regression der Perioden-Returns gegen die Benchmark-Perioden-
         # Returns (None, solange keine indexgleiche Benchmark-Serie vorlag).
         oos_alpha = oos_beta = oos_alpha_tstat = oos_alpha_n_periods = None
+        # Issue #1255/#1258 (GH #1125/#1128) — additive Regressions-Diagnostik (HC3-SE + Populations-
+        # Auszaehlung), siehe _alpha_regression_diagnostics-Docstring.
+        oos_alpha_diagnostics: dict | None = None
         if mtm_series is not None and not mtm_series.empty and _wf:
             # Issue #551 — Equity-Slices HALB-OFFEN [s, e), konsistent zur Trade-Klassifikation
             # (``any(s <= ts < e ...)``). ``pandas.loc[a:b]`` ist auf BEIDEN Seiten geschlossen; da
@@ -5741,6 +5834,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             # gesamte Fenster). ``n`` ist hier IDENTISCH zur Regressions-
                             # Stichprobengroesse (``len(_strat_log_rets) == len(_bench_log_rets)``).
                             oos_alpha_n_periods = len(_strat_log_rets)
+                            # Issue #1255/#1258 (GH #1125/#1128) — dieselben Perioden-Log-Returns,
+                            # additiv (siehe _alpha_regression_diagnostics-Docstring).
+                            oos_alpha_diagnostics = _alpha_regression_diagnostics(
+                                _strat_log_rets, _bench_log_rets)
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
             # Issue #1257 (GH #1127) — analog zum WF-Zweig oben, Nicht-Walk-Forward-Pfad.
@@ -6088,6 +6185,20 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 # ``α·n`` (das oekonomisch lesbare Holdout-Alpha, Akzeptanzkriterium #1038) im
                 # Report berechenbar.
                 oos_metrics["oos_alpha_n_periods"] = oos_alpha_n_periods
+                # Issue #1255/#1258 (GH #1125/#1128) — additive HC3-SE-/Populations-Diagnostik,
+                # siehe _alpha_regression_diagnostics-Docstring. ``None`` nur, falls die
+                # Haupt-Regression selbst ``None`` geblieben waere (siehe dortiger Docstring: beide
+                # Funktionen laufen auf demselben Eingabepaar, fallen daher stets zusammen) —
+                # dieser Zweig ist bereits an ``oos_alpha is not None`` gated, daher hier defensiv
+                # geprueft statt blind indiziert.
+                if oos_alpha_diagnostics is not None:
+                    oos_metrics["oos_alpha_tstat_hc3"] = oos_alpha_diagnostics["alpha_tstat_hc3"]
+                    oos_metrics["oos_alpha_tstat_df"] = oos_alpha_diagnostics["alpha_tstat_df"]
+                    oos_metrics["oos_alpha_n_total"] = oos_alpha_diagnostics["n_total"]
+                    oos_metrics["oos_alpha_n_informative"] = oos_alpha_diagnostics["n_informative"]
+                    oos_metrics["oos_alpha_n_y_nonzero"] = oos_alpha_diagnostics["n_y_nonzero"]
+                    oos_metrics["oos_alpha_n_x_nonzero"] = oos_alpha_diagnostics["n_x_nonzero"]
+                    oos_metrics["oos_alpha_n_both_zero"] = oos_alpha_diagnostics["n_both_zero"]
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt

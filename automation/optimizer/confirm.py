@@ -644,6 +644,14 @@ def _metrics_dict(m) -> dict:
         # Issue #1038/#1187 — die Regressions-Stichprobengroesse; macht α·n (das oekonomisch
         # lesbare Holdout-Alpha) in report.py berechenbar.
         "oos_alpha_n_periods": getattr(m, "oos_alpha_n_periods", None),
+        # Issue #1255/#1258 (GH #1125/#1128) — siehe parsing.TournamentMetrics-Docstring.
+        "oos_alpha_tstat_hc3": getattr(m, "oos_alpha_tstat_hc3", None),
+        "oos_alpha_tstat_df": getattr(m, "oos_alpha_tstat_df", None),
+        "oos_alpha_n_total": getattr(m, "oos_alpha_n_total", None),
+        "oos_alpha_n_informative": getattr(m, "oos_alpha_n_informative", None),
+        "oos_alpha_n_y_nonzero": getattr(m, "oos_alpha_n_y_nonzero", None),
+        "oos_alpha_n_x_nonzero": getattr(m, "oos_alpha_n_x_nonzero", None),
+        "oos_alpha_n_both_zero": getattr(m, "oos_alpha_n_both_zero", None),
         # Issue #1078/#1226 (P1, Semantik-Bump) — welche Kostenbasis DIESE Holdout-Re-Evaluation
         # tatsaechlich speiste (siehe backtest_runner._apply_calibrated_slippage_deduction). Der
         # Schluessel traegt bewusst den vollen ``oos_``-Feldnamen (Konvention dieses Dicts, siehe

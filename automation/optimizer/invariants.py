@@ -6666,6 +6666,162 @@ def check_cost_basis_coherence(study_records: list[dict]) -> InvariantResult:
     )
 
 
+def check_alpha_tstat_estimator_agreement(study_records: list[dict], *,
+                                          max_relative_deviation: float = 0.25) -> InvariantResult:
+    """Issue #1255 (GH #1125), Pitfall #454-Klasse in AGENTS.md — ``holdout_alpha_tstat``
+    (klassisch, homoskedastie-unterstellend) und ``holdout_alpha_tstat_hc3`` (Sandwich-Schaetzer,
+    unterstellt KEINE konstante Residualvarianz, siehe ``backtest_runner._alpha_regression_
+    diagnostics``-Docstring) MUESSEN auf einer echt homoskedastischen Residuenserie nahe beieinander
+    liegen. Eine Studie, deren Bar-Serie ueberwiegend Zero-Range-/Nicht-im-Markt-Baren enthaelt
+    (die dokumentierte Produktionsrealitaet, siehe Issue-Symptom: ``session_coverage_fraction =
+    0,2389``, ``zero_range_bar_fraction = 1,0``), verletzt diese Annahme strukturell — eine relative
+    Abweichung > ``max_relative_deviation`` (Default 25 %) macht das EMPIRISCH sichtbar, statt es
+    unter der (seit #1255 fuer das Gate selbst irrelevanten, da HC3 konsumiert wird) klassischen
+    Zahl zu verstecken.
+
+    Relative Abweichung: ``|hc3 - classic| / max(|classic|, epsilon)`` — ein Nenner nahe Null
+    (``classic`` selbst nahe 0, z. B. ein Trial ohne messbares Alpha) wuerde die relative Metrik
+    sonst explodieren lassen, ohne dass die ABSOLUTE Differenz oekonomisch bedeutsam waere; ein
+    epsilon-Boden (1e-6, dieselbe Groessenordnung wie der Alpha-Selbstwert je Bar) haelt die Metrik
+    fuer nahe-Null-Faelle definiert, ohne sie kuenstlich zu unterdruecken.
+
+    Nur Studies mit BEIDEN Feldern gesetzt werden geprueft (Legacy-Reports vor #1255 oder Studies
+    ohne erfolgreiche Alpha-Regression ⇒ ``inconclusive=True``, kein stiller Pass-durch-Abwesenheit).
+    ``severity='high'`` (Fix-Vorgabe des Issues) — ein Befund hier ist eine Modell-Diagnose
+    (Homoskedastie widerlegt), keine harte Selektions-Inkohaerenz wie ``check_cost_basis_
+    coherence`` (severity ``'blocking'``)."""
+    checked = [
+        r for r in study_records
+        if r.get("holdout_alpha_tstat") is not None and r.get("holdout_alpha_tstat_hc3") is not None
+    ]
+    expected = (
+        f"|holdout_alpha_tstat_hc3 - holdout_alpha_tstat| / max(|holdout_alpha_tstat|, 1e-6) <= "
+        f"{max_relative_deviation} je Study (Homoskedastie-Annahme der klassischen SE-Formel "
+        "empirisch bestaetigt)"
+    )
+    if not checked:
+        return InvariantResult(
+            name="check_alpha_tstat_estimator_agreement",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="high",
+            detail="Kein Report-Datensatz traegt sowohl holdout_alpha_tstat als auch holdout_"
+                   "alpha_tstat_hc3 (Report vor #1255 oder keine Study mit erfolgreicher "
+                   "Alpha-Regression) — nicht auswertbar.",
+            inconclusive=True,
+        )
+    offenders: dict[str, dict] = {}
+    for r in checked:
+        classic = float(r["holdout_alpha_tstat"])
+        hc3 = float(r["holdout_alpha_tstat_hc3"])
+        rel_dev = abs(hc3 - classic) / max(abs(classic), 1e-6)
+        if rel_dev > max_relative_deviation:
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = {
+                "holdout_alpha_tstat": classic, "holdout_alpha_tstat_hc3": hc3,
+                "relative_deviation": round(rel_dev, 4),
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_alpha_tstat_estimator_agreement",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit > {max_relative_deviation:.0%} relativer "
+                f"Abweichung zwischen klassischem und HC3-t(alpha): {offenders} — die "
+                "Homoskedastie-Annahme der klassischen SE-Formel ist auf diesen Studies empirisch "
+                "widerlegt (#1255)."),
+    )
+
+
+def check_beta_exposure_plausibility(study_records: list[dict], *,
+                                     min_exposure_fraction: float = 0.10,
+                                     min_beta_fraction_of_expected: float = 0.25) -> InvariantResult:
+    """Issue #1256 (GH #1126) — β-Plausibilitäts-Invariante gegen Exposure und Sizing.
+
+    Symptom. 13 von 14 Strategien sind long-only bei 15 % Sizing; |β| bleibt in 13/13 Studies unter
+    0,0503, und vier long-only-Studies tragen ein NEGATIVES β (AdxAtr −0,0147 bei 85,6 % Exposure,
+    erwartet ≈ +0,128).
+
+    Root-Cause. Es gab keine Prüfung, ob das geschätzte β mit der bekannten Marktbeteiligung
+    vereinbar ist. Die gesamte Begründung des t(α)-Gates ("β trennt Marktbeteiligung von Alpha",
+    #1093/#1241) ruhte auf einer unverifizierten Annahme — ein Beta, das WEDER positiv NOCH in der
+    Groessenordnung der bekannten Long-only-Exposure liegt, ist entweder ein Regressionsartefakt
+    (zu kurzes/entartetes Fenster) oder ein Indiz, dass die Benchmark-Serie nicht das misst, was sie
+    zu messen vorgibt — in beiden Faellen ist t(α) auf dieser Study nicht vertrauenswürdig.
+
+    Nur STUDIES OHNE Short-Erlaubnis (``allow_short`` fehlt oder ``False`` — der Default) werden
+    geprüft: bei einer ausschliesslich long-only handelnden Strategie ist β bei jeder MESSBAREN
+    Exposure (``holdout_exposure_fraction >= min_exposure_fraction``, Default 10 % — darunter ist
+    die Regression auf zu wenigen aktiven Bars ohnehin kaum belastbar) durch die Konstruktion selbst
+    auf ``[0, trade_amount_pct/100]`` beschränkt (kein Hebel in diesem System, siehe
+    ``report._allow_short_by_strategy``-Docstring) — NEGATIV oder UNPLAUSIBEL KLEIN
+    (``< min_beta_fraction_of_expected · beta_expected``, Default 25 %) ist beides ein FAIL.
+    ``allow_short=True``-Studies (z. B. ComboTrendVwap) haben KEIN vorhersagbares Beta-Vorzeichen —
+    sie werden von der Prüfung ausgenommen, aber NAMENTLICH als ausgenommen ausgewiesen (nicht
+    stillschweigend uebersprungen), damit ein Bericht-Leser die Ausnahme nachvollziehen kann.
+
+    ``severity='high'`` (Fix-Vorgabe) — dies ist eine Modell-/Mess-Plausibilitaets-Diagnose, keine
+    harte Selektions-Inkohaerenz wie ``check_cost_basis_coherence`` (``'blocking'``). Studies ohne
+    aufloesbares ``beta_expected``/``holdout_beta`` (fehlende Exposure-/Sizing-Basis oder keine
+    erfolgreiche Alpha-Regression) sind NICHT auswertbar und werden uebersprungen; kein
+    Report-Datensatz mit BEIDEN Feldern ⇒ ``inconclusive=True``."""
+    long_only = [r for r in study_records if not r.get("allow_short")]
+    exempted = sorted(
+        f"{r.get('strategy')}/{r.get('symbol')}" for r in study_records if r.get("allow_short"))
+    checked = [
+        r for r in long_only
+        if r.get("holdout_beta") is not None and r.get("beta_expected") is not None
+        and (r.get("holdout_exposure_fraction") or 0.0) >= min_exposure_fraction
+    ]
+    expected = (
+        f"long-only-Studies mit holdout_exposure_fraction >= {min_exposure_fraction}: "
+        f"holdout_beta >= 0 UND holdout_beta >= {min_beta_fraction_of_expected} · beta_expected "
+        "(beta_expected = holdout_exposure_fraction · trade_amount_pct/100); allow_short=True-"
+        "Studies ausgenommen (namentlich ausgewiesen)"
+    )
+    if not checked:
+        return InvariantResult(
+            name="check_beta_exposure_plausibility",
+            passed=True,
+            expected=expected,
+            actual={"exempted_allow_short_studies": exempted} if exempted else None,
+            severity="high",
+            detail="Kein Report-Datensatz mit long-only, >= 10% Exposure UND aufloesbarem "
+                   "beta_expected/holdout_beta — nicht auswertbar.",
+            inconclusive=True,
+        )
+    offenders: dict[str, dict] = {}
+    for r in checked:
+        beta_measured = float(r["holdout_beta"])
+        beta_expected = float(r["beta_expected"])
+        if beta_measured < 0.0 or beta_measured < min_beta_fraction_of_expected * beta_expected:
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = {
+                "exposure_fraction": r.get("holdout_exposure_fraction"),
+                "trade_amount_pct": r.get("trade_amount_pct"),
+                "beta_expected": beta_expected,
+                "beta_measured": beta_measured,
+            }
+    passed = not offenders
+    actual = dict(offenders)
+    if exempted:
+        actual["exempted_allow_short_studies"] = exempted
+    return InvariantResult(
+        name="check_beta_exposure_plausibility",
+        passed=passed,
+        expected=expected,
+        actual=actual or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} long-only Study/Studies mit unplausiblem β (negativ oder < "
+                f"{min_beta_fraction_of_expected:.0%} des erwarteten Werts): {offenders} (#1256)."),
+    )
+
+
 def _resolve_causal_hypothesis_state(
     candidates: list[dict], *, anchor_control_run_available: bool = False,
 ) -> str:

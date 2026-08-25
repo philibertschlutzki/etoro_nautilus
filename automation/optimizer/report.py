@@ -212,6 +212,29 @@ def _emit_cost_model_realism_event(cost_model_realism_source: str, studies: list
         }, level=logging.INFO)
 
 
+def _allow_short_by_strategy(base_cfg: Path | None = None) -> dict[str, bool]:
+    """Issue #1256 (GH #1126) — der EFFEKTIVE ``allow_short``-Flag je Strategie (``strategies.json``
+    ``[params][allow_short]``, dieselbe Ueberschreibungs-Quelle wie ``_trade_amount_pct_by_strategy``
+    direkt unten — ``strategy_defaults.json`` traegt (Stand dieses Fixes) kein ``allow_short``-Feld,
+    daher keine zweite Quelle noetig). Fehlt der Key ⇒ ``False`` (long-only, der Default jeder
+    Strategie ohne expliziten Short-Support). Rohmaterial für ``invariants.check_beta_exposure_
+    plausibility``: nur long-only-Strategien haben ein VORHERSAGBARES Vorzeichen fuer β (positiv,
+    proportional zur Exposure) — eine Strategie mit ``allow_short=True`` kann strukturell negatives β
+    tragen, ohne dass das ein Fehler waere."""
+    cfg_dir = base_cfg or config_dir()
+    out: dict[str, bool] = {}
+    strategies_cfg = _load_json(cfg_dir / "strategies.json") or {}
+    for entry in strategies_cfg.get("strategies") or []:
+        if not isinstance(entry, dict):
+            continue
+        strat = entry.get("strategy_class")
+        if not strat:
+            continue
+        allow_short = (entry.get("params") or {}).get("allow_short")
+        out[strat] = bool(allow_short) if allow_short is not None else False
+    return out
+
+
 def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, float]:
     """Issue #1028 (Katalog #866) — der EFFEKTIVE ``trade_amount_pct`` je Strategie
     (``strategy_defaults.json``, ``strategies.json[params]`` hat Vorrang, siehe
@@ -2291,6 +2314,23 @@ def _study_record(proposal: dict, study,
         # übrigen Prozent-Spalten dieses Berichts verwenden (Größenordnung < 5 %, siehe Issue-
         # Referenzwerte −1,450 % … +0,449 %) — kein zweites, inkonsistentes Rundungsschema.
         "holdout_alpha_n_periods": holdout_metrics.get("oos_alpha_n_periods"),
+        # Issue #1255 (GH #1125), Pitfall #454-Klasse — HC3-robuster Schaetzer neben dem
+        # (homoskedastie-unterstellenden) holdout_alpha_tstat oben; das oos_min_alpha_tstat-Gate
+        # konsumiert seither DIESEN Wert (backtest_runner._evaluate_oos_eligibility). holdout_
+        # alpha_tstat_df sind die auf die informative Zeilenzahl gesetzten Freiheitsgrade (statt
+        # der Kalender-Bar-Zaehlung holdout_alpha_n_periods).
+        "holdout_alpha_tstat_hc3": holdout_metrics.get("oos_alpha_tstat_hc3"),
+        "holdout_alpha_tstat_df": holdout_metrics.get("oos_alpha_tstat_df"),
+        # Issue #1258 (GH #1128) — Regressions-Grundgesamtheit auditierbar: wie viele der
+        # holdout_alpha_n_periods Kalender-Bars ueberhaupt Information trugen (Strategie- oder
+        # Benchmark-Seite ungleich Null). n_total ist ein expliziter Alias von holdout_alpha_
+        # n_periods (Akzeptanzkriterien-Feldliste des Issues, dieselbe Zahl, siehe backtest_runner.
+        # _alpha_regression_diagnostics-Docstring).
+        "holdout_alpha_n_total": holdout_metrics.get("oos_alpha_n_total"),
+        "holdout_alpha_n_informative": holdout_metrics.get("oos_alpha_n_informative"),
+        "holdout_alpha_n_y_nonzero": holdout_metrics.get("oos_alpha_n_y_nonzero"),
+        "holdout_alpha_n_x_nonzero": holdout_metrics.get("oos_alpha_n_x_nonzero"),
+        "holdout_alpha_n_both_zero": holdout_metrics.get("oos_alpha_n_both_zero"),
         "holdout_alpha_times_n_pct": (
             holdout_metrics["oos_alpha"] * holdout_metrics["oos_alpha_n_periods"] * 100.0
             if (holdout_metrics.get("oos_alpha") is not None
@@ -3638,6 +3678,9 @@ def _build_report(
     # Issue #1028 (Katalog #866) — einmal je Report-Lauf gelesen; Rohmaterial für
     # invariants.check_sizing_identity_coherence.
     _trade_amount_pct_map = _trade_amount_pct_by_strategy()
+    # Issue #1256 (GH #1126) — einmal je Report-Lauf gelesen; Rohmaterial für
+    # invariants.check_beta_exposure_plausibility.
+    _allow_short_map = _allow_short_by_strategy()
 
     studies_out: list[dict[str, Any]] = []
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
@@ -3810,6 +3853,22 @@ def _build_report(
             trials_override=_own_run_trials if _foreign_run_trials else None)
         # Issue #1028 (Katalog #866) — Rohmaterial für invariants.check_sizing_identity_coherence.
         record["trade_amount_pct"] = _trade_amount_pct_map.get(record.get("strategy"))
+        # Issue #1256 (GH #1126) — β-Plausibilitäts-Grundlage: bei ausschliesslich LONG-Positionen
+        # (``allow_short=False``, der Default) ist die erwartete Marktbeteiligung (β) proportional
+        # zur tatsaechlich gemessenen Exposure-Zeit und der konfigurierten Positionsgroesse —
+        # ``beta_expected = holdout_exposure_fraction · trade_amount_pct/100`` (Fix-Vorgabe des
+        # Issues; ``trade_amount_pct`` ist in Prozent, daher ``/100``). Nur fuer long-only-Strategien
+        # gesetzt (``allow_short=True`` kann strukturell negatives/abweichendes β tragen, siehe
+        # ``_allow_short_by_strategy``-Docstring); ``None`` ohne aufloesbare Exposure/Sizing-Basis
+        # (kein Raten).
+        record["allow_short"] = _allow_short_map.get(record.get("strategy"), False)
+        _exposure_for_beta = record.get("holdout_exposure_fraction")
+        _trade_pct_for_beta = record.get("trade_amount_pct")
+        record["beta_expected"] = (
+            float(_exposure_for_beta) * float(_trade_pct_for_beta) / 100.0
+            if (not record["allow_short"] and _exposure_for_beta is not None
+                and _trade_pct_for_beta is not None) else None
+        )
         # Issue #1088 (Katalog #921) — nur gestempelt, wenn TATSAECHLICH ein Trial dieser Study den
         # run_id-Nachweis traegt (der Legacy-/Zeitfenster-Fallback-Pfad ohne Nachweis bleibt
         # None — fail-open, siehe ``assert_invariant_scope_uncontaminated``-Docstring).
@@ -4378,6 +4437,13 @@ def _build_report(
     # staerker als der Geschwister-Check oben: ein Vorzeichen-Widerspruch untergraebt die Selektion
     # selbst, keine reine Telemetrie-Abweichung).
     all_checks.append(("global", _inv.check_cost_basis_coherence(studies_out)))
+    # Issue #1255 (GH #1125), Pitfall #454-Klasse — Homoskedastie-Diagnose der Alpha-Regression:
+    # klassischer vs. HC3-robuster t(alpha), severity='high' (Modell-Diagnose, keine harte
+    # Selektions-Inkohaerenz).
+    all_checks.append(("global", _inv.check_alpha_tstat_estimator_agreement(studies_out)))
+    # Issue #1256 (GH #1126) — β-Plausibilitäts-Diagnose gegen die bekannte Long-only-Exposure,
+    # severity='high' (Modell-/Mess-Plausibilitaet, keine harte Selektions-Inkohaerenz).
+    all_checks.append(("global", _inv.check_beta_exposure_plausibility(studies_out)))
 
     # Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter: divergiert das im Backtest
     # konfigurierte trade_amount_pct vom live tatsächlich gefahrenen MomentumLSAllocator-Deckel.

@@ -357,6 +357,21 @@ class TournamentMetrics:
     oos_total_return_gross: float | None = None
     oos_expectancy_capital_weighted_net: float | None = None
     oos_expectancy_capital_weighted_gross: float | None = None
+    # Issue #1255 (GH #1125), Pitfall #454-Klasse — HC3-robuster Standardfehler-Schaetzer der
+    # Alpha-Regression (siehe backtest_runner._alpha_regression_diagnostics-Docstring) neben dem
+    # bestehenden, homoskedastie-unterstellenden ``oos_alpha_tstat``; ``oos_alpha_tstat_df`` die
+    # AUF DIE INFORMATIVE Zeilenzahl (statt der Kalender-Bar-Zaehlung) gesetzten Freiheitsgrade.
+    # Issue #1258 (GH #1128) — Regressions-Grundgesamtheit auditierbar: ``oos_alpha_n_total`` (Alias
+    # von ``oos_alpha_n_periods``, expliziter Feldname fuer die Akzeptanzkriterien-Liste),
+    # ``oos_alpha_n_informative``/``oos_alpha_n_y_nonzero``/``oos_alpha_n_x_nonzero``/
+    # ``oos_alpha_n_both_zero``. Defaults rueckwaertskompatibel (Legacy-JSONs vor #1255/#1258).
+    oos_alpha_tstat_hc3: float | None = None
+    oos_alpha_tstat_df: int | None = None
+    oos_alpha_n_total: int | None = None
+    oos_alpha_n_informative: int | None = None
+    oos_alpha_n_y_nonzero: int | None = None
+    oos_alpha_n_x_nonzero: int | None = None
+    oos_alpha_n_both_zero: int | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -560,6 +575,17 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_total_return_gross = oos_metrics.get("total_return_gross")
     oos_expectancy_capital_weighted_net = oos_metrics.get("expectancy_capital_weighted_net")
     oos_expectancy_capital_weighted_gross = oos_metrics.get("expectancy_capital_weighted_gross")
+    # Issue #1255/#1258 (GH #1125/#1128) — siehe TournamentMetrics-Docstring. Diese Gruppe von
+    # oos_metrics-Schluesseln traegt (anders als z. B. 'total_return'/'expectancy_capital_weighted'
+    # oben) das 'oos_'-Praefix bereits IM DICT-KEY selbst — dieselbe Konvention wie das bestehende
+    # 'oos_alpha_n_periods' (Zeile oben), nicht die der #1257-Kostenbasis-Felder.
+    oos_alpha_tstat_hc3 = oos_metrics.get("oos_alpha_tstat_hc3")
+    oos_alpha_tstat_df = oos_metrics.get("oos_alpha_tstat_df")
+    oos_alpha_n_total = oos_metrics.get("oos_alpha_n_total")
+    oos_alpha_n_informative = oos_metrics.get("oos_alpha_n_informative")
+    oos_alpha_n_y_nonzero = oos_metrics.get("oos_alpha_n_y_nonzero")
+    oos_alpha_n_x_nonzero = oos_metrics.get("oos_alpha_n_x_nonzero")
+    oos_alpha_n_both_zero = oos_metrics.get("oos_alpha_n_both_zero")
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
@@ -879,6 +905,20 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_expectancy_capital_weighted_gross=(
             float(oos_expectancy_capital_weighted_gross)
             if oos_expectancy_capital_weighted_gross is not None else None),
+        # Issue #1255/#1258 (GH #1125/#1128) — siehe TournamentMetrics-Docstring.
+        oos_alpha_tstat_hc3=(
+            float(oos_alpha_tstat_hc3) if oos_alpha_tstat_hc3 is not None else None),
+        oos_alpha_tstat_df=(
+            int(oos_alpha_tstat_df) if oos_alpha_tstat_df is not None else None),
+        oos_alpha_n_total=(int(oos_alpha_n_total) if oos_alpha_n_total is not None else None),
+        oos_alpha_n_informative=(
+            int(oos_alpha_n_informative) if oos_alpha_n_informative is not None else None),
+        oos_alpha_n_y_nonzero=(
+            int(oos_alpha_n_y_nonzero) if oos_alpha_n_y_nonzero is not None else None),
+        oos_alpha_n_x_nonzero=(
+            int(oos_alpha_n_x_nonzero) if oos_alpha_n_x_nonzero is not None else None),
+        oos_alpha_n_both_zero=(
+            int(oos_alpha_n_both_zero) if oos_alpha_n_both_zero is not None else None),
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,
