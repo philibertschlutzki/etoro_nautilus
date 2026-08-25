@@ -100,19 +100,22 @@ def test_build_report_raises_typeerror_on_raw_path_list(tmp_path):
 
     with pytest.raises(TypeError, match="parse_proposal_payloads"):
         _report._build_report(
-            [proposal_path], run_id="r", started_at_utc=None, wallclock_s=None, cli_args=None)
+            [proposal_path], run_id="r", started_at_utc=None, wallclock_s=None, cli_args=None,
+            reports_dir=tmp_path)
 
 
-def test_build_report_accepts_parsed_dicts():
+def test_build_report_accepts_parsed_dicts(tmp_path):
     payload = {"strategy": "S", "symbol": "X.ETORO", "status": "REJECTED"}
     report = _report._build_report(
-        [payload], run_id="r", started_at_utc=None, wallclock_s=None, cli_args=None)
+        [payload], run_id="r", started_at_utc=None, wallclock_s=None, cli_args=None,
+        reports_dir=tmp_path)
     assert len(report["studies"]) == 1
 
 
-def test_build_report_empty_list_still_bit_identical():
+def test_build_report_empty_list_still_bit_identical(tmp_path):
     report = _report._build_report(
-        [], run_id="r1", started_at_utc=None, wallclock_s=None, cli_args=None)
+        [], run_id="r1", started_at_utc=None, wallclock_s=None, cli_args=None,
+        reports_dir=tmp_path)
     assert report["run_status"] == "complete"
     assert report["studies"] == []
 

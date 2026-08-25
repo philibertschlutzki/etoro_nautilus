@@ -2998,7 +2998,12 @@ def _bars_per_calendar_day_from_mtm_series(mtm_series) -> float | None:
 
 def _annualization_factor_cache_path(work_dir: "Path | None" = None) -> "Path":
     if work_dir is None:
-        from automation.optimizer.manifest import WORK as work_dir
+        # Issue #1270 (GH #1140), Pitfall #447-Klasse — PERSISTENT_CACHE_ROOT, NICHT WORK: dieser
+        # Cache ist per Docstring oben EXPLIZIT dafuer gedacht, "sowohl Worker- als auch
+        # Lauf-Grenzen" zu ueberleben — unter dem je Lauf frisch angelegten WORK (Empfehlung E-1
+        # aus Issue #1142) war das strukturell nie der Fall, dieselbe Root-Cause-Klasse wie der
+        # Champion-Store/Symbol-Bar-Qualitaets-/Slippage-Cache.
+        from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT as work_dir
     return Path(work_dir) / "annualization_factor_by_symbol.json"
 
 
@@ -7631,7 +7636,10 @@ def run_backtest() -> None:
     slippage_bps_p50_by_asset_class: dict = {}
     try:
         from automation.optimizer.sweep import read_calibrated_slippage_cache
-        from automation.optimizer.manifest import WORK as _optimizer_work_dir
+        # Issue #1270 (GH #1140) Fix Punkt 3 — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortige
+        # manifest.py-Docstring), derselbe Store, den sweep.calibrate_and_write_slippage_cache seit
+        # diesem Fix auch dort schreibt.
+        from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT as _optimizer_work_dir
         _calibrated = (read_calibrated_slippage_cache(_optimizer_work_dir) or {}).get(
             "slippage_bps_by_asset_class") or {}
         if _calibrated:

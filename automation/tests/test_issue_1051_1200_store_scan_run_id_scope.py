@@ -113,6 +113,7 @@ def test_proposal_for_a_purely_foreign_run_study_is_not_double_counted_as_own(tm
     report = rpt._build_report(
         proposals=[old_proposal, new_proposal], run_id="run_current",
         started_at_utc="2026-08-20T00:00:00Z", wallclock_s=1.0, cli_args={},
+        reports_dir=tmp_path,
     )
     store_scan = report["store_scan"]
     assert store_scan["n_own"] == 1, (
@@ -161,7 +162,7 @@ def test_own_run_proposal_still_counts_as_own(tmp_path, monkeypatch):
                                        "deflation_n_effective": 3}}}
     report = rpt._build_report(
         proposals=[proposal], run_id="run_current", started_at_utc="2026-08-20T00:00:00Z",
-        wallclock_s=1.0, cli_args={},
+        wallclock_s=1.0, cli_args={}, reports_dir=tmp_path,
     )
     store_scan = report["store_scan"]
     assert store_scan["n_own"] == 1

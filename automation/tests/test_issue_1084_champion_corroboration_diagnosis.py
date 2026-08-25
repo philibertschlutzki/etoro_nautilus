@@ -45,7 +45,7 @@ OPT_DATA = {
 
 
 def _isolate(monkeypatch, tmp_path):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "config_dir", lambda: tmp_path)
     # Issue #1099 (Katalog #932) — report._champions_summary bevorzugt seit #1099 ein live

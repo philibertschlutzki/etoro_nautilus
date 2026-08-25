@@ -29,7 +29,8 @@ from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
-from automation.optimizer.manifest import WORK, write_json_atomic, catalog_fingerprint, library_versions
+from automation.optimizer.manifest import (
+    WORK, PERSISTENT_CACHE_ROOT, write_json_atomic, catalog_fingerprint, library_versions)
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
     load_global_best,
@@ -68,6 +69,15 @@ sweep_fail_fast_invariant: str | None = None
 # Report-Scan-Kohorte desselben Laufs vergleichen kann (Root-Cause #1107: beide Pfade meldeten
 # denselben Check-Namen mit zwei verschiedenen, undeklarierten Grundgesamtheiten).
 sweep_fail_fast_probe_invariant_checks: list[dict] | None = None
+
+# Issue #1269 (GH #1139) — die verstrichene Sweep-Wallclock (Sekunden seit ``sweep_t0``) IM
+# MOMENT, in dem die #839-Fail-Fast-Probe zuletzt AUSGEWERTET wurde (nicht nur, wenn sie FEUERTE —
+# das Akzeptanzkriterium braucht den Zeitpunkt der Probe selbst, um die Rechtzeitigkeit zu
+# beurteilen, unabhaengig vom Ergebnis). ``None`` = in diesem Lauf lief nie eine Probe (kein
+# ``fail_fast_invariants`` konfiguriert, oder das Symbol-/Study-Minimum wurde nie erreicht). Analog
+# ``sweep_fail_fast_invariant`` gesetzt/gelesen — ``report._build_report`` berechnet daraus den
+# Wallclock-ANTEIL (``elapsed / wallclock_s``, erst am Laufende bekannt), siehe dortiger Kommentar.
+sweep_fail_fast_probe_triggered_at_wallclock_s: float | None = None
 
 # Issue #985/#1139 (Katalog #986) — die ``InvariantResult``-Objekte der Preflight-Checks
 # (``assert_required_config_keys_valid``/``assert_instrument_metadata_coherence``), die VOR dem
@@ -678,7 +688,11 @@ def calibrate_and_write_slippage_cache(
         calibration[_asset_class].setdefault("by_strategy_symbol", {})[
             f"{_strategy}|{_symbol}"] = _rec
     if work_dir is None:
-        work_dir = WORK
+        # Issue #1270 (GH #1140) — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortige
+        # manifest.py-Docstring): dieselbe Root-Cause-Klasse wie der Champion-Store/Symbol-Bar-
+        # Qualitaets-Cache — ein je Lauf frisches WORK liess auch diesen Cache nie einen Lauf
+        # ueberleben, obwohl die Kalibrierung explizit STORE-WEIT (nicht run_id-gescopt) gedacht ist.
+        work_dir = PERSISTENT_CACHE_ROOT
     try:
         write_calibrated_slippage_cache(work_dir, calibration, run_id=run_id)
     except OSError:
@@ -2423,7 +2437,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                           exc_info=True)
         if _quality_by_symbol:
             try:
-                write_symbol_bar_quality_cache(WORK, _quality_by_symbol)
+                # Issue #1270 (GH #1140) — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortige
+                # manifest.py-Docstring): ein je Lauf frisches WORK liess diesen Cache nie einen
+                # Lauf ueberleben (Symptom: cache_found=false in 3/3 Laeufen).
+                write_symbol_bar_quality_cache(PERSISTENT_CACHE_ROOT, _quality_by_symbol)
             except Exception:
                 _log.debug("[#923] symbol_bar_quality-Cache-Schreiben fehlgeschlagen (non-fatal).",
                           exc_info=True)
@@ -2914,6 +2931,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     sweep_fail_fast_invariant = None
     global sweep_fail_fast_probe_invariant_checks
     sweep_fail_fast_probe_invariant_checks = None
+    global sweep_fail_fast_probe_triggered_at_wallclock_s
+    sweep_fail_fast_probe_triggered_at_wallclock_s = None
     # Issue #985/#1139 — NICHT auf None zurueckgesetzt: der Preflight-Block lief bereits VOR
     # diesem Reset-Abschnitt (weiter oben in dieser Funktion), ``preflight_invariant_checks``
     # traegt bereits das reale Ergebnis dieses Aufrufs.
@@ -3427,6 +3446,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         if (using_real_optimize and _fail_fast_invariants
                 and len(completed_symbols) >= _fail_fast_min_symbols
                 and sweep_fail_fast_invariant is None):
+            # Issue #1269 (GH #1139) — Zeitpunkt DIESER Probe-Auswertung (unabhaengig davon, ob sie
+            # gleich feuert), damit report._build_report am Laufende den Wallclock-ANTEIL berechnen
+            # kann (siehe check_fail_fast_probe_timeliness-Docstring). Wird bei jeder erneuten
+            # Auswertung ueberschrieben — der LETZTE (i. d. R. der feuernde) Zeitpunkt zaehlt.
+            sweep_fail_fast_probe_triggered_at_wallclock_s = time.perf_counter() - sweep_t0
             _probe_invariant_checks = None
             try:
                 from automation.optimizer import report as _report_probe_mod
@@ -3718,7 +3742,19 @@ def main(argv: list[str] | None = None) -> list[Path]:
                                     "dagegen. Fehlt der Checkpoint oder weicht sein "
                                     "strategies_fingerprint ab ⇒ Exit-Code 2 (fail-loud statt "
                                     "stiller Neustart).")
+    # Issue #1253 (GH #1123) — macht einen Wiederholungslauf zu einer UNABHAENGIGEN TPE-Ziehung
+    # statt einer bit-identischen Kopie (siehe run_optimization.seed_effective-Docstring). Fehlt
+    # das Flag ⇒ bit-identisch zum Pre-#1253-Verhalten (kein Lauf-Anteil im Seed). Setzt
+    # OPTIMIZER_SEED_SALT NOCH VOR dem ersten Worker-Start, damit jeder gespawnte Sweep-/Study-
+    # Prozess (die den Wert per os.environ.get liest, siehe dortiger Kommentar) ihn per
+    # Environment-Vererbung erbt — derselbe Mechanismus wie OPTIMIZER_WORK_DIR (manifest.py).
+    parser.add_argument("--seed-salt", metavar="SALT", default=None,
+                        help="Zusaetzlicher Lauf-Anteil im Sampler-Seed jeder Study (macht einen "
+                             "Wiederholungslauf zu einer unabhaengigen Stichprobe der Suchvarianz "
+                             "statt einer Kopie). Aequivalent zu OPTIMIZER_SEED_SALT.")
     args = parser.parse_args(argv)
+    if args.seed_salt:
+        os.environ["OPTIMIZER_SEED_SALT"] = args.seed_salt
 
     if args.report_only:
         from automation.optimizer import report as _report
@@ -3996,6 +4032,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # ``using_real_optimize``), analog ``_prior_probe_checks`` als globales Signal aus
         # ``run_per_symbol_sweep`` durchgereicht.
         _preflight_checks = sweep_preflight_invariant_checks
+        # Issue #1269 (GH #1139) Fix Punkt 3 — Wallclock-Zeitpunkt der In-Prozess-Fail-Fast-Probe
+        # (sofern sie in DIESEM Lauf feuerte), analog ``_prior_probe_checks`` als globales Signal aus
+        # ``run_per_symbol_sweep`` durchgereicht.
+        _probe_triggered_at_wallclock_s = sweep_fail_fast_probe_triggered_at_wallclock_s
         if run_status == "complete":
             report_path = _report.generate_sweep_report(
                 proposals, run_id=run_id, started_at_utc=started_at_utc,
@@ -4006,6 +4046,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 prior_probe_invariant_checks=_prior_probe_checks,
                 blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
+                probe_triggered_at_wallclock_s=_probe_triggered_at_wallclock_s,
             )
         else:
             # Issue #833 — die IN-MEMORY proposals-Liste kann bei einer Exception mitten im
@@ -4022,6 +4063,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 prior_probe_invariant_checks=_prior_probe_checks,
                 blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
+                probe_triggered_at_wallclock_s=_probe_triggered_at_wallclock_s,
             )
         _report_written = True
         # Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — ein Lauf mit mindestens einer

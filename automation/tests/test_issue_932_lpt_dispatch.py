@@ -4,6 +4,7 @@ Entfernt; Longest-Processing-Time-Dispatch implementiert stattdessen: die Studie
 werden absteigend nach dem letzten Report-Erfahrungswert dispatcht.
 """
 import json
+from pathlib import Path
 
 from automation.optimizer import sweep
 
@@ -17,6 +18,7 @@ def test_pipeline_depth_removed_from_shipped_config():
 def test_read_last_study_wallclock_by_strategy_empty_without_a_report(tmp_path, monkeypatch):
     import automation.optimizer.report as report_mod
     monkeypatch.setattr(report_mod, "REPORTS_DIR", tmp_path / "nonexistent")
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(tmp_path / "nonexistent") / "run_fingerprints.jsonl")
     assert sweep._read_last_study_wallclock_by_strategy() == {}
 
 
@@ -38,6 +40,7 @@ def test_read_last_study_wallclock_by_strategy_reads_latest_report(tmp_path, mon
     import time
     os.utime(older, (time.time() - 100, time.time() - 100))
     monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir)
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(reports_dir) / "run_fingerprints.jsonl")
 
     result = sweep._read_last_study_wallclock_by_strategy()
     assert result["ComboTrendVwapStrategy"] == 2879.0  # median(2858, 2900), the NEWER report only

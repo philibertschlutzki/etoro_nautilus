@@ -16,6 +16,11 @@ eigene Zeile im Invarianten-Strom (Abschnitt 5), benennt den erwarteten Pfad UND
 gefunden wurde, statt als stilles ``None`` zu verschwinden. Akzeptanzkriterium: ``symbol_bar_
 quality`` ist fuer jedes Symbol mit >= 1 Study nicht-null, ODER der Report nennt den erwarteten Pfad
 und dass er fehlt.
+
+Update Issue #1270 (GH #1140): der EXAKTE Root-Cause-Mechanismus aus dem Symptom oben ("liegt nicht
+in dem WORK, aus dem der Report liest") ist seither strukturell ausgeschlossen — der Cache liegt
+nicht mehr unter ``WORK``, sondern unter ``manifest.PERSISTENT_CACHE_ROOT`` (PROJECT_ROOT-verankert,
+siehe dortiger Docstring), gelesen/geschrieben ueber DIESELBE Konstante an jeder Call-Site.
 """
 import json
 
@@ -109,7 +114,9 @@ def test_severity_is_medium_an_observability_not_correctness_finding():
 def test_check_is_wired_into_build_report():
     source = __import__("pathlib").Path(rpt.__file__).read_text("utf-8")
     assert "_inv.check_symbol_bar_quality_cache_availability(" in source
-    assert "symbol_bar_quality_cache_status(WORK)" in source
+    # Issue #1270 (GH #1140) — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortiger Docstring): der
+    # Cache muss die WORK-Recycling-Grenze ueberleben.
+    assert "symbol_bar_quality_cache_status(PERSISTENT_CACHE_ROOT)" in source
 
 
 def test_invariant_registry_wiring_check_still_passes():
@@ -151,8 +158,9 @@ def test_missing_cache_appears_as_a_named_report_row_not_a_silent_none(tmp_path,
     storage_url = f"sqlite:///{sweep_dir / 'study.db'}"
     _make_study(storage_url, study_name)
     monkeypatch.setattr(rpt, "resolve_storage", lambda *, study_name, base_cfg=None: storage_url)
-    monkeypatch.setattr(rpt, "WORK", tmp_path)
-    monkeypatch.setattr(sweep, "WORK", tmp_path)
+    # Issue #1270 (GH #1140) — der Cache-Lesepfad in report.py haengt seither an
+    # PERSISTENT_CACHE_ROOT, nicht mehr an WORK (siehe manifest.py-Docstring).
+    monkeypatch.setattr(rpt, "PERSISTENT_CACHE_ROOT", tmp_path)
 
     out_path = rpt.generate_sweep_report(
         [_proposal()], run_id="testrun_1168", started_at_utc="2026-07-19T00:00:00.000+00:00",
@@ -180,8 +188,9 @@ def test_populated_cache_makes_the_field_and_the_check_pass(tmp_path, monkeypatc
     storage_url = f"sqlite:///{sweep_dir / 'study.db'}"
     _make_study(storage_url, study_name)
     monkeypatch.setattr(rpt, "resolve_storage", lambda *, study_name, base_cfg=None: storage_url)
-    monkeypatch.setattr(rpt, "WORK", tmp_path)
-    monkeypatch.setattr(sweep, "WORK", tmp_path)
+    # Issue #1270 (GH #1140) — der Cache-Lesepfad in report.py haengt seither an
+    # PERSISTENT_CACHE_ROOT, nicht mehr an WORK (siehe manifest.py-Docstring).
+    monkeypatch.setattr(rpt, "PERSISTENT_CACHE_ROOT", tmp_path)
     sweep.write_symbol_bar_quality_cache(tmp_path, {
         "A.ETORO": {"frac_zero_true_range": 0.01, "atr_median_bps": 12.0,
                    "bar_coverage_ratio": 0.95, "median_delta_t_s": 3600},

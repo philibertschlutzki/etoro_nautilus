@@ -196,11 +196,12 @@ def test_report_section_lists_only_denylisted_pairs_with_evidence(monkeypatch):
     assert section[0]["first_seen_run_id"] == "run_001"
 
 
-def test_report_section_is_wired_into_cross_study(monkeypatch):
+def test_report_section_is_wired_into_cross_study(monkeypatch, tmp_path):
     monkeypatch.setattr("automation.optimizer.sweep_diagnostics.load_diagnosed_pairs_cache",
                         lambda *a, **k: {})
     report_dict = _report._build_report(
-        [], run_id="testrun", started_at_utc=None, wallclock_s=None, cli_args=None)
+        [], run_id="testrun", started_at_utc=None, wallclock_s=None, cli_args=None,
+        reports_dir=tmp_path)
     assert "diagnosed_pairs_skipped" in report_dict["cross_study"]
     assert report_dict["cross_study"]["diagnosed_pairs_skipped"] == []
 

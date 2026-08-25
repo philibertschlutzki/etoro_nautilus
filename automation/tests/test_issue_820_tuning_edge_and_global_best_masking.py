@@ -51,7 +51,7 @@ def _promotion(*, symbol_params, R_symbol, R_global=0.0) -> dict:
 
 def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(ro, "WORK", tmp_path)
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: CFG_DIR)
     monkeypatch.setattr(trial_config, "config_dir", lambda: CFG_DIR)

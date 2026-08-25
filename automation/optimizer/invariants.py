@@ -6822,6 +6822,103 @@ def check_beta_exposure_plausibility(study_records: list[dict], *,
     )
 
 
+def check_run_is_not_duplicate(run_fingerprint: str | None, run_id: str | None,
+                               prior_entries: list[dict]) -> InvariantResult:
+    """Issue #1252 (GH #1122) — erkennt einen bit-identischen Wiederholungslauf: existiert
+    ``run_fingerprint`` (siehe ``report.compute_run_fingerprint``-Docstring) bereits in
+    ``prior_entries`` (dem VOR diesem Lauf gelesenen Stand von
+    ``manifest.RUN_FINGERPRINT_INDEX_PATH``, unter einem ANDEREN ``run_id``), traegt dieser Lauf
+    dieselbe Eingangsmenge (derselbe simulierte Commit, dieselben Config-Dateien, derselbe
+    Katalog-Stand, derselbe Seed, dasselbe Symbol-/Strategie-Universum, dieselbe Reward-/
+    Simulations-Semantik) wie ein bereits durchgefuehrter Lauf — er traegt KEINE neue Information.
+
+    Symptom (#1252): drei aufeinanderfolgende Sweeps lieferten 208 von 218 Study-Feldern
+    bit-identisch, ohne dass ein Artefakt das ausgewiesen haette — drei Reports lasen sich wie drei
+    unabhaengige Belege.
+
+    ``severity='high'`` (Fix-Vorgabe) — ein Duplikat ist keine Fehlfunktion (der Lauf selbst ist
+    intern korrekt), sondern eine VERSCHWENDETE Rechenzeit/ein irrefuehrender Beleg, wenn er als
+    unabhaengige Evidenz gelesen wird. ``run_fingerprint is None`` (Legacy-Report vor #1252) oder
+    fehlender ``run_id`` ⇒ nicht auswertbar (``inconclusive=True``), kein stiller Pass-durch-
+    Abwesenheit. Ein Eintrag mit DEMSELBEN ``run_id`` wie der aktuelle Lauf zaehlt NICHT als
+    Duplikat (eine erneute Report-Generierung desselben Laufs, ``report_source != 'final'``-
+    Zwischenstaende eingeschlossen, ist keine Wiederholung)."""
+    if not run_fingerprint or not run_id:
+        return InvariantResult(
+            name="check_run_is_not_duplicate",
+            passed=True,
+            expected="run_fingerprint traegt keinen bereits im Index vorhandenen Eintrag unter "
+                     "einer ANDEREN run_id",
+            actual=None,
+            severity="high",
+            detail="run_fingerprint oder run_id fehlt (Legacy-Report vor #1252) — nicht auswertbar.",
+            inconclusive=True,
+        )
+    prior_match = next(
+        (e for e in (prior_entries or [])
+         if e.get("fingerprint") == run_fingerprint and e.get("run_id") != run_id),
+        None,
+    )
+    passed = prior_match is None
+    return InvariantResult(
+        name="check_run_is_not_duplicate",
+        passed=passed,
+        expected="run_fingerprint traegt keinen bereits im Index vorhandenen Eintrag unter einer "
+                 "ANDEREN run_id",
+        actual={"duplicate_of_run_id": prior_match.get("run_id"),
+               "duplicate_of_started_at_utc": prior_match.get("started_at_utc")} if prior_match else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"Dieser Lauf ({run_id}) traegt denselben run_fingerprint wie {prior_match.get('run_id')} "
+                f"(gestartet {prior_match.get('started_at_utc')}) — bit-identische Eingangsmenge, "
+                "keine neue Information (#1252)."),
+    )
+
+
+def check_fail_fast_probe_timeliness(
+    fail_fast_probe_triggered_at_wallclock_fraction: float | None,
+) -> InvariantResult:
+    """Issue #1269 (GH #1139) Fix Punkt 3 — die Fail-Fast-Probe (siehe sweep.py
+    ``sweep_fail_fast_probe_triggered_at_wallclock_s``) wertet erst aus, nachdem
+    ``_fail_fast_min_symbols`` Symbole VOLLSTAENDIG abgeschlossen sind (alle Strategien je Symbol) —
+    bei einem Single-Symbol-Lauf ist das strukturell erst am ENDE des Laufs der Fall (#1269-Symptom:
+    3/3 betroffene Laeufe verbrauchten ihr gesamtes Wallclock-Budget, BEVOR die Probe ueberhaupt zum
+    ersten Mal auswertete). Diese Invariante macht das Ausmass messbar, statt eine Ursache zu
+    unterstellen: FAIL, wenn eine tatsaechlich gefeuerte Probe erst bei > 60 % der Gesamt-Wallclock
+    des Laufs auswertete — ein Abbruch an diesem Punkt verschenkt den Grossteil des Rechenbudgets,
+    das eine FRUEHERE Auswertung haette einsparen koennen.
+
+    ``severity='medium'`` (Fix-Vorgabe) — kein Korrektheitsproblem (die Probe selbst entscheidet
+    richtig), sondern ein Effizienzproblem. ``fail_fast_probe_triggered_at_wallclock_fraction is
+    None`` (keine Probe feuerte in diesem Lauf, ODER wallclock_s/der Zeitpunkt ist unbekannt, z. B.
+    ein Zwischen-/Probe-Report) ⇒ ``passed=True`` — bewusst KEIN ``inconclusive=True``, da "keine
+    Probe feuerte" ein vollstaendig bekannter, nicht ambiguer Zustand ist (kein Abbruch fand statt,
+    also keine verschenkte Zeit — anders als ein fehlendes Eingangsfeld bei sonst vorhandener
+    Grundgesamtheit)."""
+    if fail_fast_probe_triggered_at_wallclock_fraction is None:
+        return InvariantResult(
+            name="check_fail_fast_probe_timeliness",
+            passed=True,
+            expected="Eine gefeuerte Fail-Fast-Probe wertet bei <= 60 % der Gesamt-Wallclock aus",
+            actual=None,
+            severity="medium",
+            detail="Keine Fail-Fast-Probe feuerte in diesem Lauf (oder der Zeitpunkt/die "
+                   "Gesamt-Wallclock ist unbekannt) — nichts zu melden.",
+        )
+    passed = fail_fast_probe_triggered_at_wallclock_fraction <= 0.60
+    return InvariantResult(
+        name="check_fail_fast_probe_timeliness",
+        passed=passed,
+        expected="Eine gefeuerte Fail-Fast-Probe wertet bei <= 60 % der Gesamt-Wallclock aus",
+        actual=fail_fast_probe_triggered_at_wallclock_fraction,
+        severity="medium",
+        detail=("OK" if passed else
+                f"Die Fail-Fast-Probe feuerte erst bei "
+                f"{fail_fast_probe_triggered_at_wallclock_fraction:.0%} der Gesamt-Wallclock — "
+                "der Grossteil des Rechenbudgets war zu diesem Zeitpunkt bereits verbraucht (#1269)."),
+    )
+
+
 def _resolve_causal_hypothesis_state(
     candidates: list[dict], *, anchor_control_run_available: bool = False,
 ) -> str:

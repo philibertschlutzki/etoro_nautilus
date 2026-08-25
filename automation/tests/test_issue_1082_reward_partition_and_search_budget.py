@@ -16,6 +16,7 @@ bestehenden #830-``'deprioritized'``-Pfad budget-reduziert — ohne eine bereits
 Konsequenz (``'denylist'``/``'search_space_override'``) zu überschreiben.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -158,6 +159,7 @@ def test_apply_search_budget_proposal_writes_deprioritized_cache_entries(tmp_pat
         ]},
     }), encoding="utf-8")
     monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir)
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(reports_dir) / "run_fingerprints.jsonl")
 
     work_dir = tmp_path / "work"
     applied = sweep._apply_search_budget_proposal(work_dir=work_dir, run_id="run-1082")
@@ -182,6 +184,7 @@ def test_apply_search_budget_proposal_never_overrides_a_stronger_existing_conseq
         ]},
     }), encoding="utf-8")
     monkeypatch.setattr(report_mod, "REPORTS_DIR", reports_dir)
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(reports_dir) / "run_fingerprints.jsonl")
 
     work_dir = tmp_path / "work"
     sweep.record_diagnosed_pair({
@@ -197,4 +200,5 @@ def test_apply_search_budget_proposal_never_overrides_a_stronger_existing_conseq
 
 def test_apply_search_budget_proposal_empty_without_a_report(tmp_path, monkeypatch):
     monkeypatch.setattr(report_mod, "REPORTS_DIR", tmp_path / "nonexistent")
+    monkeypatch.setattr(report_mod, "RUN_FINGERPRINT_INDEX_PATH", Path(tmp_path / "nonexistent") / "run_fingerprints.jsonl")
     assert sweep._apply_search_budget_proposal(work_dir=tmp_path / "work") == []

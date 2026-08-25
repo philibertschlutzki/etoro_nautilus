@@ -40,7 +40,7 @@ OPT_DATA = {
 
 
 def _isolate(monkeypatch, tmp_path):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     monkeypatch.setattr(sweep, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "config_dir", lambda: tmp_path)
@@ -68,7 +68,7 @@ def _writeback_event(strategy, symbol, *, applied, skipped_reason=None):
 
 # ── champions.store_status ────────────────────────────────────────────────────────────────────
 def test_store_status_reports_path_missing_for_fresh_work(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     status = champions.store_status()
     assert status["store_found"] is False
     assert status["entry_count"] == 0
@@ -79,13 +79,13 @@ def test_store_status_reports_path_missing_for_fresh_work(tmp_path, monkeypatch)
 def test_store_status_does_not_create_the_directory(tmp_path, monkeypatch):
     """Der zentrale Beweis fuer den #1193-Fix: store_status() darf KEINEN mkdir-Seiteneffekt
     haben -- sonst waere STORE_PATH_MISSING nach dem ERSTEN Aufruf fuer immer unbeobachtbar."""
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     champions.store_status()
     assert not (tmp_path / "champions").exists()
 
 
 def test_store_status_counts_entries_and_lists_keys(tmp_path, monkeypatch):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     d = tmp_path / "champions"
     d.mkdir()
     (d / "champion_A_X_ETORO.json").write_text("{}", "utf-8")

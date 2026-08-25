@@ -42,6 +42,7 @@ def _isolate_main(monkeypatch, tmp_path, optimizer_cfg=None):
     (tmp_path / "optimizer.json").write_text(json.dumps(optimizer_cfg or {}), "utf-8")
     monkeypatch.setattr(_report, "WORK", tmp_path)
     monkeypatch.setattr(_report, "REPORTS_DIR", tmp_path / "reports")
+    monkeypatch.setattr(_report, "RUN_FINGERPRINT_INDEX_PATH", Path(tmp_path / "reports") / "run_fingerprints.jsonl")
 
 
 # ── _strategies_fingerprint: reine Funktion ──────────────────────────────────────────────────────

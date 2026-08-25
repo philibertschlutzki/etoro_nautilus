@@ -21,6 +21,8 @@ Symbol greift). Fix: Vollständigkeit (Abdeckung) und Gültigkeit (blockierende 
 als getrennte Aussagen behandelt; ``sweep.py`` unterscheidet jetzt ``completed_invalid`` (voll
 abgedeckt, aber ungültig) von ``aborted_invariant`` (echter Abbruch mit unvollständiger Arbeit).
 """
+from pathlib import Path
+
 from automation.optimizer import invariants as inv
 from automation.optimizer import sweep
 from automation.optimizer import summary_de as sd
@@ -108,6 +110,7 @@ def test_coverage_ledger_continuity_passes_during_bootstrap():
 def test_coverage_ledger_continuity_check_excludes_own_report(tmp_path, monkeypatch):
     from automation.optimizer import report as rpt
     monkeypatch.setattr(rpt, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(rpt, "RUN_FINGERPRINT_INDEX_PATH", Path(tmp_path) / "run_fingerprints.jsonl")
     (tmp_path / "run_abc123.json").write_text("{}", "utf-8")
 
     class _FakeCoverage:
@@ -126,6 +129,7 @@ def test_coverage_ledger_continuity_check_still_detects_a_genuinely_different_pr
         tmp_path, monkeypatch):
     from automation.optimizer import report as rpt
     monkeypatch.setattr(rpt, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(rpt, "RUN_FINGERPRINT_INDEX_PATH", Path(tmp_path) / "run_fingerprints.jsonl")
     (tmp_path / "run_some_other_run.json").write_text("{}", "utf-8")
 
     class _FakeCoverage:

@@ -267,7 +267,15 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
             f"{', '.join(_scoped_parts(_blocking_inconclusive_scopes))} — siehe Abschnitt 5.1b "
             "für Details."
         )
-    return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note + blocking_note
+    # Issue #1252 (GH #1122) Fix Punkt 4 — ein Lauf mit demselben run_fingerprint wie ein Vorlauf
+    # traegt KEINE neue Information; der Leser soll das im allerersten Satz erfahren, nicht erst
+    # nach dem Lesen der vollen Tabelle vermuten.
+    _duplicate_of = report.get("duplicate_of")
+    duplicate_note = (
+        f" **Hinweis:** dieser Lauf ist eine bit-identische Wiederholung von `{_duplicate_of}` "
+        "(identischer run_fingerprint) — er trägt keine neue Information."
+    ) if _duplicate_of else ""
+    return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note + blocking_note + duplicate_note
 
 
 def _is_data_integrity_quarantined(r: dict) -> bool:

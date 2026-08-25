@@ -305,7 +305,7 @@ def _stop_study_safely(study, logger: logging.Logger) -> None:
         logger.debug("study.stop() außerhalb eines optimize()-Kontexts ignoriert (Issue #456).")
 
 
-def seed_effective(seed, study_name: str) -> int | None:
+def seed_effective(seed, study_name: str, run_salt: str | None = None) -> int | None:
     """Issue #755 — deterministischer PER-STUDY-Seed statt sweep-weiter Serialisierung.
 
     Root-Cause #755: ``sweep.main`` erzwang bislang ``n_jobs=1`` fuer den GESAMTEN Sweep, sobald
@@ -319,15 +319,34 @@ def seed_effective(seed, study_name: str) -> int | None:
     ``study_name`` konstant — ueber Prozessgrenzen und unabhaengig von der Ausfuehrungsreihenfolge —
     und fuer verschiedene ``study_name`` unterschiedlich (kein sweep-weit identischer Sampler-Seed
     mehr, der die Studies bei identischer Trial-Struktur korreliert haette). ``seed is None`` (kein
-    Determinismus verlangt) bleibt ``None`` (Optuna waehlt einen echten Zufalls-Seed)."""
+    Determinismus verlangt) bleibt ``None`` (Optuna waehlt einen echten Zufalls-Seed).
+
+    Issue #1253 (GH #1123) — ``run_salt`` (Default ``None``) erweitert die Formel auf
+    ``seed XOR stable_hash(study_name) XOR stable_hash(run_salt)``: ein Wiederholungslauf OHNE
+    Salt zieht denselben TPE-Sampler-Pfad wie sein Vorlauf und ist damit eine reine KOPIE, keine
+    unabhaengige STICHPROBE der Suchvarianz (Root-Cause #1253: ``seed_effective`` war eine reine
+    Funktion von (``seed``, ``study_name``) — kein Lauf-Anteil, ``best_eligible_reward`` liess sich
+    dadurch nie von einer stabilen Optimumsschaetzung gegenueber einer einzelnen TPE-Ziehung
+    unterscheiden). ``run_salt=None`` (Default) ist BIT-IDENTISCH zum Pre-#1253-Verhalten (der
+    zweite XOR-Term entfaellt vollstaendig, nicht nur numerisch neutral) — ein Wiederholungslauf
+    OHNE ``--seed-salt``/``OPTIMIZER_SEED_SALT`` bleibt exakt reproduzierbar, wie vor diesem Fix.
+    Mit gesetztem ``run_salt`` zieht JEDE Study desselben Laufs denselben Salt-Beitrag (sweep-weit
+    konstant), aber XOR-verknuepft mit dem je Study bereits unterschiedlichen ``stable_hash(
+    study_name)`` — der Salt allein macht daher NICHT alle Studies eines Laufs identisch
+    verschoben (die Verschiebung ist studyabhaengig durch die bereits vorhandene XOR-Kette)."""
     if seed is None:
         return None
     import hashlib
     h = int.from_bytes(hashlib.blake2b(study_name.encode("utf-8"), digest_size=8).digest(), "big")
+    effective = int(seed) ^ h
+    if run_salt:
+        h_salt = int.from_bytes(
+            hashlib.blake2b(str(run_salt).encode("utf-8"), digest_size=8).digest(), "big")
+        effective ^= h_salt
     # numpy.random.RandomState (Optuna-Sampler-Backend) verlangt einen Seed in [0, 2**32 - 1] — der
     # volle 64-Bit-Hash wird daher maskiert, NICHT nur XOR-verknuepft (sonst ValueError bei Studies,
     # deren Hash das obere Byte setzt).
-    return (int(seed) ^ h) & 0xFFFFFFFF
+    return effective & 0xFFFFFFFF
 
 
 def _trial_number(idx: int, t) -> int:
@@ -4063,7 +4082,13 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # Issue #755 — PER-STUDY-Seed statt eines sweep-weit IDENTISCHEN Seeds (der die Sweep-Level-
     # Serialisierung ``n_jobs=1`` in sweep.main erzwungen hatte). Konstant fuer diesen study_name,
     # unabhaengig von Ausfuehrungsreihenfolge/Parallelitaet.
-    seed_eff = seed_effective(seed, study_name)
+    # Issue #1253 (GH #1123) — der Salt kommt ausschliesslich aus der Umgebungsvariable, DEMSELBEN
+    # Mechanismus wie ``OPTIMIZER_WORK_DIR`` (siehe manifest.py-Docstring): jeder Prozess/Worker
+    # setzt sie VOR dem Start, ``sweep.py``s ``--seed-salt``-CLI-Flag setzt sie fuer den
+    # Eltern-Sweep-Prozess (von dem Worker-Subprozesse sie erben). ``None``/leerer String ⇒
+    # bit-identisch zum Pre-#1253-Verhalten (kein Lauf-Anteil im Seed).
+    run_salt = os.environ.get("OPTIMIZER_SEED_SALT") or None
+    seed_eff = seed_effective(seed, study_name, run_salt)
 
     reward_mode = opt_data.get("reward_mode", "auto")
     directions = None
@@ -4220,6 +4245,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # damit der #742-Report je Study nachvollziehbar macht, WELCHER Seed/WELCHES Budget lief (Voraus-
     # setzung fuer den Determinismus-Nachweis bei n_jobs>1).
     study.set_user_attr("seed_effective", seed_eff)
+    # Issue #1253 (GH #1123) Fix Punkt 2 — der wirksame Salt-Wert (oder None), je Study gestempelt
+    # (macht sichtbar, OB dieser Lauf gesalzen war, ohne seed_effective selbst zu deanonymisieren)
+    # und Eingang des run_fingerprint (report.compute_run_fingerprint).
+    study.set_user_attr("seed_salt", run_salt)
     study.set_user_attr("n_trials_budget", n_trials)
     study.set_user_attr("n_startup_trials", n_startup_trials)
     # Issue #931 Fix 2 — der wallclock_budget_policy='degrade'-Faktor, der bereits in n_trials

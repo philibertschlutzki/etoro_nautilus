@@ -63,7 +63,7 @@ def _promotion(*, symbol_params, R_symbol):
 
 
 def _isolate(monkeypatch, tmp_path):
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     monkeypatch.setattr(ro, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
 
@@ -111,7 +111,7 @@ def test_shrinkage_inactive_is_false_for_quality_stale_champion(tmp_path, monkey
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: CFG_DIR)
     monkeypatch.setattr(trial_config, "config_dir", lambda: CFG_DIR)
-    monkeypatch.setattr(champions, "WORK", tmp_path)
+    monkeypatch.setattr(champions, "CHAMPION_ROOT", tmp_path / "champions")
     _store_champion("SmaCrossoverStrategy", "TSLA.ETORO")
 
     # opt_data mit einer abweichenden reward_semantics_version simulieren, indem optimizer.json

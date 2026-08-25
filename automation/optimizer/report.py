@@ -27,6 +27,7 @@ Zwei Aufrufpfade, EIN gemeinsamer Kern (``_build_report``), garantieren Determin
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import statistics
@@ -40,7 +41,7 @@ from automation.log_manager import emit_execution_event, jsonl_sidecar_path
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
 from automation.optimizer import reward as _reward
-from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions
+from automation.optimizer.manifest import WORK, PERSISTENT_CACHE_ROOT, RUN_FINGERPRINT_INDEX_PATH, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions, append_jsonl_atomic, read_jsonl
 from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution, _best_completed_value,
@@ -210,6 +211,105 @@ def _emit_cost_model_realism_event(cost_model_realism_source: str, studies: list
                      "traegt (#1267 — ersetzt ein zuvor am Sweep-Start faelschlich gefeuertes "
                      "COST_MODEL_ZERO_REALISM, siehe cost_model_realism_source).",
         }, level=logging.INFO)
+
+
+def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
+                            optimizer_config_sha256, catalog_fingerprint_value, seed,
+                            symbols, strategies, reward_semantics_version,
+                            simulation_semantics_version, seed_salt=None) -> str:
+    """Issue #1252 (GH #1122) — sha256-Fingerabdruck der EINGANGSMENGE eines Sweep-Laufs: zwei
+    Läufe mit identischer Eingangsmenge (derselbe simulierte Commit, dieselben Config-Dateien,
+    derselbe Katalog-Stand, derselbe Seed, dasselbe Symbol-/Strategie-Universum, dieselbe Reward-/
+    Simulations-Semantik) tragen DENSELBEN Fingerabdruck — unabhängig davon, ob ihre ``run_id``s
+    verschieden sind.
+
+    Root-Cause (#1252-Symptom): drei aufeinanderfolgende Sweeps lieferten 208 von 218
+    Study-Feldern bit-identisch, kein Artefakt wies das aus — drei Reports lasen sich wie drei
+    unabhängige Belege. Ein Wiederholungslauf ohne Seed-/Config-/Commit-Änderung traegt keine neue
+    Information; ohne einen Fingerabdruck ist das aus keinem einzelnen Report ablesbar
+    (``invariants.check_run_is_not_duplicate`` braucht diesen Wert, um über Läufe hinweg zu
+    vergleichen).
+
+    Issue #1253 (GH #1123) — ``seed_salt`` (Default ``None``, additive ZEHNTE Komponente) macht
+    einen bewusst gesalzenen Wiederholungslauf (``seed_effective(seed, study_name, run_salt)``,
+    siehe dortiger Docstring) vom urspruenglichen Lauf UNTERSCHEIDBAR — ohne diese Komponente
+    wuerde ``check_run_is_not_duplicate`` einen ECHTEN, unabhaengigen Sampler-Ziehung faelschlich
+    als Duplikat des Vorlaufs melden, obwohl er per Definition eine NEUE TPE-Stichprobe ist. Fuer
+    die ``search_variance``-Gruppierung (Läufe derselben "Familie", die sich NUR im Salt
+    unterscheiden) ruft der Aufrufer diese Funktion ein ZWEITES Mal mit ``seed_salt=None``
+    (unabhängig vom tatsächlichen Salt-Wert des Laufs) — der resultierende "Basis-Fingerabdruck"
+    ist damit für alle Läufe derselben Familie identisch, während der volle ``run_fingerprint``
+    (inkl. echtem Salt) sie weiterhin einzeln unterscheidet.
+
+    Reine Funktion (kein Datei-I/O — die Aufrufer laden/berechnen jede Komponente bereits für den
+    Report selbst, siehe ``_build_report``). ``symbols``/``strategies`` werden VOR dem Hashen
+    sortiert (deterministisch unabhängig von der Iterationsreihenfolge der Aufrufer-Menge) und mit
+    Komma verkettet (Kommas sind in Symbol-/Strategie-Namen verboten). Die ZEHN Komponenten selbst
+    werden durch das ASCII-Steuerzeichen ``\\x1e`` (Record Separator — in keinem der Eingabefelder
+    gültig) getrennt, damit z. B. eine Verkettung ``('a', 'bc')``/``('ab', 'c')`` nicht denselben
+    Payload-String ergibt (Hash-Kollisions-Klasse einer naiven Konkatenation ohne Trennzeichen)."""
+    payload = "\x1e".join([
+        str(git_commit_simulation), str(tournament_config_sha256), str(optimizer_config_sha256),
+        str(catalog_fingerprint_value), str(seed),
+        ",".join(sorted(s for s in (symbols or []) if s)),
+        ",".join(sorted(s for s in (strategies or []) if s)),
+        str(reward_semantics_version), str(simulation_semantics_version), str(seed_salt),
+    ])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _compute_search_variance(fingerprint_base: str, entries: list[dict]) -> dict | None:
+    """Issue #1253 (GH #1123) Fix Punkt 3 — Streuung des TPE-Suchergebnisses ueber unabhaengige
+    Ziehungen: liegen >= 3 Eintraege in ``entries`` (der Run-Fingerabdruck-Index PLUS der aktuelle
+    Lauf, siehe Aufrufer) mit demselben ``fingerprint_base`` (dieselbe Eingangsmenge, siehe
+    ``compute_run_fingerprint``-Docstring — ``fingerprint_base`` ignoriert bewusst ``seed_salt``,
+    das ist der ganze Sinn dieser Gruppierung), wird je (Strategie, Symbol) Median/IQR/Spannweite
+    von ``best_reward``/``best_eligible_reward``/``n_eligible`` ausgewiesen — Rohmaterial fuer die
+    Frage, ob ``best_eligible_reward`` (Symptom-Beispiel: 1,7561 bei ComboTrendVwap) ein STABILER
+    Wert oder eine einzelne TPE-Ziehung ist.
+
+    ``None`` bei < 3 Läufen derselben Familie (nicht auswertbar — KEIN Fehler, die Streuung
+    existiert schlicht noch nicht als Kennzahl). Jeder ``entries``-Eintrag ohne ``study_summaries``
+    (Legacy-Index-Zeile vor #1253) traegt keine (Strategie, Symbol)-Daten bei, zaehlt aber weiterhin
+    zur Lauf-ANZAHL der Familie (die Familien-Zugehoerigkeit ist unabhaengig davon, ob die Zeile
+    bereits die #1253-Erweiterung trug)."""
+    family = [e for e in entries if e.get("fingerprint_base") == fingerprint_base]
+    if len(family) < 3:
+        return None
+    by_pair: dict[tuple[str, str], dict[str, list[float]]] = {}
+    for entry in family:
+        for s in entry.get("study_summaries") or []:
+            key = (s.get("strategy"), s.get("symbol"))
+            if not all(key):
+                continue
+            bucket = by_pair.setdefault(key, {"best_reward": [], "best_eligible_reward": [], "n_eligible": []})
+            for field in ("best_reward", "best_eligible_reward", "n_eligible"):
+                v = s.get(field)
+                if v is not None:
+                    bucket[field].append(float(v))
+    if not by_pair:
+        return None
+
+    def _stats(values: list[float]) -> dict | None:
+        if not values:
+            return None
+        sorted_v = sorted(values)
+        return {
+            "median": statistics.median(sorted_v),
+            "iqr": (
+                statistics.quantiles(sorted_v, n=4)[2] - statistics.quantiles(sorted_v, n=4)[0]
+                if len(sorted_v) >= 2 else 0.0
+            ),
+            "range": sorted_v[-1] - sorted_v[0],
+            "n": len(sorted_v),
+        }
+
+    per_pair = {}
+    for (strategy, symbol), bucket in sorted(by_pair.items()):
+        per_pair[f"{strategy}/{symbol}"] = {
+            field: _stats(values) for field, values in bucket.items()
+        }
+    return {"n_runs_in_family": len(family), "per_study": per_pair}
 
 
 def _allow_short_by_strategy(base_cfg: Path | None = None) -> dict[str, bool]:
@@ -1130,7 +1230,8 @@ def _study_record(proposal: dict, study,
     """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743).
 
     ``symbol_bar_quality_cache`` (Issue #923) — vom Aufrufer EINMAL gelesenes
-    ``sweep.read_symbol_bar_quality_cache(WORK)``-Ergebnis, hier nur je Symbol nachgeschlagen
+    ``sweep.read_symbol_bar_quality_cache(PERSISTENT_CACHE_ROOT)``-Ergebnis (WORK-Pfad seit
+    #1270/GH #1140), hier nur je Symbol nachgeschlagen
     (kein I/O in dieser Funktion selbst). ``None``/kein Eintrag für ``proposal['symbol']`` ⇒
 
     ``run_id`` (Issue #1015, Katalog #858, Fix Punkt 1) — durchgereicht an
@@ -1715,6 +1816,10 @@ def _study_record(proposal: dict, study,
         "plateau_min_modelled_trials": study_user_attrs.get("plateau_min_modelled_trials"),
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),
+        # Issue #1253 (GH #1123) Fix Punkt 2 — der wirksame Salt-Wert dieses Laufs (None ⇒
+        # ungesalzen, bit-identisch zum Pre-#1253-Verhalten), Eingang von report.compute_run_
+        # fingerprint (siehe _build_report).
+        "seed_salt": study_user_attrs.get("seed_salt"),
         "n_trials_budget": study_user_attrs.get("n_trials_budget"),
         # Issue #853 Fix Punkt 3 — seed_source als POSITIVE Telemetrie (vorher existierte nur die
         # [#565]-Negativ-WARNUNG im Log): welcher Anker den Warm-Start/param_pen dieser Study
@@ -3571,6 +3676,12 @@ def _build_report(
     prior_probe_invariant_checks: list[dict] | None = None,
     blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
+    # Issue #1269 (GH #1139) Fix Punkt 3 — Wallclock-Sekunden (seit Sweep-Start), zu denen die
+    # In-Prozess-Fail-Fast-Probe auswertete (``sweep.sweep_fail_fast_probe_triggered_at_wallclock_s``),
+    # unabhaengig davon, ob sie feuerte. ``None``, wenn keine Probe stattfand ODER dieser Report kein
+    # In-Prozess-Signal traegt (Report-Scan/``--report-only``). Treibt zusammen mit ``wallclock_s``
+    # (oben) die Telemetrie ``blocking_invariant_probe_triggered_at_wallclock_fraction`` unten.
+    probe_triggered_at_wallclock_s: float | None = None,
     reports_dir: Path | None = None,
 ) -> dict:
     # Issue #942/#1108 (Katalog #960) — ``blocking_invariant_triggered`` (der Name der
@@ -3669,12 +3780,14 @@ def _build_report(
     optimizer_cfg = _load_json(optimizer_path) or {}
 
     # Issue #923 — einmal je Report-Lauf gelesen (nicht je Study — dieselbe Datei, kein
-    # Symbol-Scope beim Lesen selbst nötig).
-    _symbol_bar_quality_cache = read_symbol_bar_quality_cache(WORK)
+    # Symbol-Scope beim Lesen selbst nötig). Issue #1270 (GH #1140) — PERSISTENT_CACHE_ROOT, NICHT
+    # WORK (siehe dortige manifest.py-Docstring): derselbe Cache, den sweep.py seit diesem Fix auch
+    # dort schreibt (Symptom vor dem Fix: cache_found=false in 3/3 Laeufen).
+    _symbol_bar_quality_cache = read_symbol_bar_quality_cache(PERSISTENT_CACHE_ROOT)
     # Issue #1016/#1168 (Katalog #1170) — {cache_path, cache_found}, damit ein leeres/fehlendes
     # symbol_bar_quality NICHT stillschweigend als "None" im Report verschwindet (siehe
     # check_symbol_bar_quality_cache_availability-Docstring).
-    _symbol_bar_quality_cache_status = symbol_bar_quality_cache_status(WORK)
+    _symbol_bar_quality_cache_status = symbol_bar_quality_cache_status(PERSISTENT_CACHE_ROOT)
     # Issue #1028 (Katalog #866) — einmal je Report-Lauf gelesen; Rohmaterial für
     # invariants.check_sizing_identity_coherence.
     _trade_amount_pct_map = _trade_amount_pct_by_strategy()
@@ -4396,7 +4509,10 @@ def _build_report(
     # Verhalten, die verschaerfte Kriterium wird dann uebersprungen statt zu erraten).
     try:
         from automation.optimizer.sweep import read_calibrated_slippage_cache
-        _slippage_calibration = (read_calibrated_slippage_cache(WORK) or {}).get(
+        # Issue #1270 (GH #1140) Fix Punkt 3 — PERSISTENT_CACHE_ROOT, NICHT WORK (siehe dortige
+        # manifest.py-Docstring), derselbe Store, den sweep.calibrate_and_write_slippage_cache seit
+        # diesem Fix auch dort schreibt.
+        _slippage_calibration = (read_calibrated_slippage_cache(PERSISTENT_CACHE_ROOT) or {}).get(
             "slippage_bps_by_asset_class") or {}
     except Exception:
         _slippage_calibration = {}
@@ -4444,6 +4560,95 @@ def _build_report(
     # Issue #1256 (GH #1126) — β-Plausibilitäts-Diagnose gegen die bekannte Long-only-Exposure,
     # severity='high' (Modell-/Mess-Plausibilitaet, keine harte Selektions-Inkohaerenz).
     all_checks.append(("global", _inv.check_beta_exposure_plausibility(studies_out)))
+
+    # Issue #1252 (GH #1122) — der Lauf-Fingerabdruck der EINGANGSMENGE dieses Sweeps (siehe
+    # compute_run_fingerprint-Docstring). symbols/strategies werden aus den TATSAECHLICH in diesen
+    # Report aufgenommenen Studies abgeleitet (studies_out — bereits um fremde/foreign_run-Studies
+    # bereinigt, siehe studies_excluded_foreign_run oben), nicht aus den rohen proposals. Der Index
+    # wird VOR dem Anhaengen des eigenen Eintrags gelesen (sonst wuerde dieser Lauf sich selbst als
+    # Duplikat erkennen) und ERST NACH der Pruefung ergaenzt.
+    _run_fingerprint_tournament_sha = (
+        sha256_file(tournament_path) if tournament_path.exists() else None)
+    _run_fingerprint_optimizer_sha = (
+        sha256_file(optimizer_path) if optimizer_path.exists() else None)
+    # Issue #1253 (GH #1123) — der je Study gestempelte seed_salt (sweep-weit konstant, siehe
+    # run_optimization.seed_effective-Docstring); None, wenn kein Lauf diesen Sweep gesalzen hat
+    # (der Regelfall, bit-identisch zum Pre-#1253-Verhalten).
+    _seed_salt = next((r.get("seed_salt") for r in studies_out if r.get("seed_salt")), None)
+    _run_fingerprint_kwargs = dict(
+        git_commit_simulation=_git_commit_simulation,
+        tournament_config_sha256=_run_fingerprint_tournament_sha,
+        optimizer_config_sha256=_run_fingerprint_optimizer_sha,
+        catalog_fingerprint_value=catalog_fingerprint(),
+        seed=optimizer_cfg.get("seed"),
+        symbols={r.get("symbol") for r in studies_out if r.get("symbol")},
+        strategies={r.get("strategy") for r in studies_out if r.get("strategy")},
+        reward_semantics_version=optimizer_cfg.get("reward_semantics_version"),
+        simulation_semantics_version=optimizer_cfg.get("simulation_semantics_version"),
+    )
+    _run_fingerprint = compute_run_fingerprint(**_run_fingerprint_kwargs, seed_salt=_seed_salt)
+    # Issue #1253 (GH #1123) Fix Punkt 3 — der Fingerabdruck OHNE Salt: identifiziert die "Familie"
+    # von Läufen, die sich NUR im Salt unterscheiden (Grundlage für search_variance unten).
+    _run_fingerprint_base = compute_run_fingerprint(**_run_fingerprint_kwargs, seed_salt=None)
+    # Test-/Isolations-Konvention, analog ``_prior_holdout_total_return`` (siehe dortiger
+    # Docstring): ein expliziter ``reports_dir``-Override (JEDER bestehende Aufrufer, der
+    # Report-Artefakte isoliert — praktisch jeder Test in diesem Repo) isoliert AUTOMATISCH auch
+    # den Fingerabdruck-Index, ohne dass jeder Aufrufer eine zweite, eigene Ueberschreibung kennen
+    # muesste. Ohne Override (der reale Produktionspfad — ``sweep.py`` uebergibt ``reports_dir``
+    # nie) bleibt der Index der ECHTE, PROJECT_ROOT-verankerte ``manifest.RUN_FINGERPRINT_INDEX_
+    # PATH`` (muss die WORK-Recycling-Grenze ueberleben, siehe dortiger Docstring). Root-Cause
+    # eines in dieser Session gefundenen Test-Kontaminationsbugs: OHNE diese Ableitung schrieb
+    # JEDER Test, der ``generate_sweep_report`` mit ``report_source='final'`` (Default) aufrief,
+    # in die ECHTE Projekt-Datei — mit Folge-FAILs in voellig unabhaengigen Tests, deren
+    # Fingerabdruck zufaellig mit einem bereits akkumulierten Eintrag kollidierte.
+    _run_fingerprint_index_path = (
+        Path(reports_dir) / "run_fingerprints.jsonl" if reports_dir is not None
+        else RUN_FINGERPRINT_INDEX_PATH
+    )
+    _prior_run_fingerprint_entries = read_jsonl(_run_fingerprint_index_path)
+    _run_duplicate_check = _inv.check_run_is_not_duplicate(
+        _run_fingerprint, run_id, _prior_run_fingerprint_entries)
+    all_checks.append(("global", _run_duplicate_check))
+    # Issue #1253 (GH #1123) Fix Punkt 3 — Streuung des Suchergebnisses über >= 3 Läufe DERSELBEN
+    # Familie (gleicher fingerprint_base, siehe compute_run_fingerprint-Docstring). Der aktuelle
+    # Lauf zaehlt mit (sein eigener study_summaries-Auszug unten), auch wenn er selbst noch nicht
+    # im Index steht.
+    _current_run_index_entry = {
+        "fingerprint": _run_fingerprint, "fingerprint_base": _run_fingerprint_base,
+        "run_id": run_id, "started_at_utc": started_at_utc, "seed_salt": _seed_salt,
+        "study_summaries": [
+            {"strategy": r.get("strategy"), "symbol": r.get("symbol"),
+             "best_reward": r.get("best_reward"), "best_eligible_reward": r.get("best_eligible_reward"),
+             "n_eligible": r.get("n_eligible")}
+            for r in studies_out
+        ],
+    }
+    _search_variance = _compute_search_variance(
+        _run_fingerprint_base, _prior_run_fingerprint_entries + [_current_run_index_entry])
+    if report_source == "final":
+        # Issue #1252 (GH #1122) — nur der FINALE Report dieses Laufs traegt zum Index bei (ein
+        # Zwischenstand/eine Probe waere sonst selbst schon ein "Duplikat seiner selbst" fuer den
+        # naechsten Zwischenstand DESSELBEN Laufs).
+        try:
+            append_jsonl_atomic(_run_fingerprint_index_path, _current_run_index_entry)
+        except OSError:
+            _log.debug("[#1252] run_fingerprints.jsonl-Schreiben fehlgeschlagen (non-fatal).",
+                      exc_info=True)
+
+    # Issue #1269 (GH #1139) Fix Punkt 3 — wie weit war die Gesamt-Wallclock bereits verstrichen,
+    # als die Fail-Fast-Probe (sofern sie in diesem Lauf feuerte) auswertete? Beide Operanden muessen
+    # bekannt sein (ein Zwischen-/Probe-Report kennt ``wallclock_s`` typischerweise noch nicht) —
+    # sonst bleibt die Telemetrie ``None`` (nicht 0.0, das behauptete faelschlich "sehr frueh").
+    # Feldname bewusst OHNE "fail_fast" (Akzeptanzkriterium #1037/2, siehe dortiger Docstring:
+    # "kein Feldname mit 'fail_fast' existiert mehr im Report, der ohne echten Abbruch gesetzt sein
+    # koennte") — dieselbe Umbenennungskonvention wie ``blocking_invariant_triggered``.
+    _blocking_invariant_probe_triggered_at_wallclock_fraction = (
+        probe_triggered_at_wallclock_s / wallclock_s
+        if probe_triggered_at_wallclock_s is not None and wallclock_s
+        else None
+    )
+    all_checks.append(("global", _inv.check_fail_fast_probe_timeliness(
+        _blocking_invariant_probe_triggered_at_wallclock_fraction)))
 
     # Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter: divergiert das im Backtest
     # konfigurierte trade_amount_pct vom live tatsächlich gefahrenen MomentumLSAllocator-Deckel.
@@ -5002,6 +5207,15 @@ def _build_report(
     report = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "run_id": run_id,
+        # Issue #1252 (GH #1122) — siehe compute_run_fingerprint-Docstring. Zwei Läufe mit
+        # identischer Eingangsmenge tragen denselben Wert, unabhängig von run_id/started_at_utc.
+        "run_fingerprint": _run_fingerprint,
+        # Issue #1252 (GH #1122) Fix Punkt 3 — run_id des Vorlaufs mit identischem run_fingerprint
+        # (siehe invariants.check_run_is_not_duplicate), oder None (kein Duplikat/nicht auswertbar).
+        "duplicate_of": (
+            _run_duplicate_check.actual.get("duplicate_of_run_id")
+            if _run_duplicate_check.actual else None
+        ),
         # Issue #1104 (Katalog #937) — GETRENNTE Felder statt des vorherigen mehrdeutigen
         # ``git_commit``: ``git_commit_simulation`` (wann die TRIALS liefen) vs.
         # ``git_commit_report`` (wann DIESER Report gebaut wurde) — ein nachtraeglich regenerierter
@@ -5015,9 +5229,18 @@ def _build_report(
         # im Nachhinein einer Installationsumgebung zuordenbar ist.
         "library_versions": library_versions(),
         "tournament_config_sha256": sha256_file(tournament_path) if tournament_path.exists() else None,
+        # Issue #1252 (GH #1122) — Config-Gegenstueck zu tournament_config_sha256 oben, Eingang des
+        # run_fingerprint (siehe dortiger Docstring).
+        "optimizer_config_sha256": sha256_file(optimizer_path) if optimizer_path.exists() else None,
         "catalog_fingerprint": catalog_fingerprint(),
         "started_at_utc": started_at_utc,
         "wallclock_s": wallclock_s,
+        # Issue #1269 (GH #1139) Fix Punkt 3 — Anteil der Gesamt-Wallclock, der bereits verstrichen
+        # war, als die Fail-Fast-Probe auswertete (``None``, wenn keine Probe feuerte oder
+        # ``wallclock_s``/der Zeitpunkt unbekannt ist; siehe invariants.check_fail_fast_probe_
+        # timeliness-Docstring fuer die Interpretation).
+        "blocking_invariant_probe_triggered_at_wallclock_fraction":
+            _blocking_invariant_probe_triggered_at_wallclock_fraction,
         "cli_args": cli_args or {},
         # Issue #833 Fix Punkt 3 — ein Report entsteht seit diesem Fix AUCH bei einem vorzeitigen
         # Sweep-Abbruch (disk_guard/wallclock_guard/SIGINT/SIGTERM/unerwartete Exception, siehe
@@ -5081,6 +5304,9 @@ def _build_report(
         # unterscheidbar, unabhaengig von blocking_invariant_triggered/report_source.
         "store_scan": store_scan,
         "cross_study": {
+            # Issue #1253 (GH #1123) Fix Punkt 3 — siehe _compute_search_variance-Docstring. None,
+            # solange < 3 Läufe derselben Eingangsmenge (fingerprint_base) im Index stehen.
+            "search_variance": _search_variance,
             # Issue #998/#1150 (Katalog #1170) — macht die Kostenbasis-Aufloesung (ATR-Floor UND
             # c_rt, je Symbol) UNTERSCHEIDBAR von "der Floor bindet nirgends" (siehe
             # check_cost_basis_resolution/_atr_floor_bps_by_symbol-Docstring).
@@ -5264,6 +5490,7 @@ def generate_sweep_report(
     prior_probe_invariant_checks: list[dict] | None = None,
     blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
+    probe_triggered_at_wallclock_s: float | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
 
@@ -5294,6 +5521,7 @@ def generate_sweep_report(
         prior_probe_invariant_checks=prior_probe_invariant_checks,
         blocking_invariant_triggered=blocking_invariant_triggered,
         preflight_invariant_checks=preflight_invariant_checks,
+        probe_triggered_at_wallclock_s=probe_triggered_at_wallclock_s,
         # Issue #1090/#1238 — dieselbe Verzeichnis-Ueberschreibung wie unten (out_dir): der
         # Vorlauf-Report (``_prior_holdout_total_return``) muss aus DEMSELBEN Verzeichnis gelesen
         # werden, in das dieser Lauf schreibt, nicht aus dem Modul-Default ``REPORTS_DIR``.
@@ -5321,6 +5549,7 @@ def generate_report_for_run(
     prior_probe_invariant_checks: list[dict] | None = None,
     blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
+    probe_triggered_at_wallclock_s: float | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
 
@@ -5351,6 +5580,7 @@ def generate_report_for_run(
         prior_probe_invariant_checks=prior_probe_invariant_checks,
         blocking_invariant_triggered=blocking_invariant_triggered,
         preflight_invariant_checks=preflight_invariant_checks,
+        probe_triggered_at_wallclock_s=probe_triggered_at_wallclock_s,
     )
 
 

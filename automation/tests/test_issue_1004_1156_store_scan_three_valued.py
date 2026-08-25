@@ -122,7 +122,7 @@ def test_store_scan_classifies_unloadable_study_as_unclassifiable_not_own(tmp_pa
 
     report = rpt._build_report(
         proposals=[], run_id="run_own_test", started_at_utc="2026-08-18T00:00:00Z",
-        wallclock_s=1.0, cli_args={},
+        wallclock_s=1.0, cli_args={}, reports_dir=tmp_path,
     )
     store_scan = report["store_scan"]
     assert store_scan["n_studies_in_store"] == 1
@@ -143,7 +143,7 @@ def test_store_scan_counts_already_seen_proposals_as_own(tmp_path, monkeypatch):
     }]
     report = rpt._build_report(
         proposals=proposals, run_id="run_own_test", started_at_utc="2026-08-18T00:00:00Z",
-        wallclock_s=1.0, cli_args={},
+        wallclock_s=1.0, cli_args={}, reports_dir=tmp_path,
     )
     store_scan = report["store_scan"]
     assert store_scan["n_own"] == 1
