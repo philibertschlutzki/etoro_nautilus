@@ -119,6 +119,18 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
 # QUANTITATIV NEU ZU KALIBRIEREN (grobe Faustregel aus der Session-Coverage dieses Katalogs: ~12-24
 # Kalender-Bars ⇒ ~7-14 Handels-Bars fuer dieselbe reale Haltedauer) — sie werden durch diesen Fix
 # NICHT automatisch mitverschoben.
+#
+# Issue #1261/#1131 — dieselbe KALENDER-Achse gilt fuer ``optimizer.json['time_box_bars']``
+# (Normierungs-Deadline des Time-Box-Penalty, an denselben Cap gebunden, siehe dortigen
+# Schema-Kommentar). ``optimizer.json['time_box_bars_axis']`` (Default ``'calendar_24_7'``,
+# EHRLICHER IST-Zustand — NICHT ``'rth'``) deklariert diese Achse jetzt EXPLIZIT, und
+# ``invariants.check_timebox_unit_coherence`` (neu) haelt die Deklaration gegen die tatsaechlich
+# gemessene ``bars_per_calendar_day``-Achse konsistent. Eine Umkalibrierung DIESER Bands (wie
+# auch von ``time_box_bars`` selbst) auf eine RTH-Achse ist bewusst NICHT Teil von #1261/#1131 —
+# die Bar-Erzeugung selbst zaehlt weiterhin Kalender-Bars (#1260/#1130 implementiert dort nur
+# Konfiguration + reine Hilfsfunktionen, siehe backtest.json['_schema']['fields']
+# ['session_hours_by_asset_class']); eine Rekalibrierung auf eine Achse, die die Simulation
+# tatsaechlich noch nicht zaehlt, wuerde die Konfiguration von der Realitaet entkoppeln.
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 # Issue #1067 — die symmetrische Untergrenze zu ``_MAX_BARS_IN_TRADE_CAP`` (Single Source of Truth,
 # siehe _contracts.py-Docstring).

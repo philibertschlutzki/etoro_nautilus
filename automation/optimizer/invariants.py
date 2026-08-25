@@ -4001,6 +4001,84 @@ def check_session_calendar_coherence(
     )
 
 
+def check_timebox_unit_coherence(
+    study_records: list[dict], *, declared_axis: str,
+    asset_class_by_symbol: dict[str, str],
+    gated_asset_classes: frozenset[str] = frozenset({"EQUITY", "COMMODITY"}),
+    max_bars_per_calendar_day: float = 8.0,
+) -> InvariantResult:
+    """Issue #1261 (GH #1131), Folge von #1260 (GH #1130) — der Zeitbox-Vertrag muss auf
+    Handels-Bars zaehlen, sobald die Bar-Erzeugung selbst auf RTH umgestellt ist; solange das
+    nicht der Fall ist, muss die Konfiguration das EHRLICH deklarieren, statt implizit eine
+    Achse zu unterstellen, die die Simulation tatsaechlich nicht zaehlt.
+
+    ``optimizer.json['time_box_bars']`` (dieselbe Achse fuer JEDE ``max_bars_in_trade``-
+    Suchraum-Bound, ``spaces.py``) deklariert seine Zaehl-Achse ueber
+    ``optimizer.json['time_box_bars_axis']`` (``declared_axis``, ``'calendar_24_7'`` oder
+    ``'rth'``). Dieser Check vergleicht die DEKLARIERTE gegen die BEOBACHTETE Achse — hergeleitet
+    aus ``bars_per_calendar_day``-Telemetrie ueber dieselbe Schwelle wie
+    ``check_session_calendar_coherence`` (``> max_bars_per_calendar_day`` ⇒ beobachtete Achse
+    ``'calendar_24_7'``, sonst ``'rth'``) — auf EQUITY/COMMODITY-Studies (``gated_asset_classes``,
+    echte RTH-Maerkte; FOREX/CRYPTO's native 24/7-Handelszeit macht die Unterscheidung dort
+    bedeutungslos, dieselbe Gate-Begruendung wie ``check_session_calendar_coherence``).
+
+    FAIL (severity ``high``), wenn fuer IRGENDEINE gated Study die beobachtete Achse von der
+    deklarierten abweicht — z. B. ``declared_axis='rth'``, aber ``bars_per_calendar_day > 8``
+    (die Zeitbox behauptet Handelsstunden-Zaehlung, misst aber weiterhin Kalenderstunden) ODER
+    umgekehrt ``declared_axis='calendar_24_7'``, aber ``bars_per_calendar_day <= 8`` (die Bar-
+    Erzeugung wurde bereits auf RTH umgestellt, ``time_box_bars_axis`` aber nicht nachgezogen —
+    ein stiller Rekalibrierungs-Bruch der Zeitbox-Bounds in ``spaces.py``).
+
+    Keine gated Study mit ``bars_per_calendar_day``-Telemetrie ⇒ ``passed=True`` mit erklaerendem
+    ``detail`` (dieselbe "nicht anwendbar"-Konvention wie ``check_session_calendar_coherence``,
+    kein erfundenes Urteil ueber eine leere Grundgesamtheit)."""
+    offenders: dict[str, dict] = {}
+    n_evaluated = 0
+    for r in study_records:
+        symbol = r.get("symbol")
+        bars_per_day = r.get("bars_per_calendar_day")
+        if not symbol or bars_per_day is None:
+            continue
+        asset_class = asset_class_by_symbol.get(symbol)
+        if asset_class not in gated_asset_classes:
+            continue
+        n_evaluated += 1
+        observed_axis = (
+            "calendar_24_7" if float(bars_per_day) > max_bars_per_calendar_day else "rth")
+        if observed_axis != declared_axis:
+            key = f"{r.get('strategy')}/{symbol}"
+            offenders[key] = {
+                "asset_class": asset_class, "bars_per_calendar_day": bars_per_day,
+                "observed_axis": observed_axis, "declared_axis": declared_axis,
+            }
+    if n_evaluated == 0:
+        return InvariantResult(
+            name="check_timebox_unit_coherence",
+            passed=True,
+            expected=f"beobachtete Achse == declared_axis={declared_axis!r} für "
+                     f"{sorted(gated_asset_classes)}",
+            actual=None,
+            severity="high",
+            detail="Keine Study mit aufgelöster EQUITY/COMMODITY-asset_class und "
+                   "bars_per_calendar_day — nicht anwendbar.",
+        )
+    passed = not offenders
+    return InvariantResult(
+        name="check_timebox_unit_coherence",
+        passed=passed,
+        expected=f"beobachtete Achse == declared_axis={declared_axis!r} für "
+                 f"{sorted(gated_asset_classes)}",
+        actual=offenders or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)}/{n_evaluated} EQUITY/COMMODITY-Studies, deren beobachtete "
+                f"Bar-Achse von der deklarierten time_box_bars_axis={declared_axis!r} abweicht "
+                "— die Zeitbox-Einheit (optimizer.json['time_box_bars']) und die tatsaechliche "
+                "Bar-Zaehlung sind inkohaerent (#1261/#1131)."),
+        provenance={"offenders": offenders} if offenders else None,
+    )
+
+
 def check_summary_row_completeness(
     study_records: list[dict], *, min_exposure_for_normalization: float = 0.05,
 ) -> InvariantResult:

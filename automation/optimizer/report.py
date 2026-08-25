@@ -4574,6 +4574,12 @@ def _build_report(
     # Menge wie die Kostenbasis-Aufloesung oben).
     all_checks.append(("global", _inv.check_session_calendar_coherence(
         studies_out, asset_class_by_symbol=_asset_class_by_symbol(_cost_basis_symbols))))
+    # Issue #1261/#1131, Folge von #1260/#1130 — deklarierte (optimizer.json['time_box_bars_axis'])
+    # gegen beobachtete (bars_per_calendar_day) Zeitbox-Zaehl-Achse. Direkt nach der Bar-Achsen-
+    # Kohaerenzpruefung platziert (dieselbe Symbol-/Gate-Grundlage).
+    all_checks.append(("global", _inv.check_timebox_unit_coherence(
+        studies_out, declared_axis=str(optimizer_cfg.get("time_box_bars_axis", "calendar_24_7")),
+        asset_class_by_symbol=_asset_class_by_symbol(_cost_basis_symbols))))
     _stamp_atr_floor_bps_derived(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
         round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,

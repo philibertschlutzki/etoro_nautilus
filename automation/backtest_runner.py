@@ -1492,6 +1492,60 @@ def resolve_opening_range_session_open_hour(inst_id_str: str,
     return int(session_open_hour_by_asset_class[asset_class_key])
 
 
+def resolve_session_hours_by_asset_class(
+    asset_class_key: str, session_hours_by_asset_class: dict | None,
+) -> tuple[str, str] | None:
+    """Issue #1260 (GH #1130) Fix Punkt 1 — löst je Asset-Class das UTC-Handelszeit-Fenster auf
+    (``backtest.json['session_hours_by_asset_class']``, Single Source of Truth analog
+    ``resolve_opening_range_session_open_hour``). Rückgabe ``(open_utc, close_utc)`` (Strings
+    ``'HH:MM'``) oder ``None`` — ``None`` bedeutet "kein Fenster", entweder weil der Key fehlt
+    (rückwärtskompatibel: kein Fenster konfiguriert ⇒ keine Maske) oder weil der Asset-Class-Eintrag
+    explizit ``null`` ist (ein echter 24/7-Markt wie FOREX/CRYPTO — die Abwesenheit einer Maske ist
+    hier eine bewusste Aussage, kein fehlender Wert).
+
+    BEWUSSTER SCOPE (siehe ``backtest.json``-Schema-Dokumentation für ``session_hours_by_asset_
+    class``): diese Funktion ist eine reine, unit-testbare Konfigurationsauflösung — sie wird
+    aktuell an KEINER Call-Site aufgerufen, die den Tick-Lade-/Bar-Aufbau-Pfad tatsächlich
+    beeinflusst (``load_ticks_from_catalog``/``engine.add_data(ticks)`` bleiben unverändert). Die
+    Verdrahtung braucht einen echten Marktdaten-Katalog zur End-to-End-Verifikation, die in dieser
+    Sandbox nicht möglich ist."""
+    if not session_hours_by_asset_class:
+        return None
+    entry = session_hours_by_asset_class.get(asset_class_key)
+    if entry is None:
+        return None
+    return entry["open_utc"], entry["close_utc"]
+
+
+def is_within_session_hours(
+    ts_ns: int, open_utc: str, close_utc: str, *, weekdays_only: bool = True,
+) -> bool:
+    """Issue #1260 (GH #1130) Fix Punkt 2 — reines Filter-Primitiv: ist der UTC-Zeitpunkt
+    ``ts_ns`` (Nanosekunden seit Epoch, dieselbe Einheit wie ``QuoteTick.ts_event``) innerhalb des
+    Handelszeit-Fensters ``[open_utc, close_utc)`` (Strings ``'HH:MM'``, UTC-Uhrzeit-of-Day, OHNE
+    Datumsanteil — das Fenster gilt für JEDEN Handelstag identisch, DST-ungenau wie
+    ``resolve_opening_range_session_open_hour``)? ``weekdays_only=True`` (Default) schliesst
+    zusätzlich Samstag/Sonntag aus (Montag=0 .. Sonntag=6, ``datetime.weekday()``) — EQUITY-/
+    COMMODITY-Märkte sind an Wochenenden UNABHÄNGIG vom Tagesfenster geschlossen; anders als das
+    Tagesfenster selbst ist das keine je-Asset-Class-konfigurierbare Grösse (jeder Markt mit einem
+    deklarierten Tagesfenster ist auch am Wochenende geschlossen — Zero-Hardcoding hier wäre
+    Overengineering ohne einen einzigen erwarteten abweichenden Fall).
+
+    Reine Funktion, kein I/O — unit-testbar mit synthetischen Zeitstempeln, ohne einen echten
+    Marktdaten-Katalog oder ``nautilus_trader``-Tick-Objekte zu benötigen (dieselbe Testbarkeits-
+    Absicht wie ``resolve_effective_bar_cap``/``compute_trial_timebox_violations``)."""
+    from datetime import datetime, timezone
+    dt = datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=timezone.utc)
+    if weekdays_only and dt.weekday() >= 5:
+        return False
+    open_h, open_m = (int(x) for x in open_utc.split(":"))
+    close_h, close_m = (int(x) for x in close_utc.split(":"))
+    time_of_day = dt.hour * 60 + dt.minute
+    open_minutes = open_h * 60 + open_m
+    close_minutes = close_h * 60 + close_m
+    return open_minutes <= time_of_day < close_minutes
+
+
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,

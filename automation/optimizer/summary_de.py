@@ -1108,7 +1108,12 @@ def _section_4_longest_trades(report: dict) -> str:
         lines.append(
             "`Handels-Bars (geschätzt)` = `Median-Bars · session_coverage_fraction` — solange die "
             "Bar-Achse ungefiltert 24/7 läuft (#1027/#1176 Schritt 1), ist das eine grobe Näherung, "
-            "keine echte Handelszeiten-Zählung (die kommt erst mit Schritt 2)."
+            "keine echte Handelszeiten-Zählung (die kommt erst mit Schritt 2). Issue #1261/#1131: "
+            "`optimizer.json['time_box_bars_axis']` deklariert diesen Ist-Zustand jetzt explizit "
+            "(`'calendar_24_7'`, solange Schritt 2 aussteht), und `invariants.check_timebox_unit_"
+            "coherence` haelt diese Deklaration gegen die tatsaechlich gemessene Bar-Achse "
+            "konsistent — diese Spalte entfaellt erst, wenn Schritt 2 (echte RTH-Bar-Erzeugung) "
+            "steht UND `time_box_bars_axis` auf `'rth'` umgestellt ist."
         )
         lines.append("")
         lines.append(
