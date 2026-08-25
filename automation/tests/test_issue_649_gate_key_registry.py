@@ -60,9 +60,13 @@ def test_the_four_previously_dead_prefixed_clauses_resolve_to_a_handler():
     for clause in dead_before_fix:
         assert _canonical_gate_key(clause) in OOS_CONDITION_MAP_KEYS
 
-    # Der EINE VERBLEIBENDE Key bleibt DEFAULT-Mitglied von eligible_requires_all (die eigentliche
-    # #649-Regression waere sein stilles Verschwinden).
-    still_default = ["oos_min_psr"]
+    # Issue #1248 (GH #1118) — 'oos_min_psr' wurde SEINERSEITS aus eligible_requires_all entfernt
+    # (gemessener Grenzbeitrag 0.0 gegenueber dem neueren oos_min_alpha_tstat-Gate, siehe
+    # tournament.json['oos_min_psr']-Schema) — sein Handler bleibt oben weiterhin ueberprueft
+    # (condition_map-Registrierung, KEINE #649-Regression), nur die Konjunktions-Mitgliedschaft
+    # entfaellt. 'oos_min_alpha_tstat' (#1093/#1241) ist seither der EINE verbleibende DEFAULT-
+    # Risikograte-Key von eligible_requires_all.
+    still_default = ["oos_min_alpha_tstat"]
     for clause in still_default:
         assert clause in TCFG["eligible_requires_all"], f"{clause} fehlt in eligible_requires_all"
 
@@ -118,14 +122,19 @@ def test_negative_excess_return_no_longer_blocks_eligibility():
     assert not any("oos_min_excess_return" in r for r in ev["oos_rejection_reasons"])
 
 
-def test_low_psr_trial_is_not_eligible():
+def test_low_psr_no_longer_blocks_eligibility_since_1248():
+    """Issue #1248 (GH #1118) — 'oos_min_psr' ist seit diesem Fix KEIN Konjunktions-Mitglied mehr
+    (gemessener Grenzbeitrag 0.0 gegenueber oos_min_alpha_tstat, siehe tournament.json-Schema):
+    ein Trial mit niedrigem PSR, aber einem passierenden t(alpha)-Gate, IST eligible — die frühere
+    Erwartung dieses Tests (PSR blockiert) ist die ROOT-CAUSE-BEHOBENE Kollinearität selbst."""
     oos = {
         "total_trades": 300, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1,
         "expectancy": 0.01, "sortino_ratio": -1.0, "psr": 0.10,
         "profit_factor": 1.3, "median_position_notional": 1000.0,
         "oos_folds_total": 4, "oos_fold_sortinos": [-1.0, -0.9, -1.1, -1.0],
-        "oos_excess_return": 0.02,
+        "oos_excess_return": 0.02, "oos_alpha_tstat": 2.5,
     }
     ev = _evaluate_oos_eligibility(oos, TCFG)
-    assert ev["oos_eligible"] is False
-    assert any("oos_min_psr" in r for r in ev["oos_rejection_reasons"])
+    assert ev["oos_eligible"] is True
+    # Near-Miss-Telemetrie bleibt sichtbar, auch wenn sie nicht mehr Gate-bindend ist.
+    assert ev["oos_gate_deltas"]["oos_min_psr"] < 0

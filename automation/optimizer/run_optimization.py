@@ -30,6 +30,7 @@ from automation.optimizer.reward import (
     check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
     gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
     check_mandatory_gate_reachability_live, _normalize_clause as _reward_normalize_clause,
+    resolve_alpha_tstat_gate_threshold,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
@@ -3032,13 +3033,37 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     except Exception:
         any_arm_live_unreachable = []
 
+    # Issue #1250 (GH #1120), Pitfall #451 — die EFFEKTIVE oos_min_alpha_tstat-Schwelle DIESER
+    # Study (reward.resolve_alpha_tstat_gate_threshold-Docstring). n_family_stage1/
+    # oos_n_periods_median sind FAMILIEN-Groessen, die erst nach Abschluss ALLER Studies eines
+    # Symbols bekannt sind (sweep._family_n_stage1_from_studies/_study_oos_n_periods_median,
+    # confirm.py/report.py) — zur Laufzeit DIESER einzelnen Study liegt weder eine Familiengroesse
+    # noch ein Kalibrier-Fixture vor, daher bleiben beide hier unbesetzt (None). Der Call bleibt
+    # dennoch verdrahtet statt zu entfallen: mode='static' (Default, siehe tournament.json
+    # ['oos_min_alpha_tstat_mode']) ist ohnehin bit-identisch zur rohen Config-Konstante, und
+    # resolve_alpha_tstat_gate_threshold faellt selbst bei mode='multiplicity_adjusted' ohne
+    # Fixture FAIL-OPEN auf 'static' zurueck (siehe dortiger Docstring) — ein zukuenftiger
+    # Kalibrierlauf kann calibration_fixture/n_family_stage1/oos_n_periods_median hier ergaenzen,
+    # ohne diese Call-Site selbst nochmal aendern zu muessen.
+    alpha_tstat_gate_threshold_effective, alpha_tstat_gate_threshold_source = (
+        resolve_alpha_tstat_gate_threshold(_tcfg_arm))
+    try:
+        study.set_user_attr("alpha_tstat_gate_threshold_effective", alpha_tstat_gate_threshold_effective)
+        study.set_user_attr("alpha_tstat_gate_threshold_source", alpha_tstat_gate_threshold_source)
+    except Exception:
+        pass
+
     # Issue #812 — Fingerabdruck der EFFEKTIV wirksamen Gate-Konfiguration DIESER Study (Schwellen
     # inkl. aller #668-Policy-Anpassungen, siehe reward.selection_rule_fingerprint-Docstring) — als
     # study.user_attr gestempelt, damit report._study_record ihn ohne erneute Live-Kohorten-
     # Berechnung auslesen kann (Single Source of Truth: die tatsaechlich wirksame Policy-
     # Entscheidung entsteht HIER, aus der vollen Trial-Kohorte). Voraussetzung fuer eine gueltige
     # familienweite DSR-Multiplizitaetskorrektur (sweep._family_n_from_studies, Pitfall #248).
-    selection_fingerprint = selection_rule_fingerprint(_tcfg_arm, any_arm_policy_decision)
+    # Issue #1250 (GH #1120) — alpha_tstat_gate_threshold_effective fliesst mit ein (siehe oben).
+    selection_fingerprint = selection_rule_fingerprint(
+        _tcfg_arm, any_arm_policy_decision,
+        alpha_tstat_gate_threshold_effective=alpha_tstat_gate_threshold_effective,
+    )
     try:
         study.set_user_attr("selection_rule_fingerprint", selection_fingerprint)
     except Exception:

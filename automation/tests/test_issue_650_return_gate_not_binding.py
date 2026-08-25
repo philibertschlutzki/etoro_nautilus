@@ -53,14 +53,16 @@ def test_low_return_high_psr_positive_alpha_trial_is_eligible():
 
 
 def test_high_return_low_psr_negative_alpha_trial_is_not_eligible():
-    """#650-Akzeptanzkriterium: total_return=0.05 (hoch) rettet NICHT, wenn psr=0.4 (niedrig) und
-    excess=-0.01 (unterbietet Buy&Hold) — die risikoadjustierten Gates diskriminieren jetzt korrekt,
-    nicht mehr der absolute Return."""
-    oos = _oos(total_return=0.05, psr=0.4, excess=-0.01)
+    """#650-Akzeptanzkriterium: total_return=0.05 (hoch) rettet NICHT, wenn das risikoadjustierte
+    Gate schwach ist — die risikoadjustierten Gates diskriminieren jetzt korrekt, nicht mehr der
+    absolute Return. Issue #1248 (GH #1118) — 'oos_min_psr' ist seither KEIN hartes Gate mehr
+    (gemessener Grenzbeitrag 0.0 gegenueber oos_min_alpha_tstat); dieser Test isoliert die
+    risikoadjustierte Ablehnung daher ueber ein schwaches t(alpha) statt eines niedrigen PSR."""
+    oos = _oos(total_return=0.05, psr=0.4, excess=-0.01, alpha_tstat=0.3)
     ev = _evaluate_oos_eligibility(oos, TCFG)
     assert ev["oos_eligible"] is False
     reasons = " ".join(ev["oos_rejection_reasons"])
-    assert "oos_min_psr" in reasons or "oos_min_excess_return" in reasons
+    assert "oos_min_alpha_tstat" in reasons
 
 
 def test_return_gate_delta_no_longer_drives_rejection():

@@ -1606,6 +1606,12 @@ def _study_record(proposal: dict, study,
         # (reward.selection_rule_fingerprint, gestempelt in run_optimization._emit_study_summary).
         # ``None`` fuer Studies aus einem Lauf vor #812 (rueckwaertskompatibel, analog seed_effective).
         "selection_rule_fingerprint": study_user_attrs.get("selection_rule_fingerprint"),
+        # Issue #1250 (GH #1120), Pitfall #451 in AGENTS.md — die effektiv wirksame
+        # oos_min_alpha_tstat-Schwelle DIESER Study (reward.resolve_alpha_tstat_gate_threshold,
+        # gestempelt in run_optimization.py neben selection_rule_fingerprint) plus ihre Quelle
+        # ('static'/'calibrated'). ``None`` fuer Studies aus einem Lauf vor #1250.
+        "alpha_tstat_gate_threshold_effective": study_user_attrs.get("alpha_tstat_gate_threshold_effective"),
+        "alpha_tstat_gate_threshold_source": study_user_attrs.get("alpha_tstat_gate_threshold_source"),
         "best_reward": best_reward,
         # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte (None, wenn
         # p_eligible == 0 — die Leermenge ist hier inhaltlich korrekt, kein Constraint-Artefakt).

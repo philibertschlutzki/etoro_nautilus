@@ -59,18 +59,27 @@ def test_eligible_requires_all_matches_documented_default():
     Issue #1093/#1241 — 'oos_min_alpha_tstat' ist ein NEUES Gate (t(α)-Vorfilter statt des
     entfernten absoluten Excess-Return-Gates, siehe test_issue_1093_1241_alpha_tstat_prefilter.py),
     keine Wiederherstellung der #776-Redundanz: t(α) ist exposure-bereinigt (OLS-Alpha/Beta-
-    Regression), das alte oos_min_excess_return war es nicht."""
+    Regression), das alte oos_min_excess_return war es nicht.
+
+    Issue #1248 (GH #1118) — 'oos_min_psr' wurde SEINERSEITS entfernt (siebte Redundanz-Instanz:
+    |ρ(oos_min_psr, oos_min_alpha_tstat)| bis 0.9991, gemessener marginaler Eigenbeitrag exakt 0.0
+    über 1627 Beobachtungen, 0 Solo-Rejections von 160) — analytisch begründet: |β|<=0.0503 macht
+    t(α) ≈ Sharpe-t und PSR ≈ Sortino-t auf derselben Serie."""
     assert CFG["eligible_requires_all"] == [
-        "min_trades", "max_drawdown", "oos_min_psr", "oos_min_alpha_tstat",
+        "min_trades", "max_drawdown", "oos_min_alpha_tstat",
     ]
 
 
 def test_oos_min_psr_and_cost_floor_keys_still_present_in_schema():
     """min_expectancy bleibt als Key/Schwelle/Kosten-Floor (oos_min_expectancy_k_alpha) erhalten —
-    nur die harte Konjunktions-Mitgliedschaft entfällt (weiche Near-Miss-Distanz bleibt aktiv)."""
+    nur die harte Konjunktions-Mitgliedschaft entfällt (weiche Near-Miss-Distanz bleibt aktiv).
+    Issue #1248 (GH #1118) — dasselbe gilt seither fuer oos_min_psr: der Key/die Schwelle bleiben
+    (weiche Near-Miss-Distanz + gate_consolidation_priority), nur nicht mehr in
+    eligible_requires_all."""
     assert "min_expectancy" in CFG
     assert "oos_min_expectancy_k_alpha" in CFG
-    assert "oos_min_psr" in CFG["eligible_requires_all"]
+    assert "oos_min_psr" in CFG
+    assert "oos_min_psr" not in CFG["eligible_requires_all"]
 
 
 def test_schema_documents_the_697_consolidation():

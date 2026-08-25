@@ -512,20 +512,34 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
 
 
 def _effective_gate_thresholds(tournament_cfg: dict | None,
-                               any_arm_policy_decision: dict | None = None) -> dict:
+                               any_arm_policy_decision: dict | None = None, *,
+                               alpha_tstat_gate_threshold_effective: float | None = None) -> dict:
     """Issue #812 — das EFFEKTIV wirksame Schwellen-Dict einer Study: ``eligible_requires_all``-
     Klauseln mit ihren konfigurierten Schwellen, plus ``eligible_requires_any``-Klauseln NACH
     Anwendung der #668-Policy (``resolve_any_arm_policy``) — gedroppte Klauseln (``drop_arm``)
     fehlen, rekalibrierte Klauseln (``recalibrate``) tragen ihre study-spezifische statt der
     Config-Schwelle. Das ist die Grundlage von ``selection_rule_fingerprint``: zwei Studies mit
-    demselben Fingerprint haben garantiert dieselbe EFFEKTIVE Selektionsregel angewendet."""
+    demselben Fingerprint haben garantiert dieselbe EFFEKTIVE Selektionsregel angewendet.
+
+    Issue #1250 (GH #1120) — ``alpha_tstat_gate_threshold_effective`` (aus
+    ``resolve_alpha_tstat_gate_threshold``, siehe dortiger Docstring) übersteuert — sofern gesetzt
+    — die rohe Config-Schwelle für ``oos_min_alpha_tstat``: eine je Study aus ``n_family_stage1``/
+    ``oos_n_periods_median`` kalibrierte Schwelle (Modus ``'multiplicity_adjusted'``) macht die
+    effektive Selektionsregel STUDY-abhängig, exakt wie ``any_arm_unreachable_policy=
+    'recalibrate'`` es für ``eligible_requires_any`` bereits tut — zwei Studies mit
+    unterschiedlicher effektiver Schwelle MÜSSEN unterschiedliche Fingerprints tragen (kein
+    gültiger DSR-Vergleich über eine study-abhängige Selektionsprozedur hinweg, Pitfall #248).
+    ``None`` (Default, Modus ``'static'``) ist bit-identisch zum Pre-#1250-Verhalten."""
     tournament_cfg = tournament_cfg or {}
     any_arm_policy_decision = any_arm_policy_decision or {}
     dropped = set(any_arm_policy_decision.get("dropped_clauses") or [])
     recalibrated = any_arm_policy_decision.get("recalibrated_thresholds") or {}
     effective: dict = {}
     for k in tournament_cfg.get("eligible_requires_all") or []:
-        effective[k] = tournament_cfg.get(k)
+        if _normalize_clause(k) == "min_alpha_tstat" and alpha_tstat_gate_threshold_effective is not None:
+            effective[k] = alpha_tstat_gate_threshold_effective
+        else:
+            effective[k] = tournament_cfg.get(k)
     for k in tournament_cfg.get("eligible_requires_any") or []:
         if k in dropped:
             continue
@@ -538,7 +552,8 @@ def _effective_gate_thresholds(tournament_cfg: dict | None,
 
 
 def selection_rule_fingerprint(tournament_cfg: dict | None,
-                               any_arm_policy_decision: dict | None = None) -> str:
+                               any_arm_policy_decision: dict | None = None, *,
+                               alpha_tstat_gate_threshold_effective: float | None = None) -> str:
     """Issue #812 — SHA-256-Hexdigest über die EFFEKTIV wirksame Gate-Konfiguration einer Study
     (``_effective_gate_thresholds`` — Schwellen inklusive aller #668-Policy-Anpassungen dieser
     Study). Root-Cause #812: die Deflated Sharpe Ratio korrigiert für das Maximum von ``N``
@@ -553,10 +568,75 @@ def selection_rule_fingerprint(tournament_cfg: dict | None,
     einer anderen griff) müssen als getrennte Familien geführt werden (siehe
     ``sweep._family_n_from_studies``, ``report._build_report``'s ``selection_rule_families``).
     Deterministisch (``json.dumps(..., sort_keys=True)`` vor dem Hash) — dieselbe effektive
-    Konfiguration liefert IMMER denselben Fingerprint, unabhängig von der Dict-Iterationsreihenfolge."""
-    effective = _effective_gate_thresholds(tournament_cfg, any_arm_policy_decision)
+    Konfiguration liefert IMMER denselben Fingerprint, unabhängig von der Dict-Iterationsreihenfolge.
+
+    Issue #1250 (GH #1120) — ``alpha_tstat_gate_threshold_effective`` wird unverändert an
+    ``_effective_gate_thresholds`` durchgereicht (siehe dortiger Docstring): eine study-spezifisch
+    kalibrierte ``oos_min_alpha_tstat``-Schwelle (Modus ``'multiplicity_adjusted'``) fließt damit in
+    den Fingerprint ein — ``None`` (Modus ``'static'``, Default) ist bit-identisch zum
+    Pre-#1250-Verhalten."""
+    effective = _effective_gate_thresholds(
+        tournament_cfg, any_arm_policy_decision,
+        alpha_tstat_gate_threshold_effective=alpha_tstat_gate_threshold_effective,
+    )
     payload = json.dumps(effective, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# Issue #1250 (GH #1120) — gültige Werte für tournament.json['oos_min_alpha_tstat_mode']. 'static'
+# (Default, fehlt der Key) ist BIT-IDENTISCH zum Pre-#1250-Verhalten (die konfigurierte Konstante
+# gilt unveraendert für jede Study). Ein unbekannter Wert bricht fail-loud ab (analog #659
+# promotion_correction_mode).
+_ALPHA_TSTAT_GATE_MODES = frozenset({"static", "multiplicity_adjusted"})
+
+
+def resolve_alpha_tstat_gate_threshold(
+    tournament_cfg: dict | None, *,
+    n_family_stage1: int | None = None, oos_n_periods_median: float | None = None,
+    calibration_fixture: dict | None = None,
+) -> tuple[float | None, str]:
+    """Issue #1250 (GH #1120), Pitfall #451 in AGENTS.md — löst die EFFEKTIVE
+    ``oos_min_alpha_tstat``-Schwelle einer Study auf: die statische Konstante
+    (``tournament_cfg['oos_min_alpha_tstat']``, Modus ``'static'``, Default) oder — bei
+    ``oos_min_alpha_tstat_mode='multiplicity_adjusted'`` UND vorliegendem Kalibrier-Fixture — eine
+    JE STUDY aus ``n_family_stage1``/``oos_n_periods_median`` aufgeloeste, multiplizitaets-
+    korrigierte Schwelle (``calibration.calibrate_alpha_tstat_gate``, analog der
+    ``deflation_confidence``-T-Adaptivitaet nach #678).
+
+    ``calibration_fixture``: ``{'n_configs', 'n_periods', 'threshold', ...}`` oder eine Liste
+    solcher Dicts (ein Gitter mehrerer (n_configs, n_periods)-Kalibrierpunkte) — der NAECHSTE
+    Punkt (kleinster euklidischer Abstand in log(n_configs)/log(n_periods)) wird verwendet. Reine
+    Funktion, KEIN Datei-I/O (der Aufrufer laedt das Fixture aus ``automation/tests/fixtures/``,
+    siehe ``calibrate_alpha_tstat_gate``-Docstring) — ohne Fixture ODER ohne beide (N, T)-Grössen
+    faellt die Funktion auf ``'static'`` zurueck (fail-open: eine fehlende Kalibrierbasis darf den
+    Sweep nie blockieren, nur die Aktivierung von ``'multiplicity_adjusted'`` bleibt wirkungslos).
+
+    Rueckgabe: ``(threshold, source)`` mit ``source ∈ {'static', 'calibrated'}``. Ein unbekannter
+    Modus bricht FAIL-LOUD ab (``ValueError``, analog ``confirm.py['promotion_correction_mode']``,
+    #659)."""
+    tournament_cfg = tournament_cfg or {}
+    static_value = tournament_cfg.get("oos_min_alpha_tstat")
+    mode = tournament_cfg.get("oos_min_alpha_tstat_mode", "static")
+    if mode not in _ALPHA_TSTAT_GATE_MODES:
+        raise ValueError(
+            f"tournament.json: oos_min_alpha_tstat_mode={mode!r} unbekannt. "
+            f"Erlaubt: {sorted(_ALPHA_TSTAT_GATE_MODES)}."
+        )
+    if mode == "static" or not calibration_fixture or n_family_stage1 is None or oos_n_periods_median is None:
+        return static_value, "static"
+    points = calibration_fixture if isinstance(calibration_fixture, list) else [calibration_fixture]
+    points = [p for p in points if isinstance(p, dict) and p.get("n_configs") and p.get("n_periods")
+             and p.get("threshold") is not None]
+    if not points:
+        return static_value, "static"
+
+    def _distance(p: dict) -> float:
+        return (math.log(max(1, int(p["n_configs"]))) - math.log(max(1, int(n_family_stage1)))) ** 2 + (
+            math.log(max(1.0, float(p["n_periods"]))) - math.log(max(1.0, float(oos_n_periods_median)))
+        ) ** 2
+
+    nearest = min(points, key=_distance)
+    return float(nearest["threshold"]), "calibrated"
 
 
 def _active_gate_collinearity_keys(tournament_cfg: dict | None) -> list[str]:
