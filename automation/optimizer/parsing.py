@@ -345,6 +345,18 @@ class TournamentMetrics:
     # von invariants.compute_trial_timebox_violations. Leeres Tuple ⇒ Pre-#899-JSON (rückwärts-
     # kompatibel; der Konsument fällt dann auf den Trial-Maximum-Punkt zurück).
     oos_holding_times_s: tuple = ()
+    # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — ``total_return``/``expectancy_capital_
+    # weighted`` teilen sich SEIT DIESEM FIX dieselbe (kalibrierte-Slippage-korrigierte) Kostenbasis
+    # (backtest_runner._apply_calibrated_slippage_to_mtm_series); die ``_net``-Felder sind explizite
+    # Aliase der bereits korrigierten ``oos_total_return``/``oos_expectancy_capital_weighted`` oben
+    # (Namensparitaet zum Akzeptanzkriterium des Issues UND zu invariants.check_cost_basis_
+    # coherence), die ``_gross``-Felder die Kostenbasis DAVOR (reine Traceability-Telemetrie, None
+    # ohne Equity-Kurve ODER ohne aktive Kalibrierung — siehe backtest_runner._calculate_stats).
+    # Defaults rueckwaertskompatibel (Legacy-JSONs vor #1257).
+    oos_total_return_net: float | None = None
+    oos_total_return_gross: float | None = None
+    oos_expectancy_capital_weighted_net: float | None = None
+    oos_expectancy_capital_weighted_gross: float | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -543,6 +555,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_expectancy = oos_metrics.get("expectancy")
     # Issue #1031 (Katalog #866) — siehe TournamentMetrics-Docstring.
     oos_expectancy_capital_weighted = oos_metrics.get("expectancy_capital_weighted")
+    # Issue #1257 (GH #1127), Pitfall #454 — siehe TournamentMetrics-Docstring.
+    oos_total_return_net = oos_metrics.get("total_return_net")
+    oos_total_return_gross = oos_metrics.get("total_return_gross")
+    oos_expectancy_capital_weighted_net = oos_metrics.get("expectancy_capital_weighted_net")
+    oos_expectancy_capital_weighted_gross = oos_metrics.get("expectancy_capital_weighted_gross")
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
@@ -851,6 +868,17 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         oos_n_losses=int(oos_n_losses) if oos_n_losses is not None else 0,
         oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
+        # Issue #1257 (GH #1127), Pitfall #454 — siehe TournamentMetrics-Docstring.
+        oos_total_return_net=(
+            float(oos_total_return_net) if oos_total_return_net is not None else None),
+        oos_total_return_gross=(
+            float(oos_total_return_gross) if oos_total_return_gross is not None else None),
+        oos_expectancy_capital_weighted_net=(
+            float(oos_expectancy_capital_weighted_net)
+            if oos_expectancy_capital_weighted_net is not None else None),
+        oos_expectancy_capital_weighted_gross=(
+            float(oos_expectancy_capital_weighted_gross)
+            if oos_expectancy_capital_weighted_gross is not None else None),
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,

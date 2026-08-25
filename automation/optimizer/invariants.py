@@ -6590,6 +6590,82 @@ def check_selection_cost_basis_contract(study_records: list[dict]) -> InvariantR
     )
 
 
+def check_cost_basis_coherence(study_records: list[dict]) -> InvariantResult:
+    """Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — ``check_selection_cost_basis_contract``
+    (oben) prueft nur, DASS ein ``selection_cost_basis``-Feld gesetzt/plausibel ist; dieser Waechter
+    prueft, OB die davon behauptete Kostenbasis tatsaechlich KOHAERENT ueber die Selektionsgroessen
+    hinweg wirkt.
+
+    Symptom (ComboTrendVwap): ``holdout_total_return = +0,57 %`` (positiv) bei
+    ``holdout_expectancy_capital_weighted = -0,52 %/Trade`` (negativ) — DIESELBEN 62 Trades, exakt
+    um die kalibrierte Slippage (78,4052 bps/Trade) auseinander. Root-Cause: ``selection_cost_
+    basis='round_trip_plus_calibrated_slippage'`` wirkte VOR #1257 an der Quelle nur auf
+    ``rt_pnls_with_ts`` (⇒ ``expectancy``), NICHT auf die MtM-Equity-Kurve (⇒ ``total_return``,
+    ``sortino_ratio``/PSR, die α/β-Regression) — zwei Kostenbasen liefen parallel, ohne dass ein
+    einziges Gate/eine Metrik das je gegen die jeweils andere prueft.
+
+    Seit #1257 (``backtest_runner._apply_calibrated_slippage_to_mtm_series``) teilen sich
+    ``total_return``/``expectancy_capital_weighted`` DIESELBE Renditeserie — bei >= 1 Trade duerfen
+    die beiden Groessen daher nicht mehr GEGENSAETZLICHE Vorzeichen tragen: ein Trade-Portfolio, das
+    im Mittel PRO TRADE verliert (``expectancy_capital_weighted_net < 0``), kann nicht gleichzeitig
+    ueber das GESAMTE Fenster einen positiven Return (``total_return_net > 0``) erwirtschaftet haben,
+    wenn beide aus derselben, kostenbereinigten Renditeserie stammen — ein Widerspruch ist entweder
+    ein Rueckfall auf die #1257-Root-Cause (zwei divergierende Kostenbasen) ODER ein neuer, noch
+    unbekannter Bruch derselben Klasse. ``severity='blocking'`` (statt nur ``'medium'`` wie der
+    Geschwister-Check oben): ein Selektionsentscheid auf inkohaerenten Groessen ist nicht nur eine
+    Telemetrie-Abweichung, sondern untergraebt die Selektion selbst (#1127-Fix-Punkt 3).
+
+    Nur Studies mit >= 1 Holdout-Trade UND BEIDEN ``_net``-Feldern gesetzt werden geprueft (Legacy-
+    Reports vor #1257 oder Studies ohne Holdout-Trade ⇒ ``inconclusive=True``, kein stiller
+    Pass-durch-Abwesenheit). Ein exaktes Gleichstands-Nullpaar (beide == 0.0) gilt als kohaerent
+    (kein Vorzeichen-Widerspruch moeglich, wenn keine der beiden Groessen von Null verschieden ist)."""
+    with_trades = [r for r in study_records if (r.get("holdout_total_trades") or 0) >= 1]
+    checked = [
+        r for r in with_trades
+        if r.get("holdout_total_return_net") is not None
+        and r.get("holdout_expectancy_capital_weighted_net") is not None
+    ]
+    expected = (
+        "sign(holdout_total_return_net) == sign(holdout_expectancy_capital_weighted_net) je Study "
+        "mit >= 1 Holdout-Trade (dieselbe Renditeserie speist beide seit #1257)"
+    )
+    if not checked:
+        return InvariantResult(
+            name="check_cost_basis_coherence",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="blocking",
+            detail="Kein Report-Datensatz traegt beide _net-Felder (Report vor #1257 oder keine "
+                   "Studies mit Holdout-Trade) — nicht auswertbar.",
+            inconclusive=True,
+        )
+    offenders: dict[str, dict] = {}
+    for r in checked:
+        total_return_net = r["holdout_total_return_net"]
+        expectancy_net = r["holdout_expectancy_capital_weighted_net"]
+        if total_return_net == 0.0 or expectancy_net == 0.0:
+            continue
+        if (total_return_net > 0.0) != (expectancy_net > 0.0):
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = {
+                "holdout_total_return_net": total_return_net,
+                "holdout_expectancy_capital_weighted_net": expectancy_net,
+                "selection_cost_basis": r.get("selection_cost_basis"),
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_cost_basis_coherence",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit gegensaetzlichem Vorzeichen zwischen "
+                f"total_return_net und expectancy_capital_weighted_net: {offenders} (#1257/#1127)."),
+    )
+
+
 def _resolve_causal_hypothesis_state(
     candidates: list[dict], *, anchor_control_run_available: bool = False,
 ) -> str:

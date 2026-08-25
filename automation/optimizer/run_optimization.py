@@ -70,6 +70,14 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_profit_factor_censored": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_censored)",
     "oos_profit_factor_raw": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_profit_factor_raw)",
     "oos_expectancy_capital_weighted": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted)",
+    # Issue #1257 (GH #1127), Pitfall #454 — analog oos_expectancy_capital_weighted direkt oben:
+    # reine Traceability-/Kohaerenz-Check-Felder (invariants.check_cost_basis_coherence), die nur
+    # am promotierten Holdout-Kandidaten (report.py holdout_total_return_net/_gross,
+    # holdout_expectancy_capital_weighted_net/_gross) gebraucht werden, nicht je Sweep-Trial.
+    "oos_total_return_net": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_total_return_net, #1257)",
+    "oos_total_return_gross": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_total_return_gross, #1257)",
+    "oos_expectancy_capital_weighted_net": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted_net, #1257)",
+    "oos_expectancy_capital_weighted_gross": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted_gross, #1257)",
     "oos_expectancy_winsorized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_winsorized)",
     "oos_expectancy_outlier_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_outlier_count)",
     "oos_expectancy_cost_stress_1_5x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_1_5x)",

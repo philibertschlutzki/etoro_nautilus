@@ -3178,7 +3178,7 @@ def _bar_calendar_telemetry(mtm_series: "pd.Series | None") -> dict:
     }
 
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None, symbol: str | None = None) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None, symbol: str | None = None, pnl_list_gross: list[float] | None = None, mtm_series_gross: pd.Series | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -3322,9 +3322,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     #   - ``expectancy_outlier_count``: Trades mit ``|pnl/notional| > 10 · median(|pnl/notional|)``
     #     innerhalb derselben gefilterten Liste.
     expectancy_capital_weighted = None
+    expectancy_capital_weighted_gross = None
     expectancy_winsorized = None
     expectancy_outlier_count = 0
     expectancy_notional_degenerate_count = 0
+    # Issue #1257 (GH #1127) — ``pnl_list_gross`` (optional, index-parallel zu ``pnl_list``) traegt
+    # dieselben Round-Trips VOR der #1078/#1226-kalibrierten-Slippage-Korrektur. Der Nennerboden
+    # (``nz``/``_notional_floor``) haengt AUSSCHLIESSLICH vom Notional ab, nie vom PnL — dieselbe
+    # Kandidatenmenge (kept indices) gilt daher fuer BEIDE Kostenbasen; nur der Zaehler (Σpnl)
+    # unterscheidet sich. Keine zweite, potenziell divergierende Nennerboden-Berechnung noetig.
+    _use_gross = pnl_list_gross is not None and len(pnl_list_gross) == len(pnl_list)
     if notional_list is not None and len(notional_list) == len(pnl_list):
         per_trade = [v / nz for v, nz in zip(pnl_list, notional_list) if nz and nz > 0.0]
         expectancy = statistics.mean(per_trade) if per_trade else 0.0
@@ -3333,7 +3340,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         _median_notional = statistics.median(_positive_notionals) if _positive_notionals else 0.0
         _notional_floor = 0.05 * _median_notional
         _pnl_floored, _notional_floored, _per_trade_floored = [], [], []
-        for v, nz in zip(pnl_list, notional_list):
+        _pnl_gross_floored = [] if _use_gross else None
+        for _idx, (v, nz) in enumerate(zip(pnl_list, notional_list)):
             if not nz or nz <= 0.0:
                 continue
             if nz < _notional_floor:
@@ -3349,9 +3357,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             _pnl_floored.append(v)
             _notional_floored.append(nz)
             _per_trade_floored.append(v / nz)
+            if _use_gross:
+                _pnl_gross_floored.append(pnl_list_gross[_idx])
 
         if _notional_floored:
             expectancy_capital_weighted = sum(_pnl_floored) / sum(_notional_floored)
+            if _pnl_gross_floored is not None:
+                expectancy_capital_weighted_gross = sum(_pnl_gross_floored) / sum(_notional_floored)
         _w_lo, _w_hi = _read_fold_winsorize()
         _winsorized_returns = _winsorize(_per_trade_floored, _w_lo, _w_hi)
         expectancy_winsorized = (
@@ -3427,6 +3439,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         for v in pnl_list:
             comp *= (1.0 + v / starting_capital)
         total_return = comp - 1.0
+
+    # Issue #1257 (GH #1127) — ``total_return_gross`` (Kostenbasis VOR der #1078/#1226-kalibrierten-
+    # Slippage-Korrektur), dieselbe Level-Ratio-Formel wie ``total_return`` oben, angewendet auf die
+    # parallele, unkorrigierte ``mtm_series_gross``. Nur bei vorliegender Equity-Kurve berechenbar
+    # (kein Nachbau des ``mtm_frames``-Fallback-Pfads fuer die Gross-Seite — reine
+    # Traceability-Telemetrie, kein Selektionsgroesse, siehe Docstring am Funktionsende).
+    total_return_gross = None
+    if (mtm_series_gross is not None and not mtm_series_gross.empty and len(mtm_series_gross) > 1
+            and float(mtm_series_gross.iloc[0]) != 0.0):
+        total_return_gross = float(mtm_series_gross.iloc[-1]) / float(mtm_series_gross.iloc[0]) - 1.0
 
     if mtm_series is not None and not mtm_series.empty:
         import numpy as np
@@ -4043,10 +4065,27 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
+        # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — ``total_return`` selbst ist SEIT
+        # DIESEM FIX bereits die kostenbereinigte (Slippage-korrigierte) Groesse, sobald eine
+        # kalibrierte p50-Slippage vorlag (``extract_metrics`` uebergibt jetzt eine an der Quelle
+        # korrigierte ``mtm_series``, siehe dortiger Kommentar) — ``total_return_net`` ist ein
+        # EXPLIZITER Alias desselben Werts (Namensparitaet zu ``expectancy_capital_weighted_net``
+        # unten und zum Akzeptanzkriterium des Issues), ``total_return_gross`` die Kostenbasis DAVOR
+        # (Traceability, siehe Berechnungsblock oben — None ohne Equity-Kurve).
+        "total_return_net": float(total_return),
+        "total_return_gross": (
+            float(total_return_gross) if total_return_gross is not None else None),
         "expectancy":    float(expectancy),
         # Issue #1031 (Katalog #866) — siehe Docstring am Berechnungsblock oben.
         "expectancy_capital_weighted": (
             float(expectancy_capital_weighted) if expectancy_capital_weighted is not None else None),
+        # Issue #1257 (GH #1127) — Alias/Gross-Pendant analog total_return_net/_gross oben, dieselbe
+        # Kandidatenmenge (Nennerboden haengt nur vom Notional ab, siehe Berechnungsblock).
+        "expectancy_capital_weighted_net": (
+            float(expectancy_capital_weighted) if expectancy_capital_weighted is not None else None),
+        "expectancy_capital_weighted_gross": (
+            float(expectancy_capital_weighted_gross)
+            if expectancy_capital_weighted_gross is not None else None),
         "expectancy_winsorized": (
             float(expectancy_winsorized) if expectancy_winsorized is not None else None),
         "expectancy_outlier_count": int(expectancy_outlier_count),
@@ -4887,10 +4926,19 @@ def _apply_calibrated_slippage_deduction(
     (``_full_realism_expectancy``, eine reine Nachverarbeitung, die die primäre Simulation nicht
     berührt). Diese Funktion zieht denselben VOLLEN (nicht nur den ``(multiplier-1)``-Anteil)
     Slippage-Betrag ab wie ``_full_realism_expectancy``, aber AN DER QUELLE der PnL-Serie SELBST —
-    dadurch propagiert der Abzug automatisch in JEDE downstream abgeleitete Grösse (Expectancy,
-    Total Return, Profit-Faktor, Sortino-Eingang, Reward, Gates, Deflation), OHNE eine zweite,
-    separat gepflegte Konsumstelle zu brauchen (Akzeptanzkriterium 4: kein Pfad, der die alte
-    Kostenbasis weiterverwendet — es gibt nach diesem Fix nur noch EINE PnL-Serie).
+    dadurch propagiert der Abzug automatisch in JEDE downstream aus ``rt_pnls_with_ts`` abgeleitete
+    Grösse (Expectancy, Profit-Faktor, Win-Rate), OHNE eine zweite, separat gepflegte Konsumstelle
+    zu brauchen.
+
+    KORREKTUR (Issue #1257/GH #1127, Pitfall #454 in AGENTS.md): die urspruengliche Formulierung
+    hier behauptete zusaetzlich "Total Return, ... Sortino-Eingang" — das war FALSCH fuer den
+    Normalfall (jeder Lauf mit einer ``mtm_series``-Equity-Kurve, siehe ``_calculate_stats``): dort
+    entstehen ``total_return``/``sortino_ratio``/PSR/die α/β-Regression NICHT aus
+    ``rt_pnls_with_ts``, sondern aus der separaten ``mtm_series``/``mtm_frames``-Kurve (#465/#771-
+    Prioritaet). Diese Kurve blieb bis #1257 unkorrigiert — ``_apply_calibrated_slippage_to_
+    mtm_series`` (unten) schliesst genau diese Luecke, an derselben Stelle in ``extract_metrics``
+    aufgerufen. ERST seit #1257 gilt Akzeptanzkriterium 4 (kein Pfad mit der alten Kostenbasis)
+    tatsaechlich vollstaendig.
 
     ``rt_pnls_with_ts`` ist ``[(pnl, exit_ts, holding_ns, qty), ...]``, ``rt_notionals_with_ts`` ist
     ``[(notional, exit_ts), ...]`` — beide index-parallel zu ``rt_exit_meta`` (dieselbe Konvention
@@ -4912,6 +4960,68 @@ def _apply_calibrated_slippage_deduction(
                 n_adjusted += 1
         adjusted.append((pnl, exit_ts, holding_ns, qty))
     return adjusted, n_adjusted
+
+
+def _apply_calibrated_slippage_to_mtm_series(
+    mtm_series: "pd.Series | None", rt_notionals_with_ts: list, rt_exit_meta: list, *,
+    slippage_bps_p50: float,
+) -> "tuple[pd.Series | None, int]":
+    """Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md Fix Punkt 1 — dieselbe kalibrierte p50-
+    Slippage wie ``_apply_calibrated_slippage_deduction``, aber auf die MtM-Equity-KURVE selbst
+    angewendet, an EXAKT demselben Exit-Bar jedes TRAILING_STOP-Round-Trips.
+
+    Root-Cause (#1127-Symptom, ComboTrendVwap): ``_apply_calibrated_slippage_deduction`` (#1078/
+    #1226) korrigiert AUSSCHLIESSLICH ``rt_pnls_with_ts`` — die Round-Trip-PnL-Liste, aus der
+    ``expectancy``/``expectancy_capital_weighted``/Profit-Faktor/Win-Rate entstehen. ``total_return``,
+    ``sortino_ratio``/PSR (ueber ``period_rets``) UND die α/β-Regression (``_alpha_beta_regression``,
+    #986/#1140) entstehen dagegen NICHT aus ``rt_pnls_with_ts``, sondern aus ``mtm_series``/
+    ``mtm_frames`` — der von ``_calculate_stats`` seit #465/#771 PRIORITAERE Pfad, sobald eine
+    Equity-Kurve vorliegt (der Normalfall in jedem Walk-Forward-Lauf). Die #1078-Docstring-Behauptung
+    "propagiert automatisch in JEDE downstream abgeleitete Groesse (... Total Return ...)" war damit
+    für genau diesen (Standard-)Pfad FALSCH — zwei Kostenbasen liefen parallel, ohne dass eine
+    einzige Konsumstelle das bemerkt hätte (``oos_min_expectancy`` slippage-bereinigt,
+    ``oos_min_alpha_tstat`` nicht).
+
+    Diese Funktion schliesst die Luecke AN DER QUELLE (dasselbe Muster): fuer jeden TRAILING_STOP-
+    Round-Trip wird der EXAKT selbe Slippage-Betrag (``slippage_bps_p50/10000 · notional``) als
+    STUFENFUNKTION ab dem Exit-Bar (``mtm_series.index.searchsorted``, erster Bar >= ``exit_ts``)
+    KUMULATIV von der Equity-Kurve abgezogen — eine Kontostand-Kurve ist ein LEVEL (kein periodischer
+    Return), ein am Exit-Bar realisierter zusätzlicher Kosten-Abzug senkt den Kontostand ab diesem
+    Zeitpunkt DAUERHAFT, nicht nur an genau diesem Bar. ``total_return`` (Level-Ratio erster/letzter
+    Bar), ``sortino_ratio``/PSR (Bar-zu-Bar-Log-Returns der korrigierten Kurve) UND die α/β-
+    Regression (dieselbe korrigierte Kurve als Regressand) teilen sich damit ab diesem Fix DIESELBE
+    Kostenbasis wie ``expectancy`` — GENAU EINE PnL-/Renditeserie fuer die gesamte Selektion
+    (Akzeptanzkriterium 3 des Issues).
+
+    ``rt_notionals_with_ts``/``rt_exit_meta`` sind dieselben index-parallelen Listen wie in
+    ``_apply_calibrated_slippage_deduction`` (NICHT ``rt_pnls_with_ts`` selbst — nur Notional/
+    Exit-Zeitstempel/Exit-Grund werden benoetigt, unabhaengig davon, ob dessen PnL bereits korrigiert
+    wurde). ``slippage_bps_p50 <= 0`` ODER eine leere/fehlende ``mtm_series`` ⇒ No-Op (Fail-Open,
+    identisch zur Schwesterfunktion). Ein Exit-Bar NACH dem letzten Bar der Kurve (Exit ausserhalb
+    des Fensters) wird sicher uebersprungen statt einen IndexError zu werfen. Rueckgabe:
+    ``(angepasste mtm_series, Anzahl tatsaechlich angepasster Round-Trips)`` — bei 0 angepassten
+    Round-Trips wird die IDENTISCHE (nicht kopierte) Eingabe-Serie zurueckgegeben (Zero-Regression,
+    Akzeptanzkriterium 1 analog #1078/#1226)."""
+    if mtm_series is None or mtm_series.empty or not slippage_bps_p50 or slippage_bps_p50 <= 0.0:
+        return mtm_series, 0
+    slippage_rate = slippage_bps_p50 / 10000.0
+    shift = pd.Series(0.0, index=mtm_series.index)
+    n_adjusted = 0
+    n_index = len(mtm_series.index)
+    for i, (notional, exit_ts) in enumerate(rt_notionals_with_ts):
+        meta = rt_exit_meta[i] if i < len(rt_exit_meta) else {}
+        if not isinstance(meta, dict) or meta.get("exit_reason") != "TRAILING_STOP":
+            continue
+        if not notional or notional <= 0.0:
+            continue
+        pos = mtm_series.index.searchsorted(pd.to_datetime(exit_ts, unit="ns"), side="left")
+        if pos >= n_index:
+            continue
+        shift.iloc[pos] -= slippage_rate * notional
+        n_adjusted += 1
+    if n_adjusted == 0:
+        return mtm_series, 0
+    return mtm_series + shift.cumsum(), n_adjusted
 
 
 def _filter_dust_round_trips(
@@ -5401,6 +5511,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # (Akzeptanzkriterium 1).
         selection_cost_basis = "round_trip_only"
         n_slippage_adjusted_round_trips = 0
+        # Issue #1257 (GH #1127) — Kostenbasis VOR der #1078-Korrektur, ausschliesslich fuer die
+        # parallele ``*_gross``-Traceability-Telemetrie (siehe ``_calculate_stats``-Aufrufe unten).
+        rt_pnls_with_ts_gross = rt_pnls_with_ts
         if _read_apply_calibrated_slippage_in_selection():
             rt_pnls_with_ts, n_slippage_adjusted_round_trips = _apply_calibrated_slippage_deduction(
                 rt_pnls_with_ts, rt_notionals_with_ts, rt_exit_meta,
@@ -5411,6 +5524,27 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     log_fn(f"[Metriken] #1078: kalibrierte p50-Slippage ({slippage_bps_p50:.2f} bps) "
                            f"auf {n_slippage_adjusted_round_trips} TRAILING_STOP-Round-Trip(s) "
                            "an der Quelle abgezogen.")
+
+        # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — DIESELBE kalibrierte p50-Slippage
+        # ZUSAETZLICH auf die MtM-Equity-Kurve selbst (``_apply_calibrated_slippage_to_mtm_series``-
+        # Docstring fuer die Root-Cause: der Abzug oben propagiert NICHT in total_return/sortino/
+        # PSR/die α/β-Regression, die alle aus ``mtm_series``/``mtm_frames`` statt aus
+        # ``rt_pnls_with_ts`` entstehen). DASSELBE Gate (``_read_apply_calibrated_slippage_in_
+        # selection``), DIESELBEN Notional-/Exit-Meta-Listen (Zeitstempel/Notional aendern sich durch
+        # die #1078-PnL-Korrektur NICHT). ``mtm_series_gross`` bleibt die unkorrigierte Kurve fuer
+        # die ``*_gross``-Telemetrie; ab hier bezeichnet der Name ``mtm_series`` — wie ueberall sonst
+        # in dieser Funktion — die tatsaechlich zu verwendende (jetzt kostenbereinigte) Kurve, kein
+        # Konsument unterhalb dieser Zeile muss geaendert werden (Fix an der Quelle).
+        mtm_series_gross = mtm_series
+        n_slippage_adjusted_mtm_events = 0
+        if _read_apply_calibrated_slippage_in_selection():
+            mtm_series, n_slippage_adjusted_mtm_events = _apply_calibrated_slippage_to_mtm_series(
+                mtm_series, rt_notionals_with_ts, rt_exit_meta, slippage_bps_p50=slippage_bps_p50)
+            if n_slippage_adjusted_mtm_events > 0 and log_fn:
+                log_fn(f"[Metriken] #1257: kalibrierte p50-Slippage ({slippage_bps_p50:.2f} bps) "
+                       f"auf {n_slippage_adjusted_mtm_events} TRAILING_STOP-Exit-Bar(s) der "
+                       "MtM-Equity-Kurve an der Quelle abgezogen (total_return/sortino/PSR/α(t) "
+                       "teilen sich damit dieselbe Kostenbasis wie expectancy).")
 
         # Issue #448/#444 — beobachtete Fill-ts-Spanne (min/max der Round-Trip-Exit-ts über alle
         # Instrumente). Wird in die Worker-/Tournament-Telemetrie gehoben (data_window.fill_ts_*),
@@ -5498,6 +5632,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_mtm = None
         oos_mtm = None
         oos_frames = None
+        # Issue #1257 (GH #1127) — parallele, UNKORRIGIERTE Slices von ``mtm_series_gross`` (reine
+        # ``*_gross``-Traceability-Telemetrie, siehe ``_calculate_stats``-Aufrufe unten).
+        is_mtm_gross = None
+        oos_mtm_gross = None
         oos_buyhold_return = None  # Issue #552 — Buy&Hold-Benchmark-Return über das OOS-Fenster.
         # Issue #986/#1140 — α/β-Regression der Perioden-Returns gegen die Benchmark-Perioden-
         # Returns (None, solange keine indexgleiche Benchmark-Serie vorlag).
@@ -5542,6 +5680,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
             oos_frames = _fold_segments_half_open(mtm_series, fold_boundaries)
             oos_mtm = _concat_half_open(oos_frames)
+
+            # Issue #1257 (GH #1127) — dieselbe Fold-Geometrie auf ``mtm_series_gross`` (die
+            # unkorrigierte Kurve), fuer die parallele ``*_gross``-Traceability-Telemetrie.
+            if mtm_series_gross is not None and not mtm_series_gross.empty:
+                is_mtm_gross = _slice_half_open(mtm_series_gross, start_ns, start_ns + is_window_ns)
+                oos_mtm_gross = _concat_half_open(
+                    _fold_segments_half_open(mtm_series_gross, fold_boundaries))
 
             # Issue #552/#772 — Buy&Hold-Benchmark-Return des Symbols über EXAKT dieselbe (halb-
             # offene, konkatenierte, deduplizierte) OOS-Fensterung wie der Strategie-Return —
@@ -5598,6 +5743,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             oos_alpha_n_periods = len(_strat_log_rets)
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
+            # Issue #1257 (GH #1127) — analog zum WF-Zweig oben, Nicht-Walk-Forward-Pfad.
+            if mtm_series_gross is not None and not mtm_series_gross.empty:
+                is_mtm_gross = mtm_series_gross
 
         def _empty_level_metrics() -> dict[str, Any]:
             return {
@@ -5609,7 +5757,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "median_position_notional": 0.0,
             }
 
-        def _split_and_stats(records: list, notionals: list, exit_meta: list[dict] | None = None) -> tuple[dict, dict]:
+        def _split_and_stats(records: list, notionals: list, exit_meta: list[dict] | None = None,
+                            records_gross: list | None = None) -> tuple[dict, dict]:
             """IS/OOS-Split einer Record-Liste (Round-Trip ODER Fill-Match) + ``_calculate_stats``
             je Ebene (Issue #508). Beide Ebenen teilen sich die IDENTISCHE Fold-Geometrie; der
             einzige Unterschied ist die Aggregations-Granularität der übergebenen Records. Jeder
@@ -5619,11 +5768,19 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             Issue #899 — ``exit_meta`` (optional, parallel zu ``records``) liefert die Exit-
             Telemetrie (exit_reason/ATR/pnl_bps) je Record; wird nur für die Round-Trip-Ebene
             übergeben (die Fill-Match-Ebene bleibt reine Execution-Diagnostik, siehe #508-Docstring
-            oben im Modul)."""
+            oben im Modul).
+
+            Issue #1257 (GH #1127) — ``records_gross`` (optional, index-parallel zu ``records``)
+            traegt dieselben Records VOR der #1078/#1226-Slippage-Korrektur, ausschliesslich fuer
+            die ``*_gross``-Traceability-Felder in ``_calculate_stats`` (Zeitstempel/Notional/
+            IS-OOS-Klassifikation sind zwischen Gross/Net IDENTISCH — nur das PnL-Feld unterscheidet
+            sich — daher genuegt EINE gemeinsame Split-Schleife statt einer zweiten Iteration)."""
             split_is_pnls, split_oos_pnls = [], []
+            split_is_pnls_gross, split_oos_pnls_gross = [], []
             split_is_holds, split_oos_holds = [], []
             split_is_notionals, split_oos_notionals = [], []
             split_is_meta, split_oos_meta = [], []
+            _has_gross = records_gross is not None and len(records_gross) == len(records)
             for rec_idx, (pnl, ts, ht, rec_qty) in enumerate(records):
                 notional = notionals[rec_idx][0]
                 if _wf:
@@ -5637,19 +5794,23 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     split_oos_notionals.append(notional)
                     if exit_meta is not None:
                         split_oos_meta.append(exit_meta[rec_idx])
+                    if _has_gross:
+                        split_oos_pnls_gross.append(records_gross[rec_idx][0])
                 elif is_in_sample:
                     split_is_pnls.append(pnl)
                     split_is_holds.append((ht, rec_qty))
                     split_is_notionals.append(notional)
                     if exit_meta is not None:
                         split_is_meta.append(exit_meta[rec_idx])
+                    if _has_gross:
+                        split_is_pnls_gross.append(records_gross[rec_idx][0])
             is_mn = statistics.median(split_is_notionals) if split_is_notionals else 0.0
             oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
             # Issue #546 — die parallelen Per-Trade-Notionals durchreichen ⇒ sizing-invariante
             # (notional-relative) Expectancy statt Normierung auf das fixe starting_capital.
-            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol)
+            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol, pnl_list_gross=split_is_pnls_gross if _has_gross else None, mtm_series_gross=is_mtm_gross)
             if split_oos_pnls:
-                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol)
+                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals, family_median_n_periods=family_median_n_periods, symbol=symbol, pnl_list_gross=split_oos_pnls_gross if _has_gross else None, mtm_series_gross=oos_mtm_gross)
             else:
                 level_oos = _empty_level_metrics()
             # Issue #613 — Aggregationsebene des Sortino EXPLIZIT stempeln. IS UND OOS werden aus ihrer
@@ -5692,7 +5853,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             return level_is, level_oos
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
-        is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta)
+        is_metrics, oos_metrics = _split_and_stats(
+            rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta,
+            records_gross=rt_pnls_with_ts_gross)
         # Issue #1078/#1226 (P1, Semantik-Bump) Fix Punkt 2 — welche Kostenbasis DIESE Study
         # tatsaechlich gespeist hat (``round_trip_only``/``round_trip_plus_calibrated_slippage``),
         # gestempelt auf BEIDE Ebenen (IS/OOS lesen dieselbe rt_pnls_with_ts, siehe oben) — kein

@@ -565,6 +565,15 @@ def _metrics_dict(m) -> dict:
         # Issue #1031 (Katalog #866) — additive, nennerausreisser-robuste Expectancy-Telemetrie
         # neben dem (weiterhin unveraendert definierten) oos_expectancy.
         "oos_expectancy_capital_weighted": getattr(m, "oos_expectancy_capital_weighted", None),
+        # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — total_return/expectancy_capital_
+        # weighted teilen sich seit diesem Fix dieselbe Kostenbasis (siehe backtest_runner.
+        # _apply_calibrated_slippage_to_mtm_series); die _net-Felder sind explizite Aliase, die
+        # _gross-Felder die Kostenbasis DAVOR. Rohmaterial fuer invariants.check_cost_basis_coherence.
+        "oos_total_return_net": getattr(m, "oos_total_return_net", None),
+        "oos_total_return_gross": getattr(m, "oos_total_return_gross", None),
+        "oos_expectancy_capital_weighted_net": getattr(m, "oos_expectancy_capital_weighted_net", None),
+        "oos_expectancy_capital_weighted_gross": getattr(
+            m, "oos_expectancy_capital_weighted_gross", None),
         "oos_expectancy_winsorized": getattr(m, "oos_expectancy_winsorized", None),
         "oos_expectancy_outlier_count": getattr(m, "oos_expectancy_outlier_count", 0),
         "oos_expectancy_notional_degenerate_count": getattr(

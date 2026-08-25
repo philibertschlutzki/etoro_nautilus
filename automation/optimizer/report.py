@@ -160,6 +160,58 @@ def _cost_model_realism_from_applied(
     return False, "mixed", zero_keys
 
 
+def _applied_slippage_bps_median_nonzero(studies: list[dict]) -> float | None:
+    """Issue #1267 (GH #1137) — Median der GEMESSENEN ``applied_slippage_bps`` ueber alle Studies
+    mit einem von Null verschiedenen effektiven Kostenmodell (dieselbe Klassifikation wie
+    ``_cost_model_realism_from_applied``, hier auf den reinen Zahlenwert statt der drei
+    Zustandskategorien reduziert) — der repraesentative Wert fuer das ``COST_MODEL_REALISM_FROM_
+    CALIBRATION``-Event (Fix Punkt 2)."""
+    values = [
+        float(r["applied_slippage_bps"]) for r in studies
+        if r.get("applied_slippage_bps") is not None and r.get("applied_financing_bps_per_day") is not None
+        and not (float(r["applied_slippage_bps"]) == 0.0 and float(r["applied_financing_bps_per_day"]) == 0.0)
+    ]
+    return statistics.median(values) if values else None
+
+
+def _emit_cost_model_realism_event(cost_model_realism_source: str, studies: list[dict]) -> None:
+    """Issue #1267 (GH #1137) — Root-Cause: ``sweep.warn_if_cost_model_zero_realism()`` feuert am
+    SWEEP-START rein aus der statischen ``backtest.json``-Config (vor jeder Kalibrierung, kann die
+    spaetere Kalibrierungs-Realitaet strukturell nicht kennen) — ``COST_MODEL_ZERO_REALISM`` blieb
+    damit auch dann im Log stehen, wenn jede Study spaeter reale ``applied_slippage_bps`` aus dem
+    Kalibrierungs-Cache trug (Symptom: 151,5869 bps auf jeder Study, obwohl das Startup-Event "alle
+    Saetze 0.0" meldete — zwei Quellen fuer denselben Begriff).
+
+    Diese Funktion emittiert das NACHTRAEGLICHE, aus den tatsaechlich gemessenen ``applied_*``-
+    Feldern abgeleitete Gegenstueck (dieselbe ``_cost_model_realism_from_applied``-Klassifikation,
+    die auch ``cross_study.cost_model_realism_source`` speist — EINE Quelle fuer beide):
+    ``COST_MODEL_ZERO_REALISM`` feuert NUR NOCH, wenn die EFFEKTIVE Groesse (nicht die Config)
+    tatsaechlich null ist (``cost_model_realism_source == 'config_zero'``, Fix Punkt 1 — deckt
+    sowohl "alle Studies 0.0" als auch den Legacy-Fallback ohne EINE klassifizierbare Study ab,
+    Akzeptanzkriterium 2: "bei tatsaechlich nullen Saetzen UND leerem Cache feuert weiterhin das
+    Original-Event"); andernfalls ``COST_MODEL_REALISM_FROM_CALIBRATION`` mit Quelle und dem
+    gemessenen Median (Fix Punkt 2)."""
+    if cost_model_realism_source == "config_zero":
+        emit_execution_event(_log, "COST_MODEL_ZERO_REALISM", {
+            "cost_model_realism_source": cost_model_realism_source,
+            "detail": "Alle Studies mit aufgeloesten applied_*-Feldern tragen 0.0 fuer Slippage UND "
+                     "Finanzierung -- die 'full_realism'-Kostenstress-Stufe ist ein echtes No-Op "
+                     "(#1010/#1162, seit #1077/#1225 aus den GEMESSENEN Feldern bestaetigt, nicht "
+                     "nur der Config, #1267).",
+        }, level=logging.WARNING)
+    elif cost_model_realism_source in ("calibrated_cache", "mixed"):
+        emit_execution_event(_log, "COST_MODEL_REALISM_FROM_CALIBRATION", {
+            "cost_model_realism_source": cost_model_realism_source,
+            "applied_slippage_bps_median": _applied_slippage_bps_median_nonzero(studies),
+            "detail": "Die 'full_realism'-Kostenstress-Stufe ist KEIN No-Op -- mindestens eine "
+                     "Study traegt eine von Null verschiedene, aus dem Kalibrierungs-Cache "
+                     "aufgeloeste applied_slippage_bps/applied_financing_bps_per_day (#1055/#1204), "
+                     "unabhaengig davon, dass backtest.json selbst nur unkalibrierte 0.0-Platzhalter "
+                     "traegt (#1267 — ersetzt ein zuvor am Sweep-Start faelschlich gefeuertes "
+                     "COST_MODEL_ZERO_REALISM, siehe cost_model_realism_source).",
+        }, level=logging.INFO)
+
+
 def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, float]:
     """Issue #1028 (Katalog #866) — der EFFEKTIVE ``trade_amount_pct`` je Strategie
     (``strategy_defaults.json``, ``strategies.json[params]`` hat Vorrang, siehe
@@ -2142,6 +2194,19 @@ def _study_record(proposal: dict, study,
         # Issue #945/#1111 — die KANONISCHE Grösse: dieselbe Basis, aus der die Kostenstress-Werte
         # abgeleitet werden UND die seither berichtet/sortiert wird (summary_de.py Abschnitt 2.1).
         "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),
+        # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — total_return/expectancy_capital_
+        # weighted teilen sich seit diesem Fix dieselbe (kalibrierte-Slippage-korrigierte)
+        # Kostenbasis (backtest_runner._apply_calibrated_slippage_to_mtm_series). Die _net-Felder
+        # sind explizite Aliase von holdout_total_return/holdout_expectancy_capital_weighted oben
+        # (Namensparitaet zum Akzeptanzkriterium des Issues UND zu invariants.check_cost_basis_
+        # coherence), die _gross-Felder die Kostenbasis DAVOR (Traceability, None ohne aktive
+        # Kalibrierung oder ohne Equity-Kurve).
+        "holdout_total_return_net": holdout_metrics.get("oos_total_return_net"),
+        "holdout_total_return_gross": holdout_metrics.get("oos_total_return_gross"),
+        "holdout_expectancy_capital_weighted_net": holdout_metrics.get(
+            "oos_expectancy_capital_weighted_net"),
+        "holdout_expectancy_capital_weighted_gross": holdout_metrics.get(
+            "oos_expectancy_capital_weighted_gross"),
         "holdout_expectancy_winsorized": holdout_metrics.get("oos_expectancy_winsorized"),
         "holdout_expectancy_outlier_count": holdout_metrics.get("oos_expectancy_outlier_count") or 0,
         "holdout_expectancy_notional_degenerate_count": (
@@ -4308,6 +4373,11 @@ def _build_report(
     # selection_cost_basis (oben, aus holdout_metrics gestempelt, siehe _study_record) gegen die
     # bereits gemessene holdout_stop_exit_slippage_bps derselben Kohorte.
     all_checks.append(("global", _inv.check_selection_cost_basis_contract(studies_out)))
+    # Issue #1257 (GH #1127), Pitfall #454 — prueft, OB die behauptete Kostenbasis KOHAERENT ueber
+    # holdout_total_return_net/holdout_expectancy_capital_weighted_net wirkt (severity='blocking',
+    # staerker als der Geschwister-Check oben: ein Vorzeichen-Widerspruch untergraebt die Selektion
+    # selbst, keine reine Telemetrie-Abweichung).
+    all_checks.append(("global", _inv.check_cost_basis_coherence(studies_out)))
 
     # Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter: divergiert das im Backtest
     # konfigurierte trade_amount_pct vom live tatsächlich gefahrenen MomentumLSAllocator-Deckel.
@@ -4860,6 +4930,8 @@ def _build_report(
     # (siehe _cost_model_realism_from_applied-Docstring), NICHT mehr aus backtest.json direkt.
     (_cost_model_zero_realism, _cost_model_realism_source,
      _cost_model_zero_realism_symbols) = _cost_model_realism_from_applied(studies_out)
+
+    _emit_cost_model_realism_event(_cost_model_realism_source, studies_out)
 
     report = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
