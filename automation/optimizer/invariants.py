@@ -5180,7 +5180,15 @@ def check_atr_floor_enforcement(
             continue
         n_binding_measured += 1
         min_required = min_stop_to_cost_ratio * float(c_rt)
-        if float(effective_stop_distance_bps) < min_required - 1e-6:
+        # Issue #1290 (GH #1163) — ``atr_median_bps``/``stop_distance_bps_modelled`` werden im
+        # Report auf 4 Nachkommastellen gerundet gespeichert; multipliziert mit dem ungerundeten
+        # ``k`` induziert das einen Fehler bis ``0,5·10⁻⁴ · k``, der eine feste ``1e-6``-Toleranz
+        # um bis zu Faktor ~100 unterschreiten kann (beobachtet: 8,999876528 gegen 9,0 − 1e-6 bei
+        # k=2,472 — der tatsaechlich gemessene Wert 9,0008776 liegt UEBER der Schranke). Die
+        # Toleranz wird deshalb aus der Speicherpraezision abgeleitet statt aus einem Wunsch nach
+        # Strenge (Pitfall #460/AGENTS.md).
+        floor_tol = max(floor_tolerance, 5e-5 * float(k))
+        if float(effective_stop_distance_bps) < min_required - floor_tol:
             key = f"{strategy}/{symbol}"
             offenders[key] = {
                 "atr_floor_bps_derived": round(float(effective_floor), 4),
@@ -5189,7 +5197,7 @@ def check_atr_floor_enforcement(
                 "c_rt": round(float(c_rt), 4),
             }
     expected = (f"floor_binding == True ⇒ effective_stop_distance_bps >= "
-                f"{min_stop_to_cost_ratio} · c_rt - 1e-6")
+                f"{min_stop_to_cost_ratio} · c_rt - max(1e-6, 5e-5·k)")
     if n_binding_measured == 0:
         return InvariantResult(
             name="check_atr_floor_enforcement",
@@ -7179,9 +7187,27 @@ def check_fail_fast_probe_timeliness(
     bei einem Single-Symbol-Lauf ist das strukturell erst am ENDE des Laufs der Fall (#1269-Symptom:
     3/3 betroffene Laeufe verbrauchten ihr gesamtes Wallclock-Budget, BEVOR die Probe ueberhaupt zum
     ersten Mal auswertete). Diese Invariante macht das Ausmass messbar, statt eine Ursache zu
-    unterstellen: FAIL, wenn eine tatsaechlich gefeuerte Probe erst bei > 60 % der Gesamt-Wallclock
+    unterstellen: FAIL, wenn eine tatsaechlich gefeuerte Probe erst bei > 50 % der Gesamt-Wallclock
     des Laufs auswertete — ein Abbruch an diesem Punkt verschenkt den Grossteil des Rechenbudgets,
     das eine FRUEHERE Auswertung haette einsparen koennen.
+
+    Issue #1287 (GH #1160, Katalog #1272-1297, P1) — Schwelle von 60 % auf 50 % gesenkt (Fix-Vorgabe
+    "check_fail_fast_probe_timeliness-Schwelle auf <= 0,5 der Wallclock setzen"). Der Referenzbefund
+    (``blocking_invariant_probe_triggered_at_wallclock_fraction = 0,9947`` in 4/4 Läufen) betraf
+    ausschliesslich ``check_effective_stop_distance`` als Fail-Fast-Ausloeser — nach #1272/#1274
+    (``check_bar_quality`` laeuft im Preflight, VOR Phase 1, UND ersetzt ``check_effective_stop_
+    distance`` als primaeren Ein-Symbol-Fail-Fast-Ausloeser bei degenerierter Bar-Achse) feuert der
+    dominante reale Fall dieses Katalogs bereits bei Fraktion ~0, nicht erst nach der vollen
+    Study-Anzahl. Die Study-Quote fuer generische, familienunabhaengige Checks
+    (``fail_fast_min_completed_studies_frac``, ``optimizer.json``) BLEIBT als dokumentierte
+    Konfiguration bestehen; die Trigger-Stelle selbst (``sweep.py``s Symbol-Fertigstellungsschleife)
+    ist bewusst NICHT auf Study-Granularitaet umgestellt — derselbe Korrektheits-Vorbehalt wie in
+    ``test_issue_1269_fail_fast_study_scope.py`` dokumentiert: der Family-Stats-Confirm-Pfad
+    (``_run_confirm_and_export``/``confirm()``) STEMPELT beim Aufruf sofort und dauerhaft auf die
+    Optuna-Study-Storage; ein Probe-Trigger auf einer UNVOLLSTAENDIGEN Symbol-Familie (nur ein
+    Teil der Strategien-Studies dieses Symbols) und ein Prozessabbruch VOR dem korrigierenden
+    finalen Confirm-Aufruf wuerde diesen provisorischen (zu kleinen) Stempel PERMANENT in der
+    Produktion belassen — ein Korrektheitsrisiko, das dieser Fix nicht eingeht.
 
     ``severity='medium'`` (Fix-Vorgabe) — kein Korrektheitsproblem (die Probe selbst entscheidet
     richtig), sondern ein Effizienzproblem. ``fail_fast_probe_triggered_at_wallclock_fraction is
@@ -7194,17 +7220,17 @@ def check_fail_fast_probe_timeliness(
         return InvariantResult(
             name="check_fail_fast_probe_timeliness",
             passed=True,
-            expected="Eine gefeuerte Fail-Fast-Probe wertet bei <= 60 % der Gesamt-Wallclock aus",
+            expected="Eine gefeuerte Fail-Fast-Probe wertet bei <= 50 % der Gesamt-Wallclock aus",
             actual=None,
             severity="medium",
             detail="Keine Fail-Fast-Probe feuerte in diesem Lauf (oder der Zeitpunkt/die "
                    "Gesamt-Wallclock ist unbekannt) — nichts zu melden.",
         )
-    passed = fail_fast_probe_triggered_at_wallclock_fraction <= 0.60
+    passed = fail_fast_probe_triggered_at_wallclock_fraction <= 0.50
     return InvariantResult(
         name="check_fail_fast_probe_timeliness",
         passed=passed,
-        expected="Eine gefeuerte Fail-Fast-Probe wertet bei <= 60 % der Gesamt-Wallclock aus",
+        expected="Eine gefeuerte Fail-Fast-Probe wertet bei <= 50 % der Gesamt-Wallclock aus",
         actual=fail_fast_probe_triggered_at_wallclock_fraction,
         severity="medium",
         detail=("OK" if passed else

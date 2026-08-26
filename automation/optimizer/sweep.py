@@ -30,7 +30,8 @@ from automation.optimizer.gate import (
 )
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
 from automation.optimizer.manifest import (
-    WORK, PERSISTENT_CACHE_ROOT, write_json_atomic, catalog_fingerprint, library_versions)
+    WORK, PERSISTENT_CACHE_ROOT, RUN_FINGERPRINT_INDEX_PATH, write_json_atomic,
+    catalog_fingerprint, library_versions, git_commit, sha256_file, read_jsonl)
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
     load_global_best,
@@ -349,6 +350,109 @@ def assert_instrument_metadata_coherence() -> "_inv.InvariantResult | None":
     if not result.passed:
         import sys as _sys
         print(f"❌ [#920] INSTRUMENT_METADATA_INCOHERENT: {result.detail}", file=_sys.stderr)
+        _sys.exit(2)
+    return result
+
+
+def assert_run_is_not_duplicate_preflight(
+    *, strategies: list[str], symbols: list[str], run_id: str, opt_data: dict,
+) -> "_inv.InvariantResult | None":
+    """Issue #1285 (GH #1158, Katalog #1272-1297, P1) — Duplikat-Preflight statt Report-Befund.
+    ``invariants.check_run_is_not_duplicate`` (#1252/GH #1122) lief bisher AUSSCHLIESSLICH in
+    ``report._build_report`` — der Befund (``f13f29db`` trug ``duplicate_of``) stand erst nach
+    1584 s Rechenzeit und 1745 abgeschlossenen Trials im Artefakt. ``report.compute_run_
+    fingerprint`` braucht ausschliesslich EINGANGSGROESSEN (Commit, Config-SHAs, Katalog-
+    Fingerabdruck, Seed, Symbole, Strategien, Semantik-Versionen, Salt) — alle bereits VOR dem
+    ersten Trial bekannt. Dieser Preflight zieht denselben Fingerabdruck-Vergleich an den
+    Sweep-Start.
+
+    ``symbols``/``strategies``: die (noch ungefilterte) angeforderte Eingangsmenge dieses Laufs
+    (vor ``enumerate_tunable_pairs``) — dieselbe Grundgesamtheit, die der Report-Zeit-Vergleich
+    aus den TATSAECHLICH gelaufenen ``studies_out`` bildet, hier vorab aus der Anforderung selbst
+    (Symbol-/Strategie-Filterung ist deterministisch aus Config+Katalog, siehe dortiger
+    Docstring) — ein spaeter enumerierter, leerer Rest aendert den Fingerabdruck der
+    EINGANGSMENGE nicht.
+
+    Bei einem Treffer (``check_run_is_not_duplicate`` FAILt): fail-loud (``SystemExit``,
+    Exit-Code 2) mit Hinweis auf ``--seed-salt``/``--allow-duplicate-run``
+    (``OPTIMIZER_ALLOW_DUPLICATE_RUN=1``, gesetzt von ``main()``s ``--allow-duplicate-run``-Flag)
+    als expliziter Opt-in. Liefert ``None``, wenn ``tournament.json``/``optimizer.json`` fehlen
+    (dieselbe No-Op-Konvention wie ``assert_required_config_keys_valid``)."""
+    from automation.optimizer import invariants as _inv
+    tournament_path = config_dir() / "tournament.json"
+    optimizer_path = config_dir() / "optimizer.json"
+    if not tournament_path.exists() or not optimizer_path.exists():
+        return None
+    fingerprint = _inv_compute_run_fingerprint_preflight(
+        strategies=strategies, symbols=symbols, opt_data=opt_data,
+        tournament_path=tournament_path, optimizer_path=optimizer_path,
+    )
+    prior_entries = read_jsonl(RUN_FINGERPRINT_INDEX_PATH)
+    result = _inv.check_run_is_not_duplicate(fingerprint, run_id, prior_entries)
+    if not result.passed and not os.environ.get("OPTIMIZER_ALLOW_DUPLICATE_RUN"):
+        import sys as _sys
+        actual = result.actual or {}
+        print(
+            f"❌ [#1285] RUN_FINGERPRINT_DUPLICATE: dieser Lauf traegt dieselbe Eingangsmenge wie "
+            f"run_id={actual.get('duplicate_of_run_id')} (gestartet "
+            f"{actual.get('duplicate_of_started_at_utc')}) — keine neue Information. Entweder "
+            f"--seed-salt SALT (unabhaengige TPE-Stichprobe) oder --allow-duplicate-run "
+            f"(bewusster bit-identischer Wiederholungslauf) setzen. Exit-Code 2 (Issue #1285).",
+            file=_sys.stderr,
+        )
+        _sys.exit(2)
+    return result
+
+
+def _inv_compute_run_fingerprint_preflight(
+    *, strategies: list[str], symbols: list[str], opt_data: dict,
+    tournament_path: Path, optimizer_path: Path,
+) -> str:
+    """Issue #1285 — Preflight-Variante von ``report.compute_run_fingerprint``s Aufrufstelle
+    (``report.py``, um ``_run_fingerprint_kwargs``): dieselben zehn Komponenten, hier aus dem
+    VOR-Phase-1-Zustand statt aus ``studies_out`` gelesen (siehe Aufrufer-Docstring)."""
+    from automation.optimizer import report as _report_mod
+    return _report_mod.compute_run_fingerprint(
+        git_commit_simulation=git_commit(),
+        tournament_config_sha256=sha256_file(tournament_path),
+        optimizer_config_sha256=sha256_file(optimizer_path),
+        catalog_fingerprint_value=catalog_fingerprint(),
+        seed=opt_data.get("seed"),
+        symbols=symbols,
+        strategies=strategies,
+        reward_semantics_version=opt_data.get("reward_semantics_version"),
+        simulation_semantics_version=opt_data.get("simulation_semantics_version"),
+        seed_salt=os.environ.get("OPTIMIZER_SEED_SALT"),
+    )
+
+
+def assert_invariant_registry_complete() -> "_inv.InvariantResult":
+    """Issue #1293 (GH #1166, Katalog #1272-1297, P2) — FAIL-LOUD beim Sweep-Start (VOR Phase 1)
+    statt erst am Laufende im Report. ``invariants.check_invariant_coverage`` (#1015/#1167) prüft
+    zur REPORT-Zeit, ob jede definierte ``check_*``-Funktion tatsächlich im Ergebnis-Strom eines
+    VOLLSTÄNDIGEN Laufs auftauchte — der Befund (#1280-Symptom: ``check_mandatory_gate_
+    reachability_live`` fehlte im Strom von 4/4 Läufen) kostete jeweils einen kompletten,
+    stundenlangen Sweep, obwohl die Ursache (ein fehlender Emit-Aufruf) rein STATISCH aus dem
+    Quelltext ablesbar ist — dieselbe Introspektion, die ``report._invariant_registry_wiring_check``
+    bereits für den End-of-Run-Report durchführt (Text-Scan über
+    ``report.py``/``sweep.py``/``confirm.py``/``daily_orchestrator.py``/``live_risk.py``/
+    ``momentum_ls_allocator.py`` nach ``check_<name>(``-Aufrufstellen, KEIN Import/keine
+    Codeausführung, < 1 s). Dieser Preflight zieht dieselbe Prüfung an den Sweep-Start vor: eine
+    definierte ``check_*``-Funktion ohne Aufrufstelle UND ohne
+    ``report._DELIBERATELY_UNWIRED_INVARIANT_CHECKS``-Eintrag bricht den Lauf sofort ab, statt das
+    fehlende Ergebnis erst nach dem letzten Symbol zu bemerken. Exit-Code 2, analog
+    ``assert_instrument_metadata_coherence``.
+
+    ``check_invariant_coverage`` selbst (Report-Ende, Laufzeit-Nachweis über den tatsächlich
+    BEOBACHTETEN Strom eines konkreten Laufs) bleibt unverändert bestehen — dieser Preflight prüft
+    eine STRUKTURELLE Vorbedingung (Aufrufstelle existiert), keinen Ersatz für den Laufzeit-Beweis
+    (Aufrufstelle wurde in DIESEM Lauf tatsächlich erreicht)."""
+    from automation.optimizer import report as _report_mod
+    result = _report_mod._invariant_registry_wiring_check()
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#1293] check_invariant_registry_wired FAILt bereits im Preflight (VOR Phase 1): "
+              f"{result.detail}", file=_sys.stderr)
         _sys.exit(2)
     return result
 
@@ -2187,6 +2291,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if confirm is None:
         confirm = _confirm
 
+    # Issue #1285 (GH #1158, Katalog #1272-1297) — vorgezogen aus dem #799-Checkpoint-Abschnitt
+    # weiter unten: der neue Duplikat-Preflight (``assert_run_is_not_duplicate_preflight`` unten)
+    # braucht einen ``run_id``-Wert, BEVOR die Fingerabdruck-Pruefung laeuft (``check_run_is_not_
+    # duplicate`` behandelt ``not run_id`` als nicht auswertbar). ``default_run_id()`` ist eine
+    # reine, seiteneffektfreie Zufallstoken-Erzeugung — die Vorverlegung aendert den Wert nicht,
+    # nur den Zeitpunkt seiner Ermittlung.
+    if run_id is None:
+        run_id = default_run_id()
+
     # Issue #794 — Lauf-Start-Purge: raeumt jedes trial_*/-Verzeichnis abgebrochener Vorlaeufe ab,
     # BEVOR der neue Lauf beginnt (champions/ und offene proposal_*.json bleiben unberuehrt, siehe
     # retention.collect_referenced_trial_dirs). Nur im echten Storage-Pfad; fail-open, da eine
@@ -2242,6 +2355,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #852 — Bibliotheksversions-Drift-Preflight (teilt den Preflight-Einstieg mit #844):
         # eine installierte Version ausserhalb des gepinnten Bereichs bricht VOR dem ersten Symbol ab.
         assert_pinned_library_versions_valid()
+        # Issue #1293 (GH #1166, Katalog #1272-1297) — Registrierungspflicht fuer check_*-Funktionen
+        # ZUR STARTZEIT statt erst am Laufende ueber check_invariant_coverage (#1015/#1167): eine
+        # fehlende Aufrufstelle ist rein statisch entscheidbar, keine Beobachtung, die einen
+        # vollstaendigen Lauf braucht.
+        preflight_invariant_checks.append(
+            dataclasses.replace(assert_invariant_registry_complete(), phase="preflight").to_dict())
         # Issue #913 Fix 3 — ``sortino_numeric_guard_reference='family_median'`` verlangt einen
         # verdrahteten Injektionspfad (kein Aufrufer, der family_median_n_periods nie übergibt);
         # sonst liefe ein 143-Symbol-Lauf 170 h informationsfrei (AGENTS.md Pitfall #296). Lazy
@@ -2264,6 +2383,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
     available_bars = count_available_bars(syms)
+
+    # Issue #1285 (GH #1158, Katalog #1272-1297) — Duplikat-Preflight: braucht die aufgeloeste
+    # Symbolliste (``syms``, unmittelbar oben) und laeuft deshalb erst HIER statt im
+    # ``using_real_optimize``-Preflight-Block weiter oben — VOR dem teuren #531-Backfill und JEDEM
+    # Symbol-Preflight, damit ein Treffer so wenig Wallclock wie moeglich verbraucht.
+    if using_real_optimize:
+        _preflight_duplicate_result = assert_run_is_not_duplicate_preflight(
+            strategies=strategies, symbols=syms, run_id=run_id, opt_data=opt_data)
+        if _preflight_duplicate_result is not None:
+            preflight_invariant_checks.append(
+                dataclasses.replace(_preflight_duplicate_result, phase="preflight").to_dict())
 
     # Issue #531 — Pre-Sweep-Backfill-Hook: Symbole, deren REAL vorhandene Bar-Spanne die volle
     # Walk-Forward-Geometrie + gate1_buffer_days (z. B. < 435 Tage) unterschreiten, VOR dem Sweep
@@ -2681,6 +2811,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # unabhaengig davon, ob optimize_symbol/confirm injizierte HI-7-Fakes oder die echte
     # Implementierung sind — das macht ihn mit injizierten Fakes testbar (siehe
     # test_issue_799_per_symbol_transaction.py) UND nuetzlich fuer einen HI-7-Dry-Run.
+    # Issue #1285 — ``run_id`` wird jetzt bereits VOR dem #794-Purge-Block oben aufgeloest (der
+    # Duplikat-Preflight braucht ihn frueher); dieser Default bleibt als No-Op-Absicherung stehen,
+    # falls ein zukuenftiger Aufrufer die Vorverlegung umgeht.
     if run_id is None:
         run_id = default_run_id()
 
@@ -3779,9 +3912,19 @@ def main(argv: list[str] | None = None) -> list[Path]:
                         help="Zusaetzlicher Lauf-Anteil im Sampler-Seed jeder Study (macht einen "
                              "Wiederholungslauf zu einer unabhaengigen Stichprobe der Suchvarianz "
                              "statt einer Kopie). Aequivalent zu OPTIMIZER_SEED_SALT.")
+    # Issue #1285 (GH #1158, Katalog #1272-1297) — expliziter Opt-in fuer einen bewusst
+    # bit-identischen Wiederholungslauf (z. B. ein Determinismus-Test, siehe #1286/GH #1159): ohne
+    # dieses Flag bricht ``assert_run_is_not_duplicate_preflight`` einen Lauf mit bereits im Index
+    # vorhandenem run_fingerprint sofort ab (siehe dortiger Docstring).
+    parser.add_argument("--allow-duplicate-run", action="store_true", default=False,
+                        help="Ueberspringt den Duplikat-Preflight (#1285): erlaubt einen Lauf mit "
+                             "identischer Eingangsmenge zu einem bereits im Fingerabdruck-Index "
+                             "vorhandenen Lauf. Aequivalent zu OPTIMIZER_ALLOW_DUPLICATE_RUN=1.")
     args = parser.parse_args(argv)
     if args.seed_salt:
         os.environ["OPTIMIZER_SEED_SALT"] = args.seed_salt
+    if args.allow_duplicate_run:
+        os.environ["OPTIMIZER_ALLOW_DUPLICATE_RUN"] = "1"
 
     if args.report_only:
         from automation.optimizer import report as _report
