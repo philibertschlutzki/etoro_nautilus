@@ -4294,8 +4294,14 @@ def check_cost_stress_distinctness(
     ]
     fraction = len(identical) / len(with_trades)
     bit_identity_passed = fraction <= min_affected_fraction
+    # Issue #1292 (GH #1165, Katalog #1272-1297, P2) — die Erwartung wird jetzt bevorzugt aus
+    # ``applied_slippage_bps`` DERSELBEN Study gebildet (die tatsaechlich AUF DIE FILLS
+    # angewandte Groesse), ``slippage_p50_bps_calibrated`` (die asset-class-/scope-aufgeloeste
+    # Kalibrierung, seit #1276 ebenfalls study-spezifisch) nur als Ruckfall, wenn
+    # ``applied_slippage_bps`` fehlt — siehe dortiger Docstring-Absatz.
     n_studies_with_calibration = sum(
-        1 for r in with_trades if r.get("slippage_p50_bps_calibrated"))
+        1 for r in with_trades
+        if r.get("applied_slippage_bps") or r.get("slippage_p50_bps_calibrated"))
     if bit_identity_passed and n_studies_with_calibration == 0:
         return InvariantResult(
             name="check_cost_stress_distinctness",
@@ -4322,8 +4328,17 @@ def check_cost_stress_distinctness(
     delta_offenders: dict[str, dict] = {}
     n_missing_holdout_scoped_numerator = 0
     for r in with_trades:
+        # Issue #1292 (GH #1165) — Erwartungsbasis: applied_slippage_bps DERSELBEN Study bevorzugt,
+        # slippage_p50_bps_calibrated nur als Ruckfall (mit Telemetrie, WELCHE Ebene getroffen hat).
+        applied_slippage = r.get("applied_slippage_bps")
         slippage_p50 = r.get("slippage_p50_bps_calibrated")
-        if not slippage_p50:
+        if applied_slippage:
+            expectation_slippage = float(applied_slippage)
+            expectation_basis = "applied_slippage_bps"
+        elif slippage_p50:
+            expectation_slippage = float(slippage_p50)
+            expectation_basis = "slippage_p50_bps_calibrated"
+        else:
             continue
         n_ts_exits = r.get("holdout_n_trailing_stop_exits")
         n_total = r.get("holdout_total_trades")
@@ -4334,17 +4349,23 @@ def check_cost_stress_distinctness(
         if n_ts_exits is None or not n_total:
             n_missing_holdout_scoped_numerator += 1
             continue
+        # Issue #1292 (GH #1165) Fix Punkt 2 — auf 1 gedeckelt: n_ts_exits ist eine ZAEHLUNG,
+        # n_total die GESAMTZAHL der Holdout-Trades derselben Study — ein Quotient > 1 (z. B. durch
+        # eine abweichende Zaehlbasis der beiden Groessen) waere eine ueberhoehte, nicht mehr als
+        # Anteil interpretierbare Skalierung des Mindestdeltas (siehe #1222-Vorkatalogbefund B-3,
+        # hier nur teilweise behoben gewesen).
+        trailing_stop_exit_share = min(1.0, float(n_ts_exits) / float(n_total))
         min_expected_delta = (
-            min_delta_coefficient * (float(slippage_p50) / 10000.0)
-            * (float(n_ts_exits) / float(n_total)))
+            min_delta_coefficient * (expectation_slippage / 10000.0) * trailing_stop_exit_share)
         actual_delta = (float(r["holdout_expectancy_capital_weighted"])
                         - float(r["holdout_expectancy_cost_stress_full_realism"]))
         if actual_delta < min_expected_delta:
             delta_offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
                 "actual_delta": round(actual_delta, 6),
                 "min_expected_delta": round(min_expected_delta, 6),
-                "slippage_p50_bps_calibrated": slippage_p50,
-                "holdout_trailing_stop_exit_share": round(float(n_ts_exits) / float(n_total), 4),
+                "expectation_basis": expectation_basis,
+                "expectation_slippage_bps": round(expectation_slippage, 4),
+                "holdout_trailing_stop_exit_share": round(trailing_stop_exit_share, 4),
             }
     passed = bit_identity_passed and not delta_offenders
     return InvariantResult(
@@ -7992,6 +8013,109 @@ def check_slippage_scope_agreement(study_records: list[dict]) -> InvariantResult
                      "n_studies_measured": len(candidates)},
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies mit abweichenden Scopes: {offenders} (#1276)."),
+        provenance={"offenders": offenders} if offenders else None,
+    )
+
+
+def check_slippage_calibration_not_circular(study_records: list[dict]) -> InvariantResult:
+    """Issue #1278 (GH #1151, Katalog #1272-1297, P1) — schliesst den Verdacht aus, dass die
+    GEMESSENE ``stop_exit_slippage_bps`` (Rohmaterial fuer die p50/p90-Kalibrierung,
+    ``sweep.calibrate_and_write_slippage_cache``) selbst bereits einen Term aus der ZUVOR
+    ANGEWANDTEN Slippage (``applied_slippage_bps``) enthaelt — ein Kreisschluss, bei dem jede
+    Kalibrierungsrunde die naechste systematisch nach oben zieht.
+
+    FAIL (severity ``high``), wenn eine Study mit gemessener ``holdout_stop_exit_slippage_bps``
+    ein ``slippage_measurement_basis`` traegt, das NICHT ``'pre_cost_price'`` ist (fehlend ODER
+    ein anderer Wert) — ``backtest_runner.resolve_stop_exit_slippage_bps`` rechnet strukturell
+    ausschliesslich aus rohen Preisen (``closing_price``/``trailing_stop_price``, siehe dortiger
+    Docstring); jede Study mit gemessener Slippage MUSS diese Basis tragen, sonst ist entweder die
+    Stempelung selbst unterbrochen oder eine kuenftige Aenderung hat die Garantie verletzt.
+
+    Studies ohne gemessene Slippage tragen nicht zur Bewertung bei (nichts zu pruefen); keine
+    solche Study ⇒ INCONCLUSIVE."""
+    candidates = [
+        r for r in study_records if r.get("holdout_stop_exit_slippage_bps") is not None]
+    expected = "holdout_stop_exit_slippage_bps definiert ⇒ slippage_measurement_basis == 'pre_cost_price'"
+    if not candidates:
+        return InvariantResult(
+            name="check_slippage_calibration_not_circular",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "NO_STUDY_WITH_MEASURED_SLIPPAGE",
+                         "n_studies_measured": 0},
+            detail="Keine Study mit gemessener stop_exit_slippage_bps — nicht auswertbar.",
+        )
+    offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": r.get("slippage_measurement_basis")
+        for r in candidates if r.get("slippage_measurement_basis") != "pre_cost_price"
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_slippage_calibration_not_circular",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": len(candidates)},
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit gemessener Slippage ohne "
+                f"'pre_cost_price'-Basis: {offenders} (#1278)."),
+        provenance={"offenders": offenders} if offenders else None,
+    )
+
+
+def check_selection_cost_basis_admissible(study_records: list[dict]) -> InvariantResult:
+    """Issue #1277 (GH #1150, Katalog #1272-1297, P0) — ``selection_cost_basis ==
+    'round_trip_plus_calibrated_slippage'`` ist bei degenerierter Bar-Achse (siehe
+    ``_bar_axis_supports_stop_verdict``) UNZULAESSIG: backtest_runner.py sollte bereits am
+    Selektionspfad fail-closed auf ``'round_trip_only'`` zurueckfallen (siehe
+    ``_bar_axis_supports_stop_verdict_from_exit_meta``); dieser Check ist der
+    REPORT-seitige Regressionswaechter gegen genau diesen Fall (z. B. ein aelterer Worker-Build
+    ohne den #1277-Fix, oder eine Study, deren Trial-lokale Bar-Achse gesund war, deren
+    STUDY-Aggregat aber degeneriert erscheint).
+
+    FAIL (severity ``blocking``), wenn die Bar-Achse dieses Laufs (aggregiert ueber
+    ``study_records``) degeneriert ist UND MINDESTENS EINE Study
+    ``selection_cost_basis == 'round_trip_plus_calibrated_slippage'`` traegt."""
+    expected = ("degenerierte Bar-Achse ⇒ KEINE Study mit selection_cost_basis == "
+               "'round_trip_plus_calibrated_slippage'")
+    if _bar_axis_supports_stop_verdict(study_records):
+        return InvariantResult(
+            name="check_selection_cost_basis_admissible",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="blocking",
+            evaluable=True,
+            evaluability={"evaluable": True, "inconclusive_reason": None,
+                         "n_studies_measured": len(study_records)},
+            detail="Bar-Achse traegt Intrabar-Information — jede Kostenbasis ist zulaessig.",
+        )
+    offenders = [
+        f"{r.get('strategy')}/{r.get('symbol')}" for r in study_records
+        if r.get("selection_cost_basis") == "round_trip_plus_calibrated_slippage"
+    ]
+    passed = not offenders
+    return InvariantResult(
+        name="check_selection_cost_basis_admissible",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="blocking",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": len(study_records)},
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit selection_cost_basis == "
+                f"'round_trip_plus_calibrated_slippage' trotz degenerierter Bar-Achse: "
+                f"{offenders} (#1277)."),
         provenance={"offenders": offenders} if offenders else None,
     )
 

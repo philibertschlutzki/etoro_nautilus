@@ -2689,6 +2689,34 @@ def _read_apply_calibrated_slippage_in_selection() -> bool:
     return val
 
 
+def _bar_axis_supports_stop_verdict_from_exit_meta(rt_exit_meta: list[dict]) -> bool:
+    """Issue #1277 (GH #1150, Katalog #1272-1297, P0) — dieselbe Vorbedingung wie
+    ``invariants._bar_axis_supports_stop_verdict`` (#1274), hier auf ``rt_exit_meta`` EINER Study
+    (statt auf die REPORT-weite Study-Liste) ausgewertet — die Groesse, die
+    ``_apply_calibrated_slippage_deduction`` tatsaechlich zur Verfuegung hat, BEVOR das Ergebnis
+    je als Study-Record existiert.
+
+    Root-Cause (#1150-Symptom): die gemessene Fill-Slippage wird seit #1078/#1226 UNBEDINGT vom
+    Trial abgezogen — an der QUELLE der PnL-Serie, also VOR jeder Gate-/Reward-/Deflations-
+    Bildung. Bei einer Bar-Achse ohne Intrabar-Information (#1272) ist diese "gemessene
+    Ausfuehrungsgroesse" nachweislich (teilweise) ein Bar-Achsen-Artefakt (#1274/Pitfall #455-
+    Klasse: ein korrekter Fix an der falschen Datengrundlage verstaerkt den Defekt) — sie darf den
+    SELEKTIONSPFAD dann nicht dominieren.
+
+    Kriterium: ``bar_range_population_n > 0`` UND ``zero_range_bar_fraction <= 0,5`` fuer
+    JEDEN Round-Trip mit definierten Feldern (Median ueber die Population). Keine Round-Trips mit
+    definierten Feldern ⇒ ``False`` (fail-closed — dieselbe Haltung wie das Report-Pendant)."""
+    populations = [m.get("bar_range_population_n") for m in rt_exit_meta
+                  if m.get("bar_range_population_n") is not None]
+    if populations and any(int(p) == 0 for p in populations):
+        return False
+    fractions = [float(m["zero_range_bar_fraction"]) for m in rt_exit_meta
+                if m.get("zero_range_bar_fraction") is not None]
+    if not fractions:
+        return False
+    return statistics.median(fractions) <= 0.5
+
+
 def _read_sortino_numeric_guard() -> float:
     """Issue #588 (Zero-Hardcoding): reiner Numerik-/Datenfehler-Guard fuer den Sortino aus
     tournament.json['sortino_numeric_guard'] (KEINE semantische Saettigung — die passiert
@@ -5496,6 +5524,14 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     None if is_data_end_fallback else meta.get("stop_exit_lag_bars")),
                 "stop_exit_fill_lag_ns": stop_exit_fill_lag_ns,
                 "stop_exit_slippage_bps": stop_exit_slippage_bps,
+                # Issue #1278 (GH #1151, Katalog #1272-1297, P1) — belegt, dass
+                # ``resolve_stop_exit_slippage_bps`` (oben) AUSSCHLIESSLICH aus rohen Preisen
+                # rechnet (``closing_price``/``_stop_px``, kein Term aus ``applied_slippage_bps``
+                # oder ``slippage_bps_p50`` — beide sind an dieser Stelle nicht einmal in Scope):
+                # eine spaetere Kalibrierung KANN diese Messgroesse strukturell nicht speisen.
+                # Konstantes Literal (kein bedingter Wert) — die Garantie gilt fuer JEDEN
+                # TRAILING_STOP-Exit, nicht nur unter bestimmten Config-Zustaenden.
+                "slippage_measurement_basis": "pre_cost_price",
                 # Issue #1054/#1203 — Verlust-Zerlegung, siehe Kommentar an der Berechnung oben.
                 "stop_distance_bps": _stop_distance_bps,
                 "trigger_to_fill_gap_bps": trigger_to_fill_gap_bps,
@@ -5663,7 +5699,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #1257 (GH #1127) — Kostenbasis VOR der #1078-Korrektur, ausschliesslich fuer die
         # parallele ``*_gross``-Traceability-Telemetrie (siehe ``_calculate_stats``-Aufrufe unten).
         rt_pnls_with_ts_gross = rt_pnls_with_ts
-        if _read_apply_calibrated_slippage_in_selection():
+        # Issue #1277 (GH #1150, Katalog #1272-1297, P0) — der kalibrierte Slippage-Abzug ist nur
+        # dann eine AUSFUEHRUNGSGROESSE (statt eines Bar-Achsen-Artefakts, siehe
+        # ``_bar_axis_supports_stop_verdict_from_exit_meta``-Docstring), wenn die Bar-Achse DIESER
+        # Study Intrabar-Information traegt. Fail-closed auf ``round_trip_only`` mit benanntem
+        # Downgrade-Grund, statt die gemessene Groesse blind in den Selektionspfad zu lassen.
+        _bar_axis_supports_selection_cost = _bar_axis_supports_stop_verdict_from_exit_meta(
+            rt_exit_meta)
+        selection_cost_basis_downgrade_reason = None
+        if _read_apply_calibrated_slippage_in_selection() and _bar_axis_supports_selection_cost:
             rt_pnls_with_ts, n_slippage_adjusted_round_trips = _apply_calibrated_slippage_deduction(
                 rt_pnls_with_ts, rt_notionals_with_ts, rt_exit_meta,
                 slippage_bps_p50=slippage_bps_p50)
@@ -5673,20 +5717,28 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     log_fn(f"[Metriken] #1078: kalibrierte p50-Slippage ({slippage_bps_p50:.2f} bps) "
                            f"auf {n_slippage_adjusted_round_trips} TRAILING_STOP-Round-Trip(s) "
                            "an der Quelle abgezogen.")
+        elif (_read_apply_calibrated_slippage_in_selection()
+              and not _bar_axis_supports_selection_cost):
+            selection_cost_basis_downgrade_reason = "BAR_AXIS_DEGENERATE"
+            if log_fn:
+                log_fn("[Metriken] #1277: kalibrierte Slippage NICHT in den Selektionspfad "
+                       "uebernommen (BAR_AXIS_DEGENERATE) — die Bar-Achse dieser Study traegt "
+                       "keine Intrabar-Information, selection_cost_basis bleibt round_trip_only.")
 
         # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — DIESELBE kalibrierte p50-Slippage
         # ZUSAETZLICH auf die MtM-Equity-Kurve selbst (``_apply_calibrated_slippage_to_mtm_series``-
         # Docstring fuer die Root-Cause: der Abzug oben propagiert NICHT in total_return/sortino/
         # PSR/die α/β-Regression, die alle aus ``mtm_series``/``mtm_frames`` statt aus
         # ``rt_pnls_with_ts`` entstehen). DASSELBE Gate (``_read_apply_calibrated_slippage_in_
-        # selection``), DIESELBEN Notional-/Exit-Meta-Listen (Zeitstempel/Notional aendern sich durch
-        # die #1078-PnL-Korrektur NICHT). ``mtm_series_gross`` bleibt die unkorrigierte Kurve fuer
-        # die ``*_gross``-Telemetrie; ab hier bezeichnet der Name ``mtm_series`` — wie ueberall sonst
-        # in dieser Funktion — die tatsaechlich zu verwendende (jetzt kostenbereinigte) Kurve, kein
-        # Konsument unterhalb dieser Zeile muss geaendert werden (Fix an der Quelle).
+        # selection`` UND, seit #1277, ``_bar_axis_supports_selection_cost``), DIESELBEN Notional-/
+        # Exit-Meta-Listen (Zeitstempel/Notional aendern sich durch die #1078-PnL-Korrektur NICHT).
+        # ``mtm_series_gross`` bleibt die unkorrigierte Kurve fuer die ``*_gross``-Telemetrie; ab
+        # hier bezeichnet der Name ``mtm_series`` — wie ueberall sonst in dieser Funktion — die
+        # tatsaechlich zu verwendende (jetzt kostenbereinigte) Kurve, kein Konsument unterhalb
+        # dieser Zeile muss geaendert werden (Fix an der Quelle).
         mtm_series_gross = mtm_series
         n_slippage_adjusted_mtm_events = 0
-        if _read_apply_calibrated_slippage_in_selection():
+        if _read_apply_calibrated_slippage_in_selection() and _bar_axis_supports_selection_cost:
             mtm_series, n_slippage_adjusted_mtm_events = _apply_calibrated_slippage_to_mtm_series(
                 mtm_series, rt_notionals_with_ts, rt_exit_meta, slippage_bps_p50=slippage_bps_p50)
             if n_slippage_adjusted_mtm_events > 0 and log_fn:
@@ -6019,6 +6071,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # deduction``-Aufruf oben).
         is_metrics["selection_cost_basis"] = selection_cost_basis
         oos_metrics["selection_cost_basis"] = selection_cost_basis
+        # Issue #1277 (GH #1150, Katalog #1272-1297) — benennt WESHALB der Selektionspfad auf
+        # round_trip_only zurueckfiel, wenn apply_calibrated_slippage_in_selection aktiv
+        # konfiguriert ist: fehlender Kalibrierungs-Cache bleibt None (Vorzustand), eine
+        # degenerierte Bar-Achse traegt explizit 'BAR_AXIS_DEGENERATE'.
+        is_metrics["selection_cost_basis_downgrade_reason"] = selection_cost_basis_downgrade_reason
+        oos_metrics["selection_cost_basis_downgrade_reason"] = selection_cost_basis_downgrade_reason
         if n_slippage_adjusted_round_trips > 0:
             is_metrics["selection_cost_basis_n_adjusted"] = n_slippage_adjusted_round_trips
             oos_metrics["selection_cost_basis_n_adjusted"] = n_slippage_adjusted_round_trips

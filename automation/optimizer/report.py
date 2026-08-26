@@ -2425,6 +2425,14 @@ def _study_record(proposal: dict, study,
         # Holdout-Re-Evaluationspfad (confirm.py) bereits korrekt GEPARST, erreichte aber nie den
         # Study-Record; Rohmaterial fuer invariants.check_selection_cost_basis_contract.
         "holdout_stop_exit_slippage_bps": holdout_metrics.get("oos_stop_exit_slippage_bps_median"),
+        # Issue #1278 (GH #1151, Katalog #1272-1297, P1) — konstantes Literal (siehe
+        # backtest_runner._finalize_round_trip, rt_exit_meta-Stempelung): resolve_stop_exit_
+        # slippage_bps rechnet strukturell IMMER aus rohen Preisen, nie aus applied_slippage_bps.
+        # None ohne jede gemessene stop_exit_slippage_bps (dieselbe Praesenz-Konvention wie das
+        # Feld oben) — kein Vorspiegeln einer Messbasis fuer eine nicht-existente Messung.
+        "slippage_measurement_basis": (
+            "pre_cost_price"
+            if holdout_metrics.get("oos_stop_exit_slippage_bps_median") is not None else None),
         "holdout_n_trailing_stop_exits": holdout_metrics.get("oos_n_trailing_stop_losses"),
         "holdout_trigger_to_fill_gap_bps": holdout_metrics.get(
             "oos_trigger_to_fill_gap_bps_median"),
@@ -2536,6 +2544,11 @@ def _study_record(proposal: dict, study,
         # von backtest_runner._apply_calibrated_slippage_deduction. None ⇒ kein Kalibrierungs-Cache/
         # Legacy-Study (siehe confirm._metrics_dict).
         "selection_cost_basis": holdout_metrics.get("oos_selection_cost_basis"),
+        # Issue #1277 (GH #1150, Katalog #1272-1297) — WESHALB selection_cost_basis auf
+        # round_trip_only zurueckfiel, obwohl apply_calibrated_slippage_in_selection aktiv
+        # konfiguriert ist (siehe backtest_runner._bar_axis_supports_stop_verdict_from_exit_meta).
+        "selection_cost_basis_downgrade_reason": holdout_metrics.get(
+            "oos_selection_cost_basis_downgrade_reason"),
         "holdout_no_alpha_detected": (
             abs(holdout_metrics["oos_alpha_tstat"]) < 1.0
             if holdout_metrics.get("oos_alpha_tstat") is not None else None
@@ -4769,6 +4782,11 @@ def _build_report(
     # Issue #1276 (GH #1149, Katalog #1272-1297) — direkt nach der slippage_p50_bps_calibrated-
     # Stempelung platziert (braucht slippage_p50_calibration_scope von dort).
     all_checks.append(("global", _inv.check_slippage_scope_agreement(studies_out)))
+    # Issue #1277 (GH #1150, Katalog #1272-1297) — Report-seitiger Regressionswaechter gegen den
+    # Selektionspfad-Fix (siehe backtest_runner._bar_axis_supports_stop_verdict_from_exit_meta).
+    all_checks.append(("global", _inv.check_selection_cost_basis_admissible(studies_out)))
+    # Issue #1278 (GH #1151, Katalog #1272-1297) — schliesst den Kalibrierungs-Kreisschluss aus.
+    all_checks.append(("global", _inv.check_slippage_calibration_not_circular(studies_out)))
     # Issue #1075/#1223 (Katalog #1247+, P0) — ebenfalls NACH der Kalibrierungs-Stempelung (braucht
     # slippage_p50_bps_calibrated fuer die Konsistenzpruefung gegen applied_slippage_bps).
     all_checks.append(("global", _inv.check_applied_cost_components_resolved(studies_out)))
