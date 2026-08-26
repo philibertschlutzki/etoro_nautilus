@@ -213,6 +213,44 @@ def _emit_cost_model_realism_event(cost_model_realism_source: str, studies: list
         }, level=logging.INFO)
 
 
+def _resolve_slippage_p50_calibrated(
+    asset_class_entry: dict | None, symbol: str | None, strategy: str | None, *,
+    min_observations: int = 30,
+) -> tuple[float | None, str]:
+    """Issue #1276 (GH #1149, Katalog #1272-1297, P0) — dieselbe Fallback-Kette wie
+    ``backtest_runner.resolve_slippage_bps``/``resolve_slippage_calibration_scope``
+    (``by_strategy_symbol`` → ``by_symbol`` → asset-class-weit), hier gegen die Struktur von
+    ``calibrated_slippage.json`` ausgewertet (``'p50'``/``'n_observations'`` je Ebene, siehe
+    ``sweep.write_calibrated_slippage_cache``/``calibrate_and_write_slippage_cache``) statt gegen
+    ``backtest.json``s ``slippage_bps_by_asset_class`` (die ``'value'``-Struktur, die
+    ``resolve_slippage_bps`` konsumiert — eine ANDERE, wenn auch aus derselben Kalibrierung
+    gespeiste Repraesentation, siehe dortiger Docstring).
+
+    Root-Cause #1276: ``report.py`` stempelte bisher AUSSCHLIESSLICH die asset-class-weite Wurzel
+    (``(entry or {}).get('p50')``) — identisch in allen 14 Studies eines Laufs, waehrend
+    ``applied_slippage_bps`` (die tatsaechlich angewandte Groesse, ueber ``resolve_slippage_bps``
+    aufgeloest) je Study um den Faktor 11,5 streute UND ``slippage_calibration_scope`` (aus
+    ``holdout_metrics``, dieselbe Fallback-Semantik) je Study ``'strategy_symbol'`` meldete — zwei
+    Felder mit fast identischem Namen beschrieben zwei verschiedene Aufloesungsebenen.
+
+    Rueckgabe ``(p50, scope)`` mit ``scope ∈ {'strategy_symbol', 'symbol', 'asset_class'}`` — DIE
+    Ebene, die tatsaechlich getroffen hat (``min_observations``, Default 30, dieselbe Schwelle wie
+    ``resolve_slippage_bps``). ``asset_class_entry is None`` ⇒ ``(None, 'asset_class')``."""
+    if not asset_class_entry:
+        return None, "asset_class"
+    if strategy:
+        rec = (asset_class_entry.get("by_strategy_symbol") or {}).get(f"{strategy}|{symbol}")
+        if (rec and rec.get("p50") is not None
+                and int(rec.get("n_observations") or 0) >= min_observations):
+            return float(rec["p50"]), "strategy_symbol"
+    rec = (asset_class_entry.get("by_symbol") or {}).get(symbol)
+    if (rec and rec.get("p50") is not None
+            and int(rec.get("n_observations") or 0) >= min_observations):
+        return float(rec["p50"]), "symbol"
+    p50 = asset_class_entry.get("p50")
+    return (float(p50) if p50 is not None else None), "asset_class"
+
+
 def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
                             optimizer_config_sha256, catalog_fingerprint_value, seed,
                             symbols, strategies, reward_semantics_version,
@@ -581,6 +619,65 @@ def _stamp_atr_floor_bps_derived(
                     float(base_floor), atr_trailing_multiplier=k_i,
                     round_trip_cost_bps=float(c_rt), min_stop_to_cost_ratio=min_stop_to_cost_ratio))
             r["atr_floor_binding_trial_fraction"] = round(_n_binding / len(_trial_pairs), 4)
+
+
+def _stamp_cost_drag_decomposition(studies_out: list[dict]) -> None:
+    """Issue #1279 (GH #1152, Katalog #1272-1297, P1) — die oekonomisch entscheidende Zahl des
+    Katalogs (der Kostendrag zwischen ``holdout_total_return_gross`` und ``_net``, 0,68 bis 23,88
+    pp) existierte bisher in KEINEM Feld und keiner Report-Sektion — nur als Differenz zweier
+    Felder rekonstruierbar, ihre Aufteilung auf ``c_rt``, Slippage und Financing gar nicht.
+
+    Stempelt je Study:
+      * ``holdout_cost_drag_pct`` — ``holdout_total_return_gross - holdout_total_return_net``
+        (Prozentpunkte; ``None`` ohne beide Werte).
+      * ``holdout_cost_drag_bps_per_round_trip`` — derselbe Drag, auf EINEN Round-Trip
+        umgelegt (``holdout_cost_drag_pct * 100 / holdout_total_trades``, ``None`` ohne
+        ``holdout_total_trades > 0``).
+      * ``holdout_cost_drag_component_round_trip_bps`` — ``round_trip_cost_bps`` (c_rt), bereits
+        eine Pro-Round-Trip-Groesse.
+      * ``holdout_cost_drag_component_slippage_bps`` — ``applied_slippage_bps``, ebenfalls bereits
+        pro Round-Trip.
+      * ``holdout_cost_drag_component_financing_bps`` — ``applied_financing_bps_per_day`` auf die
+        GESCHAETZTE Haltedauer EINES Round-Trips umgelegt (``median_bars_held · bar_seconds /
+        86400``, aus ``symbol_bar_quality``/``_contracts.BAR_SECONDS_DEFAULT`` aufgeloest — dieselbe
+        Kompoundierungs-NAEHERUNG wie die uebrigen Komponenten: additiv statt geometrisch verkettet,
+        siehe ``invariants.check_cost_drag_decomposition``s 5-%-Toleranz-Dokumentation).
+
+    Reine additive Telemetrie — keine bestehende Aggregation/Selektion liest diese Felder,
+    Zero-Regression fuer jeden bestehenden Konsumenten."""
+    for r in studies_out:
+        gross = r.get("holdout_total_return_gross")
+        net = r.get("holdout_total_return_net")
+        if gross is None or net is None:
+            r["holdout_cost_drag_pct"] = None
+        else:
+            r["holdout_cost_drag_pct"] = round(float(gross) - float(net), 4)
+        n_trades = r.get("holdout_total_trades")
+        if r["holdout_cost_drag_pct"] is not None and n_trades:
+            r["holdout_cost_drag_bps_per_round_trip"] = round(
+                r["holdout_cost_drag_pct"] * 100.0 / float(n_trades), 4)
+        else:
+            r["holdout_cost_drag_bps_per_round_trip"] = None
+        c_rt = r.get("round_trip_cost_bps")
+        r["holdout_cost_drag_component_round_trip_bps"] = (
+            round(float(c_rt), 4) if c_rt is not None else None)
+        slippage = r.get("applied_slippage_bps")
+        r["holdout_cost_drag_component_slippage_bps"] = (
+            round(float(slippage), 4) if slippage is not None else None)
+        financing_per_day = r.get("applied_financing_bps_per_day")
+        _symbol_bar_quality = r.get("symbol_bar_quality")
+        bar_seconds = (
+            _symbol_bar_quality.get("median_delta_t_s")
+            if isinstance(_symbol_bar_quality, dict) and _symbol_bar_quality.get("median_delta_t_s")
+            else _contracts.BAR_SECONDS_DEFAULT
+        )
+        median_bars_held = r.get("median_bars_held")
+        if financing_per_day is not None and median_bars_held is not None:
+            holding_days = float(median_bars_held) * float(bar_seconds) / 86400.0
+            r["holdout_cost_drag_component_financing_bps"] = round(
+                float(financing_per_day) * holding_days, 4)
+        else:
+            r["holdout_cost_drag_component_financing_bps"] = None
 
 
 def _max_symbol_exposure_fraction(base_cfg: Path | None = None) -> float | None:
@@ -4628,6 +4725,9 @@ def _build_report(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
         round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
         min_stop_to_cost_ratio=_min_stop_to_cost_ratio)
+    # Issue #1279 (GH #1152, Katalog #1272-1297) — NACH round_trip_cost_bps (oben gestempelt).
+    _stamp_cost_drag_decomposition(studies_out)
+    all_checks.append(("global", _inv.check_cost_drag_decomposition(studies_out)))
     # Issue #1055/#1204 (Katalog #1196-1221) Fix Punkt 4 — die kalibrierte p50-Slippage je Study
     # (ueber die Asset-Klasse ihres Symbols aufgeloest), Rohmaterial fuer die verschaerfte
     # invariants.check_cost_stress_distinctness-Mindestdelta-Pruefung unten. Fail-open: kein
@@ -4647,17 +4747,28 @@ def _build_report(
         for _r in studies_out:
             try:
                 _ac = _resolve_asset_class_for_symbol(_r.get("symbol"))
-                _r["slippage_p50_bps_calibrated"] = (
-                    _slippage_calibration.get(_ac) or {}).get("p50")
+                _p50, _scope = _resolve_slippage_p50_calibrated(
+                    _slippage_calibration.get(_ac), _r.get("symbol"), _r.get("strategy"))
+                _r["slippage_p50_bps_calibrated"] = _p50
+                # Issue #1276 (GH #1149, Katalog #1272-1297, P0) — die tatsaechlich getroffene
+                # Aufloesungsebene (siehe _resolve_slippage_p50_calibrated-Docstring), damit
+                # check_slippage_scope_agreement sie gegen selection_cost_basis-Feld
+                # slippage_calibration_scope (aus holdout_metrics, oben) halten kann.
+                _r["slippage_p50_calibration_scope"] = _scope
             except Exception:
                 _r["slippage_p50_bps_calibrated"] = None
+                _r["slippage_p50_calibration_scope"] = None
     else:
         for _r in studies_out:
             _r["slippage_p50_bps_calibrated"] = None
+            _r["slippage_p50_calibration_scope"] = None
     # Issue #1074/#1222 (Katalog #1247+) Fix Punkt 1 — dieser Aufruf steht ABSICHTLICH HIER, NACH
     # der ``slippage_p50_bps_calibrated``-Stempelung direkt oberhalb (vorher lief er vor der
     # Stempelung, siehe Kommentar bei ``check_cost_stress_monotonicity`` weiter oben).
     all_checks.append(("global", _inv.check_cost_stress_distinctness(studies_out)))
+    # Issue #1276 (GH #1149, Katalog #1272-1297) — direkt nach der slippage_p50_bps_calibrated-
+    # Stempelung platziert (braucht slippage_p50_calibration_scope von dort).
+    all_checks.append(("global", _inv.check_slippage_scope_agreement(studies_out)))
     # Issue #1075/#1223 (Katalog #1247+, P0) — ebenfalls NACH der Kalibrierungs-Stempelung (braucht
     # slippage_p50_bps_calibrated fuer die Konsistenzpruefung gegen applied_slippage_bps).
     all_checks.append(("global", _inv.check_applied_cost_components_resolved(studies_out)))

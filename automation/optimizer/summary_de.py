@@ -855,6 +855,38 @@ def _section_2_monetary_result(report: dict) -> str:
                 f"{_fmt_num(r.get('holdout_expectancy_cost_stress_2x'), digits=4)} | "
                 f"{_fmt_num(r.get('holdout_expectancy_cost_stress_full_realism'), digits=4)} |"
             )
+
+    # Issue #1279 (GH #1152, Katalog #1272-1297, P1) — die oekonomisch entscheidende Zahl des
+    # Katalogs (Brutto/Netto-Kostendrag) existierte bisher in keiner Report-Sektion, nur als
+    # Differenz zweier Felder rekonstruierbar. Diese Sektion macht Brutto, Netto, Drag UND die
+    # dominante Komponente je Study direkt sichtbar (report._stamp_cost_drag_decomposition).
+    _cost_drag_rows = [r for r in studies if r.get("holdout_cost_drag_pct") is not None]
+    if _cost_drag_rows:
+        lines.append("")
+        lines.append("### 2.5 Kostendrag je Study")
+        lines.append("")
+        lines.append(
+            "Aufteilung des Kostendrags (Brutto- minus Netto-Holdout-Return, Prozentpunkte) auf "
+            "seine drei Komponenten, umgelegt auf einen Round-Trip (bps) — additive Naeherung, "
+            "Toleranz 5 % gegen den Kompoundierungseffekt (`invariants.check_cost_drag_"
+            "decomposition`):"
+        )
+        lines.append("")
+        lines.append(
+            "| Strategie | Symbol | Brutto | Netto | Drag (pp) | Round-Trip (bps) | "
+            "Slippage (bps) | Financing (bps) |"
+        )
+        lines.append("|---|---|---:|---:|---:|---:|---:|---:|")
+        for r in sorted(_cost_drag_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | "
+                f"{_fmt_num(r.get('holdout_total_return_gross'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_total_return_net'), digits=4)} | "
+                f"{_fmt_num(r.get('holdout_cost_drag_pct'), digits=2)} | "
+                f"{_fmt_num(r.get('holdout_cost_drag_component_round_trip_bps'), digits=2)} | "
+                f"{_fmt_num(r.get('holdout_cost_drag_component_slippage_bps'), digits=2)} | "
+                f"{_fmt_num(r.get('holdout_cost_drag_component_financing_bps'), digits=2)} |"
+            )
     return "\n".join(lines)
 
 

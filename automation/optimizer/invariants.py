@@ -7869,6 +7869,133 @@ def check_stop_trigger_axis_coherence(
     )
 
 
+def check_cost_drag_decomposition(
+    study_records: list[dict], *, tolerance_fraction: float = 0.05,
+) -> InvariantResult:
+    """Issue #1279 (GH #1152, Katalog #1272-1297, P1) — die drei Komponenten
+    (``holdout_cost_drag_component_round_trip_bps``/``_slippage_bps``/``_financing_bps``, siehe
+    ``report._stamp_cost_drag_decomposition``) muessen sich, auf einen Round-Trip umgelegt, zum
+    gemessenen ``holdout_cost_drag_bps_per_round_trip`` summieren.
+
+    Toleranz ``tolerance_fraction`` (Default 5 %, relativ zum gemessenen Drag) — die Komponenten
+    werden ADDITIV verrechnet, waehrend der tatsaechliche Kompoundierungseffekt (Kosten wirken auf
+    ein durch VORHERIGE Kosten bereits reduziertes Kapital) geometrisch ist; die Toleranz deckt
+    diese dokumentierte Naeherung ab, keine Rechenungenauigkeit.
+
+    FAIL (severity ``high``), wenn |Σ Komponenten − gemessener Drag| / |gemessener Drag| >
+    ``tolerance_fraction`` fuer irgendeine Study mit allen vier Werten definiert. Keine solche
+    Study ⇒ INCONCLUSIVE."""
+    candidates = [
+        r for r in study_records
+        if r.get("holdout_cost_drag_bps_per_round_trip") is not None
+        and r.get("holdout_cost_drag_component_round_trip_bps") is not None
+        and r.get("holdout_cost_drag_component_slippage_bps") is not None
+        and r.get("holdout_cost_drag_component_financing_bps") is not None
+    ]
+    expected = (f"Σ(component_round_trip_bps, _slippage_bps, _financing_bps) == "
+               f"holdout_cost_drag_bps_per_round_trip (Toleranz {tolerance_fraction:.0%})")
+    if not candidates:
+        return InvariantResult(
+            name="check_cost_drag_decomposition",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "NO_STUDY_WITH_FULL_COST_DRAG_TELEMETRY",
+                         "n_studies_measured": 0},
+            detail="Keine Study mit vollstaendiger Kostendrag-Telemetrie — nicht auswertbar.",
+        )
+    offenders = {}
+    for r in candidates:
+        measured = float(r["holdout_cost_drag_bps_per_round_trip"])
+        components_sum = (
+            float(r["holdout_cost_drag_component_round_trip_bps"])
+            + float(r["holdout_cost_drag_component_slippage_bps"])
+            + float(r["holdout_cost_drag_component_financing_bps"]))
+        denom = abs(measured) if measured != 0 else max(abs(components_sum), 1e-9)
+        rel_diff = abs(components_sum - measured) / denom
+        if rel_diff > tolerance_fraction:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "measured": round(measured, 4), "components_sum": round(components_sum, 4),
+                "rel_diff": round(rel_diff, 4),
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_cost_drag_decomposition",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": len(candidates)},
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit Komponenten-Summe ausserhalb der "
+                f"{tolerance_fraction:.0%}-Toleranz: {offenders} (#1279)."),
+        provenance={"offenders": offenders} if offenders else None,
+    )
+
+
+def check_slippage_scope_agreement(study_records: list[dict]) -> InvariantResult:
+    """Issue #1276 (GH #1149, Katalog #1272-1297, P0) — ``slippage_p50_calibration_scope``
+    (``report._resolve_slippage_p50_calibrated``, die Aufloesungsebene des NEU gestempelten
+    ``slippage_p50_bps_calibrated``) muss je Study mit ``slippage_calibration_scope`` (aus
+    ``holdout_metrics['oos_slippage_calibration_scope']``, der Aufloesungsebene der TATSAECHLICH
+    AUF DIE FILLS ANGEWANDTEN Slippage, siehe ``backtest_runner.resolve_slippage_calibration_
+    scope``) uebereinstimmen — beide durchlaufen dieselbe (Strategie, Symbol) > Symbol > Asset-
+    Klasse-Fallback-Kette gegen (im Prinzip) dieselbe zugrundeliegende Kalibrierung; eine Divergenz
+    bedeutet, dass der REPORT eine andere Ebene ausweist als die SIMULATION tatsaechlich verwendet
+    hat.
+
+    FAIL (severity ``high``), sobald mindestens eine Study mit BEIDEN Feldern definiert eine
+    Abweichung traegt. Studies ohne mindestens eines der beiden Felder (kein Kalibrierungs-Cache,
+    Legacy-Report) tragen nicht zur Bewertung bei; keine bewertbare Study ⇒ INCONCLUSIVE."""
+    candidates = [
+        r for r in study_records
+        if r.get("slippage_p50_calibration_scope") is not None
+        and r.get("slippage_calibration_scope") is not None
+    ]
+    expected = "slippage_p50_calibration_scope == slippage_calibration_scope je Study"
+    if not candidates:
+        return InvariantResult(
+            name="check_slippage_scope_agreement",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "NO_STUDY_WITH_BOTH_SCOPE_FIELDS", "n_studies_measured": 0},
+            detail="Keine Study mit beiden Scope-Feldern definiert — nicht auswertbar.",
+        )
+    offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": {
+            "slippage_p50_calibration_scope": r.get("slippage_p50_calibration_scope"),
+            "slippage_calibration_scope": r.get("slippage_calibration_scope"),
+        }
+        for r in candidates
+        if r.get("slippage_p50_calibration_scope") != r.get("slippage_calibration_scope")
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_slippage_scope_agreement",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": len(candidates)},
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit abweichenden Scopes: {offenders} (#1276)."),
+        provenance={"offenders": offenders} if offenders else None,
+    )
+
+
 def _bar_axis_supports_stop_verdict(study_records: list[dict]) -> bool:
     """Issue #1274 (GH #1147, Katalog #1272-1297, P0) — gemeinsame Vorbedingungs-Funktion fuer JEDE
     Invariante, die ein Urteil ueber die Stop-MECHANIK faellt (``check_effective_stop_distance``,
