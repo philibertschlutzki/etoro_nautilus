@@ -1594,6 +1594,40 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             strategy, symbol, getattr(promoted_m_symbol, "oos_n_periods", None),
         )
 
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — check_alpha_regression_identifiability als
+    # unbedingter Guard genau an der Promotions-Entscheidung (dieselbe #958-Konvention: "narrower
+    # Guard genau an der Stelle, an der die tatsaechliche Promotions-Entscheidung faellt", statt
+    # die Top-k-Kohorte selbst zu filtern). t(α) ist seit #1093/#1241 das Haupt-Selektionsgate —
+    # es identifiziert Alpha nur, wenn β die bekannte Marktbeteiligung (exposure_fraction ·
+    # trade_amount_pct/100, dieselbe Formel wie invariants.check_beta_exposure_plausibility/
+    # report.py's beta_expected) tatsaechlich trifft. ``allow_short=True``-Strategien haben kein
+    # vorhersagbares Beta-Vorzeichen (siehe report._allow_short_by_strategy-Docstring) und werden
+    # ausgenommen — dieselbe Ausnahme wie beim Report-seitigen Pendant.
+    if holdout_passed:
+        from automation.optimizer.report import (
+            _allow_short_by_strategy, _trade_amount_pct_by_strategy)
+        _allow_short_this = _allow_short_by_strategy().get(strategy, False)
+        _trade_pct_this = _trade_amount_pct_by_strategy().get(strategy)
+        _exposure_this = getattr(promoted_m_symbol, "oos_exposure_fraction", None)
+        _beta_measured_this = getattr(promoted_m_symbol, "oos_beta", None)
+        _beta_expected_this = (
+            float(_exposure_this) * float(_trade_pct_this) / 100.0
+            if (not _allow_short_this and _exposure_this is not None
+                and _trade_pct_this is not None) else None
+        )
+        if (_beta_expected_this is not None and _beta_expected_this > 0.0
+                and _beta_measured_this is not None and _exposure_this is not None
+                and float(_exposure_this) > 0.3
+                and abs(float(_beta_measured_this)) < 0.25 * _beta_expected_this):
+            holdout_passed = False
+            holdout_reject_detail = "REJECT_OOS_ALPHA_NOT_IDENTIFIED"
+            logging.getLogger("optimizer").error(
+                "[#1283] %s/%s: beta_measured=%.4f identifiziert die Marktbeteiligung nicht "
+                "(beta_expected=%.4f, exposure_fraction=%.4f) — t(alpha) wird nicht als "
+                "Promotions-Entscheidung akzeptiert (REJECT_OOS_ALPHA_NOT_IDENTIFIED).",
+                strategy, symbol, _beta_measured_this, _beta_expected_this, _exposure_this,
+            )
+
     # Issue #1007 (Katalog #858) — eine Study kann bislang gleichzeitig als informationsfrei
     # (severity='blocking'-Invariante FAIL, z. B. check_selection_statistic_availability,
     # check_guard_reference_stability) markiert UND als Gewinner exportiert werden, weil Invarianten
@@ -2483,6 +2517,10 @@ _CONFIRM_STAGE_REJECTIONS = frozenset({
     # (unaufloesbare Familien-Multiplizitaet); der modale Per-Trial-IS-Grund erklaert nicht, warum
     # die Familien-Multiplizitaet unaufloesbar war.
     "REJECT_PROMOTION_FAMILY_UNRESOLVABLE",
+    # Issue #1283 (GH #1156, Katalog #1272-1297) — Holdout bestanden, aber beta_measured
+    # identifiziert die bekannte Marktbeteiligung nicht; der modale Per-Trial-IS-Grund erklaert
+    # nicht, warum t(alpha) als Promotions-Entscheidung verworfen wurde.
+    "REJECT_OOS_ALPHA_NOT_IDENTIFIED",
 })
 
 

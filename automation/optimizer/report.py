@@ -2580,6 +2580,18 @@ def _study_record(proposal: dict, study,
         "holdout_alpha_n_y_nonzero": holdout_metrics.get("oos_alpha_n_y_nonzero"),
         "holdout_alpha_n_x_nonzero": holdout_metrics.get("oos_alpha_n_x_nonzero"),
         "holdout_alpha_n_both_zero": holdout_metrics.get("oos_alpha_n_both_zero"),
+        # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer invariants.check_alpha_
+        # regression_identifiability: t(alpha) darf nur entscheiden, wenn beta die
+        # Marktbeteiligung tatsaechlich identifiziert (siehe backtest_runner._alpha_regression_
+        # diagnostics-Docstring fuer die Herleitung/die bewusst ausgelassene cov_exit_bars-Klasse).
+        "holdout_alpha_corr_xy": holdout_metrics.get("oos_alpha_corr_xy"),
+        "holdout_alpha_sd_x": holdout_metrics.get("oos_alpha_sd_x"),
+        "holdout_alpha_sd_y": holdout_metrics.get("oos_alpha_sd_y"),
+        "holdout_alpha_cov_xy": holdout_metrics.get("oos_alpha_cov_xy"),
+        "holdout_alpha_cov_in_market": holdout_metrics.get("oos_alpha_cov_in_market"),
+        "holdout_alpha_cov_out_of_market": holdout_metrics.get("oos_alpha_cov_out_of_market"),
+        "holdout_alpha_cov_exit_bars": holdout_metrics.get("oos_alpha_cov_exit_bars"),
+        "holdout_alpha_n_in_market": holdout_metrics.get("oos_alpha_n_in_market"),
         "holdout_alpha_times_n_pct": (
             holdout_metrics["oos_alpha"] * holdout_metrics["oos_alpha_n_periods"] * 100.0
             if (holdout_metrics.get("oos_alpha") is not None
@@ -4815,6 +4827,11 @@ def _build_report(
     # Issue #1256 (GH #1126) — β-Plausibilitäts-Diagnose gegen die bekannte Long-only-Exposure,
     # severity='high' (Modell-/Mess-Plausibilitaet, keine harte Selektions-Inkohaerenz).
     all_checks.append(("global", _inv.check_beta_exposure_plausibility(studies_out)))
+    # Issue #1283 (GH #1156, Katalog #1272-1297) — separate, explizite Diagnose (im Unterschied zum
+    # #1283-Guard in confirm.confirm_per_symbol_promotion, der dieselbe Schwelle unbedingt an der
+    # Promotions-Entscheidung erzwingt): macht die Kovarianz-Zerlegung sichtbar, die entscheidet,
+    # OB β die Marktbeteiligung ueberhaupt identifizieren KONNTE.
+    all_checks.append(("global", _inv.check_alpha_regression_identifiability(studies_out)))
 
     # Issue #1252 (GH #1122) — der Lauf-Fingerabdruck der EINGANGSMENGE dieses Sweeps (siehe
     # compute_run_fingerprint-Docstring). symbols/strategies werden aus den TATSAECHLICH in diesen
@@ -5391,8 +5408,14 @@ def _build_report(
     # gelesen, den ``_champions_summary``/``check_event_stream_completeness`` bereits nutzen.
     # Gleiche Behandlung wie der Preflight-Block oben (kein ``cohort``-Stempel — diese Checks
     # pruefen keine Study-Population dieses Reports, sondern Sweep-/Study-weite Bedingungen).
+    # Issue #1281 (GH #1154, Katalog #1272-1297) Fix Punkt 3 — je Study-Ergebnis von
+    # check_mandatory_gate_reachability_live gesammelt, damit die globale >= 80 %-Schwelle unten
+    # (nach dem Merge-Loop) berechnet werden kann.
+    _mandatory_gate_live_results: list[dict] = []
     for d in _read_external_invariant_results():
         invariant_checks.append(d)
+        if d.get("name") == "check_mandatory_gate_reachability_live":
+            _mandatory_gate_live_results.append(d)
         val = d.get("passed", True)
         if val is False:
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
@@ -5406,6 +5429,15 @@ def _build_report(
                 "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
                 "report_source": report_source,
             }, level=logging.WARNING)
+    # Issue #1281 (GH #1154) Fix Punkt 3 — zusaetzlicher globaler Eintrag severity='blocking' bei
+    # Unerreichbarkeit in >= 80 % der Studies (siehe invariants.check_mandatory_gate_reachability_
+    # global-Docstring).
+    _mandatory_gate_global_check = _inv.check_mandatory_gate_reachability_global(
+        _mandatory_gate_live_results)
+    _mandatory_gate_global_dict = _mandatory_gate_global_check.to_dict()
+    _mandatory_gate_global_dict["scope"] = "global"
+    _mandatory_gate_global_dict["source"] = "report"
+    invariant_checks.append(_mandatory_gate_global_dict)
 
     # Issue #942/#1108/#1037 (Katalog #960/#1186) — zwei der VIER orthogonalen Achsen VORAB
     # berechnet (haengen nur an Funktionsparametern, nicht an ``invariant_checks``), damit der

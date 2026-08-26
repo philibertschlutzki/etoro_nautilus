@@ -372,6 +372,16 @@ class TournamentMetrics:
     oos_alpha_n_y_nonzero: int | None = None
     oos_alpha_n_x_nonzero: int | None = None
     oos_alpha_n_both_zero: int | None = None
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer invariants.check_alpha_
+    # regression_identifiability (siehe backtest_runner._alpha_regression_diagnostics-Docstring).
+    oos_alpha_corr_xy: float | None = None
+    oos_alpha_sd_x: float | None = None
+    oos_alpha_sd_y: float | None = None
+    oos_alpha_cov_xy: float | None = None
+    oos_alpha_cov_in_market: float | None = None
+    oos_alpha_cov_out_of_market: float | None = None
+    oos_alpha_cov_exit_bars: float | None = None
+    oos_alpha_n_in_market: int | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -586,6 +596,15 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_alpha_n_y_nonzero = oos_metrics.get("oos_alpha_n_y_nonzero")
     oos_alpha_n_x_nonzero = oos_metrics.get("oos_alpha_n_x_nonzero")
     oos_alpha_n_both_zero = oos_metrics.get("oos_alpha_n_both_zero")
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — siehe TournamentMetrics-Docstring.
+    oos_alpha_corr_xy = oos_metrics.get("oos_alpha_corr_xy")
+    oos_alpha_sd_x = oos_metrics.get("oos_alpha_sd_x")
+    oos_alpha_sd_y = oos_metrics.get("oos_alpha_sd_y")
+    oos_alpha_cov_xy = oos_metrics.get("oos_alpha_cov_xy")
+    oos_alpha_cov_in_market = oos_metrics.get("oos_alpha_cov_in_market")
+    oos_alpha_cov_out_of_market = oos_metrics.get("oos_alpha_cov_out_of_market")
+    oos_alpha_cov_exit_bars = oos_metrics.get("oos_alpha_cov_exit_bars")
+    oos_alpha_n_in_market = oos_metrics.get("oos_alpha_n_in_market")
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
@@ -919,6 +938,21 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             int(oos_alpha_n_x_nonzero) if oos_alpha_n_x_nonzero is not None else None),
         oos_alpha_n_both_zero=(
             int(oos_alpha_n_both_zero) if oos_alpha_n_both_zero is not None else None),
+        # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — siehe TournamentMetrics-Docstring.
+        oos_alpha_corr_xy=(
+            float(oos_alpha_corr_xy) if oos_alpha_corr_xy is not None else None),
+        oos_alpha_sd_x=(float(oos_alpha_sd_x) if oos_alpha_sd_x is not None else None),
+        oos_alpha_sd_y=(float(oos_alpha_sd_y) if oos_alpha_sd_y is not None else None),
+        oos_alpha_cov_xy=(float(oos_alpha_cov_xy) if oos_alpha_cov_xy is not None else None),
+        oos_alpha_cov_in_market=(
+            float(oos_alpha_cov_in_market) if oos_alpha_cov_in_market is not None else None),
+        oos_alpha_cov_out_of_market=(
+            float(oos_alpha_cov_out_of_market)
+            if oos_alpha_cov_out_of_market is not None else None),
+        oos_alpha_cov_exit_bars=(
+            float(oos_alpha_cov_exit_bars) if oos_alpha_cov_exit_bars is not None else None),
+        oos_alpha_n_in_market=(
+            int(oos_alpha_n_in_market) if oos_alpha_n_in_market is not None else None),
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,

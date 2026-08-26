@@ -7146,6 +7146,104 @@ def check_beta_exposure_plausibility(study_records: list[dict], *,
     )
 
 
+def check_alpha_regression_identifiability(study_records: list[dict], *,
+                                            min_exposure_fraction: float = 0.3,
+                                            min_beta_fraction_of_expected: float = 0.25
+                                            ) -> InvariantResult:
+    """Issue #1283 (GH #1156, Katalog #1272-1297, P0) — macht sichtbar, OB β die bekannte
+    Marktbeteiligung ueberhaupt identifizieren KONNTE, statt nur DASS es sie nicht identifiziert
+    (das leistet bereits ``check_beta_exposure_plausibility``, #1256).
+
+    Symptom (Referenzfall AdxAtr/TSLA). ``exposure_fraction=0.8563``, ``trade_amount_pct=15.0`` ⇒
+    ``beta_expected=0.1285``; gemessen ``beta_measured=-0.0155`` — |β| liegt bei 12 % des erwarteten
+    Werts, weit unter der 25-%-Schwelle. Aus dem Report-Artefakt allein war bislang NICHT zu
+    entscheiden, welche von drei Hypothesen zutrifft: (a) die Benchmark-Serie misst nicht, was sie
+    zu messen vorgibt, (b) das Regressionsfenster ist zu kurz/entartet fuer eine belastbare
+    Kovarianzschaetzung, oder (c) die tatsaechliche Marktbeteiligung des Exit-Pfads weicht von der
+    NOMINALEN ``exposure_fraction`` ab (z. B. durch fruehe Exits).
+
+    Root-Cause/Fix. Diese Invariante stellt dieselbe Schwelle wie der unbedingte Promotions-Guard
+    (``confirm.confirm_per_symbol_promotion``, ``REJECT_OOS_ALPHA_NOT_IDENTIFIED``) als
+    EXPLIZITEN, benannten Report-Befund dar — mit der Kovarianz-Zerlegung
+    (``holdout_alpha_cov_xy = holdout_alpha_cov_in_market + holdout_alpha_cov_out_of_market``,
+    additive Identitaet aus ``backtest_runner._alpha_regression_diagnostics``) im Offender-Eintrag,
+    damit ein Bericht-Leser (a)/(b)/(c) anhand des Artefakts selbst unterscheiden kann: dominiert
+    ``cov_out_of_market`` ⇒ (a)/(c) (die Kovarianz entsteht ausserhalb der gehaltenen Position);
+    ``n_in_market`` klein bei grossem ``sd_x``/``sd_y`` ⇒ (b) (zu wenige aktive Bars fuer eine
+    belastbare Schaetzung); ``corr_xy`` nahe 0 trotz grossem ``n_in_market`` ⇒ (a) (kein messbarer
+    linearer Zusammenhang trotz ausreichender Stichprobe). ``cov_exit_bars`` ist per Konstruktion
+    stets ``None`` (siehe ``_alpha_regression_diagnostics``-Docstring: keine Bar-Ebenen-
+    Positionsklassifikation an dieser Aufrufstelle verfuegbar) und wird unveraendert durchgereicht,
+    NICHT approximiert.
+
+    Dieselbe Studien-/Ausnahme-Auswahl wie ``check_beta_exposure_plausibility``: nur long-only-
+    Studies (``allow_short`` fehlt/``False``) mit ``holdout_exposure_fraction > min_exposure_fraction``
+    (Default 0.3, dieselbe Schwelle wie der Promotions-Guard) UND aufloesbarem
+    ``beta_expected``/``holdout_beta``. ``severity='high'`` (Modell-/Mess-Plausibilitaets-Diagnose,
+    keine harte Selektions-Inkohaerenz)."""
+    long_only = [r for r in study_records if not r.get("allow_short")]
+    exempted = sorted(
+        f"{r.get('strategy')}/{r.get('symbol')}" for r in study_records if r.get("allow_short"))
+    checked = [
+        r for r in long_only
+        if r.get("holdout_beta") is not None and r.get("beta_expected") is not None
+        and (r.get("holdout_exposure_fraction") or 0.0) > min_exposure_fraction
+    ]
+    expected = (
+        f"long-only-Studies mit holdout_exposure_fraction > {min_exposure_fraction}: "
+        f"|holdout_beta| >= {min_beta_fraction_of_expected} · beta_expected "
+        "(beta_expected = holdout_exposure_fraction · trade_amount_pct/100); allow_short=True-"
+        "Studies ausgenommen (namentlich ausgewiesen)"
+    )
+    if not checked:
+        return InvariantResult(
+            name="check_alpha_regression_identifiability",
+            passed=True,
+            expected=expected,
+            actual={"exempted_allow_short_studies": exempted} if exempted else None,
+            severity="high",
+            detail="Kein Report-Datensatz mit long-only, > 30% Exposure UND aufloesbarem "
+                   "beta_expected/holdout_beta — nicht auswertbar.",
+            inconclusive=True,
+        )
+    offenders: dict[str, dict] = {}
+    for r in checked:
+        beta_measured = float(r["holdout_beta"])
+        beta_expected = float(r["beta_expected"])
+        if abs(beta_measured) < min_beta_fraction_of_expected * beta_expected:
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = {
+                "exposure_fraction": r.get("holdout_exposure_fraction"),
+                "trade_amount_pct": r.get("trade_amount_pct"),
+                "beta_expected": beta_expected,
+                "beta_measured": beta_measured,
+                "corr_xy": r.get("holdout_alpha_corr_xy"),
+                "sd_x": r.get("holdout_alpha_sd_x"),
+                "sd_y": r.get("holdout_alpha_sd_y"),
+                "cov_xy": r.get("holdout_alpha_cov_xy"),
+                "cov_in_market": r.get("holdout_alpha_cov_in_market"),
+                "cov_out_of_market": r.get("holdout_alpha_cov_out_of_market"),
+                "cov_exit_bars": r.get("holdout_alpha_cov_exit_bars"),
+                "n_in_market": r.get("holdout_alpha_n_in_market"),
+            }
+    passed = not offenders
+    actual = dict(offenders)
+    if exempted:
+        actual["exempted_allow_short_studies"] = exempted
+    return InvariantResult(
+        name="check_alpha_regression_identifiability",
+        passed=passed,
+        expected=expected,
+        actual=actual or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} long-only Study/Studies, bei denen β die bekannte "
+                f"Marktbeteiligung nicht identifiziert (|β| < {min_beta_fraction_of_expected:.0%} "
+                f"des erwarteten Werts bei > {min_exposure_fraction:.0%} Exposure) — Kovarianz-"
+                f"Zerlegung im Offender-Eintrag: {offenders} (#1283)."),
+    )
+
+
 def check_run_is_not_duplicate(run_fingerprint: str | None, run_id: str | None,
                                prior_entries: list[dict]) -> InvariantResult:
     """Issue #1252 (GH #1122) — erkennt einen bit-identischen Wiederholungslauf: existiert
@@ -8068,6 +8166,57 @@ def check_slippage_calibration_not_circular(study_records: list[dict]) -> Invari
                 f"{len(offenders)} Study/Studies mit gemessener Slippage ohne "
                 f"'pre_cost_price'-Basis: {offenders} (#1278)."),
         provenance={"offenders": offenders} if offenders else None,
+    )
+
+
+def check_mandatory_gate_reachability_global(
+    mandatory_gate_live_results: list[dict], *, min_affected_fraction: float = 0.8,
+) -> InvariantResult:
+    """Issue #1281 (GH #1154, Katalog #1272-1297, P0) Fix Punkt 3 — zusaetzlich zum PRO-STUDY-
+    Befund (``check_mandatory_gate_reachability_live``, je Study ein eigenes
+    ``INVARIANT_STREAM_RESULT``) ein GLOBALER, laufweiter Eintrag: erreicht die Unerreichbarkeit
+    ``min_affected_fraction`` (Default 80 %) der Studies eines Laufs, ist das kein Study-lokales
+    Problem mehr, sondern eine strukturelle Eigenschaft der Lauf-Konfiguration (dieselbe
+    ``oos_min_alpha_tstat``-Schwelle gilt fuer JEDE Study) — ``severity='blocking'``, staerker als
+    die ``'high'``-Schwere des Pro-Study-Checks.
+
+    ``mandatory_gate_live_results``: die Liste der bereits emittierten
+    ``check_mandatory_gate_reachability_live``-Ergebnis-Dicts (``{'passed': bool, ...}``, ein
+    Eintrag je Study, siehe ``report._build_report``). Leere Liste ⇒ INCONCLUSIVE (kein Lauf mit
+    diesem Check ausgewertet)."""
+    expected = f"< {min_affected_fraction:.0%} der Studies mit unerreichbarem MANDATORY-Gate"
+    if not mandatory_gate_live_results:
+        return InvariantResult(
+            name="check_mandatory_gate_reachability_global",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "NO_STUDY_WITH_MANDATORY_GATE_RESULT",
+                         "n_studies_measured": 0},
+            detail="Keine Study mit check_mandatory_gate_reachability_live-Ergebnis — nicht "
+                  "auswertbar.",
+        )
+    n_unreachable = sum(1 for d in mandatory_gate_live_results if d.get("passed") is False)
+    fraction = n_unreachable / len(mandatory_gate_live_results)
+    passed = fraction < min_affected_fraction
+    return InvariantResult(
+        name="check_mandatory_gate_reachability_global",
+        passed=passed,
+        expected=expected,
+        actual=round(fraction, 4),
+        severity="blocking",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": len(mandatory_gate_live_results)},
+        detail=("OK" if passed else
+                f"{n_unreachable}/{len(mandatory_gate_live_results)} "
+                f"({fraction:.0%}) Studies dieses Laufs melden ein strukturell unerreichbares "
+                "MANDATORY-Gate — dieselbe Schwelle ist fuer praktisch jede Study dieses Laufs "
+                "unerreichbar, keine Study-lokale Randerscheinung (#1281)."),
     )
 
 

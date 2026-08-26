@@ -4552,6 +4552,35 @@ def _alpha_regression_diagnostics(
         alpha_tstat_hc3 = (
             math.copysign(_ALPHA_TSTAT_DEGENERATE_MAGNITUDE, alpha) if alpha != 0.0 else 0.0)
 
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer
+    # invariants.check_alpha_regression_identifiability: t(alpha) darf nur entscheiden, wenn beta
+    # die Marktbeteiligung TATSAECHLICH identifiziert (Katalog-Symptom: beta_expected 0,1285 vs.
+    # beta_measured -0,0155 bei exposure_fraction 0,8563 — die Amplitude passt zur Positionsgroesse,
+    # es fehlt die KOVARIANZ). ``corr_xy``/``sd_x``/``sd_y``/``cov_xy`` sind die direkt aus (x, y)
+    # ablesbaren Kennzahlen einer geschlossenen Form (kein neues Dependency, dieselbe Konvention
+    # wie der Rest dieser Funktion).
+    #
+    # Kovarianz-ZERLEGUNG nach In-Markt-/Ausser-Markt-Baren (additiv: ``cov_in_market +
+    # cov_out_of_market == cov_xy`` EXAKT, da beide Teilsummen dieselben Referenzmittel
+    # ``x_mean``/``y_mean`` verwenden — Pitfall #438-Konvention, "ein Skalierungsterm muss aus
+    # EINEM Bezugsrahmen stammen"). "In Markt" approximiert ueber ``y_i != 0`` (dieselbe Definition
+    # wie ``n_y_nonzero`` oben: die Strategie trug in dieser Periode eine Position/einen Ertrag).
+    # Eine DRITTE Klasse ("Exit-Bars", nur die POSITION-SCHLIESSENDE Teilmenge der In-Markt-Bare)
+    # ist aus (x, y) allein nicht abgrenzbar — dafuer braucht es eine bar-genaue Positions-
+    # Zustandskennung, die an dieser Call-Site (aggregierte Log-Return-Arrays) nicht vorliegt.
+    # BEWUSST NICHT implementiert (Zero-Guessing statt einer erratenen Trennung): ``cov_exit_bars``
+    # bleibt ``None`` mit dieser Begruendung, statt eine ungedeckte Klassifikation vorzutaeuschen.
+    syy = float(((y - y_mean) ** 2).sum())
+    sd_x = math.sqrt(sxx / n)
+    sd_y = math.sqrt(syy / n) if syy > 0.0 else 0.0
+    cov_xy = sxy / n
+    corr_xy = (cov_xy / (sd_x * sd_y)) if (sd_x > 0.0 and sd_y > 0.0) else None
+    in_market_mask = y != 0.0
+    n_in_market = int(in_market_mask.sum())
+    cov_in_market = float(
+        ((x[in_market_mask] - x_mean) * (y[in_market_mask] - y_mean)).sum() / n)
+    cov_out_of_market = cov_xy - cov_in_market
+
     return {
         "alpha_tstat_hc3": float(alpha_tstat_hc3),
         "alpha_tstat_df": max(0, n_informative - 2),
@@ -4560,6 +4589,14 @@ def _alpha_regression_diagnostics(
         "n_y_nonzero": n_y_nonzero,
         "n_x_nonzero": n_x_nonzero,
         "n_both_zero": n_both_zero,
+        "corr_xy": corr_xy,
+        "sd_x": sd_x,
+        "sd_y": sd_y,
+        "cov_xy": cov_xy,
+        "cov_in_market": cov_in_market,
+        "cov_out_of_market": cov_out_of_market,
+        "cov_exit_bars": None,
+        "n_in_market": n_in_market,
     }
 
 
@@ -6316,6 +6353,18 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     oos_metrics["oos_alpha_n_y_nonzero"] = oos_alpha_diagnostics["n_y_nonzero"]
                     oos_metrics["oos_alpha_n_x_nonzero"] = oos_alpha_diagnostics["n_x_nonzero"]
                     oos_metrics["oos_alpha_n_both_zero"] = oos_alpha_diagnostics["n_both_zero"]
+                    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer
+                    # invariants.check_alpha_regression_identifiability (siehe dortiger Docstring
+                    # UND _alpha_regression_diagnostics-Docstring fuer die Herleitung).
+                    oos_metrics["oos_alpha_corr_xy"] = oos_alpha_diagnostics["corr_xy"]
+                    oos_metrics["oos_alpha_sd_x"] = oos_alpha_diagnostics["sd_x"]
+                    oos_metrics["oos_alpha_sd_y"] = oos_alpha_diagnostics["sd_y"]
+                    oos_metrics["oos_alpha_cov_xy"] = oos_alpha_diagnostics["cov_xy"]
+                    oos_metrics["oos_alpha_cov_in_market"] = oos_alpha_diagnostics["cov_in_market"]
+                    oos_metrics["oos_alpha_cov_out_of_market"] = oos_alpha_diagnostics[
+                        "cov_out_of_market"]
+                    oos_metrics["oos_alpha_cov_exit_bars"] = oos_alpha_diagnostics["cov_exit_bars"]
+                    oos_metrics["oos_alpha_n_in_market"] = oos_alpha_diagnostics["n_in_market"]
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt
