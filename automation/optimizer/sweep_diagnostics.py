@@ -1082,7 +1082,11 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
                       min_atr_median_bps: float = 5.0,
                       min_bar_coverage_ratio: float = 0.6,
                       bar_coverage_ratio: float | None = None,
-                      median_delta_t_s: float | None = None) -> dict:
+                      median_delta_t_s: float | None = None,
+                      ticks_per_bar_median: float | None = None,
+                      ticks_per_bar_p05: float | None = None,
+                      frac_bars_single_tick: float | None = None,
+                      max_frac_bars_single_tick: float = 0.5) -> dict:
     """Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
     degenerierte/konstante Bars VOR Phase 1 eines Symbols, statt erst nach 14 × 16 verbrannten
     Trials ueber 14 unabhaengige ``STRUCTURAL_ALL_UNEVALUABLE``-Diagnosen (siehe
@@ -1108,20 +1112,41 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         Gate 1) kann trotzdem ueberwiegend LUECKEN im Bar-Raster haben (30% Abdeckung ueber 1099
         Tage bestand Gate 1 vor #923 unveraendert); ``None`` (kein Preflight-Aufrufer liefert den
         Wert) ⇒ nicht pruefbar, kein Fail.
+      * ``ticks_per_bar_median``/``ticks_per_bar_p05``/``frac_bars_single_tick`` (Issue #1272/GH
+        #1145, Katalog #1272-1297) — misst die TICK-DICHTE je Bar direkt, statt sie nur aus dem
+        AGGREGIERTEN ``frac_zero_true_range``-Symptom zu erschliessen: ``frac_zero_true_range``
+        (oben) beobachtet, DASS eine Bar keine Intrabar-Spanne traegt, misst aber nicht, WARUM
+        (ein einzelner Tick je Stundenfenster macht ``high == low`` MECHANISCH unvermeidlich,
+        unabhaengig von der tatsaechlichen Marktvolatilitaet — Pitfall #458). Bei
+        ``ticks_per_bar_median <= 1`` ODER ``frac_bars_single_tick > max_frac_bars_single_tick``
+        (Default 0.5) ist die Bar-Achse strukturell UNFAEHIG, eine Intrabar-Ausloese-Distanz zu
+        tragen — dieser Zustand FAILt mit dem eigenen Code ``BAR_AXIS_NO_INTRABAR_INFORMATION``
+        und ``severity='blocking'`` (staerker als die uebrigen, ``'high'``-gewichteten
+        Degenerations-Kriterien dieser Funktion), da er JEDE nachgelagerte Stop-/Trigger-Pruefung
+        (``check_effective_stop_distance`` u. a., siehe #1274/GH #1147) invalidiert. ``None`` (kein
+        Aufrufer liefert die Tick-Zahlen, z. B. ein Legacy-Preflight-Pfad) ⇒ nicht pruefbar fuer
+        DIESES Kriterium, kein Fail allein deswegen.
 
     ``passed=False``, sobald EINE der Schwellen verletzt ist (alle aus
     ``optimizer.json['bar_quality']``, Zero-Hardcoding — Issue #900 verschaerft
     ``max_frac_high_eq_low`` 0.5 → 0.20 und ergaenzt ``max_frac_zero_true_range``/
     ``min_atr_median_bps``). Leere Eingabe ⇒ ``passed=False`` (keine Bars ⇒ nichts zu handeln,
     dieselbe Konsequenz wie degenerierte Bars — kein stiller Pass). Rein, deterministisch, kein
-    I/O."""
+    I/O.
+
+    Rueckgabe traegt seit #1272/GH #1145 zusaetzlich ``severity`` (``'blocking'``, wenn
+    ``BAR_AXIS_NO_INTRABAR_INFORMATION`` unter den Gruenden ist, sonst ``'high'`` — der
+    Aufrufer (``sweep.py``s ``INVARIANT_STREAM_RESULT``-Emission) uebernimmt diesen Wert statt
+    eine feste Severity zu stempeln)."""
     n = len(closes)
     if n == 0:
         return {
             "n_bars": 0, "frac_high_eq_low": None, "frac_identical_consecutive_closes": None,
             "n_distinct_closes": 0, "frac_zero_true_range": None, "atr_median_bps": None,
             "bar_coverage_ratio": bar_coverage_ratio, "median_delta_t_s": median_delta_t_s,
-            "passed": False, "reason": "no_bars",
+            "ticks_per_bar_median": ticks_per_bar_median, "ticks_per_bar_p05": ticks_per_bar_p05,
+            "frac_bars_single_tick": frac_bars_single_tick,
+            "passed": False, "reason": "no_bars", "severity": "high",
         }
     frac_high_eq_low = sum(1 for h, l in zip(highs, lows) if h == l) / n
     if n > 1:
@@ -1149,6 +1174,21 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
     )
 
     reasons = []
+    # Issue #1272 (GH #1145) — die Tick-Dichte-Kriterien werden ZUERST geprueft: ein
+    # BAR_AXIS_NO_INTRABAR_INFORMATION-Befund ist die Ursache, nicht nur ein weiteres Symptom
+    # (siehe check_effective_stop_distance/#1274, das diesen Grund als vorgelagerte Ursache
+    # zitiert) — er soll in der Grunde-Liste VOR den abgeleiteten frac_zero_true_range/
+    # frac_high_eq_low-Symptomen erscheinen.
+    is_blocking = False
+    if ticks_per_bar_median is not None and ticks_per_bar_median <= 1:
+        reasons.append(
+            f"BAR_AXIS_NO_INTRABAR_INFORMATION: ticks_per_bar_median={ticks_per_bar_median:.3f} <= 1")
+        is_blocking = True
+    if frac_bars_single_tick is not None and frac_bars_single_tick > max_frac_bars_single_tick:
+        reasons.append(
+            f"BAR_AXIS_NO_INTRABAR_INFORMATION: frac_bars_single_tick={frac_bars_single_tick:.3f} "
+            f"> {max_frac_bars_single_tick}")
+        is_blocking = True
     if frac_high_eq_low > max_frac_high_eq_low:
         reasons.append(f"frac_high_eq_low={frac_high_eq_low:.3f} > {max_frac_high_eq_low}")
     if frac_identical > max_frac_identical_consecutive_closes:
@@ -1174,6 +1214,10 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         "atr_median_bps": atr_median_bps,
         "bar_coverage_ratio": bar_coverage_ratio,
         "median_delta_t_s": median_delta_t_s,
+        "ticks_per_bar_median": ticks_per_bar_median,
+        "ticks_per_bar_p05": ticks_per_bar_p05,
+        "frac_bars_single_tick": frac_bars_single_tick,
+        "severity": "blocking" if is_blocking else "high",
         "passed": not reasons,
         "reason": "; ".join(reasons) if reasons else "OK",
     }

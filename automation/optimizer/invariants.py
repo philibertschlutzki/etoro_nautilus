@@ -7791,6 +7791,151 @@ def check_zero_range_bar_share(
     )
 
 
+def check_stop_trigger_axis_coherence(
+    stop_trigger_axis: str | None, study_records: list[dict], *,
+    zero_range_bar_fraction_threshold: float = 0.5,
+) -> InvariantResult:
+    """Issue #1273 (GH #1146, Katalog #1272-1297, P0) — die DEKLARIERTE Trigger-Achse
+    (``optimizer.json['stop_trigger_axis'] ∈ {'intrabar', 'bar_close_only'}``) gegen die GEMESSENE
+    ``zero_range_bar_fraction`` gehalten.
+
+    Root-Cause (siehe Katalog-M-3/#1272): der Trailing-Stop, ``profit_target_pct`` und die Zeitbox
+    werden simuliert, ALS KOENNTEN sie innerhalb einer Bar ausloesen — ohne dass diese Annahme
+    irgendwo deklariert, geschweige denn gegen die Bar-Achse geprueft wird. Bei ``high == low`` in
+    (nahezu) 100 % der Bars kann kein Preis INNERHALB einer Bar erreicht werden: der Trigger faellt
+    zwangslaeufig auf den Bar-Schluss.
+
+    FAIL (severity ``blocking``), wenn ``stop_trigger_axis == 'intrabar'`` UND MINDESTENS EINE
+    Study ``zero_range_bar_fraction > zero_range_bar_fraction_threshold`` (Default 0.5) traegt — ein
+    einzelner Fund reicht, da die Deklaration eine GLOBALE (laufweite) Behauptung ueber JEDE Study
+    ist, nicht eine Mehrheitsaussage (anders als ``check_zero_range_bar_share``, deren Aufgabe eine
+    orthogonale Frage ist: nicht "ist die Deklaration korrekt", sondern "wie oft kommt Degeneration
+    vor").
+
+    ``stop_trigger_axis == 'bar_close_only'`` ist gegenueber JEDER gemessenen
+    ``zero_range_bar_fraction`` koherent (die Achse behauptet ohnehin keine Intrabar-Erreichbarkeit)
+    — PASS unabhaengig von der Messung. ``stop_trigger_axis is None`` (Legacy-Report vor #1273) ⇒
+    nicht auswertbar (INCONCLUSIVE), kein stiller PASS."""
+    expected = ("stop_trigger_axis='intrabar' ⇒ KEINE Study mit zero_range_bar_fraction > "
+               f"{zero_range_bar_fraction_threshold}")
+    if stop_trigger_axis is None:
+        return InvariantResult(
+            name="check_stop_trigger_axis_coherence",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "STOP_TRIGGER_AXIS_NOT_STAMPED", "n_studies_measured": 0},
+            detail="stop_trigger_axis fehlt (Legacy-Report vor #1273) — nicht auswertbar.",
+        )
+    if stop_trigger_axis != "intrabar":
+        return InvariantResult(
+            name="check_stop_trigger_axis_coherence",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="blocking",
+            evaluable=True,
+            evaluability={"evaluable": True, "inconclusive_reason": None,
+                         "n_studies_measured": len(study_records)},
+            detail=f"stop_trigger_axis='{stop_trigger_axis}' behauptet keine Intrabar-"
+                  "Erreichbarkeit — koherent mit jeder gemessenen zero_range_bar_fraction.",
+        )
+    offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": round(float(r["zero_range_bar_fraction"]), 4)
+        for r in study_records
+        if r.get("zero_range_bar_fraction") is not None
+        and float(r["zero_range_bar_fraction"]) > zero_range_bar_fraction_threshold
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_stop_trigger_axis_coherence",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="blocking",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": len(study_records)},
+        detail=("OK" if passed else
+                f"stop_trigger_axis='intrabar' behauptet Intrabar-Erreichbarkeit, aber "
+                f"{len(offenders)} Study/Studies tragen zero_range_bar_fraction > "
+                f"{zero_range_bar_fraction_threshold}: {offenders} — die Deklaration widerspricht "
+                "der gemessenen Bar-Achse (#1273)."),
+        provenance={"offenders": offenders} if offenders else None,
+    )
+
+
+def _bar_axis_supports_stop_verdict(study_records: list[dict]) -> bool:
+    """Issue #1274 (GH #1147, Katalog #1272-1297, P0) — gemeinsame Vorbedingungs-Funktion fuer JEDE
+    Invariante, die ein Urteil ueber die Stop-MECHANIK faellt (``check_effective_stop_distance``,
+    ``check_trailing_stop_loss_share``, ``check_trailing_stop_risk_calibration_acceptance``,
+    ``check_stop_distance_model_fidelity``). ``check_stop_loss_vs_bar_range`` erkennt eine
+    degenerierte Bar-Achse bereits korrekt (``DEGENERATE_ZERO_RANGE``, ``bar_range_population_n =
+    0``), reichte das bisher aber an NIEMANDEN weiter — die vier oben genannten Checks urteilten
+    unveraendert weiter, obwohl ihre Eingangsgroesse (eine Bar-Achse ohne Intrabar-Information)
+    strukturell keine Aussage ueber die Stop-Mechanik tragen kann (Pitfall #454-Klasse: ein
+    korrekter Fix an der falschen Datengrundlage verstaerkt den Defekt, statt ihn zu beheben).
+
+    RUN-WEITE (nicht per-Study) Aussage, weil die Bar-Achsen-Degeneration eine SYSTEMISCHE
+    Eigenschaft des Katalog-/Aggregations-Zustands eines Laufs ist, nicht eine Eigenschaft
+    einzelner Studies (Referenzbefund: 56/56 Studies ueber 4 Laeufe identisch betroffen). Kriterium
+    (je Study mit definierten Feldern ausgewertet, dann aggregiert): ``bar_range_population_n > 0``
+    UND ``zero_range_bar_fraction <= 0,5``. Mindestens EINE Study mit ``bar_range_population_n ==
+    0`` (bestaetigt degenerierte Population) ODER ein Median von ``zero_range_bar_fraction`` > 0,5
+    ueber die Studies mit definiertem Wert ⇒ ``False`` (die Bar-Achse traegt KEIN Urteil). Keine
+    Study mit definierten Feldern ⇒ ``False`` (fail-closed — Abwesenheit von Evidenz ist keine
+    Evidenz fuer eine gesunde Bar-Achse, dieselbe Haltung wie ``check_stop_loss_vs_bar_range``s
+    ``n_zero_or_negative_bar_range``-Zweig)."""
+    populations = [r.get("bar_range_population_n") for r in study_records
+                  if r.get("bar_range_population_n") is not None]
+    if populations and any(int(p) == 0 for p in populations):
+        return False
+    fractions = [float(r["zero_range_bar_fraction"]) for r in study_records
+                if r.get("zero_range_bar_fraction") is not None]
+    if not fractions:
+        return False
+    return statistics.median(fractions) <= 0.5
+
+
+def suppress_stop_verdict_if_bar_axis_degenerate(
+    result: InvariantResult, study_records: list[dict],
+) -> InvariantResult:
+    """Issue #1274 (GH #1147) — wendet ``_bar_axis_supports_stop_verdict`` auf ein bereits
+    berechnetes ``InvariantResult`` an: unterstuetzt die Bar-Achse dieses Laufs kein Stop-
+    Verdikt, wird das Ergebnis durch ``passed=None``/``SUPPRESSED_UPSTREAM_BAR_AXIS`` ERSETZT,
+    statt das (aus einer degenerierten Bar-Achse abgeleitete) FAIL/PASS des Original-Checks zu
+    melden — dieselbe Konsequenz-lose-Beobachtbarkeit wie jeder andere INCONCLUSIVE-Zustand in
+    diesem Modul (kein stiller Abbruch, kein irrefuehrendes Urteil). ``severity`` UND ``name``
+    bleiben vom Original-Ergebnis erhalten (der Report muss weiterhin wissen, WELCHER Check
+    unterdrueckt wurde und mit welcher Schwere er URSPRUENGLICH gegatet haette).
+
+    Keine Aenderung, wenn die Vorbedingung erfuellt ist — der Original-Check urteilt dann
+    UNVERAENDERT (Akzeptanzkriterium #1274: Regressionsschutz fuer den erfuellten Vorbedingungs-
+    Fall)."""
+    if _bar_axis_supports_stop_verdict(study_records):
+        return result
+    return InvariantResult(
+        name=result.name,
+        passed=None,
+        expected=result.expected,
+        actual=None,
+        severity=result.severity,
+        inconclusive=True,
+        evaluable=False,
+        evaluability={"evaluable": False, "inconclusive_reason": "SUPPRESSED_UPSTREAM_BAR_AXIS",
+                     "n_studies_measured": 0},
+        detail="SUPPRESSED_UPSTREAM_BAR_AXIS (#1272/#1274): die Bar-Achse dieses Laufs traegt "
+              "keine Intrabar-Information (bar_range_population_n=0 fuer mindestens eine Study "
+              "ODER Median(zero_range_bar_fraction) > 0.5) — ein Urteil ueber die Stop-MECHANIK "
+              "waere ein Urteil ueber ein Datenachsen-Artefakt, nicht ueber die Risikoschicht. "
+              "Siehe check_bar_quality (#1272) fuer die Ursache.",
+    )
+
+
 def check_exit_telemetry_completeness(
     study_records: list[dict], *,
     telemetry_fields: tuple[str, ...] = (

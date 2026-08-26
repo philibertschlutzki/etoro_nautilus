@@ -2598,6 +2598,16 @@ def _study_record(proposal: dict, study,
     # ``atr_floor_binding_studies``-Provenance (siehe invariants.check_atr_scale_homogeneity).
     record["stop_distance_bps_modelled"] = (
         round(_rt_modelled_distance, 4) if _rt_modelled_distance is not None else None)
+    # Issue #1273 (GH #1146, Katalog #1272-1297, P0) — unter der jetzt DEKLARIERTEN
+    # ``stop_trigger_axis`` (siehe optimizer.json/check_stop_trigger_axis_coherence) ist diese
+    # Grösse bei ``'bar_close_only'`` keine Verlustobergrenze mehr, sondern ein AUSLÖSE-
+    # Schwellenwert (der Trigger fällt zwangsläufig auf den Bar-Schluss, nicht auf einen
+    # Intrabar-Preis) — ``stop_trigger_threshold_bps`` ist der neue, semantisch praezise Name.
+    # ``stop_distance_bps_modelled`` bleibt als Alias mit Deprecation-Telemetrie erhalten (Zero-
+    # Regression fuer bestehende Konsumenten, siehe deren Docstrings oben); NEUE Konsumenten
+    # sollen den neuen Namen verwenden.
+    record["stop_trigger_threshold_bps"] = record["stop_distance_bps_modelled"]
+    record["stop_distance_bps_modelled_deprecated_alias_of"] = "stop_trigger_threshold_bps"
     _rt_measured_distance = record.get("stop_distance_bps_measured")
     _rt_loss_median = record.get("gross_loss_median_bps_trailing_stop")
     if (_rt_loss_median is not None and _rt_measured_distance is not None
@@ -4791,8 +4801,10 @@ def _build_report(
     # Issue #1070 (Pitfall #369) — die zweite, symmetrische Schranke: ein Verhältnis WEIT ÜBER dem
     # konfigurierten Abstand beweist genauso, dass der Stop keine kalibrierte Risikogrösse ist.
     stop_distance_max_ratio = float(optimizer_cfg.get("stop_distance_max_ratio", 10.0))
-    effective_stop_distance_check = _inv.check_effective_stop_distance(
-        studies_out, min_ratio=stop_distance_min_ratio, max_ratio=stop_distance_max_ratio)
+    effective_stop_distance_check = _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_effective_stop_distance(
+            studies_out, min_ratio=stop_distance_min_ratio, max_ratio=stop_distance_max_ratio),
+        studies_out)
     all_checks.append(("global", effective_stop_distance_check))
 
     # Issue #1262 (GH #1132) — die Kohorten-Abdeckung (effective_stop_ratio_cohort_n / n_evaluable)
@@ -4806,7 +4818,8 @@ def _build_report(
     # Issue #1081/#1229 (P0, Katalog #1247+) Fix Punkt 3 — misst, wie weit die MODELLIERTE (im
     # Suchraum getunte) Stopdistanz von der tatsächlich AUSGEFÜHRTEN, gemessenen Distanz abweicht,
     # jetzt, da check_effective_stop_distance oben ausschliesslich die gemessene Groesse konsumiert.
-    all_checks.append(("global", _inv.check_stop_distance_model_fidelity(studies_out)))
+    all_checks.append(("global", _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_stop_distance_model_fidelity(studies_out), studies_out)))
 
     # Issue #1072 (Wiederkehr #1050/#1051) — die Stopdistanz muss ein Mindestvielfaches der
     # Round-Trip-Kosten betragen, sonst kann eine Position den Stop strukturell nicht überleben,
@@ -4828,14 +4841,16 @@ def _build_report(
 
     # Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer #1092/#1094: der Trailing-Stop darf
     # nicht der haeufigste, verlustreichste UND teuerste Ausgang einer Study sein.
-    all_checks.append(("global", _inv.check_trailing_stop_loss_share(
-        studies_out,
-        max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
-        # Issue #1024/#1173 — umbenannt von 'trailing_stop_max_mean_loss_ratio': Zaehler UND
-        # Nenner sind seither dieselbe Statistik (Median), siehe check_trailing_stop_loss_share-
-        # Docstring.
-        max_median_loss_ratio=float(
-            optimizer_cfg.get("trailing_stop_max_median_loss_ratio", 1.25)))))
+    all_checks.append(("global", _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_trailing_stop_loss_share(
+            studies_out,
+            max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
+            # Issue #1024/#1173 — umbenannt von 'trailing_stop_max_mean_loss_ratio': Zaehler UND
+            # Nenner sind seither dieselbe Statistik (Median), siehe check_trailing_stop_loss_share-
+            # Docstring.
+            max_median_loss_ratio=float(
+                optimizer_cfg.get("trailing_stop_max_median_loss_ratio", 1.25))),
+        studies_out)))
 
     # Issue #950/#1116 (Katalog #960) — die verbindliche SWEEP-WEITE Abnahmemessung fuer die
     # #1092/#1094-Hypothese (drei Kriterien: Spearman(k*ATR, realisierter Verlust) >= 0.3,
@@ -4843,7 +4858,8 @@ def _build_report(
     # Anteil < 35%) — strenger als die permanente check_effective_stop_distance-Schranke und die
     # per-Study check_trailing_stop_loss_share-Symptomschwelle oben, weil sie EIN holistisches
     # Urteil ueber den gesamten Sweep faellt statt je Study einzeln zu urteilen.
-    all_checks.append(("global", _inv.check_trailing_stop_risk_calibration_acceptance(studies_out)))
+    all_checks.append(("global", _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_trailing_stop_risk_calibration_acceptance(studies_out), studies_out)))
 
     # Issue #953/#1119 (Katalog #960) — blockierender Regressionswaechter gegen die konkurrierende
     # Hypothese zu #950/#1092: ist der Stop-Verlust latenz- statt stopgetrieben (Verlust in
@@ -4855,6 +4871,10 @@ def _build_report(
     # bar_range_median_bps == 0: FAIL, wenn Nullspannen-Bars in mehr als 20% der Studies die
     # Mehrheit der Bar-Population dieser Position ausmachen.
     all_checks.append(("global", _inv.check_zero_range_bar_share(studies_out)))
+    # Issue #1273 (GH #1146, Katalog #1272-1297, P0) — die deklarierte stop_trigger_axis gegen die
+    # gemessene zero_range_bar_fraction gehalten (siehe dortiger Docstring).
+    all_checks.append(("global", _inv.check_stop_trigger_axis_coherence(
+        optimizer_cfg.get("stop_trigger_axis"), studies_out)))
 
     # Issue #1054/#1203 (Katalog #1196-1221) — die algebraisch garantierte Verlust-Zerlegung
     # realized_loss_bps == stop_distance_bps + trigger_to_fill_gap_bps muss fuer >= 99,9% der
@@ -5363,6 +5383,9 @@ def _build_report(
         "git_commit_simulation": _git_commit_simulation,
         "git_commit_report": git_commit(),
         "reward_semantics_version": optimizer_cfg.get("reward_semantics_version"),
+        # Issue #1273 (GH #1146, Katalog #1272-1297) — die deklarierte Trigger-Achse dieses Laufs
+        # (siehe check_stop_trigger_axis_coherence unten UND optimizer.json-Schema-Dokumentation).
+        "stop_trigger_axis": optimizer_cfg.get("stop_trigger_axis"),
         # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
         # im Nachhinein einer Installationsumgebung zuordenbar ist.
         "library_versions": library_versions(),
@@ -5466,6 +5489,13 @@ def _build_report(
             # #1168: symbol_bar_quality war in 28/28 Studies zweier Läufe still None). Traeger fuer
             # check_symbol_bar_quality_cache_availability, siehe dortiger Docstring.
             "symbol_bar_quality_cache": _symbol_bar_quality_cache_status,
+            # Issue #1272 (GH #1145, Katalog #1272-1297) Akzeptanzkriterium 2 — die je Symbol
+            # gecachten Bar-Qualitaets-/Tick-Dichte-Kennzahlen (siehe
+            # sweep.write_symbol_bar_quality_cache/_load_symbol_bar_quality_sample), direkt
+            # unter cross_study statt nur je Study eingebettet (die Kennzahl ist symbolweit
+            # konstant, nicht studyspezifisch) — macht ``ticks_per_bar_median`` je Symbol OHNE
+            # Umweg ueber eine einzelne Study im Report auffindbar.
+            "symbol_bar_quality": _symbol_bar_quality_cache or {},
             # Issue #1021/#1196 Fix 4.2 — macht sichtbar, dass dieser Lauf per Warm-Start (Optuna
             # ``load_if_exists``) auf Trials eines VORLAUFS aufsetzt, statt es unsichtbar in
             # ``deflation_n_family``/``constraint_improvement_rate``/dem TPE-Seed verschwinden zu

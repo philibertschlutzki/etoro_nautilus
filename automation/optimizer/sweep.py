@@ -566,6 +566,25 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
 _SYMBOL_DEGENERACY_SENTINEL_STRATEGY = "__SYMBOL_DATA_DEGENERATE__"
 
 
+def _percentile(sorted_values: list[float], pct: float) -> float | None:
+    """Issue #1272 (GH #1145) — lineare Interpolation zwischen den beiden umgebenden Ordnungs-
+    statistiken (dieselbe Konvention wie ``numpy.percentile``s Default ``'linear'``-Methode), ohne
+    eine numpy-Abhaengigkeit fuer eine einzelne Perzentil-Berechnung einzufuehren.
+    ``sorted_values`` MUSS bereits aufsteigend sortiert sein (Aufrufer-Vertrag, keine eigene
+    Sortierung — vermeidet eine stille zweite O(n log n)-Sortierung bei Aufrufern, die die
+    sortierte Liste ohnehin bereits fuer eine andere Kennzahl halten)."""
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    k = (len(sorted_values) - 1) * pct
+    f = int(k)
+    c = min(f + 1, len(sorted_values) - 1)
+    if f == c:
+        return float(sorted_values[f])
+    return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
+
+
 def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = None, *,
                                     max_ticks: int = 200_000) -> dict | None:
     """Issue #807 — liest eine BESCHRAENKTE Stichprobe roher Quote-Ticks (``bid_price``/
@@ -621,7 +640,14 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         df["mid"] = (df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0
         df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
         df = df.set_index("ts").sort_index()
-        bars = df["mid"].resample("1h").agg(["max", "min", "last"]).dropna()
+        # Issue #1272 (GH #1145, Katalog #1272-1297) — ``count`` je Stundenfenster ZUSAETZLICH zu
+        # max/min/last: die Tick-DICHTE je Bar (nicht nur ihr Aggregat) ist die Vorbedingung, die
+        # jede Stop-/Trigger-Ausloese-Pruefung stillschweigend voraussetzt (siehe
+        # sweep_diagnostics.check_bar_quality-Docstring, Pitfall #458). ``count`` liefert 0 fuer
+        # leere Bins (kein NaN) — der nachfolgende ``dropna(subset=[...])`` filtert ausschliesslich
+        # auf max/min/last, damit besetzte Bars mit ihrer echten Tick-Zahl erhalten bleiben.
+        agg = df["mid"].resample("1h").agg(["max", "min", "last", "count"])
+        bars = agg.dropna(subset=["max", "min", "last"])
         if bars.empty:
             return None
         # Issue #900 Fix 1 — median_delta_t_s (Sekunden zwischen aufeinanderfolgenden BESETZTEN
@@ -636,12 +662,22 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             median_delta_t_s = 3600.0
         calendar_hours = max(1.0, (idx[-1] - idx[0]).total_seconds() / 3600.0)
         bar_coverage_ratio = len(idx) / calendar_hours
+        # Issue #1272 — Tick-Dichte-Kennzahlen ueber die BESETZTEN Bars (dieselbe Populations-
+        # Konvention wie ``bar_range_population_n`` in backtest_runner.py: eine leere Bar traegt
+        # keine Tick-Dichte-Beobachtung, sie wird nicht mitgezaehlt, siehe Pitfall #452).
+        tick_counts = sorted(int(c) for c in bars["count"].tolist())
+        ticks_per_bar_median = float(statistics.median(tick_counts))
+        ticks_per_bar_p05 = _percentile(tick_counts, 0.05)
+        frac_bars_single_tick = sum(1 for c in tick_counts if c <= 1) / len(tick_counts)
         return {
             "highs": bars["max"].tolist(),
             "lows": bars["min"].tolist(),
             "closes": bars["last"].tolist(),
             "median_delta_t_s": median_delta_t_s,
             "bar_coverage_ratio": bar_coverage_ratio,
+            "ticks_per_bar_median": ticks_per_bar_median,
+            "ticks_per_bar_p05": ticks_per_bar_p05,
+            "frac_bars_single_tick": frac_bars_single_tick,
             # Issue #900 Fix 4 — Stichprobenumfang und Fenster im Event, sonst ist die Aussage
             # nicht reproduzierbar.
             "n_sample_ticks": int(len(df)),
@@ -649,6 +685,14 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             "window_end": idx[-1].isoformat(),
         }
     except Exception:
+        # Issue #1272 (GH #1145) — fail-open bleibt (ein Lesefehler darf den Sweep nie
+        # blockieren, siehe Docstring), aber nicht mehr LAUTLOS: der Fallback in
+        # run_per_symbol_sweep braucht diese Zeile, um "passed=None bei existierendem Katalog"
+        # (#1272 Fix Punkt 4) tatsaechlich diagnostizieren zu koennen.
+        logging.getLogger("optimizer").debug(
+            "[#1272] _load_symbol_bar_quality_sample(%s) fehlgeschlagen (fail-open).", symbol,
+            exc_info=True,
+        )
         return None
 
 
@@ -2498,6 +2542,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 min_bar_coverage_ratio=_bar_quality_cfg.get("min_bar_coverage_ratio", 0.6),
                 bar_coverage_ratio=_sample.get("bar_coverage_ratio"),
                 median_delta_t_s=_sample.get("median_delta_t_s"),
+                # Issue #1272 (GH #1145) — Tick-Dichte-Kennzahlen der Stichprobe (siehe
+                # _load_symbol_bar_quality_sample); max_frac_bars_single_tick ist ueber
+                # optimizer.json['bar_quality'] konfigurierbar wie die uebrigen Schwellen.
+                ticks_per_bar_median=_sample.get("ticks_per_bar_median"),
+                ticks_per_bar_p05=_sample.get("ticks_per_bar_p05"),
+                frac_bars_single_tick=_sample.get("frac_bars_single_tick"),
+                max_frac_bars_single_tick=_bar_quality_cfg.get("max_frac_bars_single_tick", 0.5),
             )
             _bar_quality_any_measured = True
             _quality_by_symbol[_sym] = {
@@ -2505,6 +2556,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "atr_median_bps": _quality.get("atr_median_bps"),
                 "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
                 "median_delta_t_s": _quality.get("median_delta_t_s"),
+                "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
+                "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
+                "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
                 "passed": _quality["passed"],
             }
             # Issue #900 Fix 3 — BAR_QUALITY_PROFILE-Event je Symbol, UNABHAENGIG vom Pruefergebnis
@@ -2516,6 +2570,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "atr_median_bps": _quality.get("atr_median_bps"),
                 "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
                 "median_delta_t_s": _quality.get("median_delta_t_s"),
+                "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
+                "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
+                "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
                 "n_sample_ticks": _sample.get("n_sample_ticks"),
                 "window_start": _sample.get("window_start"),
                 "window_end": _sample.get("window_end"),
@@ -2531,17 +2588,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "name": "check_bar_quality", "check": "check_bar_quality",
                 "passed": _quality["passed"], "source": "sweep", "scope": _sym,
                 "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
-                           "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
-                           "Schwellen (#807).",
+                           "bar_coverage_ratio/median_delta_t_s/ticks_per_bar_median/"
+                           "frac_bars_single_tick) besteht die konfigurierten Schwellen (#807/"
+                           "#1272).",
                 "actual": {
                     "frac_zero_true_range": _quality.get("frac_zero_true_range"),
                     "atr_median_bps": _quality.get("atr_median_bps"),
                     "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
                     "median_delta_t_s": _quality.get("median_delta_t_s"),
+                    "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
+                    "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
+                    "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
                 } if not _quality["passed"] else None,
                 "detail": _quality.get("reason") if not _quality["passed"] else
                           "Bar-Qualitaets-Preflight bestanden.",
-                "severity": "high",
+                # Issue #1272 (GH #1145) Akzeptanzkriterium 3 — BAR_AXIS_NO_INTRABAR_INFORMATION
+                # meldet sich mit severity='blocking' statt der bisherigen festen 'high'; die
+                # Funktion selbst entscheidet ueber check_bar_quality()['severity'] (siehe dortiger
+                # Docstring), nicht diese Aufrufstelle.
+                "severity": _quality.get("severity", "high"),
             }, level=logging.INFO if _quality["passed"] else logging.WARNING)
             if _quality["passed"]:
                 continue
@@ -2583,17 +2648,62 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ``check_bar_quality`` erscheint TROTZDEM im Strom, als INCONCLUSIVE statt fehlend — dieselbe
     # Tri-State-Konvention wie #995/#1147 ("nicht pruefbar" ist ein Befund, kein Nicht-Ereignis).
     if not _bar_quality_any_measured:
-        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
-            "name": "check_bar_quality", "check": "check_bar_quality",
-            "passed": None, "source": "sweep", "scope": "global",
-            "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
-                       "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
-                       "Schwellen (#807).",
-            "actual": None,
-            "detail": "Kein Symbol tatsaechlich geprueft (using_real_optimize=False oder keine "
-                     "Katalog-Stichprobe verfuegbar) — nicht auswertbar, kein Befund (#1046/#1195).",
-            "severity": "high", "evaluable": False,
-        }, level=logging.INFO)
+        # Issue #1272 (GH #1145) Fix Punkt 4 — "passed=None ist fuer diesen Check nicht mehr
+        # zulaessig, sobald ein Katalogpfad existiert; nur ein fehlender Katalog rechtfertigt
+        # INCONCLUSIVE." Referenzbefund: 4/4 reale Laeufe (using_real_optimize=True, syms nicht
+        # leer, Studies liefen tatsaechlich mit Tick-Daten) meldeten trotzdem ``passed=None`` —
+        # der Katalog EXISTIERTE nachweislich, die Symbol-Stichprobe (``_load_symbol_bar_quality_
+        # sample``) scheiterte aus einem anderen, bisher unbeobachtbaren Grund (ihr eigener
+        # ``except Exception: return None`` ist bewusst fail-open, siehe dortiger Docstring, aber
+        # bis jetzt LAUTLOS). Existiert das Katalog-Wurzelverzeichnis, ist "nicht auswertbar" damit
+        # keine ehrliche Aussage mehr — der Preflight FAILt stattdessen sichtbar.
+        # Dieselbe Eintritts-Bedingung wie der Mess-Block oben (``(using_real_optimize or
+        # bar_quality_fn is not None) and syms``) — ein injizierter Test-``bar_quality_fn`` muss
+        # dieselbe Eskalation ausloesen koennen wie der echte Katalog-Pfad, sonst waere dieser
+        # Fix ausschliesslich gegen einen echten Katalog testbar.
+        _bar_quality_preflight_was_active = (using_real_optimize or bar_quality_fn is not None) and bool(syms)
+        _catalog_root_exists = False
+        if _bar_quality_preflight_was_active:
+            try:
+                _cfg_base = config_dir()
+                _raw_catalog = "data/nautilus"
+                _bt_path = _cfg_base / "backtest.json"
+                if _bt_path.exists():
+                    _raw_catalog = (json.loads(_bt_path.read_text("utf-8")) or {}).get(
+                        "catalog_path", "data/nautilus")
+                _catalog_root_exists = (_cfg_base.parent.parent / _raw_catalog).exists()
+            except (OSError, ValueError):
+                _catalog_root_exists = False
+        if _bar_quality_preflight_was_active and _catalog_root_exists:
+            emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+                "name": "check_bar_quality", "check": "check_bar_quality",
+                "passed": False, "source": "sweep", "scope": "global",
+                "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
+                           "bar_coverage_ratio/median_delta_t_s/ticks_per_bar_median) besteht die "
+                           "konfigurierten Schwellen (#807/#1272), sobald ein Katalogpfad "
+                           "existiert.",
+                "actual": {"symbols_planned": len(syms), "catalog_root_exists": True},
+                "detail": "CATALOG_SAMPLE_UNAVAILABLE_DESPITE_CATALOG: das Katalog-Wurzelverzeichnis "
+                         "existiert, aber fuer KEIN geplantes Symbol konnte eine Bar-Qualitaets-"
+                         "Stichprobe gezogen werden (siehe DEBUG-Log von "
+                         "_load_symbol_bar_quality_sample fuer den Lesefehler je Symbol) — "
+                         "passed=None ist bei existierendem Katalog kein ehrlicher Befund mehr "
+                         "(#1272 Fix Punkt 4).",
+                "severity": "blocking",
+            }, level=logging.ERROR)
+        else:
+            emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+                "name": "check_bar_quality", "check": "check_bar_quality",
+                "passed": None, "source": "sweep", "scope": "global",
+                "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
+                           "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
+                           "Schwellen (#807).",
+                "actual": None,
+                "detail": "Kein Symbol tatsaechlich geprueft (using_real_optimize=False, keine "
+                         "geplanten Symbole, oder das Katalog-Wurzelverzeichnis selbst fehlt) — "
+                         "nicht auswertbar, kein Befund (#1046/#1195).",
+                "severity": "high", "evaluable": False,
+            }, level=logging.INFO)
 
     # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
     # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
