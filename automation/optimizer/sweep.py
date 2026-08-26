@@ -41,6 +41,7 @@ from automation.optimizer.run_optimization import (
     _dispose_storage,
     derive_n_trials,
     assert_structural_min_modelled_trials_valid,
+    resolve_storage,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer import champions
@@ -506,7 +507,7 @@ def _assert_gate_reward_parity() -> None:
     Entfernung einer harten Risikogrenze verleitete, statt den Sweep-Start abzubrechen)."""
     from automation.optimizer.reward import (
         assert_any_condition_parity, assert_gate_priority_coverage,
-        assert_live_threshold_registry_coverage,
+        assert_live_threshold_registry_coverage, assert_eligible_requires_any_not_silently_empty,
     )
     try:
         cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
@@ -519,6 +520,10 @@ def _assert_gate_reward_parity() -> None:
     # sichtbar werden lassen (vgl. #1117-Symptom: check_mandatory_gate_reachability_live lief 13
     # Studies lang unbemerkt leer).
     assert_live_threshold_registry_coverage(cfg)
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) — dieselbe Fail-Loud-Stelle wie die uebrigen
+    # Gate-Konsistenz-Waechter: eine leere eligible_requires_any-Disjunktion muss ein benannter
+    # Beschluss sein, kein stiller Kollaps auf ein einziges verbleibendes eligible_requires_all-Gate.
+    assert_eligible_requires_any_not_silently_empty(cfg)
 
 
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:
@@ -847,6 +852,103 @@ def calibrate_and_write_slippage_cache(
         logging.getLogger("optimizer").debug(
             "[#1204] calibrated_slippage.json-Schreiben fehlgeschlagen (non-fatal).", exc_info=True)
     return calibration
+
+
+def _alpha_tstat_gate_calibration_cache_path(work_dir: Path) -> Path:
+    return Path(work_dir) / "alpha_tstat_gate_calibration.json"
+
+
+def write_alpha_tstat_gate_calibration_cache(
+    work_dir: Path, calibration_points: list[dict], *, run_id: str,
+) -> Path:
+    """Issue #1282 (GH #1155, Katalog #1272-1297, P0) — persistiert das Gitter der
+    ``calibration.calibrate_alpha_tstat_gate``-Kalibrierpunkte, analog
+    ``write_calibrated_slippage_cache``. Traegt ``run_id``/``calibrated_at_utc``, damit ein Leser
+    (Report/Operator) die Provenienz nachvollziehen kann (dieselbe #406/#1168-Konvention: ein Wert
+    ohne Herkunft ist von einem geratenen Wert nicht unterscheidbar)."""
+    path = _alpha_tstat_gate_calibration_cache_path(work_dir)
+    payload = {
+        "run_id": run_id,
+        "calibrated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "calibration_points": calibration_points,
+    }
+    write_json_atomic(path, payload)
+    return path
+
+
+def read_alpha_tstat_gate_calibration_cache(work_dir: Path) -> list[dict]:
+    """Gegenstück zu ``write_alpha_tstat_gate_calibration_cache``. Fehlt die Datei (noch kein
+    Kalibrierlauf) ⇒ ``[]`` (fail-open — ``reward.resolve_alpha_tstat_gate_threshold`` faellt dann
+    auf die statische Konstante zurueck, ``source='static_fallback'``, siehe dortiger Docstring)."""
+    path = _alpha_tstat_gate_calibration_cache_path(work_dir)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text("utf-8"))
+        points = data.get("calibration_points") if isinstance(data, dict) else None
+        return points if isinstance(points, list) else []
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def calibrate_and_write_alpha_tstat_gate_cache(
+    pairs, studies, *, work_dir: Path | None = None, run_id: str,
+    tournament_cfg: dict | None = None, target_fpr: float = 0.05, n_reps: int = 2000, seed: int = 42,
+) -> list[dict]:
+    """Issue #1282 (GH #1155, Katalog #1272-1297, P0) — Fix Punkt 1: ``calibrate_alpha_tstat_gate``
+    als wiederverwendbarer CLI-/Post-Sweep-Einstiegspunkt statt eines handgeschriebenen Test-
+    Fixtures (``automation/tests/fixtures/alpha_tstat_gate_calibration.json``, #1250, dokumentierte
+    bewusst nur EINEN von Hand eingetragenen Referenzpunkt).
+
+    Leitet das GITTER der zu kalibrierenden ``(n_configs, n_periods)``-Punkte aus den TATSAECHLICH
+    persistierten Studies ab: ``n_configs`` ist ``_family_n_stage1_from_studies``s N1 je
+    (Strategie, Symbol) — dieselbe Zahl "gezogener Kandidaten je Study", die
+    ``calibrate_alpha_tstat_gate``s Monte-Carlo-Kalibrierung voraussetzt (siehe dortiger
+    Docstring) —, ``n_periods`` der ``_study_oos_n_periods_median`` derselben Study. Studies mit
+    ``n_configs < 2`` (keine sinnvolle Maximum-ueber-Kandidaten-Verteilung) oder ohne aufloesbaren
+    Median werden uebersprungen. Mehrere Studies mit IDENTISCHEM (gerundetem) Gitterpunkt werden
+    dedupliziert (kein wiederholter, identischer Kalibrierlauf).
+
+    Reine Best-Effort-Telemetrie wie ``calibrate_and_write_slippage_cache``: ein einzelner
+    Kalibrierfehler darf den Sweep nie blockieren. Rueckgabe: die Liste der geschriebenen
+    Kalibrierpunkte (leer, wenn kein Paar ein auswertbares Gitter lieferte — die Datei wird dann
+    NICHT geschrieben, ein vorhandener aelterer Cache bleibt unangetastet)."""
+    from automation.optimizer.calibration import calibrate_alpha_tstat_gate
+
+    n_family_stage1 = _family_n_stage1_from_studies(pairs, studies, tournament_cfg=tournament_cfg,
+                                                     run_id=run_id)
+    distinct_points: dict[tuple[int, int], None] = {}
+    for pair, study in zip(pairs, studies):
+        if study is None:
+            continue
+        strategy, symbol = pair[0], pair[1]
+        n_configs = n_family_stage1.get((strategy, symbol), 0)
+        n_periods_median = _study_oos_n_periods_median(study)
+        if n_configs < 2 or not n_periods_median or n_periods_median <= 0:
+            continue
+        distinct_points[(int(n_configs), int(round(n_periods_median)))] = None
+
+    calibration_points = []
+    for n_configs, n_periods in sorted(distinct_points):
+        try:
+            calibration_points.append(calibrate_alpha_tstat_gate(
+                n_configs=n_configs, n_periods=n_periods, target_fpr=target_fpr,
+                n_reps=n_reps, seed=seed))
+        except Exception:
+            logging.getLogger("optimizer").debug(
+                "[#1282] calibrate_alpha_tstat_gate(n_configs=%s, n_periods=%s) fehlgeschlagen "
+                "(non-fatal).", n_configs, n_periods, exc_info=True)
+
+    if work_dir is None:
+        work_dir = PERSISTENT_CACHE_ROOT
+    if calibration_points:
+        try:
+            write_alpha_tstat_gate_calibration_cache(work_dir, calibration_points, run_id=run_id)
+        except OSError:
+            logging.getLogger("optimizer").debug(
+                "[#1282] alpha_tstat_gate_calibration.json-Schreiben fehlgeschlagen (non-fatal).",
+                exc_info=True)
+    return calibration_points
 
 
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
@@ -3493,6 +3595,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                             logging.getLogger("optimizer").debug(
                                 "[#1135] %s/%s: family_membership-Stempel fehlgeschlagen "
                                 "(non-fatal).", _strategy_deg, _symbol_deg, exc_info=True)
+            # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 1 — kalibriert
+            # oos_min_alpha_tstat_mode='multiplicity_adjusted' aus der SOEBEN ermittelten,
+            # REALISIERTEN Familiengroesse dieses Symbols (analog calibrate_and_write_slippage_
+            # cache oben: additiv/best-effort, ein Kalibrierfehler darf den Sweep nie blockieren).
+            # NACH dem #1135-Degenerations-Ausschluss aufgerufen, damit eine strukturell zu kurze
+            # Study (N1 bereits auf 0 gesetzt) keinen Scheinpunkt ins Kalibrier-Gitter einspeist.
+            try:
+                calibrate_and_write_alpha_tstat_gate_cache(
+                    symbol_pairs, symbol_studies, run_id=run_id,
+                    tournament_cfg=_tournament_cfg_for_family)
+            except Exception:
+                logging.getLogger("optimizer").debug(
+                    "[#1282] Alpha-t(α)-Gate-Kalibrierung fehlgeschlagen (non-fatal).", exc_info=True)
             # Issue #977/#1131 (Katalog #986, Pitfall #408 in AGENTS.md) — die EINGEFRORENE
             # Multiplizitaet wird seit diesem Fix PER STRATEGIE aus ``symbol_n_family_stage1``
             # bezogen (derselben Quelle, die ``deflation_n_family_source`` bereits als
@@ -4030,6 +4145,15 @@ def main(argv: list[str] | None = None) -> list[Path]:
                         help="Ueberspringt den Duplikat-Preflight (#1285): erlaubt einen Lauf mit "
                              "identischer Eingangsmenge zu einem bereits im Fingerabdruck-Index "
                              "vorhandenen Lauf. Aequivalent zu OPTIMIZER_ALLOW_DUPLICATE_RUN=1.")
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 1 — eigenstaendiger CLI-Einstiegs-
+    # punkt fuer calibrate_and_write_alpha_tstat_gate_cache (analog --report-only/--corroboration-
+    # pass: liest die BEREITS PERSISTIERTEN Studies der --strategies/--symbols-Auswahl, optimiert
+    # selbst NICHTS Neues, schreibt PERSISTENT_CACHE_ROOT/alpha_tstat_gate_calibration.json).
+    parser.add_argument("--calibrate-alpha-tstat-gate", action="store_true", default=False,
+                        help="Kalibriert oos_min_alpha_tstat_mode='multiplicity_adjusted' aus den "
+                             "PERSISTIERTEN Studies der --strategies/--symbols-Auswahl (keine neue "
+                             "Optimierung) und schreibt das Ergebnis-Gitter nach "
+                             "PERSISTENT_CACHE_ROOT/alpha_tstat_gate_calibration.json (#1282).")
     args = parser.parse_args(argv)
     if args.seed_salt:
         os.environ["OPTIMIZER_SEED_SALT"] = args.seed_salt
@@ -4045,6 +4169,39 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
+
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 1 — Standalone-Kalibrierlauf: laedt
+    # JEDE (Strategie, Symbol)-Study der Auswahl, die bereits persistiert ist (fehlende Studies
+    # werden uebersprungen, kein Fehler — ein frischer Store liefert dann ein leeres Gitter), und
+    # kalibriert daraus das (n_configs, n_periods)-Gitter (siehe calibrate_and_write_alpha_tstat_
+    # gate_cache-Docstring).
+    if args.calibrate_alpha_tstat_gate:
+        import optuna as _optuna
+        setup_bot_logging("optimizer", run_id=args.run_id or f"alpha_tstat_calibration_{default_run_id()}")
+        _cal_symbols = symbols if symbols is not None else load_symbol_universe()
+        _cal_pairs, _cal_studies = [], []
+        for _strategy in strategies:
+            for _symbol in _cal_symbols:
+                _study_name = f"study_{_strategy}_{_sanitize(_symbol)}"
+                try:
+                    _storage = resolve_storage(study_name=_study_name)
+                    _study = _optuna.load_study(study_name=_study_name, storage=_storage)
+                except Exception:
+                    continue
+                _cal_pairs.append((_strategy, _symbol, None))
+                _cal_studies.append(_study)
+        _tcfg_for_cal: dict = {}
+        try:
+            _tcfg_for_cal = json.loads((config_dir() / "tournament.json").read_text("utf-8")) or {}
+        except (OSError, ValueError):
+            pass
+        _cal_points = calibrate_and_write_alpha_tstat_gate_cache(
+            _cal_pairs, _cal_studies, run_id=args.run_id or default_run_id(),
+            tournament_cfg=_tcfg_for_cal)
+        print(f"🎯 Alpha-t(α)-Gate-Kalibrierung: {len(_cal_points)} Gitterpunkt(e) aus "
+              f"{len(_cal_pairs)} geladenen Study/Studies — "
+              f"{_alpha_tstat_gate_calibration_cache_path(PERSISTENT_CACHE_ROOT)}")
+        return []
 
     # Issue #1094/#1242 (P1, Fix Punkt 3) — dieselbe --strategies/--symbols-Filterung wie der
     # reguläre Sweep, aber KEIN Enqueue/optimize_symbol/Reporting-Apparat: run_corroboration_pass

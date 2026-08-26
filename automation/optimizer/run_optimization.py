@@ -101,11 +101,26 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     # oben (kein Gate braucht sie live — anders als oos_alpha_tstat_hc3 selbst, das per Sweep-Trial
     # gestempelt wird, siehe Stempelstelle neben oos_alpha_tstat).
     "oos_alpha_tstat_df": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1255)",
+    # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — die tatsaechlich fuer oos_alpha_tstat_df
+    # verwendete Stichprobengroesse, holdout-only wie oos_alpha_tstat_df selbst (kein Gate braucht
+    # sie live — Rohmaterial fuer invariants.check_alpha_df_consistency).
+    "oos_alpha_n_used": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1284)",
     "oos_alpha_n_total": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_informative": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_y_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_x_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_both_zero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Kovarianz-Zerlegungs-Rohmaterial fuer
+    # invariants.check_alpha_regression_identifiability, holdout-only wie die #1258-Audit-Felder
+    # direkt oben (kein Gate braucht sie live).
+    "oos_alpha_corr_xy": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_sd_x": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_sd_y": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_xy": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_in_market": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_out_of_market": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_exit_bars": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283 — stets None, siehe dortiger Docstring)",
+    "oos_alpha_n_in_market": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
     "oos_f_turnover_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_median, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_turnover_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_max, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_realized_peak_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_median, #1085/#1233 check_sizing_identity_coherence)",

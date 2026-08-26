@@ -359,14 +359,17 @@ class TournamentMetrics:
     oos_expectancy_capital_weighted_gross: float | None = None
     # Issue #1255 (GH #1125), Pitfall #454-Klasse — HC3-robuster Standardfehler-Schaetzer der
     # Alpha-Regression (siehe backtest_runner._alpha_regression_diagnostics-Docstring) neben dem
-    # bestehenden, homoskedastie-unterstellenden ``oos_alpha_tstat``; ``oos_alpha_tstat_df`` die
-    # AUF DIE INFORMATIVE Zeilenzahl (statt der Kalender-Bar-Zaehlung) gesetzten Freiheitsgrade.
+    # bestehenden, homoskedastie-unterstellenden ``oos_alpha_tstat``. Issue #1284 (GH #1157,
+    # Katalog #1272-1297, P3) — ``oos_alpha_tstat_df`` sind die auf ``oos_alpha_n_used`` (ALLE
+    # Bars, dieselbe Grundgesamtheit wie die Regression selbst) gesetzten Freiheitsgrade, NICHT
+    # mehr auf die informative Zeilenzahl (siehe dortiger Docstring fuer die Root-Cause/Wahl).
     # Issue #1258 (GH #1128) — Regressions-Grundgesamtheit auditierbar: ``oos_alpha_n_total`` (Alias
     # von ``oos_alpha_n_periods``, expliziter Feldname fuer die Akzeptanzkriterien-Liste),
     # ``oos_alpha_n_informative``/``oos_alpha_n_y_nonzero``/``oos_alpha_n_x_nonzero``/
     # ``oos_alpha_n_both_zero``. Defaults rueckwaertskompatibel (Legacy-JSONs vor #1255/#1258).
     oos_alpha_tstat_hc3: float | None = None
     oos_alpha_tstat_df: int | None = None
+    oos_alpha_n_used: int | None = None
     oos_alpha_n_total: int | None = None
     oos_alpha_n_informative: int | None = None
     oos_alpha_n_y_nonzero: int | None = None
@@ -591,6 +594,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # 'oos_alpha_n_periods' (Zeile oben), nicht die der #1257-Kostenbasis-Felder.
     oos_alpha_tstat_hc3 = oos_metrics.get("oos_alpha_tstat_hc3")
     oos_alpha_tstat_df = oos_metrics.get("oos_alpha_tstat_df")
+    oos_alpha_n_used = oos_metrics.get("oos_alpha_n_used")
     oos_alpha_n_total = oos_metrics.get("oos_alpha_n_total")
     oos_alpha_n_informative = oos_metrics.get("oos_alpha_n_informative")
     oos_alpha_n_y_nonzero = oos_metrics.get("oos_alpha_n_y_nonzero")
@@ -929,6 +933,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             float(oos_alpha_tstat_hc3) if oos_alpha_tstat_hc3 is not None else None),
         oos_alpha_tstat_df=(
             int(oos_alpha_tstat_df) if oos_alpha_tstat_df is not None else None),
+        oos_alpha_n_used=(int(oos_alpha_n_used) if oos_alpha_n_used is not None else None),
         oos_alpha_n_total=(int(oos_alpha_n_total) if oos_alpha_n_total is not None else None),
         oos_alpha_n_informative=(
             int(oos_alpha_n_informative) if oos_alpha_n_informative is not None else None),

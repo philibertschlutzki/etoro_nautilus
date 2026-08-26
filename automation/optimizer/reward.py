@@ -178,6 +178,37 @@ def _excess_distance(actual: float, cap: float | None) -> float:
 _ANY_CONDITION_CLAUSES = frozenset({"min_sortino", "min_profit_factor", "min_win_rate"})
 
 
+def assert_eligible_requires_any_not_silently_empty(tournament_cfg: dict | None) -> None:
+    """Issue #1282 (GH #1155, Katalog #1272-1297, P0) — fail-loud beim Sweep-Start: eine LEERE
+    ``eligible_requires_any``-Disjunktion darf nicht die stillschweigende FOLGE davon sein, dass
+    jede vormalige OR-Klausel einzeln als strukturell unerreichbar entfernt wurde (#633 → #658 →
+    #660 → #848, siehe ``tournament.json``-Schema-Kommentare zu ``min_win_rate``), OHNE dass je
+    jemand die RESTMENGE (leer) gegenprüfte.
+
+    Root-Cause. Mit ``eligible_requires_any=[]`` UND ``oos_min_alpha_tstat`` als einzigem
+    verbleibenden ``eligible_requires_all``-Mitglied nach der #1248-PSR-Entfernung trägt t(α) ALLEIN
+    die gesamte Qualitätsentscheidung — die Konfiguration kollabierte auf ein einziges Gate, ohne
+    dass das je ein benannter Beschluss gewesen wäre.
+
+    Eine leere Disjunktion ist NICHT per se ein Fehler — sie MUSS aber ein EXPLIZITER, benannter
+    Beschluss sein: ``tournament_cfg['eligible_requires_any_empty_accepted']`` muss ein Dict mit
+    ``{'accepted': True, 'rationale': <str>, 'decided_in_issue': <str>}`` sein, sonst ``ValueError``.
+    Bit-identisch rückwärtskompatibel, solange ``eligible_requires_any`` nicht leer ist (kein Effekt
+    für jede bereits bestehende, nicht-leere Konfiguration)."""
+    if (tournament_cfg or {}).get("eligible_requires_any"):
+        return
+    decision = (tournament_cfg or {}).get("eligible_requires_any_empty_accepted")
+    if (isinstance(decision, dict) and decision.get("accepted") is True
+            and decision.get("rationale") and decision.get("decided_in_issue")):
+        return
+    raise ValueError(
+        "tournament.json: eligible_requires_any ist leer, ohne dass "
+        "eligible_requires_any_empty_accepted={'accepted': True, 'rationale': ..., "
+        "'decided_in_issue': ...} das als expliziten Beschluss dokumentiert (#1282). Entweder "
+        "einen unabhängigen OR-Arm wieder aufnehmen oder die leere Disjunktion explizit begründen."
+    )
+
+
 def assert_any_condition_parity(tournament_cfg: dict | None) -> None:
     """Issue #593 — fail-loud beim Config-Load: JEDE Klausel in ``eligible_requires_any`` MUSS einen
     korrespondierenden Term in ``_any_condition_distance`` haben (sonst sehen Gate und Reward
@@ -606,14 +637,23 @@ def resolve_alpha_tstat_gate_threshold(
     ``calibration_fixture``: ``{'n_configs', 'n_periods', 'threshold', ...}`` oder eine Liste
     solcher Dicts (ein Gitter mehrerer (n_configs, n_periods)-Kalibrierpunkte) — der NAECHSTE
     Punkt (kleinster euklidischer Abstand in log(n_configs)/log(n_periods)) wird verwendet. Reine
-    Funktion, KEIN Datei-I/O (der Aufrufer laedt das Fixture aus ``automation/tests/fixtures/``,
-    siehe ``calibrate_alpha_tstat_gate``-Docstring) — ohne Fixture ODER ohne beide (N, T)-Grössen
-    faellt die Funktion auf ``'static'`` zurueck (fail-open: eine fehlende Kalibrierbasis darf den
-    Sweep nie blockieren, nur die Aktivierung von ``'multiplicity_adjusted'`` bleibt wirkungslos).
+    Funktion, KEIN Datei-I/O (der Aufrufer laedt das Fixture, siehe
+    ``sweep.read_alpha_tstat_gate_calibration_cache``/``calibrate_alpha_tstat_gate``-Docstring) —
+    ohne Fixture ODER ohne beide (N, T)-Grössen faellt die Funktion auf die statische Konstante
+    zurueck (fail-open: eine fehlende Kalibrierbasis darf den Sweep nie blockieren, nur die
+    Aktivierung von ``'multiplicity_adjusted'`` bleibt wirkungslos).
 
-    Rueckgabe: ``(threshold, source)`` mit ``source ∈ {'static', 'calibrated'}``. Ein unbekannter
-    Modus bricht FAIL-LOUD ab (``ValueError``, analog ``confirm.py['promotion_correction_mode']``,
-    #659)."""
+    Rueckgabe: ``(threshold, source)``. Issue #1282 (GH #1155, Katalog #1272-1297, P0) — ``source``
+    unterscheidet seither DREI Faelle statt zwei: ``'static'`` (Modus ``'static'`` explizit
+    konfiguriert ODER Default, siehe ``_ALPHA_TSTAT_GATE_MODES``-Docstring — bit-identisch zum
+    Pre-#1282-Verhalten), ``'calibrated'`` (Modus ``'multiplicity_adjusted'`` UND Fixture/(N, T)
+    vorhanden UND wirksam), ``'static_fallback'`` (Modus ``'multiplicity_adjusted'`` KONFIGURIERT,
+    aber mangels Fixture/(N, T) NICHT wirksam — Root-Cause #1282: dieser dritte Fall trug bislang
+    dasselbe Label ``'static'`` wie ein Betreiber, der ``'static'`` GAR NICHT verlassen wollte,
+    wodurch ``invariants.check_alpha_tstat_gate_calibrated`` einen wirkungslosen
+    ``'multiplicity_adjusted'``-Modus nicht von einer bewussten ``'static'``-Entscheidung
+    unterscheiden konnte). Ein unbekannter Modus bricht FAIL-LOUD ab (``ValueError``, analog
+    ``confirm.py['promotion_correction_mode']``, #659)."""
     tournament_cfg = tournament_cfg or {}
     static_value = tournament_cfg.get("oos_min_alpha_tstat")
     mode = tournament_cfg.get("oos_min_alpha_tstat_mode", "static")
@@ -622,13 +662,15 @@ def resolve_alpha_tstat_gate_threshold(
             f"tournament.json: oos_min_alpha_tstat_mode={mode!r} unbekannt. "
             f"Erlaubt: {sorted(_ALPHA_TSTAT_GATE_MODES)}."
         )
-    if mode == "static" or not calibration_fixture or n_family_stage1 is None or oos_n_periods_median is None:
+    if mode == "static":
         return static_value, "static"
+    if not calibration_fixture or n_family_stage1 is None or oos_n_periods_median is None:
+        return static_value, "static_fallback"
     points = calibration_fixture if isinstance(calibration_fixture, list) else [calibration_fixture]
     points = [p for p in points if isinstance(p, dict) and p.get("n_configs") and p.get("n_periods")
              and p.get("threshold") is not None]
     if not points:
-        return static_value, "static"
+        return static_value, "static_fallback"
 
     def _distance(p: dict) -> float:
         return (math.log(max(1, int(p["n_configs"]))) - math.log(max(1, int(n_family_stage1)))) ** 2 + (

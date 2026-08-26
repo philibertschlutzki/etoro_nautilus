@@ -4505,9 +4505,10 @@ def _alpha_regression_diagnostics(
        ``alpha = Σ w_i·y_i`` ergibt — die klassische OLS-Alpha-Formel), die HC3-Varianz ist
        ``Var_HC3(alpha) = Σ w_i²·e_i²/(1-h_i)²`` mit dem Leverage ``h_i = 1/n + (x_i-mean(x))²/Sxx``
        (derselbe Leverage-Wert wie in der klassischen SE-Formel, hier PRO BEOBACHTUNG statt
-       gepoolt). ``alpha_tstat_df`` = ``n_informative - 2`` (statt ``n - 2``, siehe Punkt 2) macht
-       eine spaetere t-Verteilungs-Nachschlagestelle konsistent mit der TATSAECHLICHEN Zahl
-       oekonomischer Ereignisse, nicht der Kalender-Bar-Zaehlung.
+       gepoolt). ``alpha_tstat_df`` = ``n_used - 2`` mit ``n_used = n`` (ALLE Bars, siehe Issue
+       #1284 unten fuer die Begruendung dieser Wahl gegenueber ``n_informative - 2``) macht eine
+       spaetere t-Verteilungs-Nachschlagestelle konsistent mit der TATSAECHLICH fuer Schaetzung UND
+       Freiheitsgrade verwendeten Stichprobe.
 
     2. Issue #1258 — die Regressions-Grundgesamtheit auditierbar: ``n_total`` (== der bereits
        gestempelte ``oos_alpha_n_periods``, hier als expliziter Alias fuer die Akzeptanzkriterien-
@@ -4515,6 +4516,22 @@ def _alpha_regression_diagnostics(
        Information), ``n_y_nonzero``/``n_x_nonzero`` (Strategie- bzw. Benchmark-Seite einzeln),
        ``n_both_zero`` (``n_total - n_informative``, exakte Partition — Akzeptanzkriterium
        ``n_both_zero + n_informative == n_total``).
+
+    Issue #1284 (GH #1157, Katalog #1272-1297, P3) — ``alpha_tstat_df`` war bis zu diesem Fix
+    ``n_informative - 2``, waehrend BEIDE t-Statistiken (klassisch ueber ``alpha_beta_regression``
+    UND ``alpha_tstat_hc3`` hier) ueber ALLE ``n`` Bars gerechnet werden (``x``/``y`` oben sind die
+    VOLLEN Arrays, nicht auf ``n_informative`` reduziert) — zwei verschiedene Grundgesamtheiten fuer
+    Schaetzung und Freiheitsgrade derselben Statistik (Referenzfall AdxAtr/TSLA: ``df=735`` vs.
+    tatsaechlich verwendete ``n=1079`` Beobachtungen). GEWAEHLTE VARIANTE: ``alpha_tstat_df =
+    n_used - 2`` mit ``n_used = n`` (ALLE Bars) — NICHT die Regression selbst auf die informativen
+    Bars beschraenkt, weil ``x``/``y`` (und damit ``alpha``/``beta``/``cov_xy`` und die gesamte
+    #1283-Kovarianz-Zerlegung, die additiv auf DENSELBEN vollen Summen ``sxx``/``sxy``/``syy``
+    beruht) an dieser Stelle bereits an mehrere andere, bereits verdrahtete Konsumenten geht — eine
+    Restriktion auf ``n_informative`` haette deren Grundgesamtheit STILL mitverschoben. ``n_used``
+    wird explizit gestempelt (statt sich auf einen impliziten Alias zu ``n_total`` zu verlassen),
+    damit ``invariants.check_alpha_df_consistency`` die tatsaechlich verwendete Stichprobe direkt
+    gegenprüfen kann, unabhaengig davon, ob eine kuenftige Variante ``n_used`` einmal von
+    ``n_total`` abweichen laesst.
 
     ``None`` unter DENSELBEN Bedingungen wie ``_alpha_beta_regression`` (< 3 Perioden, Var(x) == 0)
     — beide Funktionen werden IMMER auf demselben ``(strategy_log_returns, benchmark_log_returns)``-
@@ -4583,7 +4600,8 @@ def _alpha_regression_diagnostics(
 
     return {
         "alpha_tstat_hc3": float(alpha_tstat_hc3),
-        "alpha_tstat_df": max(0, n_informative - 2),
+        "alpha_tstat_df": max(0, n - 2),
+        "n_used": n,
         "n_total": n,
         "n_informative": n_informative,
         "n_y_nonzero": n_y_nonzero,
@@ -6348,6 +6366,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 if oos_alpha_diagnostics is not None:
                     oos_metrics["oos_alpha_tstat_hc3"] = oos_alpha_diagnostics["alpha_tstat_hc3"]
                     oos_metrics["oos_alpha_tstat_df"] = oos_alpha_diagnostics["alpha_tstat_df"]
+                    # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — die tatsaechlich fuer
+                    # alpha_tstat_df verwendete Stichprobengroesse, explizit benannt statt eines
+                    # impliziten Alias zu oos_alpha_n_total (siehe _alpha_regression_diagnostics-
+                    # Docstring); Rohmaterial fuer invariants.check_alpha_df_consistency.
+                    oos_metrics["oos_alpha_n_used"] = oos_alpha_diagnostics["n_used"]
                     oos_metrics["oos_alpha_n_total"] = oos_alpha_diagnostics["n_total"]
                     oos_metrics["oos_alpha_n_informative"] = oos_alpha_diagnostics["n_informative"]
                     oos_metrics["oos_alpha_n_y_nonzero"] = oos_alpha_diagnostics["n_y_nonzero"]

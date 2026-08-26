@@ -7244,6 +7244,113 @@ def check_alpha_regression_identifiability(study_records: list[dict], *,
     )
 
 
+def check_alpha_tstat_gate_calibrated(oos_min_alpha_tstat_mode: str | None,
+                                       study_records: list[dict]) -> InvariantResult:
+    """Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 3 — meldet FAIL ``high``, wenn
+    ``tournament.json['oos_min_alpha_tstat_mode']`` auf ``'multiplicity_adjusted'`` konfiguriert
+    ist, aber in mindestens einer Study NICHT wirksam wurde (``alpha_tstat_gate_threshold_source ==
+    'static_fallback'`` — mangels Kalibrier-Fixture oder unbekannter Familiengroesse, siehe
+    ``reward.resolve_alpha_tstat_gate_threshold``-Docstring).
+
+    Root-Cause. Vor #1282 trug ein wirkungsloser ``'multiplicity_adjusted'``-Modus DASSELBE
+    ``source='static'``-Label wie eine bewusste ``'static'``-Konfiguration — ein Betreiber, der den
+    Modus umstellte, konnte aus dem Report ALLEIN nicht erkennen, ob die Umstellung je wirksam
+    wurde. ``resolve_alpha_tstat_gate_threshold`` unterscheidet seither ``'static_fallback'`` von
+    ``'static'``; diese Invariante ist der KONSUMENT dieser Unterscheidung.
+
+    Bei ``mode == 'static'`` (Default) ist diese Pruefung gegenstandslos (``inconclusive=True`` —
+    ``'static_fallback'`` kann unter diesem Modus per Konstruktion nicht auftreten). ``severity=
+    'high'`` (Konfigurations-/Kalibrierungs-Plausibilitaet, keine harte Selektions-Inkohaerenz)."""
+    expected = ("bei oos_min_alpha_tstat_mode='multiplicity_adjusted': keine Study mit "
+                "alpha_tstat_gate_threshold_source == 'static_fallback'")
+    if oos_min_alpha_tstat_mode != "multiplicity_adjusted":
+        return InvariantResult(
+            name="check_alpha_tstat_gate_calibrated",
+            passed=True,
+            expected=expected,
+            actual={"oos_min_alpha_tstat_mode": oos_min_alpha_tstat_mode},
+            severity="high",
+            detail="oos_min_alpha_tstat_mode != 'multiplicity_adjusted' — Pruefung gegenstandslos.",
+            inconclusive=True,
+        )
+    offenders = sorted(
+        f"{r.get('strategy')}/{r.get('symbol')}" for r in study_records
+        if r.get("alpha_tstat_gate_threshold_source") == "static_fallback"
+    )
+    passed = not offenders
+    return InvariantResult(
+        name="check_alpha_tstat_gate_calibrated",
+        passed=passed,
+        expected=expected,
+        actual={"static_fallback_studies": offenders} if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"oos_min_alpha_tstat_mode='multiplicity_adjusted' konfiguriert, aber in "
+                f"{len(offenders)} Study/Studies mangels Kalibrier-Fixture/Familiengroesse NICHT "
+                f"wirksam (source='static_fallback'): {offenders} (#1282)."),
+    )
+
+
+def check_alpha_df_consistency(study_records: list[dict]) -> InvariantResult:
+    """Issue #1284 (GH #1157, Katalog #1272-1297, P3) — ``holdout_alpha_tstat_df`` muss zur
+    tatsaechlich verwendeten Regressions-Stichprobe passen: ``alpha_tstat_df == n_used - 2``.
+
+    Symptom. ``holdout_alpha_tstat_df = n_informative - 2`` (AdxAtr/TSLA: 735), waehrend beide
+    t-Statistiken (klassisch UND HC3) ueber ``n_total = 1079`` Beobachtungen gerechnet werden —
+    ``_alpha_regression_diagnostics`` mischte zwei Grundgesamtheiten: die Schaetzung lief ueber
+    ALLE Bars, die Freiheitsgrade nur ueber die informativen. Aktuell folgenlos (``oos_min_alpha_
+    tstat_mode='static'`` nutzt keine t-Verteilungs-Nachschlagestelle), wird aber mit #1282
+    (``'multiplicity_adjusted'``) entscheidungsrelevant.
+
+    Root-Cause-Fix (siehe ``backtest_runner._alpha_regression_diagnostics``-Docstring fuer die
+    Begruendung der gewaehlten Variante): ``alpha_tstat_df = n_used - 2`` mit ``n_used = n`` (ALLE
+    Bars, dieselbe Grundgesamtheit wie die Regression selbst) statt einer Restriktion der
+    Regression auf die informativen Bars. Diese Invariante ist die STRUKTURELLE Gegenprobe:
+    FAIL ``high``, wenn ein Report-Datensatz ``holdout_alpha_tstat_df`` UND ``holdout_alpha_n_used``
+    traegt, aber ``holdout_alpha_tstat_df != holdout_alpha_n_used - 2`` — z. B. ein Legacy-Report
+    vor #1284, der ``n_used`` nachtraeglich (fehlerhaft) aus ``n_informative`` ableitet.
+
+    Studies ohne BEIDE Felder (Legacy-Reports vor #1258/#1284, oder Studies ohne aufloesbare
+    Alpha-Regression) werden uebersprungen; ``inconclusive=True`` ohne einen einzigen auswertbaren
+    Datensatz. ``severity='high'`` (strukturelle Konsistenz-Diagnose, keine harte Selektions-
+    Inkohaerenz)."""
+    checked = [
+        r for r in study_records
+        if r.get("holdout_alpha_tstat_df") is not None and r.get("holdout_alpha_n_used") is not None
+    ]
+    expected = "holdout_alpha_tstat_df == holdout_alpha_n_used - 2"
+    if not checked:
+        return InvariantResult(
+            name="check_alpha_df_consistency",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="high",
+            detail="Kein Report-Datensatz mit sowohl holdout_alpha_tstat_df ALS AUCH "
+                   "holdout_alpha_n_used — nicht auswertbar.",
+            inconclusive=True,
+        )
+    offenders: dict[str, dict] = {}
+    for r in checked:
+        df = int(r["holdout_alpha_tstat_df"])
+        n_used = int(r["holdout_alpha_n_used"])
+        if df != max(0, n_used - 2):
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = {"holdout_alpha_tstat_df": df, "holdout_alpha_n_used": n_used,
+                              "expected_df": max(0, n_used - 2)}
+    passed = not offenders
+    return InvariantResult(
+        name="check_alpha_df_consistency",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit holdout_alpha_tstat_df != "
+                f"holdout_alpha_n_used - 2: {offenders} (#1284)."),
+    )
+
+
 def check_run_is_not_duplicate(run_fingerprint: str | None, run_id: str | None,
                                prior_entries: list[dict]) -> InvariantResult:
     """Issue #1252 (GH #1122) — erkennt einen bit-identischen Wiederholungslauf: existiert

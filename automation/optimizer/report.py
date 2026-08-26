@@ -2565,11 +2565,15 @@ def _study_record(proposal: dict, study,
         "holdout_alpha_n_periods": holdout_metrics.get("oos_alpha_n_periods"),
         # Issue #1255 (GH #1125), Pitfall #454-Klasse — HC3-robuster Schaetzer neben dem
         # (homoskedastie-unterstellenden) holdout_alpha_tstat oben; das oos_min_alpha_tstat-Gate
-        # konsumiert seither DIESEN Wert (backtest_runner._evaluate_oos_eligibility). holdout_
-        # alpha_tstat_df sind die auf die informative Zeilenzahl gesetzten Freiheitsgrade (statt
-        # der Kalender-Bar-Zaehlung holdout_alpha_n_periods).
+        # konsumiert seither DIESEN Wert (backtest_runner._evaluate_oos_eligibility). Issue #1284
+        # (GH #1157, Katalog #1272-1297, P3) — holdout_alpha_tstat_df sind seither auf
+        # holdout_alpha_n_used (ALLE Bars, dieselbe Grundgesamtheit wie die Regression selbst)
+        # gesetzt, NICHT mehr auf die informative Zeilenzahl (siehe backtest_runner.
+        # _alpha_regression_diagnostics-Docstring fuer die Root-Cause/Wahl); Rohmaterial fuer
+        # invariants.check_alpha_df_consistency.
         "holdout_alpha_tstat_hc3": holdout_metrics.get("oos_alpha_tstat_hc3"),
         "holdout_alpha_tstat_df": holdout_metrics.get("oos_alpha_tstat_df"),
+        "holdout_alpha_n_used": holdout_metrics.get("oos_alpha_n_used"),
         # Issue #1258 (GH #1128) — Regressions-Grundgesamtheit auditierbar: wie viele der
         # holdout_alpha_n_periods Kalender-Bars ueberhaupt Information trugen (Strategie- oder
         # Benchmark-Seite ungleich Null). n_total ist ein expliziter Alias von holdout_alpha_
@@ -4832,6 +4836,12 @@ def _build_report(
     # Promotions-Entscheidung erzwingt): macht die Kovarianz-Zerlegung sichtbar, die entscheidet,
     # OB β die Marktbeteiligung ueberhaupt identifizieren KONNTE.
     all_checks.append(("global", _inv.check_alpha_regression_identifiability(studies_out)))
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 3 — meldet einen konfigurierten,
+    # aber unwirksamen oos_min_alpha_tstat_mode='multiplicity_adjusted' (source='static_fallback').
+    all_checks.append(("global", _inv.check_alpha_tstat_gate_calibrated(
+        tournament_cfg.get("oos_min_alpha_tstat_mode"), studies_out)))
+    # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — alpha_tstat_df == n_used - 2.
+    all_checks.append(("global", _inv.check_alpha_df_consistency(studies_out)))
 
     # Issue #1252 (GH #1122) — der Lauf-Fingerabdruck der EINGANGSMENGE dieses Sweeps (siehe
     # compute_run_fingerprint-Docstring). symbols/strategies werden aus den TATSAECHLICH in diesen
