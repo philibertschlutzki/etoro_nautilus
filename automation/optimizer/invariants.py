@@ -7432,6 +7432,87 @@ def check_run_is_not_duplicate(run_fingerprint: str | None, run_id: str | None,
     )
 
 
+def check_run_determinism(run_fingerprint: str | None, result_fingerprint: str | None,
+                          run_id: str | None, prior_entries: list[dict], *,
+                          current_study_summaries: list[dict] | None = None) -> InvariantResult:
+    """Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — ``run_fingerprint`` (dieselbe
+    simulierte Eingangsmenge) ist unter Parallelitaet KEINE hinreichende Statistik fuer das
+    ERGEBNIS: ``a9d80fba`` und ``f13f29db`` trugen denselben Fingerabdruck UND dieselben
+    ``seed_effective``-Werte je Study, unterschieden sich aber in Trial-Zahlen (Donchian 106/120,
+    FlashCrash 160/141, OpeningRange 106/120, Vwap 100/89) und 52-104 numerischen Feldern je Study
+    — ``check_run_is_not_duplicate`` haette ``f13f29db`` faelschlich als Duplikat von ``a9d80fba``
+    markiert, obwohl er eine ECHTE, abweichende (und damit informative) Stichprobe traegt.
+
+    FAIL ``severity='high'``, wenn ein Vorlauf MIT IDENTISCHEM ``run_fingerprint`` (dieselbe
+    Eingangsmenge, unter einer ANDEREN ``run_id``) einen ABWEICHENDEN ``result_fingerprint``
+    (``report.compute_result_fingerprint``-Docstring) traegt — der Sweep ist unter der
+    tatsaechlich verwendeten Parallelitaet NICHT deterministisch reproduzierbar. ``actual`` nennt
+    ``prior_run_id`` UND, sofern der Aufrufer ``current_study_summaries`` uebergibt (dasselbe
+    ``study_summaries``-Abbild dieses Laufs, siehe ``report._current_run_study_summaries``), die
+    KONKRETEN (Strategie, Symbol)-Paare, deren ``n_trials``/``best_reward``/``n_eligible`` zwischen
+    den beiden Laeufen abweichen (Akzeptanzkriterium #1286: "benennt die abweichenden Studies").
+
+    Kein Vorlauf mit identischem ``run_fingerprint`` gefunden, ODER er traegt (noch) keinen
+    ``result_fingerprint`` (Legacy-Eintrag vor #1286) ⇒ nicht auswertbar (``inconclusive=True``).
+    Stimmen beide Fingerabdruecke ueberein ⇒ PASS (der Regelfall: derselbe run_fingerprint
+    reproduziert deterministisch dasselbe Ergebnis)."""
+    expected = "result_fingerprint stimmt fuer denselben run_fingerprint ueber Laeufe hinweg ueberein"
+    if not run_fingerprint or not result_fingerprint or not run_id:
+        return InvariantResult(
+            name="check_run_determinism", passed=True, expected=expected, actual=None,
+            severity="high",
+            detail="run_fingerprint/result_fingerprint/run_id fehlt (Legacy-Report vor #1286) — "
+                   "nicht auswertbar.",
+            inconclusive=True,
+        )
+    prior_match = next(
+        (e for e in (prior_entries or [])
+         if e.get("fingerprint") == run_fingerprint and e.get("run_id") != run_id),
+        None,
+    )
+    if prior_match is None or not prior_match.get("result_fingerprint"):
+        return InvariantResult(
+            name="check_run_determinism", passed=True, expected=expected,
+            actual={"prior_run_id": prior_match.get("run_id")} if prior_match else None,
+            severity="high",
+            detail="Kein Vorlauf mit identischem run_fingerprint UND bekanntem result_fingerprint "
+                   "— nicht auswertbar.",
+            inconclusive=True,
+        )
+    passed = prior_match["result_fingerprint"] == result_fingerprint
+    diverging_pairs: list[str] = []
+    if not passed and current_study_summaries:
+        # Issue #1286 (GH #1159) Akzeptanzkriterium — "benennt die abweichenden Studies": Vergleich
+        # je (Strategie, Symbol) ueber n_trials/best_reward/n_eligible (dieselben drei Felder, die
+        # den result_fingerprint bilden, siehe report.compute_result_fingerprint).
+        _fields = ("n_trials", "best_reward", "n_eligible")
+        prior_by_pair = {
+            f"{s.get('strategy')}/{s.get('symbol')}": s
+            for s in (prior_match.get("study_summaries") or [])
+        }
+        for s in current_study_summaries:
+            key = f"{s.get('strategy')}/{s.get('symbol')}"
+            prior_s = prior_by_pair.get(key)
+            if prior_s is None or any(prior_s.get(f) != s.get(f) for f in _fields):
+                diverging_pairs.append(key)
+        diverging_pairs.sort()
+    return InvariantResult(
+        name="check_run_determinism",
+        passed=passed,
+        expected=expected,
+        actual={"prior_run_id": prior_match.get("run_id"),
+               "prior_result_fingerprint": prior_match.get("result_fingerprint"),
+               "result_fingerprint": result_fingerprint,
+               "diverging_study_pairs": diverging_pairs or None} if not passed else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"Dieser Lauf ({run_id}) traegt denselben run_fingerprint wie "
+                f"{prior_match.get('run_id')}, aber einen ABWEICHENDEN result_fingerprint — der "
+                "Sweep ist unter der verwendeten Parallelitaet nicht deterministisch "
+                "reproduzierbar (#1286)."),
+    )
+
+
 def check_fail_fast_probe_timeliness(
     fail_fast_probe_triggered_at_wallclock_fraction: float | None,
 ) -> InvariantResult:

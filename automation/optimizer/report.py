@@ -296,6 +296,38 @@ def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def compute_result_fingerprint(study_summaries: list[dict]) -> str:
+    """Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 2 — sha256-Fingerabdruck des
+    tatsaechlichen ERGEBNISSES eines Sweep-Laufs (im Unterschied zu ``compute_run_fingerprint``s
+    Fingerabdruck der EINGANGSMENGE): sortierte Liste von ``(strategy, n_trials, best_reward,
+    n_eligible)`` je Study.
+
+    Root-Cause #1286: ``run_fingerprint`` (dieselbe Eingangsmenge — Commit/Configs/Katalog/Seed/
+    Universum/Semantik) ist unter Parallelitaet (``n_jobs > 1``) KEINE hinreichende Statistik fuer
+    das ERGEBNIS — zwei Laeufe mit identischem ``run_fingerprint`` unterschieden sich in Trial-
+    Zahlen (Donchian 106/120, FlashCrash 160/141, ...) UND 52-104 numerischen Feldern je Study,
+    weil die Plateau-/Struktur-Abbruchkriterien den Zustand der bereits ABGESCHLOSSENEN Trials
+    auswerten — unter Parallelitaet haengt diese Menge von der Scheduling-Reihenfolge ab, nicht
+    vom Seed. ``result_fingerprint`` macht diese Divergenz MASCHINELL nachweisbar (siehe
+    ``invariants.check_run_determinism``): zwei Laeufe mit identischem ``run_fingerprint`` MUESSEN
+    auch denselben ``result_fingerprint`` tragen, sonst ist der Lauf NICHT reproduzierbar.
+
+    Reine Funktion (kein Datei-I/O). Dieselbe Trennzeichen-Konvention wie ``compute_run_
+    fingerprint`` (ASCII Record Separator ``\\x1e`` zwischen den vier Feldern EINER Study-Zeile,
+    ``\\x1d`` (Group Separator) zwischen den Zeilen — beide in keinem der Eingabefelder gueltig).
+    Die Zeilen werden VOR dem Hashen sortiert (deterministisch unabhaengig von der Iterations-
+    reihenfolge von ``study_summaries`` selbst — ``studies_out`` ist Store-Iterationsreihenfolge,
+    keine garantiert stabile Ordnung)."""
+    rows = sorted(
+        "\x1e".join([
+            str(s.get("strategy")), str(s.get("n_trials")),
+            str(s.get("best_reward")), str(s.get("n_eligible")),
+        ])
+        for s in study_summaries
+    )
+    return hashlib.sha256("\x1d".join(rows).encode("utf-8")).hexdigest()
+
+
 def _compute_search_variance(fingerprint_base: str, entries: list[dict]) -> dict | None:
     """Issue #1253 (GH #1123) Fix Punkt 3 — Streuung des TPE-Suchergebnisses ueber unabhaengige
     Ziehungen: liegen >= 3 Eintraege in ``entries`` (der Run-Fingerabdruck-Index PLUS der aktuelle
@@ -4951,18 +4983,32 @@ def _build_report(
     # Familie (gleicher fingerprint_base, siehe compute_run_fingerprint-Docstring). Der aktuelle
     # Lauf zaehlt mit (sein eigener study_summaries-Auszug unten), auch wenn er selbst noch nicht
     # im Index steht.
+    _current_run_study_summaries = [
+        {"strategy": r.get("strategy"), "symbol": r.get("symbol"),
+         "best_reward": r.get("best_reward"), "best_eligible_reward": r.get("best_eligible_reward"),
+         "n_eligible": r.get("n_eligible"), "n_trials": r.get("n_trials")}
+        for r in studies_out
+    ]
+    # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 2 — der ERGEBNIS-Fingerabdruck
+    # dieses Laufs (siehe compute_result_fingerprint-Docstring), zusaetzlich zum EINGANGSmengen-
+    # Fingerabdruck oben. Rohmaterial fuer invariants.check_run_determinism.
+    _result_fingerprint = compute_result_fingerprint(_current_run_study_summaries)
     _current_run_index_entry = {
         "fingerprint": _run_fingerprint, "fingerprint_base": _run_fingerprint_base,
+        "result_fingerprint": _result_fingerprint,
         "run_id": run_id, "started_at_utc": started_at_utc, "seed_salt": _seed_salt,
-        "study_summaries": [
-            {"strategy": r.get("strategy"), "symbol": r.get("symbol"),
-             "best_reward": r.get("best_reward"), "best_eligible_reward": r.get("best_eligible_reward"),
-             "n_eligible": r.get("n_eligible")}
-            for r in studies_out
-        ],
+        "study_summaries": _current_run_study_summaries,
     }
     _search_variance = _compute_search_variance(
         _run_fingerprint_base, _prior_run_fingerprint_entries + [_current_run_index_entry])
+    # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — check_run_determinism: ein
+    # Vorlauf mit IDENTISCHEM run_fingerprint (dieselbe simulierte Eingangsmenge) MUSS denselben
+    # result_fingerprint tragen; weicht er ab, ist der Lauf NICHT deterministisch reproduzierbar
+    # (siehe compute_result_fingerprint-Docstring fuer die Root-Cause).
+    _run_determinism_check = _inv.check_run_determinism(
+        _run_fingerprint, _result_fingerprint, run_id, _prior_run_fingerprint_entries,
+        current_study_summaries=_current_run_study_summaries)
+    all_checks.append(("global", _run_determinism_check))
     if report_source == "final":
         # Issue #1252 (GH #1122) — nur der FINALE Report dieses Laufs traegt zum Index bei (ein
         # Zwischenstand/eine Probe waere sonst selbst schon ein "Duplikat seiner selbst" fuer den
@@ -5595,11 +5641,28 @@ def _build_report(
         # Issue #1252 (GH #1122) — siehe compute_run_fingerprint-Docstring. Zwei Läufe mit
         # identischer Eingangsmenge tragen denselben Wert, unabhängig von run_id/started_at_utc.
         "run_fingerprint": _run_fingerprint,
+        # Issue #1286 (GH #1159, Katalog #1272-1297, P1) — siehe compute_result_fingerprint-
+        # Docstring. Zwei Läufe mit identischem run_fingerprint MUESSEN denselben Wert tragen,
+        # sonst FAILt invariants.check_run_determinism.
+        "result_fingerprint": _result_fingerprint,
         # Issue #1252 (GH #1122) Fix Punkt 3 — run_id des Vorlaufs mit identischem run_fingerprint
         # (siehe invariants.check_run_is_not_duplicate), oder None (kein Duplikat/nicht auswertbar).
+        # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — NUR gesetzt, wenn BEIDE
+        # Fingerabdruecke uebereinstimmen (run_fingerprint UND result_fingerprint): ein Vorlauf mit
+        # identischer Eingangsmenge, aber ABWEICHENDEM Ergebnis (check_run_determinism FAILt) ist
+        # KEIN Duplikat (er traegt sehr wohl neue Information — naemlich, dass der Lauf nicht
+        # deterministisch ist) und erscheint stattdessen als ``nondeterministic_repeat_of`` unten.
         "duplicate_of": (
             _run_duplicate_check.actual.get("duplicate_of_run_id")
-            if _run_duplicate_check.actual else None
+            if _run_duplicate_check.actual and _run_determinism_check.passed is not False
+            else None
+        ),
+        # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — run_id des Vorlaufs mit
+        # identischem run_fingerprint, aber ABWEICHENDEM result_fingerprint (siehe
+        # invariants.check_run_determinism). None, solange kein solcher Vorlauf beobachtet wurde.
+        "nondeterministic_repeat_of": (
+            _run_determinism_check.actual.get("prior_run_id")
+            if _run_determinism_check.passed is False else None
         ),
         # Issue #1104 (Katalog #937) — GETRENNTE Felder statt des vorherigen mehrdeutigen
         # ``git_commit``: ``git_commit_simulation`` (wann die TRIALS liefen) vs.
