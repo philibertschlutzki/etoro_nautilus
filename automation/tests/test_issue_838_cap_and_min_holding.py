@@ -47,6 +47,10 @@ def test_ak3_docstring_survives_introspection():
 
 
 def test_ak2_constructor_clamps_min_holding_time_below_max_bars_and_warns():
+    """Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — max_bars_in_trade=24 wird vom
+    Konstruktor zuerst auf den (umkalibrierten) MAX_BARS_IN_TRADE_HARD_CAP=6 geklemmt; die
+    min_holding_time-Klemmung greift gegen diesen EFFEKTIVEN Wert (6 - 1 = 5), nicht gegen den
+    rohen Konfigurationswert (24)."""
     mock_log = MagicMock()
     with patch.object(Rsi2ReversionStrategy, "_log", new_callable=PropertyMock, return_value=mock_log):
         config = Rsi2ReversionConfig(
@@ -57,12 +61,12 @@ def test_ak2_constructor_clamps_min_holding_time_below_max_bars_and_warns():
         )
         strategy = Rsi2ReversionStrategy(config=config)
 
-    assert strategy._min_holding_time == 23
+    assert strategy._min_holding_time == 5
     mock_log.warning.assert_called_once()
     warning_msg = mock_log.warning.call_args[0][0]
     assert "min_holding_time" in warning_msg
     assert "48" in warning_msg
-    assert "23" in warning_msg
+    assert "5" in warning_msg
 
 
 def test_min_holding_time_below_max_bars_is_left_untouched():

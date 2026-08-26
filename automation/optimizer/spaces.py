@@ -109,28 +109,25 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
 # ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP``.
 #
 # Issue #1030/#1179 (Katalog #866-2) — ACHSEN-HINWEIS fuer JEDES ``max_bars_in_trade``-Band in
-# diesem Modul (der untenstehende Cap UND jede Strategie-spezifische ``_bounds_for(...,
-# "max_bars_in_trade", lo, _MAX_BARS_IN_TRADE_CAP)``-Zeile): alle Bands sind heute in KALENDER-Bars
-# gesampelt (die synthetische 1h-Bar-Achse laeuft fuer EQUITY/COMMODITY ueber einen 24/7-Kalender
-# statt einer Handelszeiten-Maske, ``invariants.check_session_calendar_coherence``,
-# #1011/#1163/#1027/#1176) — die ueblichen Default-Untergrenzen 6/8/12 sind KEINE Handelsstunden-
-# Naeherung, sondern buchstaeblich Kalenderstunden. Nach einer kuenftigen RTH-Umstellung (#1176
-# Schritt 2, eigener ``simulation_semantics_version``-Bump + Pflicht-Purge) sind diese Bands
-# QUANTITATIV NEU ZU KALIBRIEREN (grobe Faustregel aus der Session-Coverage dieses Katalogs: ~12-24
-# Kalender-Bars ⇒ ~7-14 Handels-Bars fuer dieselbe reale Haltedauer) — sie werden durch diesen Fix
-# NICHT automatisch mitverschoben.
+# diesem Modul: alle Bands waren bis #1275 in Kalender-Bars gesampelt (die synthetische 1h-Bar-
+# Achse lief fuer EQUITY/COMMODITY ueber einen 24/7-Kalender statt einer Handelszeiten-Maske,
+# ``invariants.check_session_calendar_coherence``, #1011/#1163/#1027/#1176) — die vormaligen
+# Default-Untergrenzen 6/8/12 waren KEINE Handelsstunden-Naeherung, sondern buchstaeblich
+# Kalenderstunden.
 #
-# Issue #1261/#1131 — dieselbe KALENDER-Achse gilt fuer ``optimizer.json['time_box_bars']``
-# (Normierungs-Deadline des Time-Box-Penalty, an denselben Cap gebunden, siehe dortigen
-# Schema-Kommentar). ``optimizer.json['time_box_bars_axis']`` (Default ``'calendar_24_7'``,
-# EHRLICHER IST-Zustand — NICHT ``'rth'``) deklariert diese Achse jetzt EXPLIZIT, und
-# ``invariants.check_timebox_unit_coherence`` (neu) haelt die Deklaration gegen die tatsaechlich
-# gemessene ``bars_per_calendar_day``-Achse konsistent. Eine Umkalibrierung DIESER Bands (wie
-# auch von ``time_box_bars`` selbst) auf eine RTH-Achse ist bewusst NICHT Teil von #1261/#1131 —
-# die Bar-Erzeugung selbst zaehlt weiterhin Kalender-Bars (#1260/#1130 implementiert dort nur
-# Konfiguration + reine Hilfsfunktionen, siehe backtest.json['_schema']['fields']
-# ['session_hours_by_asset_class']); eine Rekalibrierung auf eine Achse, die die Simulation
-# tatsaechlich noch nicht zaehlt, wuerde die Konfiguration von der Realitaet entkoppeln.
+# Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — GESCHLOSSEN: seit
+# ``backtest_runner._filter_ticks_to_session_hours`` (#1260/#1130-Nachfolger) die Bar-Erzeugung
+# tatsaechlich auf RTH-Ticks umgestellt hat, sind JEDES ``max_bars_in_trade``-Band in diesem Modul
+# (der Cap UND jede Strategie-spezifische ``_bounds_for(..., "max_bars_in_trade", lo,
+# _MAX_BARS_IN_TRADE_CAP)``-Zeile) UND ``optimizer.json['time_box_bars']`` auf die neue Achse
+# umgerechnet (Faktor 0.24 — das GEMESSENE ``session_coverage_fraction`` des #1275-Referenzlaufs,
+# NICHT die fruehere ~0,583-Faustregel dieses Kommentars: jene schaetzte die reale Haltedauer UEBER
+# Session-Luecken hinweg, dieser Faktor rebasiert die Bar-ACHSE SELBST). Alte Kalender-Bar-Werte
+# (zur Referenz): Cap 24, Floor 4, Strategie-Untergrenzen 6/8/12. Neu (RTH-Bars): Cap 6, Floor 1,
+# Strategie-Untergrenzen 1/2/3 (siehe ``_contracts.MAX_BARS_IN_TRADE_HARD_CAP``-Docstring fuer die
+# volle Herleitung). ``optimizer.json['time_box_bars_axis']`` steht seither auf ``'rth'`` (war
+# ``'calendar_24_7'``); ``invariants.check_timebox_unit_coherence`` haelt diese Deklaration
+# weiterhin gegen die tatsaechlich gemessene ``bars_per_calendar_day``-Achse konsistent.
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 # Issue #1067 — die symmetrische Untergrenze zu ``_MAX_BARS_IN_TRADE_CAP`` (Single Source of Truth,
 # siehe _contracts.py-Docstring).
@@ -231,7 +228,7 @@ def _dyn_tp_params(trial) -> dict:
 def _sample_risk_layer(
     trial, *, strategy: str, symbol: str | None,
     atr_bounds: tuple[float, float] = (0.5, 3.0),
-    max_bars_bounds: tuple[int, int] = (12, _MAX_BARS_IN_TRADE_CAP),
+    max_bars_bounds: tuple[int, int] = (3, _MAX_BARS_IN_TRADE_CAP),
 ) -> dict:
     """Issue #1043/#1192 (Katalog #1192) — gemeinsamer Sampling-Block für die beiden Risiko-Layer-
     Parameter, die ``strategies.HourlyStrategyBase`` für JEDE Strategie bereitstellt
@@ -256,11 +253,13 @@ def _sample_risk_layer(
     eigenstaendiger Zweig) sie liefert — die Beobachtung zaehlt, nicht die Implementierung.
 
     ``atr_bounds``/``max_bars_bounds`` bleiben je Aufrufer ueberschreibbar (Fix-Vorgabe: "Bänder je
-    Strategie überschreibbar halten"); Default ``(0.5, 3.0)``/``(12, _MAX_BARS_IN_TRADE_CAP)``
+    Strategie überschreibbar halten"); Default ``(0.5, 3.0)``/``(3, _MAX_BARS_IN_TRADE_CAP)``
     entspricht der bereits an der Mehrzahl der bestehenden Strategien-Zweige (Dynamic Breakout,
-    FlashCrashReversal ausgenommen der 6er-Untergrenze, TrendPullback, VwapExhaustion ausgenommen)
-    verwendeten Bandbreite. Symbol-Override-faehig ueber ``_bounds_for`` (dieselbe #669/#761-
-    Prioritaetskette wie jeder andere Suchraum-Parameter)."""
+    FlashCrashReversal ausgenommen der 1er-Untergrenze, TrendPullback, VwapExhaustion ausgenommen)
+    verwendeten Bandbreite (Issue #1275, GH #1148, Katalog #1272-1297, P0 Fix Punkt 3 — auf die
+    RTH-Bar-Achse umkalibriert, Faktor 0.24, siehe ``_contracts.MAX_BARS_IN_TRADE_HARD_CAP``-
+    Docstring). Symbol-Override-faehig ueber ``_bounds_for`` (dieselbe #669/#761-Prioritaetskette
+    wie jeder andere Suchraum-Parameter)."""
     atr_lo, atr_hi = atr_bounds
     mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", *max_bars_bounds)
     return {
@@ -281,7 +280,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
     if strategy == "HourlyMeanReversionStrategy":
         kp_lo, kp_hi = _bounds_for(strategy, symbol, "keltner_period", 6, 40)
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "keltner_period": trial.suggest_int("keltner_period", kp_lo, kp_hi),
             "keltner_atr_period": trial.suggest_int("keltner_atr_period", 6, 40),
@@ -328,11 +327,11 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),
             # Issue #714 (GR-01) — Obergrenze 120 → 24 (24-Bar-Zeitbox über alle 15 Strategien).
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP),
         }
     elif strategy == "FlashCrashReversalStrategy":
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 6, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 1, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "bb_period": trial.suggest_int("bb_period", 10, 40),
             "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 3.0),
@@ -345,7 +344,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         }
     elif strategy == "VolatilityBreakoutPumpStrategy":
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "bb_period": trial.suggest_int("bb_period", 10, 40),
             "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 3.0),
@@ -355,7 +354,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         }
     elif strategy == "VwapExhaustionStrategy":
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 6, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 1, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "vwap_period": trial.suggest_int("vwap_period", 10, 50),
             "deviation_threshold": trial.suggest_float("deviation_threshold", 0.005, 0.03),
@@ -365,7 +364,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         }
     elif strategy == "DynamicBreakoutStrategy":
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "price_breakout_period": trial.suggest_int("price_breakout_period", 5, 60),
             "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
@@ -380,7 +379,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         # einem dokumentierten Kalibrierlauf, siehe search_space_overrides.json).
         ema_lo, ema_hi = _bounds_for(strategy, symbol, "ema_period", 50, 300)
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "ema_period": trial.suggest_int("ema_period", ema_lo, ema_hi),
             "rsi_period": trial.suggest_int("rsi_period", 5, 21),
@@ -405,8 +404,8 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         # Durchsatzkosten). cooldown_bars-Untergrenze 2 → 6 UND min_holding_time NEU im Suchraum
         # (vorher an KEINER Strategie gesampelt, immer Default 0) begrenzen das Handelsregime.
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 6, 36)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
-        mh_lo, mh_hi = _bounds_for(strategy, symbol, "min_holding_time", 0, 8)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP)
+        mh_lo, mh_hi = _bounds_for(strategy, symbol, "min_holding_time", 0, 2)
         params = {
             "ema_period": trial.suggest_int("ema_period", 20, 100),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 4.0),
@@ -424,7 +423,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.3, 2.5),
             # Issue #714 (GR-01) — Obergrenze 96 → 24.
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP),
         }
     elif strategy == "SqueezeBreakoutStrategy":
         # Issue #689 — Bollinger-innerhalb-Keltner-Squeeze-Release.
@@ -443,7 +442,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         sr_lo, sr_hi = _bounds_for(strategy, symbol, "squeeze_ratio", 0.70, 1.05)
         msb_lo, msb_hi = _bounds_for(strategy, symbol, "min_squeeze_bars", 3, 18)
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 24)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP)
         squeeze_ratio = trial.suggest_float("squeeze_ratio", sr_lo, sr_hi)
         keltner_multiplier = trial.suggest_float("keltner_multiplier", 1.0, 2.5)
         params = {
@@ -469,7 +468,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         # vorher nur TrendPullback/AdxAtr/HourlyMeanReversion/SqueezeBreakout verdrahtet).
         ob_lo, ob_hi = _bounds_for(strategy, symbol, "or_bars", 1, 8)
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 1, 24)
-        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "or_bars": trial.suggest_int("or_bars", ob_lo, ob_hi),
             "or_atr_buffer": trial.suggest_float("or_atr_buffer", 0.0, 1.0),
@@ -493,7 +492,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 24),
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP),
         }
     elif strategy == "Rsi2ReversionStrategy":
         # Issue #692 — Connors-RSI(2)-Pullback-/Bounce-Reversion. Untere `rsi_oversold`-Bound
@@ -507,7 +506,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "cooldown_bars": trial.suggest_int("cooldown_bars", 1, 18),
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 8, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 2, _MAX_BARS_IN_TRADE_CAP),
         }
     elif strategy == "GapContinuationStrategy":
         # Issue #693 — Overnight-/Event-Gap-Continuation. Untere `gap_threshold_pct`-Bound
@@ -517,7 +516,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "gap_threshold_pct": trial.suggest_float("gap_threshold_pct", 0.005, 0.04),
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 3.5),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 3, _MAX_BARS_IN_TRADE_CAP),
         }
     else:
         raise ValueError(f"Unknown strategy: {strategy}")

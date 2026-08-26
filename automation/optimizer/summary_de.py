@@ -1137,33 +1137,60 @@ def _section_4_longest_trades(report: dict) -> str:
         lines.append("")
         lines.append("### 4.1 Zeitbox-Anteil und Median-Haltedauer (Kalender- vs. Handelszeit)")
         lines.append("")
-        lines.append(
-            "`Handels-Bars (geschätzt)` = `Median-Bars · session_coverage_fraction` — solange die "
-            "Bar-Achse ungefiltert 24/7 läuft (#1027/#1176 Schritt 1), ist das eine grobe Näherung, "
-            "keine echte Handelszeiten-Zählung (die kommt erst mit Schritt 2). Issue #1261/#1131: "
-            "`optimizer.json['time_box_bars_axis']` deklariert diesen Ist-Zustand jetzt explizit "
-            "(`'calendar_24_7'`, solange Schritt 2 aussteht), und `invariants.check_timebox_unit_"
-            "coherence` haelt diese Deklaration gegen die tatsaechlich gemessene Bar-Achse "
-            "konsistent — diese Spalte entfaellt erst, wenn Schritt 2 (echte RTH-Bar-Erzeugung) "
-            "steht UND `time_box_bars_axis` auf `'rth'` umgestellt ist."
-        )
-        lines.append("")
-        lines.append(
-            "| Strategie | Symbol | TIME_BOX-Anteil | Median-Bars (Kalender) | "
-            "Handels-Bars (geschätzt) |"
-        )
-        lines.append("|---|---|---:|---:|---:|")
-        for r in sorted(_timebox_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
-            _bars = r.get("median_bars_held")
-            _coverage = r.get("session_coverage_fraction")
-            _trading_bars = (
-                round(_bars * _coverage, 2) if _bars is not None and _coverage is not None else None)
+        # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 4 (Akzeptanzkriterium) —
+        # "Abschnitt 4.1 des Reports verliert die Spalte 'Handels-Bars (geschätzt)'": seit
+        # backtest_runner._filter_ticks_to_session_hours die Bar-Erzeugung tatsaechlich auf RTH
+        # umgestellt hat (#1260/#1130-Nachfolger), zaehlt median_bars_held SELBST bereits
+        # Handels-Bars — eine zusaetzliche, GESCHAETZTE Spalte waere redundant/irrefuehrend. Nur
+        # wirksam, wenn DIESER Report tatsaechlich unter time_box_bars_axis='rth' gebaut wurde
+        # (report["time_box_bars_axis"], siehe report._build_report); ein Alt-Report/-Replay unter
+        # der frueheren 'calendar_24_7'-Deklaration zeigt weiterhin die Schaetzspalte (bit-
+        # identisches Pre-#1275-Verhalten).
+        _axis = report.get("time_box_bars_axis")
+        if _axis == "rth":
             lines.append(
-                f"| {r.get('strategy')} | {r.get('symbol')} | "
-                f"{_fmt_pct(r.get('time_box_exit_fraction'))} | "
-                f"{_fmt_num(_bars, digits=2)} | "
-                f"{_fmt_num(_trading_bars, digits=2)} |"
+                "Die Bar-Achse zaehlt seit Issue #1275 (GH #1148) tatsaechlich Handels-Bars "
+                "(`time_box_bars_axis='rth'`, `invariants.check_timebox_unit_coherence` haelt das "
+                "gegen die gemessene `bars_per_calendar_day`-Achse konsistent) — `Median-Bars` "
+                "unten ist bereits die reale Handelszeit-Zaehlung, keine Schaetzung mehr."
             )
+            lines.append("")
+            lines.append("| Strategie | Symbol | TIME_BOX-Anteil | Median-Bars (Handel) |")
+            lines.append("|---|---|---:|---:|")
+            for r in sorted(_timebox_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+                lines.append(
+                    f"| {r.get('strategy')} | {r.get('symbol')} | "
+                    f"{_fmt_pct(r.get('time_box_exit_fraction'))} | "
+                    f"{_fmt_num(r.get('median_bars_held'), digits=2)} |"
+                )
+        else:
+            lines.append(
+                "`Handels-Bars (geschätzt)` = `Median-Bars · session_coverage_fraction` — solange die "
+                "Bar-Achse ungefiltert 24/7 läuft (#1027/#1176 Schritt 1), ist das eine grobe Näherung, "
+                "keine echte Handelszeiten-Zählung (die kommt erst mit Schritt 2). Issue #1261/#1131: "
+                "`optimizer.json['time_box_bars_axis']` deklariert diesen Ist-Zustand jetzt explizit "
+                "(`'calendar_24_7'`, solange Schritt 2 aussteht), und `invariants.check_timebox_unit_"
+                "coherence` haelt diese Deklaration gegen die tatsaechlich gemessene Bar-Achse "
+                "konsistent — diese Spalte entfaellt erst, wenn Schritt 2 (echte RTH-Bar-Erzeugung) "
+                "steht UND `time_box_bars_axis` auf `'rth'` umgestellt ist."
+            )
+            lines.append("")
+            lines.append(
+                "| Strategie | Symbol | TIME_BOX-Anteil | Median-Bars (Kalender) | "
+                "Handels-Bars (geschätzt) |"
+            )
+            lines.append("|---|---|---:|---:|---:|")
+            for r in sorted(_timebox_rows, key=lambda r: (r.get("strategy") or "", r.get("symbol") or "")):
+                _bars = r.get("median_bars_held")
+                _coverage = r.get("session_coverage_fraction")
+                _trading_bars = (
+                    round(_bars * _coverage, 2) if _bars is not None and _coverage is not None else None)
+                lines.append(
+                    f"| {r.get('strategy')} | {r.get('symbol')} | "
+                    f"{_fmt_pct(r.get('time_box_exit_fraction'))} | "
+                    f"{_fmt_num(_bars, digits=2)} | "
+                    f"{_fmt_num(_trading_bars, digits=2)} |"
+                )
     return "\n".join(lines)
 
 

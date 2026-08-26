@@ -1546,12 +1546,39 @@ def is_within_session_hours(
     return open_minutes <= time_of_day < close_minutes
 
 
+def _filter_ticks_to_session_hours(
+    ticks: list, session_hours_by_asset_class: dict | None, asset_class_key: str | None,
+) -> list:
+    """Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die in #1260 (GH
+    #1130) dokumentierte Verdrahtungsluecke: ``resolve_session_hours_by_asset_class``/
+    ``is_within_session_hours`` waren reine, unit-getestete Funktionen OHNE Call-Site im
+    Tick-Lade-Pfad (siehe deren Docstrings, "BEWUSSTER SCOPE"). Verwirft Ticks ausserhalb der
+    aufgeloesten Handelszeit, STATT sie NautilusTraders ``TimeBarAggregator`` ueberlassen, der die
+    Luecke bislang mit flachen O=H=L=C-Fuellbars ueberbrueckte (Root-Cause #1260-Symptom:
+    ``zero_range_bar_fraction=1.0`` in 14/14 Studies; #1275-Symptom: ``bars_per_calendar_day=24,00``
+    UND ``session_coverage_fraction=0,2389-0,2402`` in 56/56 Studies — eine 24-Bar-Zeitbox entsprach
+    nur 2,15-5,02 geschaetzten Handels-Bars).
+
+    ``None`` (kein Fenster konfiguriert ODER ``asset_class_key`` fehlt/``None``, z. B. FOREX/CRYPTO,
+    siehe ``resolve_session_hours_by_asset_class``-Docstring) ⇒ ``ticks`` UNVERAENDERT (bit-
+    identisches Alt-Verhalten, dieselbe Fail-open-Konvention)."""
+    if not asset_class_key:
+        return ticks
+    window = resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
+    if window is None:
+        return ticks
+    open_utc, close_utc = window
+    return [t for t in ticks if is_within_session_hours(int(t.ts_event), open_utc, close_utc)]
+
+
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,
     start_ns: int | None,
     end_ns: int | None,
     spread_bps: float = 0.0,
+    session_hours_by_asset_class: dict | None = None,
+    asset_class_key: str | None = None,
 ) -> list:
     try:
         ticks = catalog.quote_ticks(
@@ -1559,6 +1586,12 @@ def load_ticks_from_catalog(
             start=start_ns,
             end=end_ns,
         )
+        if not ticks:
+            return []
+        # Issue #1275 (GH #1148) Fix Punkt 2 — VOR jeder Precision-/Spread-Normalisierung unten:
+        # eine ausserhalb der Session verworfene Tick braucht keine der beiden nachfolgenden
+        # Transformationen mehr zu durchlaufen.
+        ticks = _filter_ticks_to_session_hours(ticks, session_hours_by_asset_class, asset_class_key)
         if not ticks:
             return []
 
@@ -7244,6 +7277,10 @@ def run_single_backtest_worker(
     # commission_bps/atr_floor_bps_by_asset_class oben — der Worker laedt tournament.json nicht
     # selbst neu).
     min_stop_to_cost_ratio: float = 3.0,
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — asset-class-aufgelöstes
+    # RTH-Fenster (resolve_session_hours_by_asset_class/is_within_session_hours, #1260/GH #1130),
+    # dieselbe EINMAL-im-Elternprozess-geladen-Konvention wie atr_floor_bps_by_asset_class oben.
+    session_hours_by_asset_class: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -7381,7 +7418,10 @@ def run_single_backtest_worker(
                 "atr_floor_bps": atr_floor_bps_resolved,
             })
 
-            ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns, spread_bps)
+            ticks = load_ticks_from_catalog(
+                catalog, inst_id_str, start_ns, end_ns, spread_bps,
+                session_hours_by_asset_class=session_hours_by_asset_class,
+                asset_class_key=asset_class_key)
         except InstrumentMetadataIncompleteError as e:
             wlog_err(f"REJECT_INSTRUMENT_METADATA_INCOMPLETE: {e}", exc=False)
             res = _empty_result(inst_id_str, strategy_class_name, strat)
@@ -7852,6 +7892,9 @@ def run_backtest() -> None:
     # (resolve_opening_range_session_open_hour).
     opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
         "opening_range_session_open_hour_by_asset_class", {})
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die #1260/GH #1130-
+    # Verdrahtungsluecke (siehe load_ticks_from_catalog/_filter_ticks_to_session_hours-Docstrings).
+    session_hours_by_asset_class = backtest_global_cfg.get("session_hours_by_asset_class", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -8203,6 +8246,7 @@ def run_backtest() -> None:
                         slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
+                        session_hours_by_asset_class=session_hours_by_asset_class,
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -8221,6 +8265,7 @@ def run_backtest() -> None:
                         slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
+                        session_hours_by_asset_class=session_hours_by_asset_class,
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -8264,6 +8309,7 @@ def run_backtest() -> None:
                         slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
+                        session_hours_by_asset_class=session_hours_by_asset_class,
                     )
                     break
                 except Exception as e:
@@ -8358,6 +8404,8 @@ def _run_remaining_sequentially(
     slippage_bps_p50_by_asset_class: dict | None = None,
     # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe run_single_backtest_worker-Docstring.
     min_stop_to_cost_ratio: float = 3.0,
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) — siehe run_single_backtest_worker-Docstring.
+    session_hours_by_asset_class: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -8383,6 +8431,7 @@ def _run_remaining_sequentially(
             slippage_bps_by_asset_class=slippage_bps_by_asset_class,
             slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
             min_stop_to_cost_ratio=min_stop_to_cost_ratio,
+            session_hours_by_asset_class=session_hours_by_asset_class,
         )
         _flush_worker_log(rem_log)
         done_count += 1

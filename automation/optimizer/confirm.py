@@ -660,6 +660,22 @@ def _metrics_dict(m) -> dict:
         "oos_alpha_n_y_nonzero": getattr(m, "oos_alpha_n_y_nonzero", None),
         "oos_alpha_n_x_nonzero": getattr(m, "oos_alpha_n_x_nonzero", None),
         "oos_alpha_n_both_zero": getattr(m, "oos_alpha_n_both_zero", None),
+        # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — siehe parsing.TournamentMetrics-Docstring
+        # (oos_alpha_tstat_df == oos_alpha_n_used - 2, invariants.check_alpha_df_consistency).
+        # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Kovarianz-Zerlegung, Rohmaterial fuer
+        # invariants.check_alpha_regression_identifiability. Beide Blöcke fehlten hier bislang
+        # komplett (Pitfall #421-Klasse, siehe oben bei oos_f_realized_peak_max/#1297) — parsing.py
+        # parste sie korrekt, aber diese kuratierte Teilmenge liess sie aus, wodurch sie confirm.py's
+        # Holdout-Re-Evaluation nie erreichten.
+        "oos_alpha_n_used": getattr(m, "oos_alpha_n_used", None),
+        "oos_alpha_corr_xy": getattr(m, "oos_alpha_corr_xy", None),
+        "oos_alpha_sd_x": getattr(m, "oos_alpha_sd_x", None),
+        "oos_alpha_sd_y": getattr(m, "oos_alpha_sd_y", None),
+        "oos_alpha_cov_xy": getattr(m, "oos_alpha_cov_xy", None),
+        "oos_alpha_cov_in_market": getattr(m, "oos_alpha_cov_in_market", None),
+        "oos_alpha_cov_out_of_market": getattr(m, "oos_alpha_cov_out_of_market", None),
+        "oos_alpha_cov_exit_bars": getattr(m, "oos_alpha_cov_exit_bars", None),
+        "oos_alpha_n_in_market": getattr(m, "oos_alpha_n_in_market", None),
         # Issue #1078/#1226 (P1, Semantik-Bump) — welche Kostenbasis DIESE Holdout-Re-Evaluation
         # tatsaechlich speiste (siehe backtest_runner._apply_calibrated_slippage_deduction). Der
         # Schluessel traegt bewusst den vollen ``oos_``-Feldnamen (Konvention dieses Dicts, siehe

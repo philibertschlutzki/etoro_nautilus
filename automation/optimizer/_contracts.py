@@ -14,21 +14,34 @@ Import-Zyklus zu riskieren.
 """
 from __future__ import annotations
 
-# Issue #714/GR-01 — die 24-Bar-Zeitbox-Obergrenze für ``max_bars_in_trade``. Der Bar-Zähler-Exit
+# Issue #714/GR-01 — die Bar-Zeitbox-Obergrenze für ``max_bars_in_trade``. Der Bar-Zähler-Exit
 # in ``HourlyStrategyBase`` erzwingt sie unabhängig vom je Trial gesampelten Wert; der Optuna-
 # Suchraum (``spaces.py``) und die Report-Invarianten (``invariants.py``) dürfen NIE grösser
 # suchen/prüfen als dieser Deckel.
-MAX_BARS_IN_TRADE_HARD_CAP = 24
+#
+# Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — UMKALIBRIERT von 24 (Kalender-Bars,
+# #1260/#1130s dokumentierter EHRLICHER IST-Zustand vor diesem Fix) auf 6 (RTH-Bars), Faktor 0.24
+# (round(24 * 0.24) = 6), derselbe Faktor wie ``backtest.json['session_hours_by_asset_class']``s
+# gemessenes ``session_coverage_fraction`` (0,2389-0,2402 im #1275-Referenzlauf) — NICHT die
+# frühere ~0,583-Faustregel aus #1030/#1179 (jene schätzte die reale HALTEDAUER ueber Session-
+# Luecken hinweg, dieser Faktor rebasiert die BAR-ACHSE SELBST auf dieselbe reale Zeitspanne, die
+# vorher 24 KALENDER-Bars brauchte). Nur zulässig, WEIL die Bar-Erzeugung selbst jetzt tatsächlich
+# auf RTH-Ticks filtert (siehe ``backtest_runner._filter_ticks_to_session_hours``) — vor diesem Fix
+# (#1260/#1130) wäre eine Rekalibrierung hier die Konfiguration von der Realität entkoppelt.
+MAX_BARS_IN_TRADE_HARD_CAP = 6
 
 # Issue #1067 (Pitfall #372) — die GR-01-Zeitbox war bislang NUR nach oben verdrahtet
 # (``MAX_BARS_IN_TRADE_HARD_CAP``); seit der automatische Suchraum-Rückschrieb (#761/#763) auch
 # Untergrenzen absenkt, braucht dieselbe Invariante einen symmetrischen Wächter nach unten. Unter
 # dieser Bar-Anzahl ist eine 1h-Bar-Position (GR-01-Semantik: Trade schliesst nach ~1 Handelstag)
 # kein Zeitbox-Handel mehr, sondern Rauschen-Traden ohne Informationsgewinn (vgl. #908-Befund zu
-# AdxAtrMomentum). Bewusst <= dem niedrigsten KURATIERTEN Default-Suchraum-Boden, der heute über
-# ``spaces.sample_params`` existiert (FlashCrashReversal/VwapExhaustion: 6) — der Floor begrenzt
-# NUR den automatischen Rückschrieb, er verengt keinen bestehenden kuratierten Suchraum.
-MIN_BARS_IN_TRADE_FLOOR = 4
+# AdxAtrMomentum).
+#
+# Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — UMKALIBRIERT von 4 auf 1
+# (round(4 * 0.24) = 1, derselbe Faktor/dieselbe Begründung wie ``MAX_BARS_IN_TRADE_HARD_CAP``
+# oben). Der Floor begrenzt NUR den automatischen Rückschrieb, er verengt keinen bestehenden
+# kuratierten Suchraum.
+MIN_BARS_IN_TRADE_FLOOR = 1
 
 # Issue #938 (Katalog A, Pitfall #294) — EINZIGER Konstruktor für den (Strategie, Symbol)-Paar-
 # Schlüssel. Vor diesem Fix baute jede Stelle (``invariants.py``, ``report.py``, ``confirm.py``,

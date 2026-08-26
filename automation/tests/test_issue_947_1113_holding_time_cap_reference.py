@@ -20,7 +20,7 @@ def _study(strategy, symbol, max_holding_time_s):
 def test_reported_factor_times_cap_s_equals_max_holding_time_s():
     """Akzeptanzkriterium #947: fuer jeden Offender rechnet gemeldeter Faktor * cap_s ==
     max_holding_time_s bis auf Rundung (2 Nachkommastellen im Faktor)."""
-    cap_s = 97_200.0  # (24 + 3) Bars * 3600s, Default-Konfiguration
+    cap_s = 32_400.0  # (6 + 3) Bars * 3600s, Default-Konfiguration (Issue #1275/GH #1148: 24->6)
     records = [
         _study("AdxAtrMomentumStrategy", "NVDA.ETORO", cap_s * 3.7),
         _study("SqueezeBreakoutStrategy", "TSLA.ETORO", cap_s * 5.2),
@@ -35,17 +35,17 @@ def test_reported_factor_times_cap_s_equals_max_holding_time_s():
 def test_detail_text_names_the_denominator_actually_used():
     """Der Text muss cap_s EXPLIZIT als den verwendeten Nenner benennen, nicht nur
     hard_threshold_s."""
-    cap_s = 97_200.0
+    cap_s = 32_400.0  # (6 + 3) Bars * 3600s (Issue #1275/GH #1148: 24->6)
     records = [_study("A", "B.ETORO", cap_s * 4.0)]
     result = inv.check_holding_time_cap(records)
     assert result.passed is False
-    assert "cap_s=97200s" in result.detail
-    assert "hard_threshold_s=291600s" in result.detail
+    assert "cap_s=32400s" in result.detail
+    assert "hard_threshold_s=97200s" in result.detail
     assert "NICHT von hard_threshold_s" in result.detail
 
 
 def test_provenance_carries_max_holding_time_s_in_plain_text():
-    cap_s = 97_200.0
+    cap_s = 32_400.0  # (6 + 3) Bars * 3600s (Issue #1275/GH #1148: 24->6)
     records = [_study("A", "B.ETORO", cap_s * 4.0)]
     result = inv.check_holding_time_cap(records)
     assert result.provenance["magnitude_offenders_max_holding_time_s"]["A/B.ETORO"] == cap_s * 4.0
@@ -66,7 +66,7 @@ def test_b9_reference_scenario_factor_is_computed_against_cap_s_not_hard_thresho
 
 
 def test_passes_below_hard_threshold():
-    cap_s = 97_200.0
+    cap_s = 32_400.0  # (6 + 3) Bars * 3600s (Issue #1275/GH #1148: 24->6)
     records = [_study("A", "B.ETORO", cap_s * 2.9)]  # unter hard_multiple=3.0
     result = inv.check_holding_time_cap(records)
     assert result.passed is True

@@ -8,8 +8,9 @@ unauffälligen Anteil (3 %) — "wie viele" und "wie schlimm" sind zwei verschie
 """
 from automation.optimizer import invariants as inv
 
-# cap_s = (24 + 3) * 3600 = 97200s (Default max_bars_in_trade_cap=24, slack=3.0, bar_seconds=3600).
-_CAP_S = 27 * 3600.0
+# cap_s = (6 + 3) * 3600 = 32400s (Default max_bars_in_trade_cap=6 seit Issue #1275/GH #1148,
+# Katalog #1272-1297, P0 -- vormals 24 --, slack=3.0, bar_seconds=3600).
+_CAP_S = 9 * 3600.0
 
 
 def test_magnitude_branch_fails_on_extreme_single_position_despite_low_fraction():

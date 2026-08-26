@@ -100,10 +100,12 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # den Stop dauerhaft an den Kurs klemmt (Pitfall #285, #897-Regressionstest), OHNE dafuer auf
     # die Monotonie der Ratsche selbst zu verzichten (die #897-Loesung, die #1094 revidiert).
     trailing_min_atr_frac: float = 0.5
-    # Issue #714 (GR-01) — 24h-Zeitbox = 24 Bar-Intervalle (1h-Bars), nicht Kalenderzeit. Der
-    # bestehende Bar-Zähler-Exit (siehe _check_exits_and_update) ist der Mechanismus; dieser Default
-    # UND alle Optimizer-Suchraum-Obergrenzen (spaces.py) sind auf <= 24 geklemmt.
-    max_bars_in_trade: int = 24
+    # Issue #714 (GR-01) — Zeitbox = Bar-Intervalle (1h-Bars), nicht Kalenderzeit. Der bestehende
+    # Bar-Zähler-Exit (siehe _check_exits_and_update) ist der Mechanismus; dieser Default UND alle
+    # Optimizer-Suchraum-Obergrenzen (spaces.py) sind auf <= MAX_BARS_IN_TRADE_HARD_CAP geklemmt.
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 (Kalender-Bars) → 6
+    # (RTH-Bars), Faktor 0.24, siehe _contracts.MAX_BARS_IN_TRADE_HARD_CAP-Docstring.
+    max_bars_in_trade: int = 6
     profit_target_pct: float | None = None
     cooldown_bars: int = 12
     trend_filter_period: int = 0
@@ -155,11 +157,13 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
-# Issue #714 (GR-01) — 24-Bar-Zeitbox (1h-Bars). Auch die HARTE Obergrenze für aus dem Cache
-# geladene Alt-Configs/Studies mit Werten > 24 (Konstruktor-Klemmung unten). Issue #858 — Single
-# Source of Truth über einen Import statt einer eigenen dritten Kopie des Literals, konsistent mit
-# ``spaces._MAX_BARS_IN_TRADE_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP`` (Pitfall #271).
-DEFAULT_MAX_BARS_IN_TRADE = 24
+# Issue #714 (GR-01) — Bar-Zeitbox (1h-Bars). Auch die HARTE Obergrenze für aus dem Cache geladene
+# Alt-Configs/Studies mit Werten > MAX_BARS_IN_TRADE_HARD_CAP (Konstruktor-Klemmung unten).
+# Issue #858 — Single Source of Truth über einen Import statt einer eigenen dritten Kopie des
+# Literals, konsistent mit ``spaces._MAX_BARS_IN_TRADE_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP``
+# (Pitfall #271). Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 → 6, siehe
+# HourlyStrategyConfig.max_bars_in_trade-Kommentar.
+DEFAULT_MAX_BARS_IN_TRADE = 6
 
 # Issue #712 (Req-02+Req-03) — Cancel/Replace nur bei |ΔTarget| > 1 Tick (Order-Sturm-Schutz,
 # konsistent mit etoro_rate_limiter.py).

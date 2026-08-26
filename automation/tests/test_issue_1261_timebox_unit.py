@@ -34,6 +34,14 @@ nicht zählt, und würde die Konfiguration von der Realität entkoppeln (schlimm
 quo). Die "Handels-Bars (geschätzt)"-Spalte in §4.1 (``summary_de.py``) bleibt aus demselben
 Grund bestehen; sie referenziert jetzt zusätzlich ``time_box_bars_axis`` als expliziten
 Ist-Zustand-Hinweis, statt zu behaupten, Schritt 2 sei bereits erfolgt.
+
+NACHTRAG (Issue #1275, GH #1148, Katalog #1272-1297, P0): Schritt 2 ist seither GESCHLOSSEN —
+``backtest_runner._filter_ticks_to_session_hours`` stellt die Bar-Erzeugung fuer EQUITY/COMMODITY
+tatsaechlich auf RTH um, ``time_box_bars_axis`` steht auf ``'rth'``, ``time_box_bars``/die
+``max_bars_in_trade``-Bounds sind umkalibriert, und §4.1s Schaetzspalte entfaellt fuer jeden Report,
+der unter dieser Deklaration gebaut wird (siehe ``summary_de._section_4_longest_trades`` und
+``test_issue_1275_rth_bar_axis_wiring.py``). Der BEWUSSTE SCOPE oben beschreibt weiterhin akkurat
+den Stand VOR #1275 und bleibt als historische Begruendung stehen.
 """
 import json
 import sys
@@ -156,9 +164,12 @@ def test_check_is_wired_into_the_report():
 
 # --- optimizer.json ------------------------------------------------------------------------------
 
-def test_optimizer_json_declares_time_box_bars_axis_as_the_honest_calendar_default():
+def test_optimizer_json_declares_time_box_bars_axis_as_rth():
+    """Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — GESCHLOSSEN: seit die
+    Bar-Erzeugung tatsaechlich auf RTH-Ticks filtert (backtest_runner._filter_ticks_to_session_
+    hours), ist 'rth' (vormals der EHRLICHE IST-Zustand 'calendar_24_7') die korrekte Deklaration."""
     cfg = json.loads(_OPTIMIZER_JSON_PATH.read_text())
-    assert cfg["time_box_bars_axis"] == "calendar_24_7"
+    assert cfg["time_box_bars_axis"] == "rth"
 
 
 def test_optimizer_json_schema_documents_time_box_bars_axis():
@@ -169,13 +180,15 @@ def test_optimizer_json_schema_documents_time_box_bars_axis():
 
 # --- summary_de.py §4.1: keine falsche "Schritt 2 ist erfolgt"-Behauptung ----------------------
 
-def test_section_4_1_still_shows_the_estimate_column_since_step_2_has_not_shipped():
-    """Das Issue verlangt woertlich "§4.1 zeigt keine Schätzspalte mehr" — das setzt voraus, dass
-    die Bar-Erzeugung tatsaechlich auf RTH umgestellt ist (Schritt 2). Da dieser Fix Schritt 2
-    bewusst NICHT enthaelt (siehe Moduldocstring), MUSS die Schaetzspalte weiterhin erscheinen;
-    sie zu entfernen waere eine falsche Tatsachenbehauptung. Der Test haelt diese bewusste
-    Abweichung fest, statt sie stillschweigend zu ignorieren."""
+def test_section_4_1_still_shows_the_estimate_column_for_a_legacy_calendar_report():
+    """Issue #1275 (GH #1148, Katalog #1272-1297, P0) hat Schritt 2 (echte RTH-Bar-Erzeugung)
+    GESCHLOSSEN — die Schaetzspalte entfaellt SEITHER, aber nur fuer einen Report, der tatsaechlich
+    unter time_box_bars_axis='rth' gebaut wurde (siehe test_issue_1275_rth_bar_axis_wiring.py).
+    Ein Alt-Report/-Replay OHNE diese Deklaration (z. B. `time_box_bars_axis` fehlt, oder traegt
+    weiterhin `'calendar_24_7'`) zeigt bit-identisch die alte Schaetzspalte — sie zu entfernen waere
+    dort eine falsche Tatsachenbehauptung."""
     report = {
+        "time_box_bars_axis": "calendar_24_7",
         "studies": [
             {"strategy": "Strat", "symbol": "NVDA.ETORO", "time_box_exit_fraction": 0.49,
              "median_bars_held": 3.0, "session_coverage_fraction": 0.19},
@@ -188,6 +201,7 @@ def test_section_4_1_still_shows_the_estimate_column_since_step_2_has_not_shippe
 
 def test_section_4_1_estimate_note_references_the_new_declarative_axis_config():
     report = {
+        "time_box_bars_axis": "calendar_24_7",
         "studies": [
             {"strategy": "Strat", "symbol": "NVDA.ETORO", "time_box_exit_fraction": 0.49,
              "median_bars_held": 3.0, "session_coverage_fraction": 0.19},

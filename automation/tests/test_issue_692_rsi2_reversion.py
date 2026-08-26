@@ -101,7 +101,8 @@ def test_defaults_present_and_match_spec():
     assert d["rsi_oversold"] == 10.0
     assert d["rsi_overbought"] == 90.0
     assert d["ema_period"] == 100
-    assert d["max_bars_in_trade"] == 24
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 -> 6 (Faktor 0.24).
+    assert d["max_bars_in_trade"] == 6
 
 
 def test_spaces_branch_produces_valid_params():

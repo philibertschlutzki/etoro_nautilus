@@ -51,12 +51,13 @@ def test_theoretical_max_oos_trades_is_none_for_strategy_without_cycle_model():
 
 
 def test_theoretical_max_oos_trades_uses_the_fastest_cycle_bound():
-    """cooldown_bars=[2,36], max_bars_in_trade=[12,24] fuer TrendPullback ⇒ schnellster Zyklus
-    2+12=14 Bars; ueber splits*oos_window_days*bars_per_day gepoolte Bars // 14."""
+    """cooldown_bars=[2,36], max_bars_in_trade=[3,6] fuer TrendPullback (Issue #1275, GH #1148,
+    Katalog #1272-1297, P0 Fix Punkt 3 -- vormals [12,24]) ⇒ schnellster Zyklus 2+3=5 Bars; ueber
+    splits*oos_window_days*bars_per_day gepoolte Bars // 5."""
     wf = {"splits": 4, "oos_window_days": 45}
     result = theoretical_max_oos_trades("TrendPullbackStrategy", walk_forward=wf, bars_per_day=24)
     total_bars = 4 * 45 * 24
-    assert result == total_bars // 14
+    assert result == total_bars // 5
 
 
 def test_theoretical_max_oos_trades_shrinks_with_narrower_oos_window():

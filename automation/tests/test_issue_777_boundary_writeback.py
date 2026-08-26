@@ -195,21 +195,24 @@ def test_confirm_reads_bounds_widening_factor_from_config(tmp_path, monkeypatch)
     assert recorded[0]["proposed_bounds"]["cooldown_bars"] == [lo, expected_hi]
 
 
-# ── Akzeptanzkriterium #777/2: max_bars_in_trade wird auf 24 gekappt (#714/GR-01 bindend) ────────
+# ── Akzeptanzkriterium #777/2: max_bars_in_trade wird auf den Domaenen-Cap gekappt (#714/GR-01
+# bindend). Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — der Cap wurde von 24
+# (Kalender-Bars) auf 6 (RTH-Bars) umkalibriert (Faktor 0.24); die Test-Eingabebounds unten sind
+# entsprechend auf innerhalb der neuen Domaene [1, 6] verschoben (vormals [10,20]/[12,20]).
 def test_max_bars_in_trade_proposal_is_capped_at_714_hard_limit():
     proposals = propose_bounds_from_boundary_hits(
         {"max_bars_in_trade": "high"}, "TrendPullbackStrategy",
-        current_bounds={"max_bars_in_trade": (12.0, 20.0)}, widen_fraction=1.5)
-    # Ohne Kappung waere 20 + 1.5*8 = 32.0 — die #714-Zeitbox-Obergrenze ist 24.
-    assert proposals["max_bars_in_trade"] == [12.0, 24.0]
+        current_bounds={"max_bars_in_trade": (3.0, 5.0)}, widen_fraction=1.5)
+    # Ohne Kappung waere 5 + 1.5*2 = 8.0 — die #714-Zeitbox-Obergrenze ist 6 (seit #1275).
+    assert proposals["max_bars_in_trade"] == [3.0, 6.0]
 
 
 def test_max_bars_in_trade_proposal_below_cap_is_unaffected():
     proposals = propose_bounds_from_boundary_hits(
         {"max_bars_in_trade": "high"}, "TrendPullbackStrategy",
-        current_bounds={"max_bars_in_trade": (10.0, 16.0)}, widen_fraction=0.3)
-    assert proposals["max_bars_in_trade"] == [10.0, round(16.0 + 0.3 * 6.0, 6)]
-    assert proposals["max_bars_in_trade"][1] < 24.0
+        current_bounds={"max_bars_in_trade": (2.0, 4.0)}, widen_fraction=0.3)
+    assert proposals["max_bars_in_trade"] == [2.0, round(4.0 + 0.3 * 2.0, 6)]
+    assert proposals["max_bars_in_trade"][1] < 6.0
 
 
 def test_other_params_unaffected_by_the_714_cap():

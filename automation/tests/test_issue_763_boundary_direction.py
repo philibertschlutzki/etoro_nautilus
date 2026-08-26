@@ -83,12 +83,16 @@ def test_propose_bounds_widens_upper_bound_for_high_direction():
 
 
 def test_propose_bounds_handles_multiple_params_independently():
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — max_bars_in_trade's
+    # Domaenenregister ist auf [1, 6] umkalibriert (Faktor 0.24, vormals [4, 24]); (12.0, 24.0)
+    # waere seither selbst ausserhalb der Domaene -- (2.0, 5.0) haelt denselben Testzweck
+    # (Untergrenze bleibt bei "high"-Richtung unveraendert) innerhalb der neuen Domaene.
     proposals = propose_bounds_from_boundary_hits(
         {"cooldown_bars": "low", "max_bars_in_trade": "high"}, "TrendPullbackStrategy",
-        current_bounds={"cooldown_bars": (2.0, 36.0), "max_bars_in_trade": (12.0, 24.0)})
+        current_bounds={"cooldown_bars": (2.0, 36.0), "max_bars_in_trade": (2.0, 5.0)})
     assert set(proposals.keys()) == {"cooldown_bars", "max_bars_in_trade"}
     assert proposals["cooldown_bars"][1] == 36.0            # Obergrenze unveraendert
-    assert proposals["max_bars_in_trade"][0] == 12.0         # Untergrenze unveraendert
+    assert proposals["max_bars_in_trade"][0] == 2.0          # Untergrenze unveraendert
 
 
 def test_propose_bounds_skips_params_without_known_bounds():

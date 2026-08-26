@@ -4919,8 +4919,9 @@ def _build_report(
     # Issue #1261/#1131, Folge von #1260/#1130 — deklarierte (optimizer.json['time_box_bars_axis'])
     # gegen beobachtete (bars_per_calendar_day) Zeitbox-Zaehl-Achse. Direkt nach der Bar-Achsen-
     # Kohaerenzpruefung platziert (dieselbe Symbol-/Gate-Grundlage).
+    _declared_time_box_bars_axis = str(optimizer_cfg.get("time_box_bars_axis", "calendar_24_7"))
     all_checks.append(("global", _inv.check_timebox_unit_coherence(
-        studies_out, declared_axis=str(optimizer_cfg.get("time_box_bars_axis", "calendar_24_7")),
+        studies_out, declared_axis=_declared_time_box_bars_axis,
         asset_class_by_symbol=_asset_class_by_symbol(_cost_basis_symbols))))
     _stamp_atr_floor_bps_derived(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
@@ -5746,6 +5747,12 @@ def _build_report(
         # Docstring. Zwei Läufe mit identischem run_fingerprint MUESSEN denselben Wert tragen,
         # sonst FAILt invariants.check_run_determinism.
         "result_fingerprint": _result_fingerprint,
+        # Issue #1275 (GH #1148, Katalog #1272-1297, P0) — die DEKLARIERTE Zeitbox-Zaehl-Achse
+        # (optimizer.json['time_box_bars_axis']), fuer summary_de._section_4_longest_trades: die
+        # "Handels-Bars (geschätzt)"-Spalte entfaellt nur, wenn dieser Wert tatsaechlich 'rth' ist
+        # (siehe dortiger Docstring) — robust gegen einen Report, der (z. B. ein Alt-Lauf-Replay)
+        # noch unter der alten 'calendar_24_7'-Deklaration gebaut wurde.
+        "time_box_bars_axis": _declared_time_box_bars_axis,
         # Issue #1252 (GH #1122) Fix Punkt 3 — run_id des Vorlaufs mit identischem run_fingerprint
         # (siehe invariants.check_run_is_not_duplicate), oder None (kein Duplikat/nicht auswertbar).
         # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — NUR gesetzt, wenn BEIDE
