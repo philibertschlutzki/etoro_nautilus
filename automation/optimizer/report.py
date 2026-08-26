@@ -3341,7 +3341,7 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
              "skipped_by_reason": {}, "semantics_migrated": 0,
              "admissible_despite_simulation_stale": 0, "max_corroboration_count": None,
-             "attempts": None, **_store_status}
+             "attempts": None, "champion_store_attempts": [], **_store_status}
     try:
         champions_dir = _champions_mod._champions_dir()
         paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
@@ -3414,6 +3414,22 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     # Produktion ruft ausschliesslich ``_build_report`` diese Funktion auf, IMMER mit gesetztem
     # ``studies_out``; ``studies_out=None`` ist ein reiner Test-/Legacy-Aufrufpfad.
     _events_path = jsonl_sidecar_path(_log.name) if studies_out is not None else None
+    # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 2/3 — Ebene-1-Ereignisstrom
+    # (``champions.store_champion``s CHAMPION_STORE_ATTEMPT, siehe dortiger Docstring): eine
+    # STORE_EMPTY/STORE_PATH_MISSING-Beobachtung (Ebene 2, "kein Eintrag existiert") sagt NICHT,
+    # WARUM nie ein Eintrag entstand — dieser Strom traegt den granularen champion_is_admissible-
+    # Ablehnungscode MIT Ist-/Sollwert je Versuch. Je Paar wird NUR der LETZTE Versuch dieses Laufs
+    # behalten (der massgebliche, aktuellste Befund). ``check_champion_writeback_reachability``
+    # verlangt seither, dass jeder Ebene-1-Versuch einen aufloesbaren ``skip_detail['reason']``
+    # traegt (FAIL 'high' bei ``'UNKNOWN'``).
+    champion_store_attempts: dict[str, dict] = {}
+    if _events_path is not None:
+        for ev in _read_jsonl_events(_events_path, "CHAMPION_STORE_ATTEMPT"):
+            _key = f"{ev.get('strategy')}/{ev.get('symbol')}"
+            champion_store_attempts[_key] = {
+                "strategy": ev.get("strategy"), "symbol": ev.get("symbol"),
+                "stored": ev.get("stored"), "skip_detail": ev.get("skip_detail"),
+            }
     if _events_path is not None:
         # Issue #1099 (Katalog #932) — bevorzugte Quelle: die tatsächlich emittierten
         # CHAMPION_WRITEBACK-Ereignisse DIESES Laufs (siehe Docstring oben).
@@ -3478,8 +3494,21 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     else:
         _scan_events = _read_jsonl_events(_events_path, "CHAMPION_STORE_SCAN")
         _store_found_at_run_start = bool(_scan_events[0].get("store_found")) if _scan_events else None
+    # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 1 — NUR STORE_PATH_MISSING, wenn
+    # noch KEIN einziger Champion-Eintrag existiert (``_store_status['entry_count']``). Root-Cause:
+    # die vorherige, unbedingte Umbenennung behauptete "der Pfad fehlt" (STORE_PATH_MISSING) selbst
+    # dann, wenn der Store laengst WAEHREND DIESES Laufs angelegt wurde (mtime_utc = Laufbeginn +
+    # wenige Sekunden) — ein direkter Widerspruch zu ``champions_summary['store_found']=True`` im
+    # selben Report-Objekt. ``store_found`` (bloße Verzeichnis-Existenz) taugt NICHT als
+    # Unterscheidungsmerkmal — JEDER Champion-Store-Zugriff (auch ein reiner Lookup) legt das
+    # Verzeichnis als Seiteneffekt an (``_champions_dir``s ``mkdir(exist_ok=True)``), lange bevor
+    # ein einziger Eintrag je gespeichert wurde; ``entry_count`` (tatsaechliche
+    # ``champion_*.json``-Dateien) ist der seiteneffektfreie Nachweis. STORE_CREATED_THIS_RUN
+    # benennt den Erstanlage-Fall eigens, statt ihn als andauerndes Problem misszudeuten.
     if _store_found_at_run_start is False and skipped_by_reason.get("STORE_EMPTY"):
-        skipped_by_reason["STORE_PATH_MISSING"] = skipped_by_reason.pop("STORE_EMPTY")
+        _has_any_entry_now = int(_store_status.get("entry_count") or 0) > 0
+        _label = "STORE_CREATED_THIS_RUN" if _has_any_entry_now else "STORE_PATH_MISSING"
+        skipped_by_reason[_label] = skipped_by_reason.pop("STORE_EMPTY")
 
     return {
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
@@ -3487,6 +3516,10 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
         "semantics_migrated": semantics_migrated,
         "admissible_despite_simulation_stale": admissible_despite_simulation_stale,
         "max_corroboration_count": max_corroboration_count, "attempts": attempts,
+        # Issue #1288 (GH #1161, Katalog #1272-1297, P1) — je (Strategie, Symbol) der LETZTE
+        # Ebene-1-Speicherversuch dieses Laufs (siehe Feldkommentar oben), Rohmaterial fuer
+        # invariants.check_champion_writeback_reachability.
+        "champion_store_attempts": list(champion_store_attempts.values()),
         **_store_status,
     }
 

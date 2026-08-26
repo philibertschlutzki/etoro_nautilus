@@ -5635,8 +5635,8 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
             actual={"stored": 0, "written_back": 0, "attempts": attempts},
             detail="Kein Champion-Store-Eintrag — nicht anwendbar.",
         )
-    passed = written_back > 0
-    if passed:
+    writeback_passed = written_back > 0
+    if writeback_passed:
         detail = "OK"
     elif attempts == 0:
         detail = ("0 Champion-Writeback-Versuche beobachtet — Ebene 2 (#706) hat KEINE "
@@ -5648,12 +5648,40 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
         cohort_text = f"{attempts} Versuche" if attempts is not None else f"{stored} Store-Eintraege"
         detail = (f"{cohort_text}, 0 Writebacks — beobachtete Ursachen: {reasons_text} (#1084: "
                   "die Ursache ist gemessen, nicht geraten).")
+
+    # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 3 — JEDER Ebene-1-Speicherversuch
+    # (``champions.store_champion``s ``CHAMPION_STORE_ATTEMPT``, siehe ``report._champions_summary``-
+    # Feldkommentar) muss einen AUFLOESBAREN ``skip_detail['reason']`` tragen, sobald er nicht zu
+    # einem Store-Eintrag fuehrte (``stored=False``) — ``'UNKNOWN'``/fehlend ist der direkte
+    # Fingerabdruck eines Ablehnungscodes, den ``champions.champion_admissibility_skip_detail``
+    # nicht abdeckt (Root-Cause #1288: 14 Versuche, 0 Store-Eintraege, OHNE dass das Artefakt je
+    # sagte, welches Kriterium riss). severity='high' (Fix-Vorgabe) — staerker als die
+    # 'medium'-Default-Schwere des Writeback-Befunds oben, unabhaengig davon, ob dieser selbst
+    # PASSt (ein aufgeloester Grund UND ein spaeter erfolgreicher Writeback schliessen sich nicht
+    # aus, ein UNAUFGELOESTER Grund ist aber immer ein eigenstaendiger Befund).
+    champion_store_attempts = champions_summary.get("champion_store_attempts") or []
+    unresolved_attempts = sorted(
+        f"{a.get('strategy')}/{a.get('symbol')}" for a in champion_store_attempts
+        if a.get("stored") is False
+        and ((a.get("skip_detail") or {}).get("reason") or "UNKNOWN") == "UNKNOWN"
+    )
+    passed = writeback_passed and not unresolved_attempts
+    severity = "high" if unresolved_attempts else "medium"
+    if unresolved_attempts:
+        detail = (f"{detail} {len(unresolved_attempts)} Ebene-1-Versuch(e) ohne aufloesbaren "
+                  f"champion_skip_detail (reason='UNKNOWN'): {unresolved_attempts} (#1288)."
+                  if detail != "OK" else
+                  f"{len(unresolved_attempts)} Ebene-1-Versuch(e) ohne aufloesbaren "
+                  f"champion_skip_detail (reason='UNKNOWN'): {unresolved_attempts} (#1288).")
     return InvariantResult(
         name="check_champion_writeback_reachability",
         passed=passed,
-        expected="written_back > 0, sobald stored > 0 oder ein Schreibversuch stattfand",
+        expected="written_back > 0, sobald stored > 0 oder ein Schreibversuch stattfand; jeder "
+                 "Ebene-1-Speicherversuch traegt einen aufloesbaren skip_detail['reason']",
         actual={"stored": stored, "written_back": written_back, "attempts": attempts,
-               "skipped_by_reason": skipped_by_reason},
+               "skipped_by_reason": skipped_by_reason,
+               "unresolved_champion_store_attempts": unresolved_attempts or None},
+        severity=severity,
         detail=detail,
     )
 

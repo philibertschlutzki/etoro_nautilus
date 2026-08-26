@@ -2008,7 +2008,20 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict, *,
         applied = False
         skipped_reason = _no_entry_reason or "STORE_EMPTY"
         if skipped_reason == "STORE_EMPTY" and store_found_at_run_start is False:
-            skipped_reason = "STORE_PATH_MISSING"
+            # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 1 — NUR STORE_PATH_MISSING,
+            # wenn noch KEIN einziger Champion-Eintrag existiert. Root-Cause: die vorherige,
+            # unbedingte Reklassifikation allein auf ``store_found_at_run_start`` meldete STORE_
+            # PATH_MISSING selbst dann, wenn der Store LAENGST waehrend DIESES Laufs angelegt
+            # wurde (mtime_utc = Laufbeginn + wenige Sekunden) — widersprach ``champions_summary
+            # ['store_found']=True`` im selben Report. WICHTIG: ``store_found`` (bloße Verzeichnis-
+            # Existenz) ist KEIN brauchbares Unterscheidungsmerkmal — jeder Lookup (auch dieser
+            # selbst, ueber ``load_champion_entry_with_reason``/``_champion_path`` oben) legt das
+            # Verzeichnis als Seiteneffekt an (``_champions_dir``s ``mkdir(exist_ok=True)``), noch
+            # BEVOR ein einziger Champion je gespeichert wurde. ``entry_count`` (tatsaechliche
+            # ``champion_*.json``-Dateien) ist der einzige Seiteneffekt-freie Nachweis, ob DIESER
+            # Lauf inzwischen wirklich einen Eintrag angelegt hat.
+            _has_any_entry_now = int(champions.store_status().get("entry_count") or 0) > 0
+            skipped_reason = "STORE_CREATED_THIS_RUN" if _has_any_entry_now else "STORE_PATH_MISSING"
         advance_days = None
         corroboration_count = None
         # Issue #1103 (Katalog #936) — WELCHER Store-Schlüssel gesucht wurde und welche tatsächlich
