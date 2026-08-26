@@ -5256,11 +5256,13 @@ def _build_report(
             studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold))
     all_checks.append(("global", structural_zero_eligible_diagnosis_check))
 
-    # Issue #1263 (GH #1133) Fix Punkt 3/4 — rein diagnostisch (severity 'medium'), siehe dortiger
-    # Docstring fuer den bewusst begrenzten Scope dieses Fixes (Beobachtbarkeit, keine Live-
-    # Intervention).
+    # Issue #1263 (GH #1133) Fix Punkt 3/4, erweitert #1295 (GH #1168, Katalog #1272-1297, P1) —
+    # unter der Default-Policy 'diagnose' bleibt dies rein diagnostisch (severity 'medium'); unter
+    # 'freeze' FAILt jeder Kandidat 'high' (die Live-Intervention ist bewusst nicht implementiert,
+    # siehe dortiger Docstring fuer den Scope).
     all_checks.append(("global", _inv.check_atr_floor_dimension_freeze_candidates(
-        studies_out, freeze_threshold=_atr_floor_freeze_threshold)))
+        studies_out, freeze_threshold=_atr_floor_freeze_threshold,
+        policy=optimizer_cfg.get("atr_floor_dimension_freeze_policy", "diagnose"))))
 
     # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
     # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen

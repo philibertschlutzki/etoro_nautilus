@@ -5075,10 +5075,14 @@ def check_atr_scale_homogeneity(
     )
 
 
+_ATR_FLOOR_FREEZE_POLICIES = frozenset({"diagnose", "freeze"})
+
+
 def check_atr_floor_dimension_freeze_candidates(
     study_records: list[dict], *,
     freeze_threshold: float = 0.60,
     min_trials: int = 30,
+    policy: str = "diagnose",
 ) -> InvariantResult:
     """Issue #1263 (GH #1133) — identifiziert retrospektiv, WELCHE Studies fuer eine Einfrierung
     von ``atr_trailing_multiplier`` qualifiziert haetten: ``atr_floor_binding_trial_fraction >
@@ -5088,21 +5092,32 @@ def check_atr_floor_dimension_freeze_candidates(
     multiplier``, gemessene Stopdistanz)=0,2594 — 881 von 1742 Trials (50,6 %) tunten eine
     Dimension, deren Ergebnis der kostengekoppelte ATR-Floor bereits konstant hielt.
 
-    Bewusster Scope (siehe ``optimizer.json``-Schema-Dokumentation fuer
-    ``atr_floor_dimension_freeze_threshold``): dieser Check implementiert AUSSCHLIESSLICH die
-    Beobachtbarkeits-Seite (GH #1133 Fix Punkt 3/4) — er FRIERT NICHTS EIN und veraendert KEINEN
-    Sampling-Pfad. Die live Intervention (Fix Punkt 1: ``spaces.sample_params`` liest waehrend
-    einer laufenden Study progressive Telemetrie und fixiert die Dimension auf einen Punktwert)
-    ist NICHT umgesetzt — sie braucht neue Live-Per-Trial-Infrastruktur, deren "bit-identisch ohne
-    Bindung"-Anforderung ohne einen echten End-to-End-Lauf (kein ``nautilus_trader`` in dieser
-    Sandbox) nicht verifizierbar waere.
+    Issue #1295 (GH #1168, Katalog #1272-1297, P1) — ``policy`` (``optimizer.json
+    ['atr_floor_dimension_freeze_policy']``, Default ``'diagnose'``) macht den Bewussten-Scope-
+    Zustand aus #1263 EXPLIZIT statt implizit: ein unbekannter Wert bricht FAIL-LOUD ab (analog
+    ``reward.resolve_alpha_tstat_gate_threshold``). Unter ``'diagnose'`` bleibt dieser Check
+    UNVERAENDERT rein beobachtend (``severity='medium'`` — kein Korrektheits-/Ressourcenproblem
+    DIESES Laufs, nur ein Hinweis auf verschwendetes Budget). Unter ``'freeze'`` FAILt jeder
+    Kandidat mit ``severity='high'``: dieser Code-Stand implementiert die LIVE-Intervention
+    (``spaces.sample_params`` liest waehrend einer laufenden Study progressive Per-Trial-Telemetrie
+    und fixiert die Dimension auf einen Punktwert) BEWUSST NICHT — sie braucht neue, live
+    PROGRESSIVE Per-Trial-Infrastruktur quer durch ``run_optimization.py``s Trial-Schleife UND alle
+    Aufrufstellen in ``spaces.py``, mit einer "bit-identisch ohne Bindung"-Anforderung, die ohne
+    einen echten End-to-End-Optimierungslauf (kein ``nautilus_trader`` in dieser Sandbox) nicht
+    verifizierbar waere. Ein Betreiber, der ``'freeze'`` konfiguriert, MUSS daher sehen, dass die
+    Konfiguration wirkungslos bleibt — statt eines stillen No-Ops (dieselbe Fehlerklasse wie #907/
+    #1251, die diese Invariante selbst schliessen soll).
 
-    ``severity='medium'`` (rein diagnostisch, kein Korrektheits- oder Ressourcen-Problem DIESES
-    Laufs selbst — nur ein Hinweis auf verschwendetes Budget). ``atr_floor_binding_trial_fraction
-    is None`` (nicht gemessen) ODER ``n_trials_completed < min_trials`` schliesst eine Study aus
-    den Kandidaten aus (kein Rateversuch auf zu duenner Evidenz), macht sie aber NICHT
-    ``inconclusive`` — Abwesenheit von Kandidaten ist ein vollstaendig bekannter Zustand (0
-    qualifizierende Studies ist ein legitimes PASS)."""
+    ``atr_floor_binding_trial_fraction is None`` (nicht gemessen) ODER ``n_trials_completed <
+    min_trials`` schliesst eine Study aus den Kandidaten aus (kein Rateversuch auf zu duenner
+    Evidenz), macht sie aber NICHT ``inconclusive`` — Abwesenheit von Kandidaten ist ein
+    vollstaendig bekannter Zustand (0 qualifizierende Studies ist ein legitimes PASS, in JEDER
+    Policy)."""
+    if policy not in _ATR_FLOOR_FREEZE_POLICIES:
+        raise ValueError(
+            f"optimizer.json['atr_floor_dimension_freeze_policy']={policy!r} unbekannt. "
+            f"Erlaubt: {sorted(_ATR_FLOOR_FREEZE_POLICIES)}."
+        )
     candidates: dict[str, dict] = {}
     for r in study_records:
         symbol, strategy = r.get("symbol"), r.get("strategy")
@@ -5117,7 +5132,29 @@ def check_atr_floor_dimension_freeze_candidates(
         if float(fraction) > freeze_threshold:
             candidates[f"{strategy}/{symbol}"] = {
                 "atr_floor_binding_trial_fraction": fraction, "n_trials_completed": n_trials,
+                "frozen_dimensions": r.get("frozen_dimensions") or [],
             }
+    if policy == "freeze":
+        # Issue #1295 — unter 'freeze' MUESSTE jeder Kandidat 'atr_trailing_multiplier' in
+        # frozen_dimensions tragen; da die Live-Intervention nicht implementiert ist, kann dieses
+        # Feld nie befuellt sein — jeder Kandidat bleibt daher ein FAIL, bis die Intervention
+        # tatsaechlich existiert (kein stilles No-Op unter einer explizit gewaehlten Policy).
+        offenders = {
+            k: v for k, v in candidates.items()
+            if "atr_trailing_multiplier" not in (v.get("frozen_dimensions") or [])
+        }
+        return InvariantResult(
+            name="check_atr_floor_dimension_freeze_candidates",
+            passed=not offenders,
+            expected="unter policy='freeze': jeder Kandidat traegt "
+                     "frozen_dimensions=['atr_trailing_multiplier']",
+            actual=offenders or None,
+            severity="high",
+            detail=("OK" if not offenders else
+                    f"{len(offenders)} Kandidat(en) unter policy='freeze', aber NICHT eingefroren "
+                    "— die Live-Intervention ist in diesem Code-Stand nicht implementiert (siehe "
+                    f"optimizer.json-Schema): {offenders} (#1295)."),
+        )
     return InvariantResult(
         name="check_atr_floor_dimension_freeze_candidates",
         passed=not candidates,
