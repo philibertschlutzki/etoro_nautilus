@@ -1406,18 +1406,29 @@ def _study_record(proposal: dict, study,
     # verschiedene Grundgesamtheiten; ``max(0, n_evaluable - n_eligible - n_ineligible_
     # unmeasurable)`` klemmte die daraus resultierende NEGATIVE Differenz still auf 0, statt den
     # Kohortenbruch zu melden (SqueezeBreakout: 71 - 20 - 78 = -27, ausgewiesen als 0 statt der
-    # korrekten 51). Fix: ``n_ineligible_measured`` wird DIREKT aus ``is_rejection_detail_counts``
-    # gebildet (Summe aller Codes ausser den drei "keine Messung fand statt"-Sentinels) statt
-    # subtrahiert — eine Zaehlgroesse wird gezaehlt, nicht als Rest einer Subtraktion erschlossen
-    # (Pitfall #424 in AGENTS.md).
+    # korrekten 51). Fix: ``n_ineligible_measured`` wird DIREKT gezaehlt (Summe aller Codes ausser
+    # den drei "keine Messung fand statt"-Sentinels) statt subtrahiert — eine Zaehlgroesse wird
+    # gezaehlt, nicht als Rest einer Subtraktion erschlossen (Pitfall #424 in AGENTS.md).
+    # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — ZUSAeTZLICH auf ``oos_evaluated is True``
+    # eingeschraenkt (dieselbe PRUNED-/oos_evaluated-Filterkonvention wie ``n_evaluable``/
+    # ``n_ineligible_unmeasurable`` oben), NICHT MEHR aus dem ungefilterten
+    # ``is_rejection_detail_counts`` summiert. Root-Cause: ein vom Inferenz-Waechter zensierter
+    # Trial (SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE) hat ``oos_evaluated=False``, traegt
+    # aber ``is_rejection_detail=REJECT_OOS_DISCARDED_BY_IS_GATE`` (kein Sentinel oben) — er zaehlte
+    # bislang GLEICHZEITIG hier (ueber is_rejection_detail_counts) UND in ``n_unevaluable`` (ueber
+    # ``oos_evaluated=False``), die Kohorten-Partition war nicht disjunkt (TSLA/SqueezeBreakout:
+    # 34 doppelt gezaehlte Trials, Differenz -34; NVDA: 138, Differenz -138). Diese guard-zensierten
+    # Trials bilden seither ihre EIGENE vierte Klasse, ``n_guard_censored`` (siehe unten).
     n_ineligible_measured = sum(
-        v for k, v in is_rejection_detail_counts.items()
-        if k not in (
+        1 for t, a in zip(trials, trial_attrs)
+        if a.get("oos_evaluated") is True and a.get("oos_eligible") is not True
+        and a.get("is_rejection_detail") not in (
             IS_REJECTION_NONE,
             "REJECT_OOS_STATISTIC_UNAVAILABLE",
             "REJECT_OOS_NOT_EVALUATED",
             "REJECT_OOS_WINDOW_UNREACHABLE",
         )
+        and getattr(t, "state", None) != _pruned_state
     )
     # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
     # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
@@ -1557,6 +1568,11 @@ def _study_record(proposal: dict, study,
     # gestoppte Study (floor_plateau_warned/zero_eligible_plateau_warned) liefert gradient_signal=
     # None (Eskalationsfrage unbeantwortet), sonst reward- ODER constraint-fortschritts-basiert.
     study_user_attrs = getattr(study, "user_attrs", None) or {} if study is not None else {}
+    # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — gebrueckt aus dem in run_optimization.py
+    # UNBEDINGT gestempelten ``n_guard_censored`` (dieselbe ``_inv._censored_trial_share``-Zaehlung
+    # wie ``check_inference_diagnostics_concentration``, Akzeptanzkriterium: beide muessen
+    # uebereinstimmen — EINE Zaehl-Funktion statt einer zweiten, hier unabhaengig nachgebildeten).
+    n_guard_censored = int(study_user_attrs.get("n_guard_censored") or 0)
     n_startup_for_report = study_user_attrs.get("n_startup_trials")
     if n_startup_for_report is not None:
         modelled = _modelled_trials(trials, int(n_startup_for_report))
@@ -1739,6 +1755,7 @@ def _study_record(proposal: dict, study,
             "n_trials": n_trials, "n_evaluable": n_evaluable, "n_eligible": n_eligible,
             "n_ineligible_measured": n_ineligible_measured,
             "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
+            "n_guard_censored": n_guard_censored,
         }),
     ]
 
@@ -1843,6 +1860,12 @@ def _study_record(proposal: dict, study,
         # für den LPT-Dispatch (sweep._read_last_study_wallclock_by_strategy) des NÄCHSTEN Laufs.
         "wallclock_s": study_user_attrs.get("wallclock_s"),
         "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
+        # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — vierte Kohorten-Klasse: Trials, die der
+        # Inferenz-Waechter VOR jeder Eligibility-Bewertung zensierte (siehe Feldkommentar bei
+        # n_ineligible_measured oben). ``check_ineligible_cohort_partition_identity`` prueft
+        # n_eligible + n_ineligible_measured + n_ineligible_unmeasurable + n_guard_censored +
+        # n_unevaluable_other == n_trials.
+        "n_guard_censored": n_guard_censored,
         "n_eligible": n_eligible,
         # Issue #1025/#1174 Akzeptanzkriterium 3 — der Rest, der bei einer korrekten Zerlegung 0
         # sein MUSS (n_evaluable == n_eligible + n_ineligible_measured + n_ineligible_

@@ -2816,6 +2816,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     # (siehe test_issue_823_study_guard_dominated.py fuer die bestehende Konfigurierbarkeits-Abdeckung).
     guard_tripped = _inv._censored_trial_share(
         [dict(getattr(t, "user_attrs", {}) or {}) for t in trials])
+    # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — UNBEDINGT gestempelt (nicht nur bei
+    # study_guard_dominated), damit invariants.check_ineligible_cohort_partition_identity dieselbe
+    # Zahl wie check_inference_diagnostics_concentration als vierte Kohorten-Klasse konsumieren
+    # kann (Akzeptanzkriterium: beide Werte muessen uebereinstimmen — EINE Zaehl-Funktion,
+    # _inv._censored_trial_share, statt einer zweiten, unabhaengig gepflegten Zaehlung).
+    try:
+        study.set_user_attr("n_guard_censored", guard_tripped)
+    except Exception:
+        pass
     study_guard_dominated = bool(
         n_trials_informative > 0
         and (guard_tripped / n_trials_informative) > guard_trip_fraction_warn)

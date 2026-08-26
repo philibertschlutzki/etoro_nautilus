@@ -9693,38 +9693,56 @@ def check_ineligible_cohort_partition_identity(study_counts: dict) -> InvariantR
     ist der Regressionswaechter GEGEN eine erneute Divergenz der drei Zaehler, unabhaengig davon,
     WIE eine kuenftige Aenderung sie einfuehren wuerde.
 
+    Issue #1291 (GH #1164, Katalog #1272-1297, P2) — VIERTE Klasse ergaenzt: ``n_guard_censored``
+    (Trials, die der Inferenz-Waechter — SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE,
+    dieselben Codes wie ``check_inference_diagnostics_concentration``/``_censored_trial_share`` —
+    VOR jeder Eligibility-Bewertung zensierte). Root-Cause: ein guard-zensierter Trial hat
+    ``oos_evaluated=False`` (zaehlte daher in ``n_unevaluable``), traegt aber gleichzeitig einen
+    ECHTEN ``is_rejection_detail`` (``REJECT_OOS_DISCARDED_BY_IS_GATE`` — kein "keine Messung fand
+    statt"-Sentinel), wodurch er VOR diesem Fix ZUSAeTZLICH in ``n_ineligible_measured`` zaehlte —
+    die Partition war per Konstruktion nicht disjunkt (TSLA/SqueezeBreakout: 34 doppelt gezaehlte
+    Trials, Differenz -34; NVDA: 138, Differenz -138). ``report.py`` zaehlt ``n_ineligible_measured``
+    seither NUR NOCH ueber ``oos_evaluated is True`` (schliesst guard-zensierte Trials aus); diese
+    bilden ihre eigene, vierte Klasse.
+
     FAIL (severity ``high``), wenn ``n_eligible + n_ineligible_measured + n_ineligible_unmeasurable
-    + n_unevaluable != n_trials`` (``n_unevaluable := n_trials - n_evaluable``). Fehlt einer der
+    + n_guard_censored + n_unevaluable_other != n_trials`` (``n_unevaluable_other := n_trials -
+    n_evaluable - n_guard_censored`` — der VERBLEIBENDE Rest der ``oos_evaluated=False``-Kohorte
+    NACH Abzug der bereits als ``n_guard_censored`` ausgewiesenen Trials). Fehlt einer der ersten
     vier Zaehler ⇒ nicht anwendbar (PASS, fail-open auf fehlender Evidenz, analog
-    ``check_denominator_coherence``)."""
+    ``check_denominator_coherence``); fehlt NUR ``n_guard_censored`` (Legacy-Report vor #1291) ⇒
+    ``0`` (rueckwaertskompatibel, bit-identisch zum Pre-#1291-Verhalten)."""
     keys = ("n_trials", "n_evaluable", "n_eligible", "n_ineligible_measured",
             "n_ineligible_unmeasurable")
     values = {k: study_counts.get(k) for k in keys}
+    expected = ("n_eligible + n_ineligible_measured + n_ineligible_unmeasurable + "
+                "n_guard_censored + n_unevaluable_other == n_trials")
     if any(v is None for v in values.values()):
         return InvariantResult(
             name="check_ineligible_cohort_partition_identity",
             passed=True,
-            expected="n_eligible + n_ineligible_measured + n_ineligible_unmeasurable + "
-                     "n_unevaluable == n_trials",
+            expected=expected,
             actual=None,
             severity="high",
             detail="Zähler unbekannt — nicht anwendbar.",
         )
-    n_unevaluable = values["n_trials"] - values["n_evaluable"]
+    n_guard_censored = int(study_counts.get("n_guard_censored") or 0)
+    n_unevaluable_other = values["n_trials"] - values["n_evaluable"] - n_guard_censored
     total = (values["n_eligible"] + values["n_ineligible_measured"]
-             + values["n_ineligible_unmeasurable"] + n_unevaluable)
+             + values["n_ineligible_unmeasurable"] + n_guard_censored + n_unevaluable_other)
     diff = values["n_trials"] - total
     passed = diff == 0
+    actual = {**values, "n_guard_censored": n_guard_censored,
+              "n_unevaluable_other": n_unevaluable_other, "diff": diff}
     return InvariantResult(
         name="check_ineligible_cohort_partition_identity",
         passed=passed,
-        expected="n_eligible + n_ineligible_measured + n_ineligible_unmeasurable + "
-                 "n_unevaluable == n_trials",
-        actual=None if passed else {**values, "n_unevaluable": n_unevaluable, "diff": diff},
+        expected=expected,
+        actual=None if passed else actual,
         severity="high",
         detail=("OK" if passed else
                 f"Zerlegung ({total}) != n_trials ({values['n_trials']}), Differenz {diff}: "
-                f"{values} — die Kohorten-Zerlegung ist nicht disjunkt/vollstaendig "
+                f"{actual} — die Kohorten-Zerlegung ist nicht disjunkt/vollstaendig "
                 "(#1025/#1174-Fehlerklasse, Pitfall #424)."),
     )
 
