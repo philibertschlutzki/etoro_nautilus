@@ -5417,6 +5417,12 @@ def _build_report(
         fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
     all_checks.append(("global", fail_fast_schema_consistency_check))
 
+    # Issue #1294 (GH #1167, Katalog #1272-1297, P1) — jeder Live-Config-Wert mit dokumentierter
+    # _schema.calibrations-Kalibrierung muss ihr entsprechen ODER einen vollstaendigen
+    # config_override_accepted-Eintrag tragen (Referenzfaelle oos_min_trades/sortino_numeric_guard).
+    all_checks.append(("global", _inv.check_config_matches_calibration(
+        {"tournament.json": tournament_cfg, "optimizer.json": optimizer_cfg})))
+
     # Issue #1063 (Pitfall #370) — Meta-Wächter: jeder FAILende fail_fast_invariants-Check muss
     # seine Offender in der actual-Pair-Konvention tragen, sonst kann
     # sweep._offending_pairs_for_fail_fast_check die #1016-Breitenschwelle nie auswerten (stiller

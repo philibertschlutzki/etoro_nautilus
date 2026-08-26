@@ -1,7 +1,20 @@
 {
   "_schema": {
     "description": "Selektionskriterien f\u00fcr das Tournament. Definiert harte Filter und Score-Gewichtung f\u00fcr die Gewinner-Auswahl pro Symbol.",
+    "calibrations": {
+      "oos_min_trades": {
+        "calibrated_value": 20,
+        "calibrated_in_issue": "#617",
+        "calibration_basis": "Ein OOS-Sortino/Profit-Factor aus 1-9 Trades ist keine Kennzahl; 20 ist an min_trades ausgerichtet und statistisch verteidigbar (siehe fields.oos_min_trades)."
+      },
+      "sortino_numeric_guard": {
+        "calibrated_value": 25.0,
+        "calibrated_in_issue": "#614",
+        "calibration_basis": "Bei T\u2248200 ist ein annualisierter |Sortino| > 25 ein Datenfehler, kein Ergebnis (der vorherige Guard von 1e6 griff nie, siehe fields.sortino_numeric_guard)."
+      }
+    },
     "fields": {
+      "config_override_accepted": "Issue #1294 (GH #1167, Katalog #1272-1297, P1) — Gegenstueck zu _schema.calibrations: {config_key: {value, rationale, decided_in_issue}}. Erforderlich, sobald der LIVE-Wert eines Keys mit dokumentierter calibrated_value davon abweicht (invariants.check_config_matches_calibration, FAIL 'blocking' beim Sweep-Start ohne diesen Eintrag) — macht eine bewusste Abweichung von der dokumentierten Kalibrierung zu einem benannten Beschluss statt einer stillen Konfigurationsdrift.",
       "min_trades": "Mindestanzahl abgeschlossener Trades (hartes Filter)",
       "min_sortino": "Mindest-Sortino-Ratio. Issue #765 (Schema-Drift-Korrektur) \u2014 dieser Key war ZWISCHEN #593 und #614 ein hartes ALL-Gate-Kriterium; SEIT Issue #614 ist er NICHT MEHR in eligible_requires_all gelistet, ERSETZT durch oos_min_psr (skalenfrei, annualisierungs-invariant, T-bewusst \u2014 siehe dortiges Schema). min_sortino/oos_min_sortino wirken seither NUR NOCH als WEICHE Near-Miss-Telemetrie (reward._normalized_gate_distances, analog min_expectancy seit #697), KEIN hartes Konjunktions-Gate mehr. Auch NICHT in eligible_requires_any (die #593-Historie: vorher hebelte die ODER-Klausel das Sortino-Gate ueber den Profit-Factor aus, 190/600 Trials mit negativem Sortino passierten via PF \u2014 dieser Grund fuer die damalige Verschiebung ist weiterhin gueltig, der Sortino ist seit #587\u2013#589 kohaerent). WICHTIG (Issue #563/#587): Der Sortino ist ANNUALISIERT \u00fcber die EMPIRISCHE Span-Frequenz (n_periods\u00b731_557_600/total_span_seconds; RTH-Equity 1h \u2248 \u221a1638, 24/7-Krypto \u2248 \u221a8766, siehe _get_annualization_factor). Diese Schwelle ist also eine annualisierte Ziel-Sortino, KEIN per-Bar-Wert. Konsistent zur Reward-Base (die seit Issue #559 weich ges\u00e4ttigt wird, kein Hard-Clip mehr).",
       "min_profit_factor": "Mindest-Profit-Factor (weiches Filter, in eligible_requires_any)",
@@ -96,7 +109,7 @@
   "min_total_return": 0.0,
   "min_expectancy": 0.001,
   "k_shrinkage": 20.0,
-  "oos_min_trades": 8,
+  "oos_min_trades": 20,
   "sortino_min_trades": 5,
   "undefined_metric_policy": "fallback_total_return",
   "oos_min_total_return": 0.0,
@@ -153,7 +166,7 @@
   "promotion_family_scope": "per_strategy",
   "min_oos_periods_for_family": 30,
   "selection_rule_homogeneity_policy": "partition",
-  "sortino_numeric_guard": 500.0,
+  "sortino_numeric_guard": 25.0,
   "sortino_numeric_guard_min_periods": 320,
   "sortino_min_downside_observations": 0.5,
   "sortino_downside_shrinkage_m0": 30,

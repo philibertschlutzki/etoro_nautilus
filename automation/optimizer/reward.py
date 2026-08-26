@@ -209,6 +209,25 @@ def assert_eligible_requires_any_not_silently_empty(tournament_cfg: dict | None)
     )
 
 
+def assert_config_matches_calibration(config_docs: dict[str, dict]) -> None:
+    """Issue #1294 (GH #1167, Katalog #1272-1297, P1) — fail-loud beim Sweep-Start (dieselbe
+    Fail-Loud-Stelle wie die uebrigen Gate-/Config-Konsistenz-Waechter): ein Config-Wert, der von
+    seiner eigenen dokumentierten Kalibrierung abweicht (``invariants.check_config_matches_
+    calibration``-Docstring, Referenzfaelle ``oos_min_trades``/``sortino_numeric_guard``), darf
+    einen Sweep-Start nicht stillschweigend passieren — genau die Kleinstichproben-Artefakt-Klasse,
+    gegen die die Kampagne seit zwoelf Katalogbloecken arbeitet, waere sonst unbemerkt wieder aktiv.
+    ``ValueError`` bei FAIL (analog ``assert_eligible_requires_any_not_silently_empty``)."""
+    from automation.optimizer.invariants import check_config_matches_calibration
+    result = check_config_matches_calibration(config_docs)
+    if result.passed is False:
+        raise ValueError(
+            "Config-Wert(e) weichen von ihrer dokumentierten _schema.calibrations-Kalibrierung ab, "
+            f"ohne einen vollstaendigen config_override_accepted-Eintrag (#1294): {result.actual}. "
+            "Entweder auf calibrated_value zuruecksetzen oder config_override_accepted[<key>] = "
+            "{'value': ..., 'rationale': ..., 'decided_in_issue': ...} eintragen."
+        )
+
+
 def assert_any_condition_parity(tournament_cfg: dict | None) -> None:
     """Issue #593 — fail-loud beim Config-Load: JEDE Klausel in ``eligible_requires_any`` MUSS einen
     korrespondierenden Term in ``_any_condition_distance`` haben (sonst sehen Gate und Reward

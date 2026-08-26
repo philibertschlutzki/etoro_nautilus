@@ -508,6 +508,7 @@ def _assert_gate_reward_parity() -> None:
     from automation.optimizer.reward import (
         assert_any_condition_parity, assert_gate_priority_coverage,
         assert_live_threshold_registry_coverage, assert_eligible_requires_any_not_silently_empty,
+        assert_config_matches_calibration,
     )
     try:
         cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
@@ -524,6 +525,16 @@ def _assert_gate_reward_parity() -> None:
     # Gate-Konsistenz-Waechter: eine leere eligible_requires_any-Disjunktion muss ein benannter
     # Beschluss sein, kein stiller Kollaps auf ein einziges verbleibendes eligible_requires_all-Gate.
     assert_eligible_requires_any_not_silently_empty(cfg)
+    # Issue #1294 (GH #1167, Katalog #1272-1297, P1) — Startup-Invariante: ein Config-Wert, der von
+    # seiner eigenen dokumentierten _schema.calibrations-Kalibrierung abweicht, darf den Sweep-
+    # Start nicht stillschweigend passieren (Referenzfaelle oos_min_trades/sortino_numeric_guard).
+    try:
+        optimizer_cfg_for_calibration = json.loads(
+            (config_dir() / "optimizer.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        optimizer_cfg_for_calibration = {}
+    assert_config_matches_calibration(
+        {"tournament.json": cfg, "optimizer.json": optimizer_cfg_for_calibration})
 
 
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:

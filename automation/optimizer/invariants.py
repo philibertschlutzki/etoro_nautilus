@@ -9307,6 +9307,84 @@ def check_fail_fast_schema_consistency(config_docs: dict[str, object], *,
     )
 
 
+def check_config_matches_calibration(config_docs: dict[str, dict]) -> InvariantResult:
+    """Issue #1294 (GH #1167, Katalog #1272-1297, P1) — Config-Werte widersprechen ihrer eigenen
+    dokumentierten Kalibrierung.
+
+    Symptom (belegte Faelle in ``tournament.json``): ``oos_min_trades = 8``, waehrend das
+    ``_schema``-Feld dokumentiert, der Wert sei in #617 "von 1 auf 20 gehoben" worden, weil "ein
+    OOS-Sortino/Profit-Factor aus 1-9 Trades keine Kennzahl" sei — 8 liegt IM ausdruecklich
+    verworfenen Bereich. ``sortino_numeric_guard = 500.0``, waehrend #614 dokumentiert, der Wert
+    sei "auf 25.0 gesenkt" worden. Beide Werte betreffen genau die Kleinstichproben-Artefakte,
+    gegen die die Kampagne seit zwoelf Katalogbloecken arbeitet — ohne dass irgendeine bestehende
+    Pruefung (``check_required_config_keys``/``check_config_key_registry``) den LIVE-Wert gegen
+    seine eigene dokumentierte Kalibrierung vergleicht (die Kalibrierungs-Historie stand bislang
+    nur als Fliesstext im ``_schema``-Kommentar, maschinell nicht auswertbar).
+
+    ``config_docs``: ``{quellenname: geparster Config-Dict, ...}`` (z. B. ``{"tournament.json":
+    tournament_cfg, "optimizer.json": optimizer_cfg}``, analog ``check_fail_fast_schema_
+    consistency``). Liest je Dokument ``doc['_schema']['calibrations']`` — EIN strukturiertes,
+    ZUSAETZLICHES Feld neben dem bestehenden ``_schema.fields``-Fliesstext (NICHT dessen Ersatz,
+    um bestehende String-Konsumenten wie ``check_eligible_all_claim_...`` nicht zu brechen):
+    ``{config_key: {'calibrated_value', 'calibrated_in_issue', 'calibration_basis'}}``.
+
+    FAIL ``severity='blocking'`` (Fix-Vorgabe — dies ist eine Startup-Invariante), wenn
+    ``doc[config_key] != calibrated_value`` UND kein vollstaendiger Eintrag in
+    ``doc['config_override_accepted'][config_key]`` (``{'value', 'rationale', 'decided_in_issue'}``,
+    mit ``value == doc[config_key]``) existiert — ein abweichender Live-Wert MUSS entweder auf die
+    Kalibrierung zurueckgesetzt oder als bewusster, benannter Override dokumentiert werden.
+
+    Kein Dokument mit ``_schema.calibrations``-Eintraegen ⇒ nicht auswertbar (``inconclusive=True``,
+    kein Fehler — die Struktur ist additiv und muss nicht ueberall vorliegen)."""
+    expected = ("jeder Live-Wert mit dokumentierter calibrated_value stimmt ueberein ODER traegt "
+                "einen vollstaendigen config_override_accepted-Eintrag "
+                "{value, rationale, decided_in_issue}")
+    offenders: dict[str, dict] = {}
+    n_checked = 0
+    for source, doc in (config_docs or {}).items():
+        doc = doc or {}
+        calibrations = ((doc.get("_schema") or {}).get("calibrations")) or {}
+        overrides = doc.get("config_override_accepted") or {}
+        if not isinstance(calibrations, dict):
+            continue
+        for key, cal in calibrations.items():
+            if not isinstance(cal, dict) or "calibrated_value" not in cal:
+                continue
+            n_checked += 1
+            live_value = doc.get(key)
+            calibrated_value = cal.get("calibrated_value")
+            if live_value == calibrated_value:
+                continue
+            override = overrides.get(key) if isinstance(overrides, dict) else None
+            if (isinstance(override, dict) and override.get("value") == live_value
+                    and override.get("rationale") and override.get("decided_in_issue")):
+                continue
+            offenders[f"{source}:{key}"] = {
+                "live_value": live_value, "calibrated_value": calibrated_value,
+                "calibrated_in_issue": cal.get("calibrated_in_issue"),
+                "calibration_basis": cal.get("calibration_basis"),
+            }
+    passed = not offenders
+    if n_checked == 0:
+        return InvariantResult(
+            name="check_config_matches_calibration",
+            passed=True, expected=expected, actual=None, severity="blocking",
+            detail="Kein Config-Dokument mit _schema.calibrations-Eintraegen — nicht auswertbar.",
+            inconclusive=True,
+        )
+    return InvariantResult(
+        name="check_config_matches_calibration",
+        passed=passed,
+        expected=expected,
+        actual=offenders or None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Config-Wert(e) weichen von ihrer dokumentierten Kalibrierung ab, "
+                f"ohne einen vollstaendigen config_override_accepted-Eintrag: {offenders} "
+                "(#1294)."),
+    )
+
+
 def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
                                       fail_fast_invariants: list[str] | None = None,
                                       global_scope_checks: frozenset = frozenset(
