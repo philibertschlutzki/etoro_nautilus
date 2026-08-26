@@ -178,14 +178,18 @@ def diagnose_structural_zero_eligible_gate(
     elif gate_type == "quality":
         binding_cause, proposed_action = "signal_quality", "budget_deprioritization"
     elif gate_type == "gate":
-        # Issue #1264 (GH #1134) Fix Punkt 2 — ``action='none'`` ist HIER bewusst KEIN "kein
-        # Befund" (anders als der allgemeine ``binding_cause in (None, 'none')``-Fall unten): die
-        # Ursache liegt in der KONFIGURIERTEN Gate-Schwelle (``tournament.json``), nicht im
-        # (Strategie, Symbol)-Paar — eine Denylist/Bounds-Weitung fuer DIESES Paar waere hier keine
-        # sinnvolle Konsequenz (ein anderes Paar mit derselben Config-Schwelle traefe dasselbe
-        # strukturelle Limit). ``check_structural_zero_eligible_has_diagnosis`` akzeptiert
-        # ``binding_cause='gate_unreachable'`` dennoch als vollwertigen Diagnose-Eintrag.
-        binding_cause, proposed_action = "gate_unreachable", "none"
+        # Issue #1264 (GH #1134) Fix Punkt 2 — die Ursache liegt in der KONFIGURIERTEN Gate-
+        # Schwelle (``tournament.json``), nicht im (Strategie, Symbol)-Paar — eine Denylist fuer
+        # DIESES Paar waere hier keine sinnvolle Konsequenz (ein anderes Paar mit derselben
+        # Config-Schwelle traefe dasselbe strukturelle Limit). ``check_structural_zero_eligible_
+        # has_diagnosis`` akzeptiert ``binding_cause='gate_unreachable'`` dennoch als vollwertigen
+        # Diagnose-Eintrag.
+        # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — ``proposed_action`` war bislang
+        # ``'none'`` (reine Diagnose ohne Konsequenz, Root-Cause des Katalog-Symptoms: 22 von 46
+        # diagnosed_pairs-Eintraegen mit action='none'). Budget-DEPRIORISIERUNG (nicht Denylist,
+        # siehe Docstring oben) haelt das Paar erreichbar, waehrend die eigentliche Gate-Ursache
+        # unabhaengig davon behoben wird (#1282 Alpha-Regression-Kalibrierung).
+        binding_cause, proposed_action = "gate_unreachable", "budget_deprioritization"
     else:
         binding_cause, proposed_action = "none", "none"
     return {
@@ -492,7 +496,8 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                stop_reason: str | None = None,
                                max_consecutive_structural_runs: int = 2,
                                simulation_semantics_version: int | None = None,
-                               blocking_invariants_failing: bool | None = None) -> dict:
+                               blocking_invariants_failing: bool | None = None,
+                               n_evaluable: int | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -587,6 +592,28 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         nur quarantänisiert) — die Simulationsschicht ist nachweislich gültig, 'signal_quality' ist
         dann eine zulässige Aussage.
 
+    Issue #1296 (GH #1169, Katalog #1272-1297, P1) — zwei weitere Ursachen erhalten seither eine
+    ECHTE Konsequenz statt ``action='none'`` (Root-Cause-Symptom: 22 von 46 ``diagnosed_pairs``-
+    Eintraegen mit ``action='none'``, "Automatisch denylistete Paare: 0", "Budget-deprioritisierte
+    Paare: 0"):
+      * ``'gate_unreachable'`` (ein 100 % homogenes GATE, nicht das Paar selbst, blockiert jeden
+        Trial, siehe ``diagnose_structural_zero_eligible_gate``) ⇒ ``'deprioritized'`` ab der
+        ERSTEN Bestaetigung (``n_runs_confirmed >= 1``, dieselbe Schwelle wie ``'signal_quality'``s
+        Zwischenstufe) — NIEMALS ``'denylist'``: die Ursache liegt in der KONFIGURIERTEN
+        Gate-Schwelle (``tournament.json``, siehe #1282 fuer die eigentliche Behebung), nicht in
+        der Strategie; ein Denylist-Eintrag waere hier eine Aussage ueber das FALSCHE Objekt
+        (#1264 bleibt gueltig — nur die vorherige ``action='none'``-Untätigkeit wird ersetzt).
+      * ``'signal_sparse'`` MIT ``n_evaluable == 0`` (der Aufrufer uebergibt ``n_evaluable`` aus
+        ``diagnose_trade_frequency``s gleichnamigem Feld) UND ``n_runs_confirmed >= 2`` (dieselbe
+        Zwei-Läufe-Bestaetigungsschwelle wie ``'signal_quality'``/``'signal_absent'``, #778) ⇒
+        ``'denylist'`` — eine ERWEITERUNG, keine Aufhebung des #778-Vorsichtsprinzips: #778
+        verhindert eine Deaktivierung nach einer EINZIGEN Beobachtung (Typ-II-Verstaerker-Gefahr);
+        NACH zwei bestaetigten Laeufen mit persistent ``n_evaluable=0`` (SqueezeBreakout-Symptom:
+        115-180 Trials, 4/4 Laeufe, unveraendert erneut budgetiert) ist die Override-Chance (#699)
+        bereits erschoepft und weitere Wiederholung reine Budgetverschwendung. Fehlt ``n_evaluable``
+        (Legacy-/Test-Aufrufer, Default ``None``) ⇒ bit-identisches Pre-#1296-Verhalten (kein
+        Unterschied zu ``n_evaluable != 0``, da ``None == 0`` falsch ist).
+
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
@@ -664,8 +691,20 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
             action = "none"
     elif cause == "signal_absent":
         action = "denylist" if sufficient_evidence else "none"
+    elif cause == "gate_unreachable":
+        # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — siehe Docstring oben: NIEMALS
+        # 'denylist' (die Ursache liegt im Gate, nicht im Paar), aber ab der ersten Bestaetigung
+        # 'deprioritized' statt der bisherigen dauerhaften Untaetigkeit ('none').
+        action = "deprioritized" if n_runs_confirmed >= 1 else "none"
     elif cause in ("signal_sparse", "hold_duration"):
-        if _strategy_supports_search_space_override(strategy) and not has_existing_override:
+        if (cause == "signal_sparse" and n_evaluable == 0
+                and n_runs_confirmed >= max_consecutive_structural_runs):
+            # Issue #1296 — Erweiterung des #778-Vorsichtsprinzips: NACH ausreichender, mehrfach
+            # bestaetigter Evidenz (nicht nach einer einzigen Beobachtung) ist ein persistent
+            # ausbleibendes n_evaluable=0 kein Regime-Artefakt mehr, sondern ein reproduzierter
+            # Befund (siehe Docstring oben).
+            action = "denylist"
+        elif _strategy_supports_search_space_override(strategy) and not has_existing_override:
             action = "search_space_override"
         else:
             action = "none"

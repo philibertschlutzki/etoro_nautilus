@@ -2464,6 +2464,13 @@ def _study_record(proposal: dict, study,
         # ist das Kriterium fuer invariants.check_sizing_cap_enforcement.
         "holdout_f_realized_peak_median": holdout_metrics.get("oos_f_realized_peak_median"),
         "holdout_f_realized_peak_max": holdout_metrics.get("oos_f_realized_peak_max"),
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — Sizing-Cap-Korrektur-
+        # Telemetrie (hourly_strategy_base.on_position_opened's POST-FILL-Deckel, siehe
+        # live_risk.compute_sizing_cap_correction), holdout-only konsumiert wie die beiden Felder
+        # oben (dieselbe confirm.py-Re-Evaluations-Quelle).
+        "holdout_sizing_cap_corrections_count": holdout_metrics.get("oos_sizing_cap_corrections_count"),
+        "holdout_sizing_cap_max_overshoot_pre_correction": holdout_metrics.get(
+            "oos_sizing_cap_max_overshoot_pre_correction"),
         # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
         # konfigurierten) Kostenkomponenten dieser Study; Rohmaterial fuer
         # invariants.check_applied_cost_components_resolved. Root-Cause des Vorzustands: ein
@@ -3011,7 +3018,13 @@ def _atr_floor_dominant_diagnosed_pairs(
     Fixes), verschwendet Suchbudget auf eine strukturell wirkungslose Dimension — dieselbe
     "Diagnose ohne Rückschrieb"-Fehlerklasse wie #1244, hier für ``binding_cause=
     'atr_floor_dominant'``. ``action='none'`` (keine Denylist-Konsequenz — die Studie selbst bleibt
-    gültig, nur eine EINZELNE Suchdimension ist betroffen)."""
+    gültig, nur eine EINZELNE Suchdimension ist betroffen).
+
+    Issue #1296 (GH #1169, Katalog #1272-1297, P1) Fix Punkt 3 — bewusst KEINE eigene Budget-Aktion
+    für ``atr_floor_dominant``: die Konsequenz läuft über #1295 (``check_atr_floor_dimension_freeze_
+    candidates``/``atr_floor_dimension_freeze_policy``), nicht über ``recommend_diagnosis_action``.
+    ``n_runs_confirmed``/``expires_after_runs`` bleiben deshalb bewusst ``None`` — dieser Live-Befund
+    nimmt nicht an #1296 Fix Punkt 4s Ablauf-Fristenprüfung (``check_diagnosis_actionability``) teil."""
     out = []
     for r in studies_out:
         symbol, strategy = r.get("symbol"), r.get("strategy")
@@ -3136,6 +3149,71 @@ def _writeback_search_stagnation_diagnoses(
         except Exception:
             _log.debug(
                 "Issue #1069/#1219: search_stagnation-Rueckschrieb fuer %s/%s fehlgeschlagen "
+                "(non-fatal).", strategy, symbol, exc_info=True)
+    return recommendations
+
+
+def _writeback_gate_unreachable_diagnoses(
+    studies_out: list[dict[str, Any]], *, run_id: str, work_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Issue #1296 (GH #1169, Katalog #1272-1297, P1) — "Diagnose ohne Konsequenz", dieselbe
+    Fehlerklasse wie #1219 (siehe ``_writeback_search_stagnation_diagnoses`` oben): ``binding_
+    cause='gate_unreachable'`` (``diagnose_structural_zero_eligible_gate``, ein 100 % homogenes
+    Gate — nicht das Paar selbst — blockiert jeden Trial) erreichte bislang NIE die
+    ``recommend_diagnosis_action``/``record_diagnosed_pair``-Pipeline: ``_structural_zero_
+    eligible_diagnosed_pairs`` ist eine reine, cache-unabhaengige REPORT-Anzeige (siehe dortiger
+    Docstring: "NUR GESCHRIEBEN (Report-Sichtbarkeit)"), kein Rueckschrieb-Pfad. Symptom (#1296):
+    22 von 46 ``diagnosed_pairs``-Eintraegen mit ``action='none'``, "Budget-deprioritisierte
+    Paare: 0".
+
+    Dieselbe REPORT-BUILD-ZEIT-Rueckschrieb-Konvention wie ``_writeback_search_stagnation_
+    diagnoses`` (sequenziell, EIN Prozess je Lauf-Report — keine der #1086-Mehrprozess-Sorgen
+    der LIVE Per-Trial-Callbacks in ``run_optimization.py``, daher hier statt dort sicher
+    implementierbar): fuer jedes (Strategie, Symbol)-Paar mit ``binding_cause='gate_unreachable'``
+    in DIESEM Lauf wird ``recommend_diagnosis_action`` (die ``gate_unreachable``-Verzweigung dort:
+    ``action='deprioritized'`` ab der ersten Bestaetigung, NIE ``'denylist'`` — die Ursache liegt
+    in der KONFIGURIERTEN Gate-Schwelle, siehe #1264) aufgerufen und das Ergebnis via
+    ``record_diagnosed_pair`` in denselben Cache geschrieben, den ``run_optimization._apply_
+    deprioritized_budget``/``sweep.enumerate_tunable_pairs`` im NAECHSTEN Lauf lesen — dieselbe
+    generische, ``action``-basierte (nicht ``binding_cause``-spezifische) Anwendung wie fuer
+    ``'signal_quality'`` (#830).
+
+    Fail-open je Paar (dieselbe Absicherung wie #1219). Rueckgabe: die Liste der tatsaechlich
+    erzeugten Empfehlungen (fuer Tests/Telemetrie), leer, wenn kein Paar betroffen war."""
+    from automation.optimizer.sweep_diagnostics import (
+        recommend_diagnosis_action, record_diagnosed_pair, load_diagnosed_pairs_cache,
+    )
+    gate_pairs = [
+        e for e in _structural_zero_eligible_diagnosed_pairs(studies_out or [])
+        if e.get("binding_cause") == "gate_unreachable"
+    ]
+    if not gate_pairs:
+        return []
+    try:
+        cache = load_diagnosed_pairs_cache(work_dir)
+    except Exception:
+        cache = {}
+    recommendations: list[dict[str, Any]] = []
+    for e in gate_pairs:
+        strategy, symbol = e.get("strategy"), e.get("symbol")
+        if not strategy or not symbol:
+            continue
+        try:
+            prior = cache.get((strategy, symbol))
+            n_runs_confirmed = (
+                int(prior.get("n_runs_confirmed", 0))
+                if prior and prior.get("binding_cause") == "gate_unreachable" else 0
+            )
+            rec = recommend_diagnosis_action(
+                strategy, symbol, {"binding_cause": "gate_unreachable"},
+                budget_executed_fraction=e.get("budget_executed_fraction"),
+                n_runs_confirmed=n_runs_confirmed,
+            )
+            record_diagnosed_pair(rec, work_dir=work_dir, run_id=run_id)
+            recommendations.append(rec)
+        except Exception:
+            _log.debug(
+                "Issue #1296: gate_unreachable-Rueckschrieb fuer %s/%s fehlgeschlagen "
                 "(non-fatal).", strategy, symbol, exc_info=True)
     return recommendations
 
@@ -4784,8 +4862,14 @@ def _build_report(
     all_checks.append(("global", _inv.check_sizing_identity_coherence(studies_out)))
     # Issue #1060/#1209 (Katalog #1196-1221) — Abnahmemessung fuer den harten Aggregat-Exposure-
     # Deckel in hourly_strategy_base._compute_quantity: das GEMESSENE Maximum (nicht der Median)
-    # darf trade_amount_pct nur um die Rundungs-/Slippage-Toleranz uebersteigen.
-    all_checks.append(("global", _inv.check_sizing_cap_enforcement(studies_out)))
+    # darf trade_amount_pct nur um die Rundungs-/Slippage-Toleranz uebersteigen. Issue #1297 (GH
+    # #1170, Katalog #1272-1297, P1) Fix Punkt 2 — die zuvor in max_overshoot_factor (Default 1.05)
+    # eingefrorene Toleranz wird durch optimizer.json['sizing_cap_tolerance'] (Default 0.02, EIN
+    # config-getriebener Wert statt einer im Check und einer im Live-/Backtest-Post-Fill-Deckel
+    # (hourly_strategy_base.HourlyStrategyConfig.sizing_cap_tolerance) unabhaengig gepflegten
+    # Konstante) ersetzt.
+    all_checks.append(("global", _inv.check_sizing_cap_enforcement(
+        studies_out, max_overshoot_factor=1.0 + float(optimizer_cfg.get("sizing_cap_tolerance", 0.02)))))
     # Issue #1071 — die per-Symbol ATR-Floor-Auflösung macht den Mechanismus (Floor-Bindung vs.
     # echte Sprungstelle) messbar, statt eine Ursache zu behaupten (siehe Docstring dort).
     _cost_basis_symbols = sorted({r.get("symbol") for r in studies_out if r.get("symbol")})
@@ -5369,6 +5453,15 @@ def _build_report(
     except Exception:
         _log.debug("Issue #1069/#1219: search_stagnation-Rueckschrieb-Batch fehlgeschlagen "
                    "(non-fatal).", exc_info=True)
+
+    # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — dieselbe "Diagnose ohne Konsequenz"-Klasse
+    # fuer binding_cause='gate_unreachable' (siehe _writeback_gate_unreachable_diagnoses-Docstring):
+    # ab der ersten Bestaetigung 'deprioritized', NIE 'denylist' (die Ursache liegt im Gate).
+    try:
+        _writeback_gate_unreachable_diagnoses(studies_out, run_id=run_id)
+    except Exception:
+        _log.debug("Issue #1296: gate_unreachable-Rueckschrieb-Batch fehlgeschlagen (non-fatal).",
+                   exc_info=True)
 
     # Issue #919 Fix 4 — jede Lücke zwischen dem je-Study aufsummierten Exit-Reason-Histogramm
     # und der tatsächlichen Round-Trip-Zahl bedeutet einen Exit-Pfad ohne Order-Tag-Attribution.

@@ -41,6 +41,7 @@ from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.indicators import SimpleMovingAverage
 from automation.momentum_ls_allocator import MomentumLSAllocator
+from automation.live_risk import compute_sizing_cap_correction
 from automation.log_manager import emit_execution_event
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
 
@@ -144,6 +145,13 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # (Balance-Query-Bug, Allocator-Fehlkonfiguration) hart ab, ohne den Normalbetrieb einzuschränken.
     max_aggregate_open_positions: int = 5
     max_order_notional: float = 2000.0
+    # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — Toleranz fuer den POST-FILL-Sizing-Deckel
+    # (siehe on_position_opened/live_risk.compute_sizing_cap_correction), als Anteil (0.02 = 2 %)
+    # ueber dem konfigurierten Zielanteil (trade_amount_pct bzw. Allocator-
+    # max_symbol_exposure_fraction). Ersetzt die zuvor implizite 1,05x/5%-Toleranz aus
+    # invariants.check_sizing_cap_enforcement's max_overshoot_factor (dort UNVERAENDERT als reine
+    # Abnahmemessung erhalten) durch einen expliziten, an der DURCHSETZUNG wirksamen Config-Key.
+    sizing_cap_tolerance: float = 0.02
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
@@ -309,6 +317,15 @@ class HourlyStrategyBase(Strategy):
         self._exit_close_retries: int = 0
         self._exit_close_unrecoverable: bool = False
         self._exit_close_max_retries = max(1, int(getattr(config, "exit_close_max_retries", None) or 3))
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — Post-Fill-Sizing-Deckel-Zustand.
+        # ``_sizing_target_fraction`` wird in _compute_quantity NUR fuer die pct-basierten Pfade
+        # (C: trade_amount_pct: A: Allocator-max_symbol_exposure_fraction) gesetzt -- bit-identisch
+        # None (kein Post-Fill-Eingriff) fuer die USD-/Fallback-Pfade B/D/E, dieselbe Ausnahme wie
+        # der #1209-Pre-Fill-Deckel (siehe dortiger Kommentar, Issue #182-Praezedenz).
+        self._sizing_target_fraction: float | None = None
+        self._sizing_cap_tolerance = float(getattr(config, "sizing_cap_tolerance", None) or 0.02)
+        self._sizing_cap_corrections_count: int = 0
+        self._sizing_cap_max_overshoot_pre_correction: float | None = None
         self._max_bars_in_trade = getattr(config, "max_bars_in_trade", None)
         if self._max_bars_in_trade is None:
             self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
@@ -1425,11 +1442,16 @@ class HourlyStrategyBase(Strategy):
             )
             return None
 
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — Zielanteil fuer den POST-FILL-Deckel in
+        # on_position_opened, NUR fuer die beiden pct-basierten Pfade A/C gesetzt (siehe
+        # HourlyStrategyConfig.sizing_cap_tolerance-Kommentar); B/D/E bleiben None (kein Eingriff).
+        self._sizing_target_fraction = None
         _sizing_via_pct = False
         if self.allocator is not None:
             # A: Live-Allocator hat höchste Prio
             balance = self._get_current_balance()
             trade_amount_usd = self.allocator.get_allocation(self.instrument_id, self.cache, balance)
+            self._sizing_target_fraction = self.allocator.max_symbol_exposure_fraction
         elif trade_amount_usd_cfg is not None and trade_amount_usd_cfg > 0 and trade_amount_usd_cfg != 100.0:
             # B: Explizit gesetzter USD-Betrag (z.B. vom Runner injiziert, aber nicht der Default)
             trade_amount_usd = trade_amount_usd_cfg
@@ -1438,6 +1460,7 @@ class HourlyStrategyBase(Strategy):
             balance = self._get_current_balance()
             trade_amount_usd = balance * (trade_amount_pct / 100.0)
             _sizing_via_pct = True
+            self._sizing_target_fraction = trade_amount_pct / 100.0
         elif trade_amount_usd_cfg is not None and trade_amount_usd_cfg > 0:
             # D: Explizit gesetzter Default USD-Betrag
             trade_amount_usd = trade_amount_usd_cfg
@@ -1561,8 +1584,69 @@ class HourlyStrategyBase(Strategy):
         self._executed_trades += 1
         self._log.info(f"[{self.instrument_id}] PositionOpened: {event} (Trade {self._daily_trades} today, {self._executed_trades} total)")
 
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — POST-FILL-Sizing-Deckel: der Fill kann zu
+        # einem anderen Preis als dem Signal-Preis erfolgen (Order zum aktuellen Bar-Schluss, Fill
+        # zum naechsten); bei adverser Kursbewegung ueberschreitet event.quantity *
+        # event.avg_px_open den konfigurierten Zielanteil, ohne dass der #1209-Pre-Fill-Deckel (der
+        # auf dem SIGNAL-Preis rechnet) das verhindern konnte. Dieselbe Deckel-Funktion
+        # (live_risk.compute_sizing_cap_correction) wie der Live-Allocator-Pfad (Fix Punkt 4, EIN
+        # Aufrufort fuer beide) -- _sizing_target_fraction ist None fuer die USD-/Fallback-Pfade
+        # B/D/E (kein Eingriff, siehe _compute_quantity).
+        _corrected_qty = float(event.quantity)
+        if self._sizing_target_fraction is not None:
+            _equity_at_entry = self._get_current_balance()
+            _realized_notional = float(event.quantity) * float(event.avg_px_open)
+            _correction = compute_sizing_cap_correction(
+                realized_notional=_realized_notional, equity_at_entry=_equity_at_entry,
+                target_fraction=self._sizing_target_fraction, tolerance=self._sizing_cap_tolerance,
+            )
+            if _correction.overshoot_factor is not None:
+                _overshoot = _correction.overshoot_factor - 1.0
+                self._sizing_cap_max_overshoot_pre_correction = _overshoot if (
+                    self._sizing_cap_max_overshoot_pre_correction is None
+                ) else max(self._sizing_cap_max_overshoot_pre_correction, _overshoot)
+            if _correction.correction_needed:
+                instrument = self.cache.instrument(self.instrument_id)
+                excess_qty = None
+                if instrument is not None:
+                    excess_units = _correction.excess_notional / float(event.avg_px_open)
+                    try:
+                        inc = float(instrument.size_increment)
+                        prec = instrument.size_precision
+                        # Aufgerundet (math.ceil statt floor wie im Sizing-Pfad): die Teilschliessung
+                        # darf den Zielanteil unterschreiten, NIEMALS ihn (nach Rundung) verfehlen.
+                        quantized_excess = min(
+                            round(math.ceil(excess_units / inc) * inc, prec), float(event.quantity))
+                        if quantized_excess > 0:
+                            excess_qty = instrument.make_qty(quantized_excess)
+                    except ValueError as e:
+                        self._log.warning(f"[{self.instrument_id}] SIZING_CAP_CORRECTION make_qty Fehler: {e}")
+                if excess_qty is not None and float(excess_qty) > 0:
+                    reduce_side = OrderSide.SELL if event.side == PositionSide.LONG else OrderSide.BUY
+                    correction_order = self.order_factory.market(
+                        instrument_id=self.instrument_id, order_side=reduce_side,
+                        quantity=excess_qty, time_in_force=TimeInForce.GTC,
+                        tags=["EXIT_REASON:SIZING_CAP_CORRECTION"],
+                    )
+                    self.submit_order(correction_order)
+                    self._sizing_cap_corrections_count += 1
+                    _corrected_qty = max(0.0, float(event.quantity) - float(excess_qty))
+                    emit_execution_event(log, "SIZING_CAP_CORRECTION", {
+                        "instrument_id": str(self.instrument_id),
+                        "realized_notional": _realized_notional,
+                        "target_notional": _correction.target_notional,
+                        "excess_notional": _correction.excess_notional,
+                        "overshoot_factor": _correction.overshoot_factor,
+                    }, level=logging.WARNING)
+                    self._log.warning(
+                        f"[{self.instrument_id}] SIZING_CAP_CORRECTION: realisiertes Notional "
+                        f"{_realized_notional:.2f} USD > Ziel {_correction.target_notional:.2f} USD "
+                        f"* (1+{self._sizing_cap_tolerance}) -- Teilschliessung ueber "
+                        f"{float(excess_qty):.6f} Einheiten abgesetzt (#1297)."
+                    )
+
         # Submit native limit order for profit target
-        if self._profit_target_pct is not None:
+        if self._profit_target_pct is not None and _corrected_qty > 0:
             instrument = self.cache.instrument(self.instrument_id)
             if instrument:
                 entry_price = float(event.avg_px_open)
@@ -1575,7 +1659,7 @@ class HourlyStrategyBase(Strategy):
 
                 # We format price based on instrument precision
                 price = instrument.make_price(target)
-                qty = event.quantity
+                qty = instrument.make_qty(_corrected_qty) if _corrected_qty != float(event.quantity) else event.quantity
 
                 order = self.order_factory.limit(
                     instrument_id=self.instrument_id,

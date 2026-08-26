@@ -611,6 +611,14 @@ def _metrics_dict(m) -> dict:
         # enforcement (Max).
         "oos_f_realized_peak_median": getattr(m, "oos_f_realized_peak_median", None),
         "oos_f_realized_peak_max": getattr(m, "oos_f_realized_peak_max", None),
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — siehe parsing.TournamentMetrics-
+        # Docstring; Rohmaterial fuer invariants.check_sizing_cap_enforcement's Offender-Kontext.
+        # Explizit HIER (nicht nur in parsing.py) ergaenzt -- Pitfall #421-Klasse: eine je Feld
+        # einzeln kuratierte Teilmenge ist eine eigene Datenschranke, die parsing.py's korrektes
+        # Parsen allein nicht ueberbrueckt (Root-Cause-Praezedenz #1084/#1232, siehe Kommentar oben).
+        "oos_sizing_cap_corrections_count": getattr(m, "oos_sizing_cap_corrections_count", None),
+        "oos_sizing_cap_max_overshoot_pre_correction": getattr(
+            m, "oos_sizing_cap_max_overshoot_pre_correction", None),
         # Issue #1075/#1223 (Katalog #1247+, P0) — siehe parsing.TournamentMetrics-Docstring;
         # Rohmaterial fuer invariants.check_applied_cost_components_resolved.
         "oos_applied_financing_bps_per_day": getattr(m, "oos_applied_financing_bps_per_day", None),

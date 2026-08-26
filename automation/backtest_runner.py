@@ -7633,6 +7633,16 @@ def run_single_backtest_worker(
                 "value": getattr(strategy, "_exit_close_retries", None),
             })
 
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — Sizing-Cap-Korrektur-
+        # Telemetrie (hourly_strategy_base.on_position_opened's POST-FILL-Deckel), analog zu den
+        # Exit-Close-Zaehlern oben direkt von der eben ausgefuehrten Strategie-Instanz gelesen.
+        # Rohmaterial fuer invariants.check_sizing_cap_enforcement (via parsing.TournamentMetrics's
+        # oos_sizing_cap_*-Felder, holdout-only konsumiert, siehe dortiger Docstring).
+        oos_metrics["sizing_cap_corrections_count"] = getattr(
+            strategy, "_sizing_cap_corrections_count", 0)
+        oos_metrics["sizing_cap_max_overshoot_pre_correction"] = getattr(
+            strategy, "_sizing_cap_max_overshoot_pre_correction", None)
+
         if round_trip_cost_bps is not None:
             metrics["round_trip_cost_bps"] = round_trip_cost_bps
             oos_metrics["round_trip_cost_bps"] = round_trip_cost_bps

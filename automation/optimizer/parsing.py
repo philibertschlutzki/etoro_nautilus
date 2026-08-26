@@ -278,6 +278,12 @@ class TournamentMetrics:
     # enforcement.
     oos_f_realized_peak_median: float | None = None
     oos_f_realized_peak_max: float | None = None
+    # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — Sizing-Cap-Korrektur-Telemetrie
+    # (hourly_strategy_base.on_position_opened's POST-FILL-Deckel), Rohmaterial fuer
+    # invariants.check_sizing_cap_enforcement's Offender-Kontext (macht "Deckel griff post-fill zu
+    # spaet, wurde aber korrigiert" von "Deckel griff nie" unterscheidbar).
+    oos_sizing_cap_corrections_count: int | None = None
+    oos_sizing_cap_max_overshoot_pre_correction: float | None = None
     # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
     # konfigurierten) Kostenkomponenten dieses Levels, siehe backtest_runner.extract_metrics
     # (Stempelstelle direkt neben expectancy_round_trip_cost_stress_full_realism). Rohmaterial fuer
@@ -537,6 +543,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #1085/#1233 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
     oos_f_realized_peak_median = oos_metrics.get("f_realized_peak_median")
     oos_f_realized_peak_max = oos_metrics.get("f_realized_peak_max")
+    # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — siehe TournamentMetrics-Docstring.
+    oos_sizing_cap_corrections_count = oos_metrics.get("sizing_cap_corrections_count")
+    oos_sizing_cap_max_overshoot_pre_correction = oos_metrics.get("sizing_cap_max_overshoot_pre_correction")
     # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
     oos_applied_financing_bps_per_day = oos_metrics.get("applied_financing_bps_per_day")
     oos_applied_slippage_bps = oos_metrics.get("applied_slippage_bps")
@@ -852,6 +861,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             float(oos_f_realized_peak_median) if oos_f_realized_peak_median is not None else None),
         oos_f_realized_peak_max=(
             float(oos_f_realized_peak_max) if oos_f_realized_peak_max is not None else None),
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — siehe TournamentMetrics-Docstring.
+        oos_sizing_cap_corrections_count=(
+            int(oos_sizing_cap_corrections_count)
+            if oos_sizing_cap_corrections_count is not None else None),
+        oos_sizing_cap_max_overshoot_pre_correction=(
+            float(oos_sizing_cap_max_overshoot_pre_correction)
+            if oos_sizing_cap_max_overshoot_pre_correction is not None else None),
         # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
         oos_applied_financing_bps_per_day=(
             float(oos_applied_financing_bps_per_day)

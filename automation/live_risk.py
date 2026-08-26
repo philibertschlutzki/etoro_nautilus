@@ -89,6 +89,52 @@ def evaluate_circuit_breaker(
     )
 
 
+@dataclass(frozen=True)
+class SizingCapCorrection:
+    correction_needed: bool
+    target_notional: float | None
+    excess_notional: float
+    overshoot_factor: float | None
+
+
+def compute_sizing_cap_correction(
+    *, realized_notional: float, equity_at_entry: float | None, target_fraction: float | None,
+    tolerance: float = 0.02,
+) -> SizingCapCorrection:
+    """Issue #1297 (GH #1170, Katalog #1272-1297, P1) — der Sizing-Deckel aus #1209
+    (``hourly_strategy_base._compute_quantity``) wird auf Basis des Equity-Standes und Preises ZUM
+    SIGNALZEITPUNKT gerechnet; der Fill erfolgt zum naechsten Bar-Schluss. Bei einer adversen
+    Kursbewegung zwischen Sizing und Fill ueberschreitet das REALISIERTE Notional
+    (``quantity * fill_price``) den Zielanteil, ohne dass vor diesem Fix ein Nachpruefpfad
+    existierte (Symptom: Vwap/TSLA 15,94-16,05 %, AdxAtr/NVDA 16,19 % gegen ``trade_amount_pct =
+    15,0`` -- Ueberschreitungsfaktoren 1,06-1,08 in 4/4 Laeufen).
+
+    Reine, deterministische Entscheidungsfunktion (kein I/O, kein State) -- der GEMEINSAME Deckel
+    fuer Backtest- (``hourly_strategy_base.on_position_opened``, Pfad C: ``trade_amount_pct``) UND
+    Live-Pfad (dieselbe Methode, Pfad A: ``MomentumLSAllocator.max_symbol_exposure_fraction`` als
+    ``target_fraction``) -- EIN Aufrufort in beiden Faellen (``on_position_opened``), kein
+    Duplikat (Fix Punkt 4). ``target_fraction`` ist ein Anteil (0.15 fuer 15 %), nicht ein
+    Prozentwert.
+
+    FAIL-OPEN (``correction_needed=False``) ohne auswertbare Basis (``equity_at_entry``/
+    ``target_fraction`` fehlend oder <= 0) -- dieselbe Konvention wie ``_apply_sizing_cap``
+    (#1209): kein erfundener Eingriff ohne reale Grundlage. Toleranz (Default 0.02, Issue-Text Fix
+    Punkt 2 -- ``optimizer.json['sizing_cap_tolerance']``, ersetzt die zuvor implizite 1,05x/5 %-
+    Toleranz aus ``invariants.check_sizing_cap_enforcement``s ``max_overshoot_factor``, die
+    UNVERAENDERT als reine Abnahmemessung bestehen bleibt) wird MULTIPLIKATIV auf den Zielanteil
+    angewandt: eine Korrektur greift erst, wenn das realisierte Notional
+    ``target_fraction * equity_at_entry * (1 + tolerance)`` uebersteigt."""
+    if (equity_at_entry is None or equity_at_entry <= 0
+            or target_fraction is None or target_fraction <= 0):
+        return SizingCapCorrection(False, None, 0.0, None)
+    target_notional = equity_at_entry * target_fraction
+    overshoot_factor = realized_notional / target_notional if target_notional > 0 else None
+    if realized_notional <= target_notional * (1.0 + tolerance):
+        return SizingCapCorrection(False, target_notional, 0.0, overshoot_factor)
+    return SizingCapCorrection(
+        True, target_notional, realized_notional - target_notional, overshoot_factor)
+
+
 def drawdown_damper(dd_current: float | None, *, dd_halt_fraction: float = 0.10, psi_min: float = 0.2) -> float:
     """``psi(DD) = max(psi_min, 1 − DD_current/DD_halt)`` — skaliert die Positionsgroesse
     kontinuierlich herunter, WAEHREND sich der Live-Drawdown dem harten Ausloeser A naehert, statt

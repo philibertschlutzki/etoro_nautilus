@@ -4875,6 +4875,17 @@ def check_sizing_cap_enforcement(
             if r.get("holdout_f_turnover_realized_max") is not None:
                 offender["f_turnover_realized_max_pct"] = round(
                     float(r["holdout_f_turnover_realized_max"]) * 100.0, 4)
+            # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — Sizing-Cap-Korrektur-
+            # Telemetrie NEBEN dem Peak-Wert (dieselbe Kontext-Konvention wie #1233s
+            # f_turnover_realized_max_pct oben): macht einen Offender als "Deckel griff nicht UND
+            # wurde nie korrigiert" (corrections_count fehlt/0) von "Deckel griff post-fill zu spaet,
+            # ABER die Korrektur hat eingegriffen" (corrections_count > 0) unterscheidbar — exakt das
+            # Akzeptanzkriterium ("... oder jeder Offender traegt sizing_cap_corrections_count > 0").
+            if r.get("holdout_sizing_cap_corrections_count") is not None:
+                offender["sizing_cap_corrections_count"] = int(r["holdout_sizing_cap_corrections_count"])
+            if r.get("holdout_sizing_cap_max_overshoot_pre_correction") is not None:
+                offender["sizing_cap_max_overshoot_pre_correction"] = round(
+                    float(r["holdout_sizing_cap_max_overshoot_pre_correction"]), 4)
             offenders[key] = offender
     passed = not offenders
     return InvariantResult(
@@ -5933,9 +5944,23 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
     ``action == 'none'`` in JEDEM Fall). Ein Diagnose-Cache, der über viele Symbole hinweg
     ausschliesslich ``'none'`` für dieselbe Ursache meldet, ist der direkte Fingerabdruck eines
     solchen Deadlocks — unabhängig davon, ob die konkrete Ursache ``signal_absent`` (#829) oder eine
-    künftige, strukturell ähnliche Kombination ist."""
+    künftige, strukturell ähnliche Kombination ist.
+
+    Issue #1296 (GH #1169, Katalog #1272-1297, P1) Fix Punkt 4 — VERSCHÄRFUNG, PER-EINTRAG statt nur
+    über die (strategy, binding_cause)-Aggregation: ``action == 'none'`` ist nur zulässig, solange
+    ``n_runs_confirmed < expires_after_runs`` — ein Eintrag, der seine eigene Ablauf-Frist erreicht
+    oder überschritten hat, OHNE je auf eine echte Aktion (denylist/deprioritized/
+    search_space_override) zu eskalieren, ist derselbe Deadlock-Fingerabdruck wie oben, nur bereits
+    auf EINEM einzelnen Paar sichtbar (bevor er die ``min_count``-Aggregatschwelle erreicht). Nur
+    Einträge mit BEIDEN Feldern nicht-``None`` werden geprüft — ein Eintrag ohne diese Felder (z. B.
+    Legacy-/Test-Aufrufer, oder die #1263-``atr_floor_dominant``-Live-Ableitung, die bewusst
+    ``n_runs_confirmed=None``/``expires_after_runs=None`` trägt, siehe
+    ``report._atr_floor_dominant_diagnosed_pairs``-Docstring — diese Ursache wird gemäss #1296 Fix
+    Punkt 3 an #1295 weitergeleitet, nicht über diesen Mechanismus geprüft) ist nicht beurteilbar und
+    wird übersprungen."""
     from collections import Counter
     none_counts: Counter = Counter()
+    stale_none_offenders: dict[str, dict[str, Any]] = {}
     for entry in diagnosed_pairs or []:
         if entry.get("action") != "none":
             continue
@@ -5943,17 +5968,41 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
         if key[0] is None or key[1] is None:
             continue
         none_counts[key] += 1
+        n_runs_confirmed, expires_after_runs = entry.get("n_runs_confirmed"), entry.get("expires_after_runs")
+        if n_runs_confirmed is None or expires_after_runs is None:
+            continue
+        if int(n_runs_confirmed) >= int(expires_after_runs):
+            symbol = entry.get("symbol")
+            stale_none_offenders[f"{key[0]}/{symbol}/{key[1]}"] = {
+                "n_runs_confirmed": n_runs_confirmed, "expires_after_runs": expires_after_runs,
+            }
     offenders = {f"{strategy}/{cause}": n for (strategy, cause), n in none_counts.items() if n >= min_count}
-    passed = not offenders
+    passed = not offenders and not stale_none_offenders
+    actual = None
+    if offenders or stale_none_offenders:
+        actual = {}
+        if offenders:
+            actual["aggregate_none_deadlock"] = offenders
+        if stale_none_offenders:
+            actual["stale_none_past_expiry"] = stale_none_offenders
+    detail_parts = []
+    if offenders:
+        detail_parts.append(
+            f"{len(offenders)} (strategy, binding_cause)-Kombination(en) melden >= {min_count} "
+            f"Paare mit action=='none': {offenders} — vermutlich ein Evidenzschwellen-Deadlock "
+            "(Pitfall #258), analog #829.")
+    if stale_none_offenders:
+        detail_parts.append(
+            f"{len(stale_none_offenders)} Paar(e) mit action=='none' haben n_runs_confirmed >= "
+            f"expires_after_runs erreicht, ohne je zu eskalieren: {stale_none_offenders} (#1296 Fix "
+            "Punkt 4).")
     return InvariantResult(
         name="check_diagnosis_actionability",
         passed=passed,
-        expected=f"< {min_count} Paare je (strategy, binding_cause) mit action=='none'",
-        actual=offenders if offenders else None,
-        detail=("OK" if passed else
-                f"{len(offenders)} (strategy, binding_cause)-Kombination(en) melden >= {min_count} "
-                f"Paare mit action=='none': {offenders} — vermutlich ein Evidenzschwellen-Deadlock "
-                "(Pitfall #258), analog #829."),
+        expected=(f"< {min_count} Paare je (strategy, binding_cause) mit action=='none'; jeder "
+                  "einzelne 'none'-Eintrag mit n_runs_confirmed < expires_after_runs (#1296)"),
+        actual=actual,
+        detail="OK" if passed else " ".join(detail_parts),
     )
 
 

@@ -125,6 +125,8 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_f_turnover_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_max, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_realized_peak_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_median, #1085/#1233 check_sizing_identity_coherence)",
     "oos_f_realized_peak_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_max, #1085/#1233 check_sizing_cap_enforcement)",
+    "oos_sizing_cap_corrections_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_sizing_cap_corrections_count, #1297 check_sizing_cap_enforcement)",
+    "oos_sizing_cap_max_overshoot_pre_correction": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_sizing_cap_max_overshoot_pre_correction, #1297 check_sizing_cap_enforcement)",
     "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_slippage_calibration_scope": "holdout-only (confirm.py-Re-Evaluation, siehe report.py slippage_calibration_scope, #1266/GH #1136 check_cost_stress_discriminates)",
@@ -906,6 +908,11 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         run_id=run_id)
                     rec = recommend_diagnosis_action(
                         strategy, symbol, diagnosis,
+                        # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — dieselbe Groesse, die
+                        # diagnose_trade_frequency bereits im diagnosis-Dict liefert (n_evaluable=0
+                        # fuer JEDEN signal_sparse-Befund aus DIESER Quelle, siehe dortiger
+                        # Docstring); Voraussetzung fuer die neue signal_sparse-Denylist-Eskalation.
+                        n_evaluable=diagnosis.get("n_evaluable"),
                         has_existing_override=has_existing_search_space_override(strategy, symbol),
                         previously_recommended_override=bool(
                             _prior and _prior.get("action") == "search_space_override"),
