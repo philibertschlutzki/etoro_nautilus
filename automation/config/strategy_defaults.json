@@ -7,7 +7,7 @@
     "sma_period": 5,
     "trade_amount_pct": 15.0,
     "atr_trailing_multiplier": 1.5,
-    "max_bars_in_trade": 24
+    "max_bars_in_trade": 6
   },
   "MeanReversionStrategy": {
     "keltner_period": 20,
@@ -26,7 +26,7 @@
     "rsi_oversold": 30.0,
     "rsi_overbought": 70.0,
     "atr_trailing_multiplier": 0.75,
-    "max_bars_in_trade": 16,
+    "max_bars_in_trade": 4,
     "trade_amount_pct": 15.0
   },
   "VolatilityBreakoutPumpStrategy": {
@@ -82,7 +82,7 @@
     "cooldown_bars": 6,
     "atr_period": 14,
     "atr_trailing_multiplier": 2.0,
-    "max_bars_in_trade": 24,
+    "max_bars_in_trade": 6,
     "trade_amount_pct": 15.0
   },
   "OpeningRangeBreakoutStrategy": {
@@ -91,7 +91,7 @@
     "cooldown_bars": 6,
     "atr_period": 14,
     "atr_trailing_multiplier": 2.0,
-    "max_bars_in_trade": 24,
+    "max_bars_in_trade": 6,
     "max_daily_trades": 2,
     "trade_amount_pct": 15.0
   },
@@ -103,7 +103,7 @@
     "cooldown_bars": 6,
     "atr_period": 14,
     "atr_trailing_multiplier": 2.5,
-    "max_bars_in_trade": 24,
+    "max_bars_in_trade": 6,
     "trade_amount_pct": 15.0
   },
   "Rsi2ReversionStrategy": {
@@ -114,7 +114,7 @@
     "cooldown_bars": 3,
     "atr_period": 14,
     "atr_trailing_multiplier": 1.5,
-    "max_bars_in_trade": 24,
+    "max_bars_in_trade": 6,
     "trade_amount_pct": 15.0
   },
   "GapContinuationStrategy": {
@@ -122,7 +122,7 @@
     "cooldown_bars": 0,
     "atr_period": 14,
     "atr_trailing_multiplier": 2.0,
-    "max_bars_in_trade": 24,
+    "max_bars_in_trade": 6,
     "max_daily_trades": 1,
     "trade_amount_pct": 15.0
   }

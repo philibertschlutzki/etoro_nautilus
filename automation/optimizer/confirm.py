@@ -611,6 +611,14 @@ def _metrics_dict(m) -> dict:
         # enforcement (Max).
         "oos_f_realized_peak_median": getattr(m, "oos_f_realized_peak_median", None),
         "oos_f_realized_peak_max": getattr(m, "oos_f_realized_peak_max", None),
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — siehe parsing.TournamentMetrics-
+        # Docstring; Rohmaterial fuer invariants.check_sizing_cap_enforcement's Offender-Kontext.
+        # Explizit HIER (nicht nur in parsing.py) ergaenzt -- Pitfall #421-Klasse: eine je Feld
+        # einzeln kuratierte Teilmenge ist eine eigene Datenschranke, die parsing.py's korrektes
+        # Parsen allein nicht ueberbrueckt (Root-Cause-Praezedenz #1084/#1232, siehe Kommentar oben).
+        "oos_sizing_cap_corrections_count": getattr(m, "oos_sizing_cap_corrections_count", None),
+        "oos_sizing_cap_max_overshoot_pre_correction": getattr(
+            m, "oos_sizing_cap_max_overshoot_pre_correction", None),
         # Issue #1075/#1223 (Katalog #1247+, P0) — siehe parsing.TournamentMetrics-Docstring;
         # Rohmaterial fuer invariants.check_applied_cost_components_resolved.
         "oos_applied_financing_bps_per_day": getattr(m, "oos_applied_financing_bps_per_day", None),
@@ -652,6 +660,22 @@ def _metrics_dict(m) -> dict:
         "oos_alpha_n_y_nonzero": getattr(m, "oos_alpha_n_y_nonzero", None),
         "oos_alpha_n_x_nonzero": getattr(m, "oos_alpha_n_x_nonzero", None),
         "oos_alpha_n_both_zero": getattr(m, "oos_alpha_n_both_zero", None),
+        # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — siehe parsing.TournamentMetrics-Docstring
+        # (oos_alpha_tstat_df == oos_alpha_n_used - 2, invariants.check_alpha_df_consistency).
+        # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Kovarianz-Zerlegung, Rohmaterial fuer
+        # invariants.check_alpha_regression_identifiability. Beide Blöcke fehlten hier bislang
+        # komplett (Pitfall #421-Klasse, siehe oben bei oos_f_realized_peak_max/#1297) — parsing.py
+        # parste sie korrekt, aber diese kuratierte Teilmenge liess sie aus, wodurch sie confirm.py's
+        # Holdout-Re-Evaluation nie erreichten.
+        "oos_alpha_n_used": getattr(m, "oos_alpha_n_used", None),
+        "oos_alpha_corr_xy": getattr(m, "oos_alpha_corr_xy", None),
+        "oos_alpha_sd_x": getattr(m, "oos_alpha_sd_x", None),
+        "oos_alpha_sd_y": getattr(m, "oos_alpha_sd_y", None),
+        "oos_alpha_cov_xy": getattr(m, "oos_alpha_cov_xy", None),
+        "oos_alpha_cov_in_market": getattr(m, "oos_alpha_cov_in_market", None),
+        "oos_alpha_cov_out_of_market": getattr(m, "oos_alpha_cov_out_of_market", None),
+        "oos_alpha_cov_exit_bars": getattr(m, "oos_alpha_cov_exit_bars", None),
+        "oos_alpha_n_in_market": getattr(m, "oos_alpha_n_in_market", None),
         # Issue #1078/#1226 (P1, Semantik-Bump) — welche Kostenbasis DIESE Holdout-Re-Evaluation
         # tatsaechlich speiste (siehe backtest_runner._apply_calibrated_slippage_deduction). Der
         # Schluessel traegt bewusst den vollen ``oos_``-Feldnamen (Konvention dieses Dicts, siehe
@@ -1594,6 +1618,40 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             strategy, symbol, getattr(promoted_m_symbol, "oos_n_periods", None),
         )
 
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — check_alpha_regression_identifiability als
+    # unbedingter Guard genau an der Promotions-Entscheidung (dieselbe #958-Konvention: "narrower
+    # Guard genau an der Stelle, an der die tatsaechliche Promotions-Entscheidung faellt", statt
+    # die Top-k-Kohorte selbst zu filtern). t(α) ist seit #1093/#1241 das Haupt-Selektionsgate —
+    # es identifiziert Alpha nur, wenn β die bekannte Marktbeteiligung (exposure_fraction ·
+    # trade_amount_pct/100, dieselbe Formel wie invariants.check_beta_exposure_plausibility/
+    # report.py's beta_expected) tatsaechlich trifft. ``allow_short=True``-Strategien haben kein
+    # vorhersagbares Beta-Vorzeichen (siehe report._allow_short_by_strategy-Docstring) und werden
+    # ausgenommen — dieselbe Ausnahme wie beim Report-seitigen Pendant.
+    if holdout_passed:
+        from automation.optimizer.report import (
+            _allow_short_by_strategy, _trade_amount_pct_by_strategy)
+        _allow_short_this = _allow_short_by_strategy().get(strategy, False)
+        _trade_pct_this = _trade_amount_pct_by_strategy().get(strategy)
+        _exposure_this = getattr(promoted_m_symbol, "oos_exposure_fraction", None)
+        _beta_measured_this = getattr(promoted_m_symbol, "oos_beta", None)
+        _beta_expected_this = (
+            float(_exposure_this) * float(_trade_pct_this) / 100.0
+            if (not _allow_short_this and _exposure_this is not None
+                and _trade_pct_this is not None) else None
+        )
+        if (_beta_expected_this is not None and _beta_expected_this > 0.0
+                and _beta_measured_this is not None and _exposure_this is not None
+                and float(_exposure_this) > 0.3
+                and abs(float(_beta_measured_this)) < 0.25 * _beta_expected_this):
+            holdout_passed = False
+            holdout_reject_detail = "REJECT_OOS_ALPHA_NOT_IDENTIFIED"
+            logging.getLogger("optimizer").error(
+                "[#1283] %s/%s: beta_measured=%.4f identifiziert die Marktbeteiligung nicht "
+                "(beta_expected=%.4f, exposure_fraction=%.4f) — t(alpha) wird nicht als "
+                "Promotions-Entscheidung akzeptiert (REJECT_OOS_ALPHA_NOT_IDENTIFIED).",
+                strategy, symbol, _beta_measured_this, _beta_expected_this, _exposure_this,
+            )
+
     # Issue #1007 (Katalog #858) — eine Study kann bislang gleichzeitig als informationsfrei
     # (severity='blocking'-Invariante FAIL, z. B. check_selection_statistic_availability,
     # check_guard_reference_stability) markiert UND als Gewinner exportiert werden, weil Invarianten
@@ -2483,6 +2541,10 @@ _CONFIRM_STAGE_REJECTIONS = frozenset({
     # (unaufloesbare Familien-Multiplizitaet); der modale Per-Trial-IS-Grund erklaert nicht, warum
     # die Familien-Multiplizitaet unaufloesbar war.
     "REJECT_PROMOTION_FAMILY_UNRESOLVABLE",
+    # Issue #1283 (GH #1156, Katalog #1272-1297) — Holdout bestanden, aber beta_measured
+    # identifiziert die bekannte Marktbeteiligung nicht; der modale Per-Trial-IS-Grund erklaert
+    # nicht, warum t(alpha) als Promotions-Entscheidung verworfen wurde.
+    "REJECT_OOS_ALPHA_NOT_IDENTIFIED",
 })
 
 

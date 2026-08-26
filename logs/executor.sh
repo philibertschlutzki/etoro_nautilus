@@ -15,11 +15,19 @@ source venv/bin/activate
 # CLI-Flag (sweep.py hat kein --work-dir).
 run_sweep() {
     local symbol="$1"
-    local work_dir
+    local work_dir seed_salt
     work_dir="data/optimizer/runs/${symbol%%.*}_$(date -u +%Y%m%dT%H%M%S%N)"
     mkdir -p "$work_dir"
-    echo "==> Sweep ${symbol} -> OPTIMIZER_WORK_DIR=${work_dir}"
-    OPTIMIZER_WORK_DIR="$work_dir" python -m automation.optimizer.sweep --strategies all --tier all --symbols "$symbol"
+    # Issue #1285 (GH #1158, Katalog #1272-1297) Fix Punkt 3 — JEDE Invokation bekommt einen
+    # eigenen, zeitstempelbasierten --seed-salt: der neue sweep.py-Preflight
+    # (assert_run_is_not_duplicate_preflight) bricht einen Lauf mit identischer Eingangsmenge zu
+    # einem bereits im Index stehenden Lauf jetzt VOR Phase 1 fail-loud ab (statt wie bisher erst
+    # nach vollem Durchlauf einen duplicate_of-Befund zu melden) — zwei Aufrufe DERSELBEN
+    # run_sweep-Zeile (siehe NVDA.ETORO unten, zweimal in diesem Skript) sind sonst ab sofort ein
+    # Exit-Code-2-Abbruch statt der bisherigen stillen Wallclock-Verschwendung (a9d80fba/f13f29db).
+    seed_salt="$(date -u +%Y%m%dT%H%M%S%N)"
+    echo "==> Sweep ${symbol} -> OPTIMIZER_WORK_DIR=${work_dir} --seed-salt=${seed_salt}"
+    OPTIMIZER_WORK_DIR="$work_dir" python -m automation.optimizer.sweep --strategies all --tier all --symbols "$symbol" --seed-salt "$seed_salt"
 }
 
 # Sequential Sweep Execution
@@ -27,7 +35,10 @@ run_sweep() {
 # Batches waren bit-identische Kopien (208/218 Study-Felder identisch): ohne --seed-salt
 # (#1123/#1253) ist ein zweiter/dritter Lauf auf derselben Eingangsmenge keine Stichprobe,
 # sondern eine Wiederholung, die nur Wallclock kostet (Ersparnis 0,92 h/Batch). Genau EIN
-# TSLA-Lauf, bis Wiederholungsläufe wieder mit --seed-salt gefahren werden.
+# TSLA-Lauf, bis Wiederholungsläufe wieder mit --seed-salt gefahren werden. Issue #1285 — jede
+# run_sweep-Invokation traegt seither IMMER einen frischen --seed-salt (siehe run_sweep oben),
+# die Beschraenkung auf einen einzelnen TSLA-Lauf bleibt trotzdem als bewusste
+# Wallclock-Entscheidung fuer diesen Batch bestehen (keine automatische Reaktivierung).
 #run_sweep GOOGL.ETORO
 run_sweep TSLA.ETORO
 #run_sweep PLTR.ETORO

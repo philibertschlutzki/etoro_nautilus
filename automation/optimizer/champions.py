@@ -563,6 +563,67 @@ def champion_is_admissible(entry: dict, opt_data: dict,
     return True, None
 
 
+def champion_admissibility_skip_detail(entry: dict, opt_data: dict, reason: str | None, *,
+                                       tournament_cfg: dict | None = None) -> dict:
+    """Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 2 — reichert einen
+    ``champion_is_admissible``-Ablehnungscode mit dem konkreten IST-/SOLL-Wert des gerissenen
+    Kriteriums an. Root-Cause: ``store_champion`` verwarf den ``reason``-Code bislang stillschweigend
+    (nur zur Quarantäne-Namensbildung genutzt) — 14 Versuche, 0 Store-Einträge, ohne dass aus dem
+    Artefakt je hervorging, WELCHES der drei benannten Kriterien (``champion_min_R_symbol``/
+    ``champion_min_tuning_edge``/``champion_admissible_reject_details``) tatsächlich blockierte.
+
+    Deckt genau die drei im Issue benannten, NUMERISCH nachprüfbaren Kriterien mit
+    ``{criterion, actual, expected_...}`` ab; jeder andere ``champion_is_admissible``-Code (z. B.
+    ``CHAMPION_DISABLED``, ``EMPTY_PARAMS``) ist selbst bereits die vollständige, benannte Ursache
+    und bekommt nur ``{'reason': reason}`` — ``check_champion_writeback_reachability`` verlangt
+    LEDIGLICH einen VOM CODE UNTERSCHIEDENEN ``'UNKNOWN'``, nicht zwingend ein numerisches Kriterium
+    für jeden Code."""
+    provenance = entry.get("provenance") or {}
+    quality = entry.get("quality") or {}
+    if reason == "BELOW_QUALITY_FLOOR":
+        return {
+            "reason": reason, "criterion": "champion_min_R_symbol",
+            "actual_R_symbol": quality.get("R_symbol"),
+            "expected_min_R_symbol": float(opt_data.get("champion_min_R_symbol", 0.0)),
+        }
+    if reason == "NO_TUNING_EDGE":
+        r_symbol = quality.get("R_symbol")
+        r_global = quality.get("R_global")
+        min_edge = float(opt_data.get("champion_min_tuning_edge", 0.0))
+        return {
+            "reason": reason, "criterion": "champion_min_tuning_edge",
+            "actual_R_symbol": r_symbol, "actual_R_global": r_global,
+            "actual_edge": (r_symbol - r_global) if (r_symbol is not None and r_global is not None) else None,
+            "expected_min_tuning_edge": min_edge,
+        }
+    if reason == "REJECTION_NOT_ALLOWLISTED":
+        return {
+            "reason": reason, "criterion": "champion_admissible_reject_details",
+            "actual_holdout_reject_detail": provenance.get("holdout_reject_detail"),
+            "expected_allowlist": sorted(_configured_admissible_reject_details(opt_data)),
+        }
+    if reason == "HOLDOUT_GATE_SHORTFALL_TOO_LARGE":
+        cfg = tournament_cfg if tournament_cfg is not None else _load_tournament_cfg()
+        binding_gate = provenance.get("holdout_binding_gate")
+        gate_deltas = provenance.get("holdout_gate_deltas") or {}
+        shortfall = _holdout_gate_shortfall_relative(gate_deltas, binding_gate, cfg) if binding_gate else None
+        return {
+            "reason": reason, "criterion": "champion_max_holdout_gate_shortfall",
+            "actual_shortfall_relative": shortfall,
+            "expected_max_shortfall_relative": float(
+                opt_data.get("champion_max_holdout_gate_shortfall", 0.0)),
+            "binding_gate": binding_gate,
+        }
+    if reason == "DEFLATION_REJECTION_NOT_QUALIFIED":
+        gate_deltas = provenance.get("holdout_gate_deltas") or {}
+        return {
+            "reason": reason,
+            "actual_holdout_return": provenance.get("holdout_return"),
+            "actual_oos_min_psr_delta": gate_deltas.get("oos_min_psr"),
+        }
+    return {"reason": reason or "UNKNOWN"}
+
+
 def _bump_corroboration(prior_lifecycle: dict, run_id: str) -> tuple[int, str]:
     """Issue #821 — ``corroboration_count`` zählt LÄUFE (verschiedene ``run_id``), nicht
     Schreibvorgänge: zwei ``store_champion``-Aufrufe mit DERSELBEN ``run_id`` (z. B. ein Confirm-
@@ -805,6 +866,15 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
         if discarded_for_quarantine is not None:
             _quarantine_champion(strategy, symbol, path, discarded_for_quarantine,
                                  reason=f"{quarantine_mismatch_kind}_then_{reason}")
+        # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 2 — der GRUND, warum DIESER
+        # Versuch keinen Store-Eintrag hinterliess, wurde bislang nach diesem Punkt stillschweigend
+        # verworfen (14 Versuche, 0 Store-Eintraege, ohne dass das Artefakt je sagte, welches
+        # Kriterium riss). Eigener Ereignisstrom (analog CHAMPION_WRITEBACK), von
+        # report._champions_summary gelesen.
+        emit_execution_event(logging.getLogger("optimizer"), "CHAMPION_STORE_ATTEMPT", {
+            "strategy": strategy, "symbol": symbol, "stored": False,
+            "skip_detail": champion_admissibility_skip_detail(candidate_entry, opt_data, reason),
+        })
         return None  # ein Degrade-Update oben (falls quality_stale=False) bleibt bestehen.
 
     if existing is None:
@@ -883,6 +953,11 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
             merged = existing  # schlechter, gleicher Snapshot -- gespeicherten Champion unangetastet lassen
 
     _write_entry(path, merged)
+    # Issue #1288 (GH #1161, Katalog #1272-1297, P1) — symmetrisch zum Ablehnungs-Ereignis oben:
+    # macht "attempts" ueber DIESEN Ereignisstrom allein zaehlbar (analog CHAMPION_WRITEBACK).
+    emit_execution_event(logging.getLogger("optimizer"), "CHAMPION_STORE_ATTEMPT", {
+        "strategy": strategy, "symbol": symbol, "stored": True,
+    })
     return path
 
 

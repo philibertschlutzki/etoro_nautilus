@@ -101,15 +101,32 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     # oben (kein Gate braucht sie live — anders als oos_alpha_tstat_hc3 selbst, das per Sweep-Trial
     # gestempelt wird, siehe Stempelstelle neben oos_alpha_tstat).
     "oos_alpha_tstat_df": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1255)",
+    # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — die tatsaechlich fuer oos_alpha_tstat_df
+    # verwendete Stichprobengroesse, holdout-only wie oos_alpha_tstat_df selbst (kein Gate braucht
+    # sie live — Rohmaterial fuer invariants.check_alpha_df_consistency).
+    "oos_alpha_n_used": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1284)",
     "oos_alpha_n_total": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_informative": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_y_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_x_nonzero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
     "oos_alpha_n_both_zero": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1258)",
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Kovarianz-Zerlegungs-Rohmaterial fuer
+    # invariants.check_alpha_regression_identifiability, holdout-only wie die #1258-Audit-Felder
+    # direkt oben (kein Gate braucht sie live).
+    "oos_alpha_corr_xy": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_sd_x": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_sd_y": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_xy": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_in_market": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_out_of_market": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
+    "oos_alpha_cov_exit_bars": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283 — stets None, siehe dortiger Docstring)",
+    "oos_alpha_n_in_market": "holdout-only (confirm.py-Re-Evaluation, backtest_runner._alpha_regression_diagnostics, #1283)",
     "oos_f_turnover_realized_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_median, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_turnover_realized_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_turnover_realized_max, #989/#1143, umbenannt #1085/#1233)",
     "oos_f_realized_peak_median": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_median, #1085/#1233 check_sizing_identity_coherence)",
     "oos_f_realized_peak_max": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_f_realized_peak_max, #1085/#1233 check_sizing_cap_enforcement)",
+    "oos_sizing_cap_corrections_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_sizing_cap_corrections_count, #1297 check_sizing_cap_enforcement)",
+    "oos_sizing_cap_max_overshoot_pre_correction": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_sizing_cap_max_overshoot_pre_correction, #1297 check_sizing_cap_enforcement)",
     "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_slippage_calibration_scope": "holdout-only (confirm.py-Re-Evaluation, siehe report.py slippage_calibration_scope, #1266/GH #1136 check_cost_stress_discriminates)",
@@ -260,6 +277,41 @@ def _emit_any_arm_reachability_result(logger: logging.Logger, unreachable: list[
         "detail": (f"OR-Arm-Klausel(n) strukturell unerreichbar: {', '.join(unreachable)}."
                   if not passed else "Alle eligible_requires_any-Klauseln erreichbar."),
         "severity": "medium",
+    }, level=logging.INFO if passed else logging.WARNING)
+
+
+def _emit_mandatory_gate_reachability_result(
+    logger: logging.Logger, unreachable: list[str], *, scope: str | None,
+) -> None:
+    """Issue #1280/#1281 (GH #1153/#1154, Katalog #1272-1297, P0) — eigenstaendiger Emit fuer
+    ``check_mandatory_gate_reachability_live`` (#1093/#1241, ``reward.py``): existiert, wird
+    aufgerufen, lieferte in 55/56 Studies eines Referenzkatalogs einen Befund, der aber bislang
+    NIE unter dem eigenen Namen erschien (Root-Cause #1280: der Emit wurde in
+    ``_emit_any_arm_reachability_result``/``check_any_arm_reachability_live`` gemergt) — der
+    Report meldete stattdessen dasselbe Ergebnis unter dem Namen UND Text der ``requires_any``-
+    Pruefung (Root-Cause #1281: ``oos_min_alpha_tstat`` ist Mitglied von ``eligible_requires_
+    all``, nicht von ``eligible_requires_any``, das leer ist).
+
+    ``severity='high'`` (statt der ``'medium'``-Schwere des ``requires_any``-Pendants) UND ein
+    eigener Text: eine ``requires_all``-Klausel, die strukturell unerreichbar ist, lehnt JEDEN
+    Trial unabhaengig von jeder anderen Kennzahl ab — keine Disjunktion, die "auf die uebrigen
+    Arme kollabiert" (das beschreibt nur ``requires_any``). Der globale, laufweite
+    ``severity='blocking``-Befund bei >= 80 % betroffener Studies lebt in
+    ``invariants.check_mandatory_gate_reachability_global`` (report.py, braucht die volle
+    Study-Liste eines Laufs — nicht in dieser Pro-Study-Funktion auswertbar)."""
+    passed = not unreachable
+    emit_execution_event(logger, "INVARIANT_STREAM_RESULT", {
+        "name": "check_mandatory_gate_reachability_live",
+        "check": "check_mandatory_gate_reachability_live",
+        "passed": passed, "source": "sweep", "scope": scope,
+        "expected": "jede eligible_requires_all-Klausel liegt unter dem p99 der Referenzverteilung "
+                   "(strukturell erreichbar).",
+        "actual": {"unreachable_clauses": unreachable} if not passed else None,
+        "detail": (
+            f"MANDATORY-Gate {', '.join(unreachable)} ist für diese Study strukturell "
+            "unerreichbar — jeder Trial wird unabhängig von jeder anderen Kennzahl abgelehnt."
+            if not passed else "Alle eligible_requires_all-Klauseln erreichbar."),
+        "severity": "high",
     }, level=logging.INFO if passed else logging.WARNING)
 
 
@@ -856,6 +908,11 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         run_id=run_id)
                     rec = recommend_diagnosis_action(
                         strategy, symbol, diagnosis,
+                        # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — dieselbe Groesse, die
+                        # diagnose_trade_frequency bereits im diagnosis-Dict liefert (n_evaluable=0
+                        # fuer JEDEN signal_sparse-Befund aus DIESER Quelle, siehe dortiger
+                        # Docstring); Voraussetzung fuer die neue signal_sparse-Denylist-Eskalation.
+                        n_evaluable=diagnosis.get("n_evaluable"),
                         has_existing_override=has_existing_search_space_override(strategy, symbol),
                         previously_recommended_override=bool(
                             _prior and _prior.get("action") == "search_space_override"),
@@ -2766,6 +2823,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     # (siehe test_issue_823_study_guard_dominated.py fuer die bestehende Konfigurierbarkeits-Abdeckung).
     guard_tripped = _inv._censored_trial_share(
         [dict(getattr(t, "user_attrs", {}) or {}) for t in trials])
+    # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — UNBEDINGT gestempelt (nicht nur bei
+    # study_guard_dominated), damit invariants.check_ineligible_cohort_partition_identity dieselbe
+    # Zahl wie check_inference_diagnostics_concentration als vierte Kohorten-Klasse konsumieren
+    # kann (Akzeptanzkriterium: beide Werte muessen uebereinstimmen — EINE Zaehl-Funktion,
+    # _inv._censored_trial_share, statt einer zweiten, unabhaengig gepflegten Zaehlung).
+    try:
+        study.set_user_attr("n_guard_censored", guard_tripped)
+    except Exception:
+        pass
     study_guard_dominated = bool(
         n_trials_informative > 0
         and (guard_tripped / n_trials_informative) > guard_trip_fraction_warn)
@@ -3089,6 +3155,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     ]
     live_alpha_tstats = [v for v in live_alpha_tstats if v is not None]
     any_arm_live_unreachable = []
+    # Issue #1280/#1281 (GH #1153/#1154, Katalog #1272-1297, P0) — getrennt von
+    # ``any_arm_live_unreachable`` gehalten: eine ``requires_all``-Klausel (jeder Trial wird
+    # abgelehnt) ist ein STRUKTURELL anderer Befund als eine ``requires_any``-Klausel (kollabiert
+    # auf die uebrigen Arme) — siehe ``_emit_mandatory_gate_reachability_result``-Docstring.
+    mandatory_gate_live_unreachable: list[str] = []
     # Issue #668 — hebt die reine #660-Warnung auf eine KONFIGURIERTE Policy (warn/drop_arm/
     # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
     any_arm_policy_decision = {"policy": "warn", "dropped_clauses": [], "recalibrated_thresholds": {},
@@ -3104,27 +3175,30 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
             any_arm_policy_decision = resolve_any_arm_policy(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
-            # Issue #1093/#1241 — die READ-ONLY Diagnose fuer das neue MANDATORY-Gate wird in
-            # dieselbe Telemetrie-Liste gemergt (keine Policy-Wirkung, siehe Docstring dort), damit
-            # ``any_arm_live_unreachable`` (Akzeptanzkriterium #1241) auch ein strukturell
-            # unerreichbares oos_min_alpha_tstat-Gate erfasst.
-            # Issue #1247 (GH #1117) — der Schlüssel MUSS die normalisierte (unpräfigierte) Form
-            # tragen, unabhängig davon, ob tournament.json['eligible_requires_all'] die Klausel
-            # mit oder ohne 'oos_'-Präfix listet (Pitfall #448): reward._normalize_clause ist die
-            # EINE Stelle, die diese Form definiert.
-            any_arm_live_unreachable = list(any_arm_live_unreachable) + [
-                c for c in check_mandatory_gate_reachability_live(
-                    _tcfg_arm,
-                    {_reward_normalize_clause("oos_min_alpha_tstat"): live_alpha_tstats},
-                    n_evaluated=evaluable)
-                if c not in any_arm_live_unreachable
-            ]
             _emit_any_arm_reachability_result(
                 logging.getLogger("optimizer"), any_arm_live_unreachable,
                 check_name="check_any_arm_reachability_live",
                 scope=getattr(study, "study_name", None))
+            # Issue #1093/#1241 — die READ-ONLY Diagnose fuer das neue MANDATORY-Gate.
+            # Issue #1280/#1281 (GH #1153/#1154) — NICHT mehr in any_arm_live_unreachable gemergt
+            # und NICHT mehr unter check_any_arm_reachability_live emittiert (Root-Cause #1281:
+            # ein requires_all-Gate erschien unter Namen/Text/Severity der requires_any-Pruefung,
+            # obwohl die reale Konsequenz gegensaetzlich ist — "jeder Trial wird abgelehnt" statt
+            # "kollabiert auf die uebrigen Arme"). Eigener Emit-Aufruf, eigener Check-Name.
+            # Issue #1247 (GH #1117) — der Schlüssel MUSS die normalisierte (unpräfigierte) Form
+            # tragen, unabhängig davon, ob tournament.json['eligible_requires_all'] die Klausel
+            # mit oder ohne 'oos_'-Präfix listet (Pitfall #448): reward._normalize_clause ist die
+            # EINE Stelle, die diese Form definiert.
+            mandatory_gate_live_unreachable = check_mandatory_gate_reachability_live(
+                _tcfg_arm,
+                {_reward_normalize_clause("oos_min_alpha_tstat"): live_alpha_tstats},
+                n_evaluated=evaluable)
+            _emit_mandatory_gate_reachability_result(
+                logging.getLogger("optimizer"), mandatory_gate_live_unreachable,
+                scope=getattr(study, "study_name", None))
     except Exception:
         any_arm_live_unreachable = []
+        mandatory_gate_live_unreachable = []
 
     # Issue #1250 (GH #1120), Pitfall #451 — die EFFEKTIVE oos_min_alpha_tstat-Schwelle DIESER
     # Study (reward.resolve_alpha_tstat_gate_threshold-Docstring). n_family_stage1/
@@ -3355,6 +3429,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Fixture-Check: Klauseln, deren konfigurierte Schwelle über dem beobachteten p99 DIESER
         # Study liegt.
         "any_arm_live_unreachable": any_arm_live_unreachable,
+        # Issue #1280/#1281 (GH #1153/#1154, Katalog #1272-1297) — GETRENNT von
+        # any_arm_live_unreachable (siehe dortiger Kommentar): eine requires_all-Klausel, keine
+        # requires_any-Klausel.
+        "mandatory_gate_live_unreachable": mandatory_gate_live_unreachable,
         # Issue #668 — die EXPLIZITE Policy-Entscheidung (statt der blossen #660-Warnung): welche
         # Klauseln gedroppt (any_arm_reduced) bzw. auf welche Schwellen symbol-spezifisch
         # rekalibriert wurden (any_arm_recalibrated_thresholds). Beide leer bei Policy='warn'.

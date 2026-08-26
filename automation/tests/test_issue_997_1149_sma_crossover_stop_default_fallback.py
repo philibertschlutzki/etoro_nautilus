@@ -63,12 +63,13 @@ def test_empty_trial_attrs_with_default_still_yields_strategy_default():
 def test_strategy_defaults_json_declares_the_true_runtime_default_for_sma_crossover():
     """Regressionswaechter: SmaCrossoverStrategy fehlten diese Keys komplett (das eigentliche
     Symptom des Issues) — der Wert MUSS mit HourlyStrategyConfig's tatsaechlichem Klassendefault
-    (1.5 / 24) uebereinstimmen, sonst waere die Telemetrie eine erfundene Zahl, keine Dokumentation
-    des realen Verhaltens."""
+    (1.5 / 6, seit Issue #1275 GH #1148 Katalog #1272-1297 P0 Fix Punkt 3 -- vormals 24)
+    uebereinstimmen, sonst waere die Telemetrie eine erfundene Zahl, keine Dokumentation des
+    realen Verhaltens."""
     defaults = json.loads(_STRATEGY_DEFAULTS_PATH.read_text("utf-8"))
     sma_defaults = defaults["SmaCrossoverStrategy"]
     assert sma_defaults["atr_trailing_multiplier"] == 1.5
-    assert sma_defaults["max_bars_in_trade"] == 24
+    assert sma_defaults["max_bars_in_trade"] == 6
 
 
 def test_study_record_stamps_source_field_for_a_strategy_that_never_samples_the_stop():
@@ -104,5 +105,6 @@ def test_study_record_stamps_source_field_for_a_strategy_that_never_samples_the_
     record, _invariant_results = rpt._study_record(proposal, study, tournament_cfg={})
     assert record["atr_trailing_multiplier_median"] == 1.5
     assert record["atr_trailing_multiplier_median_source"] == "strategy_default"
-    assert record["max_bars_in_trade_median"] == 24.0
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24.0 -> 6.0 (Faktor 0.24).
+    assert record["max_bars_in_trade_median"] == 6.0
     assert record["max_bars_in_trade_median_source"] == "strategy_default"

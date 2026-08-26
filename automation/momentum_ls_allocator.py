@@ -69,6 +69,15 @@ class MomentumLSAllocator:
         self._current_drawdown: float | None = None
         self._breaker_tripped: bool = False
 
+    @property
+    def max_symbol_exposure_fraction(self) -> float:
+        """Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 4 — der Strategie-seitige
+        Post-Fill-Sizing-Deckel (``hourly_strategy_base.on_position_opened``, siehe
+        ``live_risk.compute_sizing_cap_correction``) braucht denselben Zielanteil, den
+        ``get_allocation`` bereits zur Bemessung verwendet, statt einer zweiten, unabhaengig
+        gepflegten Konstante (#1014/#1166-Klasse)."""
+        return self._max_symbol_exposure_fraction
+
     def update_risk_state(self, *, current_drawdown: float | None = None, tripped: bool | None = None) -> None:
         """Vom ``LiveCircuitBreakerWatchdog`` (automation/live_risk.py) periodisch aufgerufen. Trennt
         die Allokations-Formel (rein, testbar ohne einen laufenden Watchdog) von der Live-Zustands-

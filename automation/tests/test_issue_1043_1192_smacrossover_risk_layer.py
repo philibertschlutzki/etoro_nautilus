@@ -39,19 +39,20 @@ def test_sma_crossover_now_samples_both_risk_layer_parameters():
     assert "atr_trailing_multiplier" in params
     assert "max_bars_in_trade" in params
     assert params["atr_trailing_multiplier"] == 0.5  # low bound (RecordingTrial returns low)
-    assert params["max_bars_in_trade"] == 12
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 12 -> 3 (Faktor 0.24).
+    assert params["max_bars_in_trade"] == 3
 
 
 def test_sma_crossover_symbol_override_still_applies_to_the_shared_risk_layer(monkeypatch):
     """_sample_risk_layer nutzt _bounds_for -- ein kuratierter/automatischer Override fuer
     max_bars_in_trade muss auch fuer SmaCrossover wirksam werden."""
     monkeypatch.setattr(spaces, "_load_search_space_overrides", lambda: {
-        "SmaCrossoverStrategy": {"TSLA.ETORO": {"max_bars_in_trade": [4, 18]}},
+        "SmaCrossoverStrategy": {"TSLA.ETORO": {"max_bars_in_trade": [1, 4]}},
     })
     trial = _RecordingTrial()
     params = spaces.sample_params("SmaCrossoverStrategy", trial, symbol="TSLA.ETORO")
-    assert trial.numeric["max_bars_in_trade"] == (4, 18)
-    assert params["max_bars_in_trade"] == 4
+    assert trial.numeric["max_bars_in_trade"] == (1, 4)
+    assert params["max_bars_in_trade"] == 1
 
 
 def test_all_other_strategies_are_unaffected_by_the_fix():
@@ -59,7 +60,8 @@ def test_all_other_strategies_are_unaffected_by_the_fix():
     strategiespezifischen Bandbreiten (kein Umstellen auf den gemeinsamen Default)."""
     trial = _RecordingTrial()
     spaces.sample_params("FlashCrashReversalStrategy", trial)
-    assert trial.numeric["max_bars_in_trade"][0] == 6  # unveraendert die 6er-Untergrenze
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 6 -> 1 (Faktor 0.24).
+    assert trial.numeric["max_bars_in_trade"][0] == 1  # unveraendert die (umkalibrierte) Untergrenze
     trial2 = _RecordingTrial()
     spaces.sample_params("AdxAtrMomentumStrategy", trial2)
     assert trial2.numeric["cooldown_bars"][0] == 6  # unveraendert die #908-Untergrenze

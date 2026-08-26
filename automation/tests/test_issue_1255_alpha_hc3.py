@@ -110,10 +110,15 @@ def test_heteroskedastic_fixture_deviates_measurably_and_check_fails():
 # HC3 population/df fields (shared with #1258, spot-checked here for the HC3 fixture)
 # ---------------------------------------------------------------------------------------------
 
-def test_alpha_tstat_df_uses_informative_row_count():
+def test_alpha_tstat_df_uses_the_full_regression_sample_not_the_informative_row_count():
+    """Issue #1284 (GH #1157, Katalog #1272-1297, P3) — alpha_tstat_df wurde auf n_used (== n_total,
+    ALLE Bars) umgestellt, NICHT mehr auf n_informative: beide t-Statistiken (klassisch und HC3)
+    werden ueber die VOLLEN Arrays gerechnet, die Freiheitsgrade muessen zu derselben
+    Grundgesamtheit passen (siehe _alpha_regression_diagnostics-Docstring)."""
     x, y = _heteroskedastic_fixture()
     diag = _alpha_regression_diagnostics(y, x)
-    assert diag["alpha_tstat_df"] == diag["n_informative"] - 2
+    assert diag["alpha_tstat_df"] == diag["n_used"] - 2
+    assert diag["n_used"] == diag["n_total"]
 
 
 def test_hc3_tstat_sign_matches_alpha_sign():

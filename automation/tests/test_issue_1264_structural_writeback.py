@@ -49,11 +49,16 @@ def test_existing_classifications_unaffected():
 
 def test_reference_symptom_13_alpha_gate_studies_get_gate_unreachable_no_denylist():
     # Akzeptanzkriterium #1264: "Die 13 alpha-gate-blockierten Studies erhalten gate_unreachable
-    # und KEINE Denylist."
+    # und KEINE Denylist." Issue #1296 (GH #1169, Katalog #1272-1297, P1) Fix Punkt 2 —
+    # ``proposed_action`` wurde von ``'none'`` (reine Diagnose ohne Konsequenz, Root-Cause des
+    # #1296-Katalogsymptoms) auf ``'budget_deprioritization'`` gehoben: die #1264-Aussage "KEINE
+    # Denylist" bleibt unveraendert gueltig (Budget-Deprioritisierung ist keine Denylist), nur die
+    # vorherige Untaetigkeit wird ersetzt (siehe report._writeback_gate_unreachable_diagnoses).
     diagnosis = diagnose_structural_zero_eligible_gate(
         {"REJECT_OOS_MIN_ALPHA_TSTAT": 123}, stop_reason="STRUCTURAL_ZERO_ELIGIBLE")
     assert diagnosis["binding_cause"] == "gate_unreachable"
-    assert diagnosis["proposed_action"] == "none"
+    assert diagnosis["proposed_action"] == "budget_deprioritization"
+    assert diagnosis["proposed_action"] != "denylist"
     assert diagnosis["gate_type"] == "gate"
     assert diagnosis["dominant_rejection_detail"] == "REJECT_OOS_MIN_ALPHA_TSTAT"
     assert diagnosis["dominant_fraction"] == 1.0

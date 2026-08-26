@@ -213,6 +213,44 @@ def _emit_cost_model_realism_event(cost_model_realism_source: str, studies: list
         }, level=logging.INFO)
 
 
+def _resolve_slippage_p50_calibrated(
+    asset_class_entry: dict | None, symbol: str | None, strategy: str | None, *,
+    min_observations: int = 30,
+) -> tuple[float | None, str]:
+    """Issue #1276 (GH #1149, Katalog #1272-1297, P0) — dieselbe Fallback-Kette wie
+    ``backtest_runner.resolve_slippage_bps``/``resolve_slippage_calibration_scope``
+    (``by_strategy_symbol`` → ``by_symbol`` → asset-class-weit), hier gegen die Struktur von
+    ``calibrated_slippage.json`` ausgewertet (``'p50'``/``'n_observations'`` je Ebene, siehe
+    ``sweep.write_calibrated_slippage_cache``/``calibrate_and_write_slippage_cache``) statt gegen
+    ``backtest.json``s ``slippage_bps_by_asset_class`` (die ``'value'``-Struktur, die
+    ``resolve_slippage_bps`` konsumiert — eine ANDERE, wenn auch aus derselben Kalibrierung
+    gespeiste Repraesentation, siehe dortiger Docstring).
+
+    Root-Cause #1276: ``report.py`` stempelte bisher AUSSCHLIESSLICH die asset-class-weite Wurzel
+    (``(entry or {}).get('p50')``) — identisch in allen 14 Studies eines Laufs, waehrend
+    ``applied_slippage_bps`` (die tatsaechlich angewandte Groesse, ueber ``resolve_slippage_bps``
+    aufgeloest) je Study um den Faktor 11,5 streute UND ``slippage_calibration_scope`` (aus
+    ``holdout_metrics``, dieselbe Fallback-Semantik) je Study ``'strategy_symbol'`` meldete — zwei
+    Felder mit fast identischem Namen beschrieben zwei verschiedene Aufloesungsebenen.
+
+    Rueckgabe ``(p50, scope)`` mit ``scope ∈ {'strategy_symbol', 'symbol', 'asset_class'}`` — DIE
+    Ebene, die tatsaechlich getroffen hat (``min_observations``, Default 30, dieselbe Schwelle wie
+    ``resolve_slippage_bps``). ``asset_class_entry is None`` ⇒ ``(None, 'asset_class')``."""
+    if not asset_class_entry:
+        return None, "asset_class"
+    if strategy:
+        rec = (asset_class_entry.get("by_strategy_symbol") or {}).get(f"{strategy}|{symbol}")
+        if (rec and rec.get("p50") is not None
+                and int(rec.get("n_observations") or 0) >= min_observations):
+            return float(rec["p50"]), "strategy_symbol"
+    rec = (asset_class_entry.get("by_symbol") or {}).get(symbol)
+    if (rec and rec.get("p50") is not None
+            and int(rec.get("n_observations") or 0) >= min_observations):
+        return float(rec["p50"]), "symbol"
+    p50 = asset_class_entry.get("p50")
+    return (float(p50) if p50 is not None else None), "asset_class"
+
+
 def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
                             optimizer_config_sha256, catalog_fingerprint_value, seed,
                             symbols, strategies, reward_semantics_version,
@@ -256,6 +294,38 @@ def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
         str(reward_semantics_version), str(simulation_semantics_version), str(seed_salt),
     ])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def compute_result_fingerprint(study_summaries: list[dict]) -> str:
+    """Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 2 — sha256-Fingerabdruck des
+    tatsaechlichen ERGEBNISSES eines Sweep-Laufs (im Unterschied zu ``compute_run_fingerprint``s
+    Fingerabdruck der EINGANGSMENGE): sortierte Liste von ``(strategy, n_trials, best_reward,
+    n_eligible)`` je Study.
+
+    Root-Cause #1286: ``run_fingerprint`` (dieselbe Eingangsmenge — Commit/Configs/Katalog/Seed/
+    Universum/Semantik) ist unter Parallelitaet (``n_jobs > 1``) KEINE hinreichende Statistik fuer
+    das ERGEBNIS — zwei Laeufe mit identischem ``run_fingerprint`` unterschieden sich in Trial-
+    Zahlen (Donchian 106/120, FlashCrash 160/141, ...) UND 52-104 numerischen Feldern je Study,
+    weil die Plateau-/Struktur-Abbruchkriterien den Zustand der bereits ABGESCHLOSSENEN Trials
+    auswerten — unter Parallelitaet haengt diese Menge von der Scheduling-Reihenfolge ab, nicht
+    vom Seed. ``result_fingerprint`` macht diese Divergenz MASCHINELL nachweisbar (siehe
+    ``invariants.check_run_determinism``): zwei Laeufe mit identischem ``run_fingerprint`` MUESSEN
+    auch denselben ``result_fingerprint`` tragen, sonst ist der Lauf NICHT reproduzierbar.
+
+    Reine Funktion (kein Datei-I/O). Dieselbe Trennzeichen-Konvention wie ``compute_run_
+    fingerprint`` (ASCII Record Separator ``\\x1e`` zwischen den vier Feldern EINER Study-Zeile,
+    ``\\x1d`` (Group Separator) zwischen den Zeilen — beide in keinem der Eingabefelder gueltig).
+    Die Zeilen werden VOR dem Hashen sortiert (deterministisch unabhaengig von der Iterations-
+    reihenfolge von ``study_summaries`` selbst — ``studies_out`` ist Store-Iterationsreihenfolge,
+    keine garantiert stabile Ordnung)."""
+    rows = sorted(
+        "\x1e".join([
+            str(s.get("strategy")), str(s.get("n_trials")),
+            str(s.get("best_reward")), str(s.get("n_eligible")),
+        ])
+        for s in study_summaries
+    )
+    return hashlib.sha256("\x1d".join(rows).encode("utf-8")).hexdigest()
 
 
 def _compute_search_variance(fingerprint_base: str, entries: list[dict]) -> dict | None:
@@ -581,6 +651,65 @@ def _stamp_atr_floor_bps_derived(
                     float(base_floor), atr_trailing_multiplier=k_i,
                     round_trip_cost_bps=float(c_rt), min_stop_to_cost_ratio=min_stop_to_cost_ratio))
             r["atr_floor_binding_trial_fraction"] = round(_n_binding / len(_trial_pairs), 4)
+
+
+def _stamp_cost_drag_decomposition(studies_out: list[dict]) -> None:
+    """Issue #1279 (GH #1152, Katalog #1272-1297, P1) — die oekonomisch entscheidende Zahl des
+    Katalogs (der Kostendrag zwischen ``holdout_total_return_gross`` und ``_net``, 0,68 bis 23,88
+    pp) existierte bisher in KEINEM Feld und keiner Report-Sektion — nur als Differenz zweier
+    Felder rekonstruierbar, ihre Aufteilung auf ``c_rt``, Slippage und Financing gar nicht.
+
+    Stempelt je Study:
+      * ``holdout_cost_drag_pct`` — ``holdout_total_return_gross - holdout_total_return_net``
+        (Prozentpunkte; ``None`` ohne beide Werte).
+      * ``holdout_cost_drag_bps_per_round_trip`` — derselbe Drag, auf EINEN Round-Trip
+        umgelegt (``holdout_cost_drag_pct * 100 / holdout_total_trades``, ``None`` ohne
+        ``holdout_total_trades > 0``).
+      * ``holdout_cost_drag_component_round_trip_bps`` — ``round_trip_cost_bps`` (c_rt), bereits
+        eine Pro-Round-Trip-Groesse.
+      * ``holdout_cost_drag_component_slippage_bps`` — ``applied_slippage_bps``, ebenfalls bereits
+        pro Round-Trip.
+      * ``holdout_cost_drag_component_financing_bps`` — ``applied_financing_bps_per_day`` auf die
+        GESCHAETZTE Haltedauer EINES Round-Trips umgelegt (``median_bars_held · bar_seconds /
+        86400``, aus ``symbol_bar_quality``/``_contracts.BAR_SECONDS_DEFAULT`` aufgeloest — dieselbe
+        Kompoundierungs-NAEHERUNG wie die uebrigen Komponenten: additiv statt geometrisch verkettet,
+        siehe ``invariants.check_cost_drag_decomposition``s 5-%-Toleranz-Dokumentation).
+
+    Reine additive Telemetrie — keine bestehende Aggregation/Selektion liest diese Felder,
+    Zero-Regression fuer jeden bestehenden Konsumenten."""
+    for r in studies_out:
+        gross = r.get("holdout_total_return_gross")
+        net = r.get("holdout_total_return_net")
+        if gross is None or net is None:
+            r["holdout_cost_drag_pct"] = None
+        else:
+            r["holdout_cost_drag_pct"] = round(float(gross) - float(net), 4)
+        n_trades = r.get("holdout_total_trades")
+        if r["holdout_cost_drag_pct"] is not None and n_trades:
+            r["holdout_cost_drag_bps_per_round_trip"] = round(
+                r["holdout_cost_drag_pct"] * 100.0 / float(n_trades), 4)
+        else:
+            r["holdout_cost_drag_bps_per_round_trip"] = None
+        c_rt = r.get("round_trip_cost_bps")
+        r["holdout_cost_drag_component_round_trip_bps"] = (
+            round(float(c_rt), 4) if c_rt is not None else None)
+        slippage = r.get("applied_slippage_bps")
+        r["holdout_cost_drag_component_slippage_bps"] = (
+            round(float(slippage), 4) if slippage is not None else None)
+        financing_per_day = r.get("applied_financing_bps_per_day")
+        _symbol_bar_quality = r.get("symbol_bar_quality")
+        bar_seconds = (
+            _symbol_bar_quality.get("median_delta_t_s")
+            if isinstance(_symbol_bar_quality, dict) and _symbol_bar_quality.get("median_delta_t_s")
+            else _contracts.BAR_SECONDS_DEFAULT
+        )
+        median_bars_held = r.get("median_bars_held")
+        if financing_per_day is not None and median_bars_held is not None:
+            holding_days = float(median_bars_held) * float(bar_seconds) / 86400.0
+            r["holdout_cost_drag_component_financing_bps"] = round(
+                float(financing_per_day) * holding_days, 4)
+        else:
+            r["holdout_cost_drag_component_financing_bps"] = None
 
 
 def _max_symbol_exposure_fraction(base_cfg: Path | None = None) -> float | None:
@@ -1309,18 +1438,29 @@ def _study_record(proposal: dict, study,
     # verschiedene Grundgesamtheiten; ``max(0, n_evaluable - n_eligible - n_ineligible_
     # unmeasurable)`` klemmte die daraus resultierende NEGATIVE Differenz still auf 0, statt den
     # Kohortenbruch zu melden (SqueezeBreakout: 71 - 20 - 78 = -27, ausgewiesen als 0 statt der
-    # korrekten 51). Fix: ``n_ineligible_measured`` wird DIREKT aus ``is_rejection_detail_counts``
-    # gebildet (Summe aller Codes ausser den drei "keine Messung fand statt"-Sentinels) statt
-    # subtrahiert — eine Zaehlgroesse wird gezaehlt, nicht als Rest einer Subtraktion erschlossen
-    # (Pitfall #424 in AGENTS.md).
+    # korrekten 51). Fix: ``n_ineligible_measured`` wird DIREKT gezaehlt (Summe aller Codes ausser
+    # den drei "keine Messung fand statt"-Sentinels) statt subtrahiert — eine Zaehlgroesse wird
+    # gezaehlt, nicht als Rest einer Subtraktion erschlossen (Pitfall #424 in AGENTS.md).
+    # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — ZUSAeTZLICH auf ``oos_evaluated is True``
+    # eingeschraenkt (dieselbe PRUNED-/oos_evaluated-Filterkonvention wie ``n_evaluable``/
+    # ``n_ineligible_unmeasurable`` oben), NICHT MEHR aus dem ungefilterten
+    # ``is_rejection_detail_counts`` summiert. Root-Cause: ein vom Inferenz-Waechter zensierter
+    # Trial (SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE) hat ``oos_evaluated=False``, traegt
+    # aber ``is_rejection_detail=REJECT_OOS_DISCARDED_BY_IS_GATE`` (kein Sentinel oben) — er zaehlte
+    # bislang GLEICHZEITIG hier (ueber is_rejection_detail_counts) UND in ``n_unevaluable`` (ueber
+    # ``oos_evaluated=False``), die Kohorten-Partition war nicht disjunkt (TSLA/SqueezeBreakout:
+    # 34 doppelt gezaehlte Trials, Differenz -34; NVDA: 138, Differenz -138). Diese guard-zensierten
+    # Trials bilden seither ihre EIGENE vierte Klasse, ``n_guard_censored`` (siehe unten).
     n_ineligible_measured = sum(
-        v for k, v in is_rejection_detail_counts.items()
-        if k not in (
+        1 for t, a in zip(trials, trial_attrs)
+        if a.get("oos_evaluated") is True and a.get("oos_eligible") is not True
+        and a.get("is_rejection_detail") not in (
             IS_REJECTION_NONE,
             "REJECT_OOS_STATISTIC_UNAVAILABLE",
             "REJECT_OOS_NOT_EVALUATED",
             "REJECT_OOS_WINDOW_UNREACHABLE",
         )
+        and getattr(t, "state", None) != _pruned_state
     )
     # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
     # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
@@ -1460,6 +1600,11 @@ def _study_record(proposal: dict, study,
     # gestoppte Study (floor_plateau_warned/zero_eligible_plateau_warned) liefert gradient_signal=
     # None (Eskalationsfrage unbeantwortet), sonst reward- ODER constraint-fortschritts-basiert.
     study_user_attrs = getattr(study, "user_attrs", None) or {} if study is not None else {}
+    # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — gebrueckt aus dem in run_optimization.py
+    # UNBEDINGT gestempelten ``n_guard_censored`` (dieselbe ``_inv._censored_trial_share``-Zaehlung
+    # wie ``check_inference_diagnostics_concentration``, Akzeptanzkriterium: beide muessen
+    # uebereinstimmen — EINE Zaehl-Funktion statt einer zweiten, hier unabhaengig nachgebildeten).
+    n_guard_censored = int(study_user_attrs.get("n_guard_censored") or 0)
     n_startup_for_report = study_user_attrs.get("n_startup_trials")
     if n_startup_for_report is not None:
         modelled = _modelled_trials(trials, int(n_startup_for_report))
@@ -1642,6 +1787,7 @@ def _study_record(proposal: dict, study,
             "n_trials": n_trials, "n_evaluable": n_evaluable, "n_eligible": n_eligible,
             "n_ineligible_measured": n_ineligible_measured,
             "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
+            "n_guard_censored": n_guard_censored,
         }),
     ]
 
@@ -1746,6 +1892,12 @@ def _study_record(proposal: dict, study,
         # für den LPT-Dispatch (sweep._read_last_study_wallclock_by_strategy) des NÄCHSTEN Laufs.
         "wallclock_s": study_user_attrs.get("wallclock_s"),
         "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
+        # Issue #1291 (GH #1164, Katalog #1272-1297, P2) — vierte Kohorten-Klasse: Trials, die der
+        # Inferenz-Waechter VOR jeder Eligibility-Bewertung zensierte (siehe Feldkommentar bei
+        # n_ineligible_measured oben). ``check_ineligible_cohort_partition_identity`` prueft
+        # n_eligible + n_ineligible_measured + n_ineligible_unmeasurable + n_guard_censored +
+        # n_unevaluable_other == n_trials.
+        "n_guard_censored": n_guard_censored,
         "n_eligible": n_eligible,
         # Issue #1025/#1174 Akzeptanzkriterium 3 — der Rest, der bei einer korrekten Zerlegung 0
         # sein MUSS (n_evaluable == n_eligible + n_ineligible_measured + n_ineligible_
@@ -2312,6 +2464,13 @@ def _study_record(proposal: dict, study,
         # ist das Kriterium fuer invariants.check_sizing_cap_enforcement.
         "holdout_f_realized_peak_median": holdout_metrics.get("oos_f_realized_peak_median"),
         "holdout_f_realized_peak_max": holdout_metrics.get("oos_f_realized_peak_max"),
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — Sizing-Cap-Korrektur-
+        # Telemetrie (hourly_strategy_base.on_position_opened's POST-FILL-Deckel, siehe
+        # live_risk.compute_sizing_cap_correction), holdout-only konsumiert wie die beiden Felder
+        # oben (dieselbe confirm.py-Re-Evaluations-Quelle).
+        "holdout_sizing_cap_corrections_count": holdout_metrics.get("oos_sizing_cap_corrections_count"),
+        "holdout_sizing_cap_max_overshoot_pre_correction": holdout_metrics.get(
+            "oos_sizing_cap_max_overshoot_pre_correction"),
         # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
         # konfigurierten) Kostenkomponenten dieser Study; Rohmaterial fuer
         # invariants.check_applied_cost_components_resolved. Root-Cause des Vorzustands: ein
@@ -2328,6 +2487,14 @@ def _study_record(proposal: dict, study,
         # Holdout-Re-Evaluationspfad (confirm.py) bereits korrekt GEPARST, erreichte aber nie den
         # Study-Record; Rohmaterial fuer invariants.check_selection_cost_basis_contract.
         "holdout_stop_exit_slippage_bps": holdout_metrics.get("oos_stop_exit_slippage_bps_median"),
+        # Issue #1278 (GH #1151, Katalog #1272-1297, P1) — konstantes Literal (siehe
+        # backtest_runner._finalize_round_trip, rt_exit_meta-Stempelung): resolve_stop_exit_
+        # slippage_bps rechnet strukturell IMMER aus rohen Preisen, nie aus applied_slippage_bps.
+        # None ohne jede gemessene stop_exit_slippage_bps (dieselbe Praesenz-Konvention wie das
+        # Feld oben) — kein Vorspiegeln einer Messbasis fuer eine nicht-existente Messung.
+        "slippage_measurement_basis": (
+            "pre_cost_price"
+            if holdout_metrics.get("oos_stop_exit_slippage_bps_median") is not None else None),
         "holdout_n_trailing_stop_exits": holdout_metrics.get("oos_n_trailing_stop_losses"),
         "holdout_trigger_to_fill_gap_bps": holdout_metrics.get(
             "oos_trigger_to_fill_gap_bps_median"),
@@ -2439,6 +2606,11 @@ def _study_record(proposal: dict, study,
         # von backtest_runner._apply_calibrated_slippage_deduction. None ⇒ kein Kalibrierungs-Cache/
         # Legacy-Study (siehe confirm._metrics_dict).
         "selection_cost_basis": holdout_metrics.get("oos_selection_cost_basis"),
+        # Issue #1277 (GH #1150, Katalog #1272-1297) — WESHALB selection_cost_basis auf
+        # round_trip_only zurueckfiel, obwohl apply_calibrated_slippage_in_selection aktiv
+        # konfiguriert ist (siehe backtest_runner._bar_axis_supports_stop_verdict_from_exit_meta).
+        "selection_cost_basis_downgrade_reason": holdout_metrics.get(
+            "oos_selection_cost_basis_downgrade_reason"),
         "holdout_no_alpha_detected": (
             abs(holdout_metrics["oos_alpha_tstat"]) < 1.0
             if holdout_metrics.get("oos_alpha_tstat") is not None else None
@@ -2455,11 +2627,15 @@ def _study_record(proposal: dict, study,
         "holdout_alpha_n_periods": holdout_metrics.get("oos_alpha_n_periods"),
         # Issue #1255 (GH #1125), Pitfall #454-Klasse — HC3-robuster Schaetzer neben dem
         # (homoskedastie-unterstellenden) holdout_alpha_tstat oben; das oos_min_alpha_tstat-Gate
-        # konsumiert seither DIESEN Wert (backtest_runner._evaluate_oos_eligibility). holdout_
-        # alpha_tstat_df sind die auf die informative Zeilenzahl gesetzten Freiheitsgrade (statt
-        # der Kalender-Bar-Zaehlung holdout_alpha_n_periods).
+        # konsumiert seither DIESEN Wert (backtest_runner._evaluate_oos_eligibility). Issue #1284
+        # (GH #1157, Katalog #1272-1297, P3) — holdout_alpha_tstat_df sind seither auf
+        # holdout_alpha_n_used (ALLE Bars, dieselbe Grundgesamtheit wie die Regression selbst)
+        # gesetzt, NICHT mehr auf die informative Zeilenzahl (siehe backtest_runner.
+        # _alpha_regression_diagnostics-Docstring fuer die Root-Cause/Wahl); Rohmaterial fuer
+        # invariants.check_alpha_df_consistency.
         "holdout_alpha_tstat_hc3": holdout_metrics.get("oos_alpha_tstat_hc3"),
         "holdout_alpha_tstat_df": holdout_metrics.get("oos_alpha_tstat_df"),
+        "holdout_alpha_n_used": holdout_metrics.get("oos_alpha_n_used"),
         # Issue #1258 (GH #1128) — Regressions-Grundgesamtheit auditierbar: wie viele der
         # holdout_alpha_n_periods Kalender-Bars ueberhaupt Information trugen (Strategie- oder
         # Benchmark-Seite ungleich Null). n_total ist ein expliziter Alias von holdout_alpha_
@@ -2470,6 +2646,18 @@ def _study_record(proposal: dict, study,
         "holdout_alpha_n_y_nonzero": holdout_metrics.get("oos_alpha_n_y_nonzero"),
         "holdout_alpha_n_x_nonzero": holdout_metrics.get("oos_alpha_n_x_nonzero"),
         "holdout_alpha_n_both_zero": holdout_metrics.get("oos_alpha_n_both_zero"),
+        # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer invariants.check_alpha_
+        # regression_identifiability: t(alpha) darf nur entscheiden, wenn beta die
+        # Marktbeteiligung tatsaechlich identifiziert (siehe backtest_runner._alpha_regression_
+        # diagnostics-Docstring fuer die Herleitung/die bewusst ausgelassene cov_exit_bars-Klasse).
+        "holdout_alpha_corr_xy": holdout_metrics.get("oos_alpha_corr_xy"),
+        "holdout_alpha_sd_x": holdout_metrics.get("oos_alpha_sd_x"),
+        "holdout_alpha_sd_y": holdout_metrics.get("oos_alpha_sd_y"),
+        "holdout_alpha_cov_xy": holdout_metrics.get("oos_alpha_cov_xy"),
+        "holdout_alpha_cov_in_market": holdout_metrics.get("oos_alpha_cov_in_market"),
+        "holdout_alpha_cov_out_of_market": holdout_metrics.get("oos_alpha_cov_out_of_market"),
+        "holdout_alpha_cov_exit_bars": holdout_metrics.get("oos_alpha_cov_exit_bars"),
+        "holdout_alpha_n_in_market": holdout_metrics.get("oos_alpha_n_in_market"),
         "holdout_alpha_times_n_pct": (
             holdout_metrics["oos_alpha"] * holdout_metrics["oos_alpha_n_periods"] * 100.0
             if (holdout_metrics.get("oos_alpha") is not None
@@ -2598,6 +2786,16 @@ def _study_record(proposal: dict, study,
     # ``atr_floor_binding_studies``-Provenance (siehe invariants.check_atr_scale_homogeneity).
     record["stop_distance_bps_modelled"] = (
         round(_rt_modelled_distance, 4) if _rt_modelled_distance is not None else None)
+    # Issue #1273 (GH #1146, Katalog #1272-1297, P0) — unter der jetzt DEKLARIERTEN
+    # ``stop_trigger_axis`` (siehe optimizer.json/check_stop_trigger_axis_coherence) ist diese
+    # Grösse bei ``'bar_close_only'`` keine Verlustobergrenze mehr, sondern ein AUSLÖSE-
+    # Schwellenwert (der Trigger fällt zwangsläufig auf den Bar-Schluss, nicht auf einen
+    # Intrabar-Preis) — ``stop_trigger_threshold_bps`` ist der neue, semantisch praezise Name.
+    # ``stop_distance_bps_modelled`` bleibt als Alias mit Deprecation-Telemetrie erhalten (Zero-
+    # Regression fuer bestehende Konsumenten, siehe deren Docstrings oben); NEUE Konsumenten
+    # sollen den neuen Namen verwenden.
+    record["stop_trigger_threshold_bps"] = record["stop_distance_bps_modelled"]
+    record["stop_distance_bps_modelled_deprecated_alias_of"] = "stop_trigger_threshold_bps"
     _rt_measured_distance = record.get("stop_distance_bps_measured")
     _rt_loss_median = record.get("gross_loss_median_bps_trailing_stop")
     if (_rt_loss_median is not None and _rt_measured_distance is not None
@@ -2820,7 +3018,13 @@ def _atr_floor_dominant_diagnosed_pairs(
     Fixes), verschwendet Suchbudget auf eine strukturell wirkungslose Dimension — dieselbe
     "Diagnose ohne Rückschrieb"-Fehlerklasse wie #1244, hier für ``binding_cause=
     'atr_floor_dominant'``. ``action='none'`` (keine Denylist-Konsequenz — die Studie selbst bleibt
-    gültig, nur eine EINZELNE Suchdimension ist betroffen)."""
+    gültig, nur eine EINZELNE Suchdimension ist betroffen).
+
+    Issue #1296 (GH #1169, Katalog #1272-1297, P1) Fix Punkt 3 — bewusst KEINE eigene Budget-Aktion
+    für ``atr_floor_dominant``: die Konsequenz läuft über #1295 (``check_atr_floor_dimension_freeze_
+    candidates``/``atr_floor_dimension_freeze_policy``), nicht über ``recommend_diagnosis_action``.
+    ``n_runs_confirmed``/``expires_after_runs`` bleiben deshalb bewusst ``None`` — dieser Live-Befund
+    nimmt nicht an #1296 Fix Punkt 4s Ablauf-Fristenprüfung (``check_diagnosis_actionability``) teil."""
     out = []
     for r in studies_out:
         symbol, strategy = r.get("symbol"), r.get("strategy")
@@ -2945,6 +3149,71 @@ def _writeback_search_stagnation_diagnoses(
         except Exception:
             _log.debug(
                 "Issue #1069/#1219: search_stagnation-Rueckschrieb fuer %s/%s fehlgeschlagen "
+                "(non-fatal).", strategy, symbol, exc_info=True)
+    return recommendations
+
+
+def _writeback_gate_unreachable_diagnoses(
+    studies_out: list[dict[str, Any]], *, run_id: str, work_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Issue #1296 (GH #1169, Katalog #1272-1297, P1) — "Diagnose ohne Konsequenz", dieselbe
+    Fehlerklasse wie #1219 (siehe ``_writeback_search_stagnation_diagnoses`` oben): ``binding_
+    cause='gate_unreachable'`` (``diagnose_structural_zero_eligible_gate``, ein 100 % homogenes
+    Gate — nicht das Paar selbst — blockiert jeden Trial) erreichte bislang NIE die
+    ``recommend_diagnosis_action``/``record_diagnosed_pair``-Pipeline: ``_structural_zero_
+    eligible_diagnosed_pairs`` ist eine reine, cache-unabhaengige REPORT-Anzeige (siehe dortiger
+    Docstring: "NUR GESCHRIEBEN (Report-Sichtbarkeit)"), kein Rueckschrieb-Pfad. Symptom (#1296):
+    22 von 46 ``diagnosed_pairs``-Eintraegen mit ``action='none'``, "Budget-deprioritisierte
+    Paare: 0".
+
+    Dieselbe REPORT-BUILD-ZEIT-Rueckschrieb-Konvention wie ``_writeback_search_stagnation_
+    diagnoses`` (sequenziell, EIN Prozess je Lauf-Report — keine der #1086-Mehrprozess-Sorgen
+    der LIVE Per-Trial-Callbacks in ``run_optimization.py``, daher hier statt dort sicher
+    implementierbar): fuer jedes (Strategie, Symbol)-Paar mit ``binding_cause='gate_unreachable'``
+    in DIESEM Lauf wird ``recommend_diagnosis_action`` (die ``gate_unreachable``-Verzweigung dort:
+    ``action='deprioritized'`` ab der ersten Bestaetigung, NIE ``'denylist'`` — die Ursache liegt
+    in der KONFIGURIERTEN Gate-Schwelle, siehe #1264) aufgerufen und das Ergebnis via
+    ``record_diagnosed_pair`` in denselben Cache geschrieben, den ``run_optimization._apply_
+    deprioritized_budget``/``sweep.enumerate_tunable_pairs`` im NAECHSTEN Lauf lesen — dieselbe
+    generische, ``action``-basierte (nicht ``binding_cause``-spezifische) Anwendung wie fuer
+    ``'signal_quality'`` (#830).
+
+    Fail-open je Paar (dieselbe Absicherung wie #1219). Rueckgabe: die Liste der tatsaechlich
+    erzeugten Empfehlungen (fuer Tests/Telemetrie), leer, wenn kein Paar betroffen war."""
+    from automation.optimizer.sweep_diagnostics import (
+        recommend_diagnosis_action, record_diagnosed_pair, load_diagnosed_pairs_cache,
+    )
+    gate_pairs = [
+        e for e in _structural_zero_eligible_diagnosed_pairs(studies_out or [])
+        if e.get("binding_cause") == "gate_unreachable"
+    ]
+    if not gate_pairs:
+        return []
+    try:
+        cache = load_diagnosed_pairs_cache(work_dir)
+    except Exception:
+        cache = {}
+    recommendations: list[dict[str, Any]] = []
+    for e in gate_pairs:
+        strategy, symbol = e.get("strategy"), e.get("symbol")
+        if not strategy or not symbol:
+            continue
+        try:
+            prior = cache.get((strategy, symbol))
+            n_runs_confirmed = (
+                int(prior.get("n_runs_confirmed", 0))
+                if prior and prior.get("binding_cause") == "gate_unreachable" else 0
+            )
+            rec = recommend_diagnosis_action(
+                strategy, symbol, {"binding_cause": "gate_unreachable"},
+                budget_executed_fraction=e.get("budget_executed_fraction"),
+                n_runs_confirmed=n_runs_confirmed,
+            )
+            record_diagnosed_pair(rec, work_dir=work_dir, run_id=run_id)
+            recommendations.append(rec)
+        except Exception:
+            _log.debug(
+                "Issue #1296: gate_unreachable-Rueckschrieb fuer %s/%s fehlgeschlagen "
                 "(non-fatal).", strategy, symbol, exc_info=True)
     return recommendations
 
@@ -3182,7 +3451,7 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
              "skipped_by_reason": {}, "semantics_migrated": 0,
              "admissible_despite_simulation_stale": 0, "max_corroboration_count": None,
-             "attempts": None, **_store_status}
+             "attempts": None, "champion_store_attempts": [], **_store_status}
     try:
         champions_dir = _champions_mod._champions_dir()
         paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
@@ -3255,6 +3524,22 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     # Produktion ruft ausschliesslich ``_build_report`` diese Funktion auf, IMMER mit gesetztem
     # ``studies_out``; ``studies_out=None`` ist ein reiner Test-/Legacy-Aufrufpfad.
     _events_path = jsonl_sidecar_path(_log.name) if studies_out is not None else None
+    # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 2/3 — Ebene-1-Ereignisstrom
+    # (``champions.store_champion``s CHAMPION_STORE_ATTEMPT, siehe dortiger Docstring): eine
+    # STORE_EMPTY/STORE_PATH_MISSING-Beobachtung (Ebene 2, "kein Eintrag existiert") sagt NICHT,
+    # WARUM nie ein Eintrag entstand — dieser Strom traegt den granularen champion_is_admissible-
+    # Ablehnungscode MIT Ist-/Sollwert je Versuch. Je Paar wird NUR der LETZTE Versuch dieses Laufs
+    # behalten (der massgebliche, aktuellste Befund). ``check_champion_writeback_reachability``
+    # verlangt seither, dass jeder Ebene-1-Versuch einen aufloesbaren ``skip_detail['reason']``
+    # traegt (FAIL 'high' bei ``'UNKNOWN'``).
+    champion_store_attempts: dict[str, dict] = {}
+    if _events_path is not None:
+        for ev in _read_jsonl_events(_events_path, "CHAMPION_STORE_ATTEMPT"):
+            _key = f"{ev.get('strategy')}/{ev.get('symbol')}"
+            champion_store_attempts[_key] = {
+                "strategy": ev.get("strategy"), "symbol": ev.get("symbol"),
+                "stored": ev.get("stored"), "skip_detail": ev.get("skip_detail"),
+            }
     if _events_path is not None:
         # Issue #1099 (Katalog #932) — bevorzugte Quelle: die tatsächlich emittierten
         # CHAMPION_WRITEBACK-Ereignisse DIESES Laufs (siehe Docstring oben).
@@ -3319,8 +3604,21 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     else:
         _scan_events = _read_jsonl_events(_events_path, "CHAMPION_STORE_SCAN")
         _store_found_at_run_start = bool(_scan_events[0].get("store_found")) if _scan_events else None
+    # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 1 — NUR STORE_PATH_MISSING, wenn
+    # noch KEIN einziger Champion-Eintrag existiert (``_store_status['entry_count']``). Root-Cause:
+    # die vorherige, unbedingte Umbenennung behauptete "der Pfad fehlt" (STORE_PATH_MISSING) selbst
+    # dann, wenn der Store laengst WAEHREND DIESES Laufs angelegt wurde (mtime_utc = Laufbeginn +
+    # wenige Sekunden) — ein direkter Widerspruch zu ``champions_summary['store_found']=True`` im
+    # selben Report-Objekt. ``store_found`` (bloße Verzeichnis-Existenz) taugt NICHT als
+    # Unterscheidungsmerkmal — JEDER Champion-Store-Zugriff (auch ein reiner Lookup) legt das
+    # Verzeichnis als Seiteneffekt an (``_champions_dir``s ``mkdir(exist_ok=True)``), lange bevor
+    # ein einziger Eintrag je gespeichert wurde; ``entry_count`` (tatsaechliche
+    # ``champion_*.json``-Dateien) ist der seiteneffektfreie Nachweis. STORE_CREATED_THIS_RUN
+    # benennt den Erstanlage-Fall eigens, statt ihn als andauerndes Problem misszudeuten.
     if _store_found_at_run_start is False and skipped_by_reason.get("STORE_EMPTY"):
-        skipped_by_reason["STORE_PATH_MISSING"] = skipped_by_reason.pop("STORE_EMPTY")
+        _has_any_entry_now = int(_store_status.get("entry_count") or 0) > 0
+        _label = "STORE_CREATED_THIS_RUN" if _has_any_entry_now else "STORE_PATH_MISSING"
+        skipped_by_reason[_label] = skipped_by_reason.pop("STORE_EMPTY")
 
     return {
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
@@ -3328,6 +3626,10 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
         "semantics_migrated": semantics_migrated,
         "admissible_despite_simulation_stale": admissible_despite_simulation_stale,
         "max_corroboration_count": max_corroboration_count, "attempts": attempts,
+        # Issue #1288 (GH #1161, Katalog #1272-1297, P1) — je (Strategie, Symbol) der LETZTE
+        # Ebene-1-Speicherversuch dieses Laufs (siehe Feldkommentar oben), Rohmaterial fuer
+        # invariants.check_champion_writeback_reachability.
+        "champion_store_attempts": list(champion_store_attempts.values()),
         **_store_status,
     }
 
@@ -4560,8 +4862,14 @@ def _build_report(
     all_checks.append(("global", _inv.check_sizing_identity_coherence(studies_out)))
     # Issue #1060/#1209 (Katalog #1196-1221) — Abnahmemessung fuer den harten Aggregat-Exposure-
     # Deckel in hourly_strategy_base._compute_quantity: das GEMESSENE Maximum (nicht der Median)
-    # darf trade_amount_pct nur um die Rundungs-/Slippage-Toleranz uebersteigen.
-    all_checks.append(("global", _inv.check_sizing_cap_enforcement(studies_out)))
+    # darf trade_amount_pct nur um die Rundungs-/Slippage-Toleranz uebersteigen. Issue #1297 (GH
+    # #1170, Katalog #1272-1297, P1) Fix Punkt 2 — die zuvor in max_overshoot_factor (Default 1.05)
+    # eingefrorene Toleranz wird durch optimizer.json['sizing_cap_tolerance'] (Default 0.02, EIN
+    # config-getriebener Wert statt einer im Check und einer im Live-/Backtest-Post-Fill-Deckel
+    # (hourly_strategy_base.HourlyStrategyConfig.sizing_cap_tolerance) unabhaengig gepflegten
+    # Konstante) ersetzt.
+    all_checks.append(("global", _inv.check_sizing_cap_enforcement(
+        studies_out, max_overshoot_factor=1.0 + float(optimizer_cfg.get("sizing_cap_tolerance", 0.02)))))
     # Issue #1071 — die per-Symbol ATR-Floor-Auflösung macht den Mechanismus (Floor-Bindung vs.
     # echte Sprungstelle) messbar, statt eine Ursache zu behaupten (siehe Docstring dort).
     _cost_basis_symbols = sorted({r.get("symbol") for r in studies_out if r.get("symbol")})
@@ -4611,13 +4919,17 @@ def _build_report(
     # Issue #1261/#1131, Folge von #1260/#1130 — deklarierte (optimizer.json['time_box_bars_axis'])
     # gegen beobachtete (bars_per_calendar_day) Zeitbox-Zaehl-Achse. Direkt nach der Bar-Achsen-
     # Kohaerenzpruefung platziert (dieselbe Symbol-/Gate-Grundlage).
+    _declared_time_box_bars_axis = str(optimizer_cfg.get("time_box_bars_axis", "calendar_24_7"))
     all_checks.append(("global", _inv.check_timebox_unit_coherence(
-        studies_out, declared_axis=str(optimizer_cfg.get("time_box_bars_axis", "calendar_24_7")),
+        studies_out, declared_axis=_declared_time_box_bars_axis,
         asset_class_by_symbol=_asset_class_by_symbol(_cost_basis_symbols))))
     _stamp_atr_floor_bps_derived(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
         round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
         min_stop_to_cost_ratio=_min_stop_to_cost_ratio)
+    # Issue #1279 (GH #1152, Katalog #1272-1297) — NACH round_trip_cost_bps (oben gestempelt).
+    _stamp_cost_drag_decomposition(studies_out)
+    all_checks.append(("global", _inv.check_cost_drag_decomposition(studies_out)))
     # Issue #1055/#1204 (Katalog #1196-1221) Fix Punkt 4 — die kalibrierte p50-Slippage je Study
     # (ueber die Asset-Klasse ihres Symbols aufgeloest), Rohmaterial fuer die verschaerfte
     # invariants.check_cost_stress_distinctness-Mindestdelta-Pruefung unten. Fail-open: kein
@@ -4637,17 +4949,33 @@ def _build_report(
         for _r in studies_out:
             try:
                 _ac = _resolve_asset_class_for_symbol(_r.get("symbol"))
-                _r["slippage_p50_bps_calibrated"] = (
-                    _slippage_calibration.get(_ac) or {}).get("p50")
+                _p50, _scope = _resolve_slippage_p50_calibrated(
+                    _slippage_calibration.get(_ac), _r.get("symbol"), _r.get("strategy"))
+                _r["slippage_p50_bps_calibrated"] = _p50
+                # Issue #1276 (GH #1149, Katalog #1272-1297, P0) — die tatsaechlich getroffene
+                # Aufloesungsebene (siehe _resolve_slippage_p50_calibrated-Docstring), damit
+                # check_slippage_scope_agreement sie gegen selection_cost_basis-Feld
+                # slippage_calibration_scope (aus holdout_metrics, oben) halten kann.
+                _r["slippage_p50_calibration_scope"] = _scope
             except Exception:
                 _r["slippage_p50_bps_calibrated"] = None
+                _r["slippage_p50_calibration_scope"] = None
     else:
         for _r in studies_out:
             _r["slippage_p50_bps_calibrated"] = None
+            _r["slippage_p50_calibration_scope"] = None
     # Issue #1074/#1222 (Katalog #1247+) Fix Punkt 1 — dieser Aufruf steht ABSICHTLICH HIER, NACH
     # der ``slippage_p50_bps_calibrated``-Stempelung direkt oberhalb (vorher lief er vor der
     # Stempelung, siehe Kommentar bei ``check_cost_stress_monotonicity`` weiter oben).
     all_checks.append(("global", _inv.check_cost_stress_distinctness(studies_out)))
+    # Issue #1276 (GH #1149, Katalog #1272-1297) — direkt nach der slippage_p50_bps_calibrated-
+    # Stempelung platziert (braucht slippage_p50_calibration_scope von dort).
+    all_checks.append(("global", _inv.check_slippage_scope_agreement(studies_out)))
+    # Issue #1277 (GH #1150, Katalog #1272-1297) — Report-seitiger Regressionswaechter gegen den
+    # Selektionspfad-Fix (siehe backtest_runner._bar_axis_supports_stop_verdict_from_exit_meta).
+    all_checks.append(("global", _inv.check_selection_cost_basis_admissible(studies_out)))
+    # Issue #1278 (GH #1151, Katalog #1272-1297) — schliesst den Kalibrierungs-Kreisschluss aus.
+    all_checks.append(("global", _inv.check_slippage_calibration_not_circular(studies_out)))
     # Issue #1075/#1223 (Katalog #1247+, P0) — ebenfalls NACH der Kalibrierungs-Stempelung (braucht
     # slippage_p50_bps_calibrated fuer die Konsistenzpruefung gegen applied_slippage_bps).
     all_checks.append(("global", _inv.check_applied_cost_components_resolved(studies_out)))
@@ -4676,6 +5004,17 @@ def _build_report(
     # Issue #1256 (GH #1126) — β-Plausibilitäts-Diagnose gegen die bekannte Long-only-Exposure,
     # severity='high' (Modell-/Mess-Plausibilitaet, keine harte Selektions-Inkohaerenz).
     all_checks.append(("global", _inv.check_beta_exposure_plausibility(studies_out)))
+    # Issue #1283 (GH #1156, Katalog #1272-1297) — separate, explizite Diagnose (im Unterschied zum
+    # #1283-Guard in confirm.confirm_per_symbol_promotion, der dieselbe Schwelle unbedingt an der
+    # Promotions-Entscheidung erzwingt): macht die Kovarianz-Zerlegung sichtbar, die entscheidet,
+    # OB β die Marktbeteiligung ueberhaupt identifizieren KONNTE.
+    all_checks.append(("global", _inv.check_alpha_regression_identifiability(studies_out)))
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 3 — meldet einen konfigurierten,
+    # aber unwirksamen oos_min_alpha_tstat_mode='multiplicity_adjusted' (source='static_fallback').
+    all_checks.append(("global", _inv.check_alpha_tstat_gate_calibrated(
+        tournament_cfg.get("oos_min_alpha_tstat_mode"), studies_out)))
+    # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — alpha_tstat_df == n_used - 2.
+    all_checks.append(("global", _inv.check_alpha_df_consistency(studies_out)))
 
     # Issue #1252 (GH #1122) — der Lauf-Fingerabdruck der EINGANGSMENGE dieses Sweeps (siehe
     # compute_run_fingerprint-Docstring). symbols/strategies werden aus den TATSAECHLICH in diesen
@@ -4729,18 +5068,32 @@ def _build_report(
     # Familie (gleicher fingerprint_base, siehe compute_run_fingerprint-Docstring). Der aktuelle
     # Lauf zaehlt mit (sein eigener study_summaries-Auszug unten), auch wenn er selbst noch nicht
     # im Index steht.
+    _current_run_study_summaries = [
+        {"strategy": r.get("strategy"), "symbol": r.get("symbol"),
+         "best_reward": r.get("best_reward"), "best_eligible_reward": r.get("best_eligible_reward"),
+         "n_eligible": r.get("n_eligible"), "n_trials": r.get("n_trials")}
+        for r in studies_out
+    ]
+    # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 2 — der ERGEBNIS-Fingerabdruck
+    # dieses Laufs (siehe compute_result_fingerprint-Docstring), zusaetzlich zum EINGANGSmengen-
+    # Fingerabdruck oben. Rohmaterial fuer invariants.check_run_determinism.
+    _result_fingerprint = compute_result_fingerprint(_current_run_study_summaries)
     _current_run_index_entry = {
         "fingerprint": _run_fingerprint, "fingerprint_base": _run_fingerprint_base,
+        "result_fingerprint": _result_fingerprint,
         "run_id": run_id, "started_at_utc": started_at_utc, "seed_salt": _seed_salt,
-        "study_summaries": [
-            {"strategy": r.get("strategy"), "symbol": r.get("symbol"),
-             "best_reward": r.get("best_reward"), "best_eligible_reward": r.get("best_eligible_reward"),
-             "n_eligible": r.get("n_eligible")}
-            for r in studies_out
-        ],
+        "study_summaries": _current_run_study_summaries,
     }
     _search_variance = _compute_search_variance(
         _run_fingerprint_base, _prior_run_fingerprint_entries + [_current_run_index_entry])
+    # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — check_run_determinism: ein
+    # Vorlauf mit IDENTISCHEM run_fingerprint (dieselbe simulierte Eingangsmenge) MUSS denselben
+    # result_fingerprint tragen; weicht er ab, ist der Lauf NICHT deterministisch reproduzierbar
+    # (siehe compute_result_fingerprint-Docstring fuer die Root-Cause).
+    _run_determinism_check = _inv.check_run_determinism(
+        _run_fingerprint, _result_fingerprint, run_id, _prior_run_fingerprint_entries,
+        current_study_summaries=_current_run_study_summaries)
+    all_checks.append(("global", _run_determinism_check))
     if report_source == "final":
         # Issue #1252 (GH #1122) — nur der FINALE Report dieses Laufs traegt zum Index bei (ein
         # Zwischenstand/eine Probe waere sonst selbst schon ein "Duplikat seiner selbst" fuer den
@@ -4791,8 +5144,10 @@ def _build_report(
     # Issue #1070 (Pitfall #369) — die zweite, symmetrische Schranke: ein Verhältnis WEIT ÜBER dem
     # konfigurierten Abstand beweist genauso, dass der Stop keine kalibrierte Risikogrösse ist.
     stop_distance_max_ratio = float(optimizer_cfg.get("stop_distance_max_ratio", 10.0))
-    effective_stop_distance_check = _inv.check_effective_stop_distance(
-        studies_out, min_ratio=stop_distance_min_ratio, max_ratio=stop_distance_max_ratio)
+    effective_stop_distance_check = _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_effective_stop_distance(
+            studies_out, min_ratio=stop_distance_min_ratio, max_ratio=stop_distance_max_ratio),
+        studies_out)
     all_checks.append(("global", effective_stop_distance_check))
 
     # Issue #1262 (GH #1132) — die Kohorten-Abdeckung (effective_stop_ratio_cohort_n / n_evaluable)
@@ -4806,7 +5161,8 @@ def _build_report(
     # Issue #1081/#1229 (P0, Katalog #1247+) Fix Punkt 3 — misst, wie weit die MODELLIERTE (im
     # Suchraum getunte) Stopdistanz von der tatsächlich AUSGEFÜHRTEN, gemessenen Distanz abweicht,
     # jetzt, da check_effective_stop_distance oben ausschliesslich die gemessene Groesse konsumiert.
-    all_checks.append(("global", _inv.check_stop_distance_model_fidelity(studies_out)))
+    all_checks.append(("global", _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_stop_distance_model_fidelity(studies_out), studies_out)))
 
     # Issue #1072 (Wiederkehr #1050/#1051) — die Stopdistanz muss ein Mindestvielfaches der
     # Round-Trip-Kosten betragen, sonst kann eine Position den Stop strukturell nicht überleben,
@@ -4828,14 +5184,16 @@ def _build_report(
 
     # Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer #1092/#1094: der Trailing-Stop darf
     # nicht der haeufigste, verlustreichste UND teuerste Ausgang einer Study sein.
-    all_checks.append(("global", _inv.check_trailing_stop_loss_share(
-        studies_out,
-        max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
-        # Issue #1024/#1173 — umbenannt von 'trailing_stop_max_mean_loss_ratio': Zaehler UND
-        # Nenner sind seither dieselbe Statistik (Median), siehe check_trailing_stop_loss_share-
-        # Docstring.
-        max_median_loss_ratio=float(
-            optimizer_cfg.get("trailing_stop_max_median_loss_ratio", 1.25)))))
+    all_checks.append(("global", _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_trailing_stop_loss_share(
+            studies_out,
+            max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
+            # Issue #1024/#1173 — umbenannt von 'trailing_stop_max_mean_loss_ratio': Zaehler UND
+            # Nenner sind seither dieselbe Statistik (Median), siehe check_trailing_stop_loss_share-
+            # Docstring.
+            max_median_loss_ratio=float(
+                optimizer_cfg.get("trailing_stop_max_median_loss_ratio", 1.25))),
+        studies_out)))
 
     # Issue #950/#1116 (Katalog #960) — die verbindliche SWEEP-WEITE Abnahmemessung fuer die
     # #1092/#1094-Hypothese (drei Kriterien: Spearman(k*ATR, realisierter Verlust) >= 0.3,
@@ -4843,7 +5201,8 @@ def _build_report(
     # Anteil < 35%) — strenger als die permanente check_effective_stop_distance-Schranke und die
     # per-Study check_trailing_stop_loss_share-Symptomschwelle oben, weil sie EIN holistisches
     # Urteil ueber den gesamten Sweep faellt statt je Study einzeln zu urteilen.
-    all_checks.append(("global", _inv.check_trailing_stop_risk_calibration_acceptance(studies_out)))
+    all_checks.append(("global", _inv.suppress_stop_verdict_if_bar_axis_degenerate(
+        _inv.check_trailing_stop_risk_calibration_acceptance(studies_out), studies_out)))
 
     # Issue #953/#1119 (Katalog #960) — blockierender Regressionswaechter gegen die konkurrierende
     # Hypothese zu #950/#1092: ist der Stop-Verlust latenz- statt stopgetrieben (Verlust in
@@ -4855,6 +5214,10 @@ def _build_report(
     # bar_range_median_bps == 0: FAIL, wenn Nullspannen-Bars in mehr als 20% der Studies die
     # Mehrheit der Bar-Population dieser Position ausmachen.
     all_checks.append(("global", _inv.check_zero_range_bar_share(studies_out)))
+    # Issue #1273 (GH #1146, Katalog #1272-1297, P0) — die deklarierte stop_trigger_axis gegen die
+    # gemessene zero_range_bar_fraction gehalten (siehe dortiger Docstring).
+    all_checks.append(("global", _inv.check_stop_trigger_axis_coherence(
+        optimizer_cfg.get("stop_trigger_axis"), studies_out)))
 
     # Issue #1054/#1203 (Katalog #1196-1221) — die algebraisch garantierte Verlust-Zerlegung
     # realized_loss_bps == stop_distance_bps + trigger_to_fill_gap_bps muss fuer >= 99,9% der
@@ -4978,11 +5341,13 @@ def _build_report(
             studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold))
     all_checks.append(("global", structural_zero_eligible_diagnosis_check))
 
-    # Issue #1263 (GH #1133) Fix Punkt 3/4 — rein diagnostisch (severity 'medium'), siehe dortiger
-    # Docstring fuer den bewusst begrenzten Scope dieses Fixes (Beobachtbarkeit, keine Live-
-    # Intervention).
+    # Issue #1263 (GH #1133) Fix Punkt 3/4, erweitert #1295 (GH #1168, Katalog #1272-1297, P1) —
+    # unter der Default-Policy 'diagnose' bleibt dies rein diagnostisch (severity 'medium'); unter
+    # 'freeze' FAILt jeder Kandidat 'high' (die Live-Intervention ist bewusst nicht implementiert,
+    # siehe dortiger Docstring fuer den Scope).
     all_checks.append(("global", _inv.check_atr_floor_dimension_freeze_candidates(
-        studies_out, freeze_threshold=_atr_floor_freeze_threshold)))
+        studies_out, freeze_threshold=_atr_floor_freeze_threshold,
+        policy=optimizer_cfg.get("atr_floor_dimension_freeze_policy", "diagnose"))))
 
     # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
     # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen
@@ -5090,6 +5455,15 @@ def _build_report(
         _log.debug("Issue #1069/#1219: search_stagnation-Rueckschrieb-Batch fehlgeschlagen "
                    "(non-fatal).", exc_info=True)
 
+    # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — dieselbe "Diagnose ohne Konsequenz"-Klasse
+    # fuer binding_cause='gate_unreachable' (siehe _writeback_gate_unreachable_diagnoses-Docstring):
+    # ab der ersten Bestaetigung 'deprioritized', NIE 'denylist' (die Ursache liegt im Gate).
+    try:
+        _writeback_gate_unreachable_diagnoses(studies_out, run_id=run_id)
+    except Exception:
+        _log.debug("Issue #1296: gate_unreachable-Rueckschrieb-Batch fehlgeschlagen (non-fatal).",
+                   exc_info=True)
+
     # Issue #919 Fix 4 — jede Lücke zwischen dem je-Study aufsummierten Exit-Reason-Histogramm
     # und der tatsächlichen Round-Trip-Zahl bedeutet einen Exit-Pfad ohne Order-Tag-Attribution.
     exit_reason_coverage_check = _inv.check_exit_reason_coverage(studies_out)
@@ -5138,6 +5512,12 @@ def _build_report(
         {"tournament.json": tournament_cfg, "optimizer.json": optimizer_cfg},
         fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
     all_checks.append(("global", fail_fast_schema_consistency_check))
+
+    # Issue #1294 (GH #1167, Katalog #1272-1297, P1) — jeder Live-Config-Wert mit dokumentierter
+    # _schema.calibrations-Kalibrierung muss ihr entsprechen ODER einen vollstaendigen
+    # config_override_accepted-Eintrag tragen (Referenzfaelle oos_min_trades/sortino_numeric_guard).
+    all_checks.append(("global", _inv.check_config_matches_calibration(
+        {"tournament.json": tournament_cfg, "optimizer.json": optimizer_cfg})))
 
     # Issue #1063 (Pitfall #370) — Meta-Wächter: jeder FAILende fail_fast_invariants-Check muss
     # seine Offender in der actual-Pair-Konvention tragen, sonst kann
@@ -5242,8 +5622,14 @@ def _build_report(
     # gelesen, den ``_champions_summary``/``check_event_stream_completeness`` bereits nutzen.
     # Gleiche Behandlung wie der Preflight-Block oben (kein ``cohort``-Stempel — diese Checks
     # pruefen keine Study-Population dieses Reports, sondern Sweep-/Study-weite Bedingungen).
+    # Issue #1281 (GH #1154, Katalog #1272-1297) Fix Punkt 3 — je Study-Ergebnis von
+    # check_mandatory_gate_reachability_live gesammelt, damit die globale >= 80 %-Schwelle unten
+    # (nach dem Merge-Loop) berechnet werden kann.
+    _mandatory_gate_live_results: list[dict] = []
     for d in _read_external_invariant_results():
         invariant_checks.append(d)
+        if d.get("name") == "check_mandatory_gate_reachability_live":
+            _mandatory_gate_live_results.append(d)
         val = d.get("passed", True)
         if val is False:
             emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
@@ -5257,6 +5643,15 @@ def _build_report(
                 "expected": d.get("expected"), "actual": d.get("actual"), "detail": d.get("detail"),
                 "report_source": report_source,
             }, level=logging.WARNING)
+    # Issue #1281 (GH #1154) Fix Punkt 3 — zusaetzlicher globaler Eintrag severity='blocking' bei
+    # Unerreichbarkeit in >= 80 % der Studies (siehe invariants.check_mandatory_gate_reachability_
+    # global-Docstring).
+    _mandatory_gate_global_check = _inv.check_mandatory_gate_reachability_global(
+        _mandatory_gate_live_results)
+    _mandatory_gate_global_dict = _mandatory_gate_global_check.to_dict()
+    _mandatory_gate_global_dict["scope"] = "global"
+    _mandatory_gate_global_dict["source"] = "report"
+    invariant_checks.append(_mandatory_gate_global_dict)
 
     # Issue #942/#1108/#1037 (Katalog #960/#1186) — zwei der VIER orthogonalen Achsen VORAB
     # berechnet (haengen nur an Funktionsparametern, nicht an ``invariant_checks``), damit der
@@ -5348,11 +5743,34 @@ def _build_report(
         # Issue #1252 (GH #1122) — siehe compute_run_fingerprint-Docstring. Zwei Läufe mit
         # identischer Eingangsmenge tragen denselben Wert, unabhängig von run_id/started_at_utc.
         "run_fingerprint": _run_fingerprint,
+        # Issue #1286 (GH #1159, Katalog #1272-1297, P1) — siehe compute_result_fingerprint-
+        # Docstring. Zwei Läufe mit identischem run_fingerprint MUESSEN denselben Wert tragen,
+        # sonst FAILt invariants.check_run_determinism.
+        "result_fingerprint": _result_fingerprint,
+        # Issue #1275 (GH #1148, Katalog #1272-1297, P0) — die DEKLARIERTE Zeitbox-Zaehl-Achse
+        # (optimizer.json['time_box_bars_axis']), fuer summary_de._section_4_longest_trades: die
+        # "Handels-Bars (geschätzt)"-Spalte entfaellt nur, wenn dieser Wert tatsaechlich 'rth' ist
+        # (siehe dortiger Docstring) — robust gegen einen Report, der (z. B. ein Alt-Lauf-Replay)
+        # noch unter der alten 'calendar_24_7'-Deklaration gebaut wurde.
+        "time_box_bars_axis": _declared_time_box_bars_axis,
         # Issue #1252 (GH #1122) Fix Punkt 3 — run_id des Vorlaufs mit identischem run_fingerprint
         # (siehe invariants.check_run_is_not_duplicate), oder None (kein Duplikat/nicht auswertbar).
+        # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — NUR gesetzt, wenn BEIDE
+        # Fingerabdruecke uebereinstimmen (run_fingerprint UND result_fingerprint): ein Vorlauf mit
+        # identischer Eingangsmenge, aber ABWEICHENDEM Ergebnis (check_run_determinism FAILt) ist
+        # KEIN Duplikat (er traegt sehr wohl neue Information — naemlich, dass der Lauf nicht
+        # deterministisch ist) und erscheint stattdessen als ``nondeterministic_repeat_of`` unten.
         "duplicate_of": (
             _run_duplicate_check.actual.get("duplicate_of_run_id")
-            if _run_duplicate_check.actual else None
+            if _run_duplicate_check.actual and _run_determinism_check.passed is not False
+            else None
+        ),
+        # Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 3 — run_id des Vorlaufs mit
+        # identischem run_fingerprint, aber ABWEICHENDEM result_fingerprint (siehe
+        # invariants.check_run_determinism). None, solange kein solcher Vorlauf beobachtet wurde.
+        "nondeterministic_repeat_of": (
+            _run_determinism_check.actual.get("prior_run_id")
+            if _run_determinism_check.passed is False else None
         ),
         # Issue #1104 (Katalog #937) — GETRENNTE Felder statt des vorherigen mehrdeutigen
         # ``git_commit``: ``git_commit_simulation`` (wann die TRIALS liefen) vs.
@@ -5363,6 +5781,9 @@ def _build_report(
         "git_commit_simulation": _git_commit_simulation,
         "git_commit_report": git_commit(),
         "reward_semantics_version": optimizer_cfg.get("reward_semantics_version"),
+        # Issue #1273 (GH #1146, Katalog #1272-1297) — die deklarierte Trigger-Achse dieses Laufs
+        # (siehe check_stop_trigger_axis_coherence unten UND optimizer.json-Schema-Dokumentation).
+        "stop_trigger_axis": optimizer_cfg.get("stop_trigger_axis"),
         # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
         # im Nachhinein einer Installationsumgebung zuordenbar ist.
         "library_versions": library_versions(),
@@ -5466,6 +5887,13 @@ def _build_report(
             # #1168: symbol_bar_quality war in 28/28 Studies zweier Läufe still None). Traeger fuer
             # check_symbol_bar_quality_cache_availability, siehe dortiger Docstring.
             "symbol_bar_quality_cache": _symbol_bar_quality_cache_status,
+            # Issue #1272 (GH #1145, Katalog #1272-1297) Akzeptanzkriterium 2 — die je Symbol
+            # gecachten Bar-Qualitaets-/Tick-Dichte-Kennzahlen (siehe
+            # sweep.write_symbol_bar_quality_cache/_load_symbol_bar_quality_sample), direkt
+            # unter cross_study statt nur je Study eingebettet (die Kennzahl ist symbolweit
+            # konstant, nicht studyspezifisch) — macht ``ticks_per_bar_median`` je Symbol OHNE
+            # Umweg ueber eine einzelne Study im Report auffindbar.
+            "symbol_bar_quality": _symbol_bar_quality_cache or {},
             # Issue #1021/#1196 Fix 4.2 — macht sichtbar, dass dieser Lauf per Warm-Start (Optuna
             # ``load_if_exists``) auf Trials eines VORLAUFS aufsetzt, statt es unsichtbar in
             # ``deflation_n_family``/``constraint_improvement_rate``/dem TPE-Seed verschwinden zu

@@ -7,47 +7,47 @@
     "VwapExhaustionStrategy": {
       "TSLA.ETORO": {
         "cooldown_bars": [2, 12],
-        "max_bars_in_trade": [4, 18]
+        "max_bars_in_trade": [1, 4]
       }
     },
     "HourlyMeanReversionStrategy": {
       "TSLA.ETORO": {
         "keltner_period": [5, 20],
         "cooldown_bars": [2, 12],
-        "max_bars_in_trade": [4, 18]
+        "max_bars_in_trade": [1, 4]
       }
     },
     "FlashCrashReversalStrategy": {
       "TSLA.ETORO": {
         "cooldown_bars": [2, 12],
-        "max_bars_in_trade": [4, 18]
+        "max_bars_in_trade": [1, 4]
       }
     },
     "TrendPullbackStrategy": {
       "TSLA.ETORO": {
         "ema_period": [5, 25],
         "cooldown_bars": [2, 12],
-        "max_bars_in_trade": [4, 18]
+        "max_bars_in_trade": [1, 4]
       }
     },
     "AdxAtrMomentumStrategy": {
       "TSLA.ETORO": {
         "adx_period": [7, 21],
         "cooldown_bars": [2, 12],
-        "max_bars_in_trade": [4, 18]
+        "max_bars_in_trade": [1, 4]
       }
     },
     "SqueezeBreakoutStrategy": {
       "TSLA.ETORO": {
         "cooldown_bars": [2, 12],
-        "max_bars_in_trade": [4, 18]
+        "max_bars_in_trade": [1, 4]
       }
     },
     "OpeningRangeBreakoutStrategy": {
       "TSLA.ETORO": {
         "or_bars": [1, 4],
         "cooldown_bars": [2, 12],
-        "max_bars_in_trade": [4, 18]
+        "max_bars_in_trade": [1, 4]
       }
     }
   }

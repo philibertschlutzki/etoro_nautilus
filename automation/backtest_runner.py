@@ -1546,12 +1546,39 @@ def is_within_session_hours(
     return open_minutes <= time_of_day < close_minutes
 
 
+def _filter_ticks_to_session_hours(
+    ticks: list, session_hours_by_asset_class: dict | None, asset_class_key: str | None,
+) -> list:
+    """Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die in #1260 (GH
+    #1130) dokumentierte Verdrahtungsluecke: ``resolve_session_hours_by_asset_class``/
+    ``is_within_session_hours`` waren reine, unit-getestete Funktionen OHNE Call-Site im
+    Tick-Lade-Pfad (siehe deren Docstrings, "BEWUSSTER SCOPE"). Verwirft Ticks ausserhalb der
+    aufgeloesten Handelszeit, STATT sie NautilusTraders ``TimeBarAggregator`` ueberlassen, der die
+    Luecke bislang mit flachen O=H=L=C-Fuellbars ueberbrueckte (Root-Cause #1260-Symptom:
+    ``zero_range_bar_fraction=1.0`` in 14/14 Studies; #1275-Symptom: ``bars_per_calendar_day=24,00``
+    UND ``session_coverage_fraction=0,2389-0,2402`` in 56/56 Studies — eine 24-Bar-Zeitbox entsprach
+    nur 2,15-5,02 geschaetzten Handels-Bars).
+
+    ``None`` (kein Fenster konfiguriert ODER ``asset_class_key`` fehlt/``None``, z. B. FOREX/CRYPTO,
+    siehe ``resolve_session_hours_by_asset_class``-Docstring) ⇒ ``ticks`` UNVERAENDERT (bit-
+    identisches Alt-Verhalten, dieselbe Fail-open-Konvention)."""
+    if not asset_class_key:
+        return ticks
+    window = resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
+    if window is None:
+        return ticks
+    open_utc, close_utc = window
+    return [t for t in ticks if is_within_session_hours(int(t.ts_event), open_utc, close_utc)]
+
+
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,
     start_ns: int | None,
     end_ns: int | None,
     spread_bps: float = 0.0,
+    session_hours_by_asset_class: dict | None = None,
+    asset_class_key: str | None = None,
 ) -> list:
     try:
         ticks = catalog.quote_ticks(
@@ -1559,6 +1586,12 @@ def load_ticks_from_catalog(
             start=start_ns,
             end=end_ns,
         )
+        if not ticks:
+            return []
+        # Issue #1275 (GH #1148) Fix Punkt 2 — VOR jeder Precision-/Spread-Normalisierung unten:
+        # eine ausserhalb der Session verworfene Tick braucht keine der beiden nachfolgenden
+        # Transformationen mehr zu durchlaufen.
+        ticks = _filter_ticks_to_session_hours(ticks, session_hours_by_asset_class, asset_class_key)
         if not ticks:
             return []
 
@@ -2687,6 +2720,34 @@ def _read_apply_calibrated_slippage_in_selection() -> bool:
         val = True
     _apply_calibrated_slippage_in_selection_cache = val
     return val
+
+
+def _bar_axis_supports_stop_verdict_from_exit_meta(rt_exit_meta: list[dict]) -> bool:
+    """Issue #1277 (GH #1150, Katalog #1272-1297, P0) — dieselbe Vorbedingung wie
+    ``invariants._bar_axis_supports_stop_verdict`` (#1274), hier auf ``rt_exit_meta`` EINER Study
+    (statt auf die REPORT-weite Study-Liste) ausgewertet — die Groesse, die
+    ``_apply_calibrated_slippage_deduction`` tatsaechlich zur Verfuegung hat, BEVOR das Ergebnis
+    je als Study-Record existiert.
+
+    Root-Cause (#1150-Symptom): die gemessene Fill-Slippage wird seit #1078/#1226 UNBEDINGT vom
+    Trial abgezogen — an der QUELLE der PnL-Serie, also VOR jeder Gate-/Reward-/Deflations-
+    Bildung. Bei einer Bar-Achse ohne Intrabar-Information (#1272) ist diese "gemessene
+    Ausfuehrungsgroesse" nachweislich (teilweise) ein Bar-Achsen-Artefakt (#1274/Pitfall #455-
+    Klasse: ein korrekter Fix an der falschen Datengrundlage verstaerkt den Defekt) — sie darf den
+    SELEKTIONSPFAD dann nicht dominieren.
+
+    Kriterium: ``bar_range_population_n > 0`` UND ``zero_range_bar_fraction <= 0,5`` fuer
+    JEDEN Round-Trip mit definierten Feldern (Median ueber die Population). Keine Round-Trips mit
+    definierten Feldern ⇒ ``False`` (fail-closed — dieselbe Haltung wie das Report-Pendant)."""
+    populations = [m.get("bar_range_population_n") for m in rt_exit_meta
+                  if m.get("bar_range_population_n") is not None]
+    if populations and any(int(p) == 0 for p in populations):
+        return False
+    fractions = [float(m["zero_range_bar_fraction"]) for m in rt_exit_meta
+                if m.get("zero_range_bar_fraction") is not None]
+    if not fractions:
+        return False
+    return statistics.median(fractions) <= 0.5
 
 
 def _read_sortino_numeric_guard() -> float:
@@ -4477,9 +4538,10 @@ def _alpha_regression_diagnostics(
        ``alpha = Σ w_i·y_i`` ergibt — die klassische OLS-Alpha-Formel), die HC3-Varianz ist
        ``Var_HC3(alpha) = Σ w_i²·e_i²/(1-h_i)²`` mit dem Leverage ``h_i = 1/n + (x_i-mean(x))²/Sxx``
        (derselbe Leverage-Wert wie in der klassischen SE-Formel, hier PRO BEOBACHTUNG statt
-       gepoolt). ``alpha_tstat_df`` = ``n_informative - 2`` (statt ``n - 2``, siehe Punkt 2) macht
-       eine spaetere t-Verteilungs-Nachschlagestelle konsistent mit der TATSAECHLICHEN Zahl
-       oekonomischer Ereignisse, nicht der Kalender-Bar-Zaehlung.
+       gepoolt). ``alpha_tstat_df`` = ``n_used - 2`` mit ``n_used = n`` (ALLE Bars, siehe Issue
+       #1284 unten fuer die Begruendung dieser Wahl gegenueber ``n_informative - 2``) macht eine
+       spaetere t-Verteilungs-Nachschlagestelle konsistent mit der TATSAECHLICH fuer Schaetzung UND
+       Freiheitsgrade verwendeten Stichprobe.
 
     2. Issue #1258 — die Regressions-Grundgesamtheit auditierbar: ``n_total`` (== der bereits
        gestempelte ``oos_alpha_n_periods``, hier als expliziter Alias fuer die Akzeptanzkriterien-
@@ -4487,6 +4549,22 @@ def _alpha_regression_diagnostics(
        Information), ``n_y_nonzero``/``n_x_nonzero`` (Strategie- bzw. Benchmark-Seite einzeln),
        ``n_both_zero`` (``n_total - n_informative``, exakte Partition — Akzeptanzkriterium
        ``n_both_zero + n_informative == n_total``).
+
+    Issue #1284 (GH #1157, Katalog #1272-1297, P3) — ``alpha_tstat_df`` war bis zu diesem Fix
+    ``n_informative - 2``, waehrend BEIDE t-Statistiken (klassisch ueber ``alpha_beta_regression``
+    UND ``alpha_tstat_hc3`` hier) ueber ALLE ``n`` Bars gerechnet werden (``x``/``y`` oben sind die
+    VOLLEN Arrays, nicht auf ``n_informative`` reduziert) — zwei verschiedene Grundgesamtheiten fuer
+    Schaetzung und Freiheitsgrade derselben Statistik (Referenzfall AdxAtr/TSLA: ``df=735`` vs.
+    tatsaechlich verwendete ``n=1079`` Beobachtungen). GEWAEHLTE VARIANTE: ``alpha_tstat_df =
+    n_used - 2`` mit ``n_used = n`` (ALLE Bars) — NICHT die Regression selbst auf die informativen
+    Bars beschraenkt, weil ``x``/``y`` (und damit ``alpha``/``beta``/``cov_xy`` und die gesamte
+    #1283-Kovarianz-Zerlegung, die additiv auf DENSELBEN vollen Summen ``sxx``/``sxy``/``syy``
+    beruht) an dieser Stelle bereits an mehrere andere, bereits verdrahtete Konsumenten geht — eine
+    Restriktion auf ``n_informative`` haette deren Grundgesamtheit STILL mitverschoben. ``n_used``
+    wird explizit gestempelt (statt sich auf einen impliziten Alias zu ``n_total`` zu verlassen),
+    damit ``invariants.check_alpha_df_consistency`` die tatsaechlich verwendete Stichprobe direkt
+    gegenprüfen kann, unabhaengig davon, ob eine kuenftige Variante ``n_used`` einmal von
+    ``n_total`` abweichen laesst.
 
     ``None`` unter DENSELBEN Bedingungen wie ``_alpha_beta_regression`` (< 3 Perioden, Var(x) == 0)
     — beide Funktionen werden IMMER auf demselben ``(strategy_log_returns, benchmark_log_returns)``-
@@ -4524,14 +4602,52 @@ def _alpha_regression_diagnostics(
         alpha_tstat_hc3 = (
             math.copysign(_ALPHA_TSTAT_DEGENERATE_MAGNITUDE, alpha) if alpha != 0.0 else 0.0)
 
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer
+    # invariants.check_alpha_regression_identifiability: t(alpha) darf nur entscheiden, wenn beta
+    # die Marktbeteiligung TATSAECHLICH identifiziert (Katalog-Symptom: beta_expected 0,1285 vs.
+    # beta_measured -0,0155 bei exposure_fraction 0,8563 — die Amplitude passt zur Positionsgroesse,
+    # es fehlt die KOVARIANZ). ``corr_xy``/``sd_x``/``sd_y``/``cov_xy`` sind die direkt aus (x, y)
+    # ablesbaren Kennzahlen einer geschlossenen Form (kein neues Dependency, dieselbe Konvention
+    # wie der Rest dieser Funktion).
+    #
+    # Kovarianz-ZERLEGUNG nach In-Markt-/Ausser-Markt-Baren (additiv: ``cov_in_market +
+    # cov_out_of_market == cov_xy`` EXAKT, da beide Teilsummen dieselben Referenzmittel
+    # ``x_mean``/``y_mean`` verwenden — Pitfall #438-Konvention, "ein Skalierungsterm muss aus
+    # EINEM Bezugsrahmen stammen"). "In Markt" approximiert ueber ``y_i != 0`` (dieselbe Definition
+    # wie ``n_y_nonzero`` oben: die Strategie trug in dieser Periode eine Position/einen Ertrag).
+    # Eine DRITTE Klasse ("Exit-Bars", nur die POSITION-SCHLIESSENDE Teilmenge der In-Markt-Bare)
+    # ist aus (x, y) allein nicht abgrenzbar — dafuer braucht es eine bar-genaue Positions-
+    # Zustandskennung, die an dieser Call-Site (aggregierte Log-Return-Arrays) nicht vorliegt.
+    # BEWUSST NICHT implementiert (Zero-Guessing statt einer erratenen Trennung): ``cov_exit_bars``
+    # bleibt ``None`` mit dieser Begruendung, statt eine ungedeckte Klassifikation vorzutaeuschen.
+    syy = float(((y - y_mean) ** 2).sum())
+    sd_x = math.sqrt(sxx / n)
+    sd_y = math.sqrt(syy / n) if syy > 0.0 else 0.0
+    cov_xy = sxy / n
+    corr_xy = (cov_xy / (sd_x * sd_y)) if (sd_x > 0.0 and sd_y > 0.0) else None
+    in_market_mask = y != 0.0
+    n_in_market = int(in_market_mask.sum())
+    cov_in_market = float(
+        ((x[in_market_mask] - x_mean) * (y[in_market_mask] - y_mean)).sum() / n)
+    cov_out_of_market = cov_xy - cov_in_market
+
     return {
         "alpha_tstat_hc3": float(alpha_tstat_hc3),
-        "alpha_tstat_df": max(0, n_informative - 2),
+        "alpha_tstat_df": max(0, n - 2),
+        "n_used": n,
         "n_total": n,
         "n_informative": n_informative,
         "n_y_nonzero": n_y_nonzero,
         "n_x_nonzero": n_x_nonzero,
         "n_both_zero": n_both_zero,
+        "corr_xy": corr_xy,
+        "sd_x": sd_x,
+        "sd_y": sd_y,
+        "cov_xy": cov_xy,
+        "cov_in_market": cov_in_market,
+        "cov_out_of_market": cov_out_of_market,
+        "cov_exit_bars": None,
+        "n_in_market": n_in_market,
     }
 
 
@@ -5496,6 +5612,14 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     None if is_data_end_fallback else meta.get("stop_exit_lag_bars")),
                 "stop_exit_fill_lag_ns": stop_exit_fill_lag_ns,
                 "stop_exit_slippage_bps": stop_exit_slippage_bps,
+                # Issue #1278 (GH #1151, Katalog #1272-1297, P1) — belegt, dass
+                # ``resolve_stop_exit_slippage_bps`` (oben) AUSSCHLIESSLICH aus rohen Preisen
+                # rechnet (``closing_price``/``_stop_px``, kein Term aus ``applied_slippage_bps``
+                # oder ``slippage_bps_p50`` — beide sind an dieser Stelle nicht einmal in Scope):
+                # eine spaetere Kalibrierung KANN diese Messgroesse strukturell nicht speisen.
+                # Konstantes Literal (kein bedingter Wert) — die Garantie gilt fuer JEDEN
+                # TRAILING_STOP-Exit, nicht nur unter bestimmten Config-Zustaenden.
+                "slippage_measurement_basis": "pre_cost_price",
                 # Issue #1054/#1203 — Verlust-Zerlegung, siehe Kommentar an der Berechnung oben.
                 "stop_distance_bps": _stop_distance_bps,
                 "trigger_to_fill_gap_bps": trigger_to_fill_gap_bps,
@@ -5663,7 +5787,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #1257 (GH #1127) — Kostenbasis VOR der #1078-Korrektur, ausschliesslich fuer die
         # parallele ``*_gross``-Traceability-Telemetrie (siehe ``_calculate_stats``-Aufrufe unten).
         rt_pnls_with_ts_gross = rt_pnls_with_ts
-        if _read_apply_calibrated_slippage_in_selection():
+        # Issue #1277 (GH #1150, Katalog #1272-1297, P0) — der kalibrierte Slippage-Abzug ist nur
+        # dann eine AUSFUEHRUNGSGROESSE (statt eines Bar-Achsen-Artefakts, siehe
+        # ``_bar_axis_supports_stop_verdict_from_exit_meta``-Docstring), wenn die Bar-Achse DIESER
+        # Study Intrabar-Information traegt. Fail-closed auf ``round_trip_only`` mit benanntem
+        # Downgrade-Grund, statt die gemessene Groesse blind in den Selektionspfad zu lassen.
+        _bar_axis_supports_selection_cost = _bar_axis_supports_stop_verdict_from_exit_meta(
+            rt_exit_meta)
+        selection_cost_basis_downgrade_reason = None
+        if _read_apply_calibrated_slippage_in_selection() and _bar_axis_supports_selection_cost:
             rt_pnls_with_ts, n_slippage_adjusted_round_trips = _apply_calibrated_slippage_deduction(
                 rt_pnls_with_ts, rt_notionals_with_ts, rt_exit_meta,
                 slippage_bps_p50=slippage_bps_p50)
@@ -5673,20 +5805,28 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     log_fn(f"[Metriken] #1078: kalibrierte p50-Slippage ({slippage_bps_p50:.2f} bps) "
                            f"auf {n_slippage_adjusted_round_trips} TRAILING_STOP-Round-Trip(s) "
                            "an der Quelle abgezogen.")
+        elif (_read_apply_calibrated_slippage_in_selection()
+              and not _bar_axis_supports_selection_cost):
+            selection_cost_basis_downgrade_reason = "BAR_AXIS_DEGENERATE"
+            if log_fn:
+                log_fn("[Metriken] #1277: kalibrierte Slippage NICHT in den Selektionspfad "
+                       "uebernommen (BAR_AXIS_DEGENERATE) — die Bar-Achse dieser Study traegt "
+                       "keine Intrabar-Information, selection_cost_basis bleibt round_trip_only.")
 
         # Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — DIESELBE kalibrierte p50-Slippage
         # ZUSAETZLICH auf die MtM-Equity-Kurve selbst (``_apply_calibrated_slippage_to_mtm_series``-
         # Docstring fuer die Root-Cause: der Abzug oben propagiert NICHT in total_return/sortino/
         # PSR/die α/β-Regression, die alle aus ``mtm_series``/``mtm_frames`` statt aus
         # ``rt_pnls_with_ts`` entstehen). DASSELBE Gate (``_read_apply_calibrated_slippage_in_
-        # selection``), DIESELBEN Notional-/Exit-Meta-Listen (Zeitstempel/Notional aendern sich durch
-        # die #1078-PnL-Korrektur NICHT). ``mtm_series_gross`` bleibt die unkorrigierte Kurve fuer
-        # die ``*_gross``-Telemetrie; ab hier bezeichnet der Name ``mtm_series`` — wie ueberall sonst
-        # in dieser Funktion — die tatsaechlich zu verwendende (jetzt kostenbereinigte) Kurve, kein
-        # Konsument unterhalb dieser Zeile muss geaendert werden (Fix an der Quelle).
+        # selection`` UND, seit #1277, ``_bar_axis_supports_selection_cost``), DIESELBEN Notional-/
+        # Exit-Meta-Listen (Zeitstempel/Notional aendern sich durch die #1078-PnL-Korrektur NICHT).
+        # ``mtm_series_gross`` bleibt die unkorrigierte Kurve fuer die ``*_gross``-Telemetrie; ab
+        # hier bezeichnet der Name ``mtm_series`` — wie ueberall sonst in dieser Funktion — die
+        # tatsaechlich zu verwendende (jetzt kostenbereinigte) Kurve, kein Konsument unterhalb
+        # dieser Zeile muss geaendert werden (Fix an der Quelle).
         mtm_series_gross = mtm_series
         n_slippage_adjusted_mtm_events = 0
-        if _read_apply_calibrated_slippage_in_selection():
+        if _read_apply_calibrated_slippage_in_selection() and _bar_axis_supports_selection_cost:
             mtm_series, n_slippage_adjusted_mtm_events = _apply_calibrated_slippage_to_mtm_series(
                 mtm_series, rt_notionals_with_ts, rt_exit_meta, slippage_bps_p50=slippage_bps_p50)
             if n_slippage_adjusted_mtm_events > 0 and log_fn:
@@ -6019,6 +6159,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # deduction``-Aufruf oben).
         is_metrics["selection_cost_basis"] = selection_cost_basis
         oos_metrics["selection_cost_basis"] = selection_cost_basis
+        # Issue #1277 (GH #1150, Katalog #1272-1297) — benennt WESHALB der Selektionspfad auf
+        # round_trip_only zurueckfiel, wenn apply_calibrated_slippage_in_selection aktiv
+        # konfiguriert ist: fehlender Kalibrierungs-Cache bleibt None (Vorzustand), eine
+        # degenerierte Bar-Achse traegt explizit 'BAR_AXIS_DEGENERATE'.
+        is_metrics["selection_cost_basis_downgrade_reason"] = selection_cost_basis_downgrade_reason
+        oos_metrics["selection_cost_basis_downgrade_reason"] = selection_cost_basis_downgrade_reason
         if n_slippage_adjusted_round_trips > 0:
             is_metrics["selection_cost_basis_n_adjusted"] = n_slippage_adjusted_round_trips
             oos_metrics["selection_cost_basis_n_adjusted"] = n_slippage_adjusted_round_trips
@@ -6253,11 +6399,28 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 if oos_alpha_diagnostics is not None:
                     oos_metrics["oos_alpha_tstat_hc3"] = oos_alpha_diagnostics["alpha_tstat_hc3"]
                     oos_metrics["oos_alpha_tstat_df"] = oos_alpha_diagnostics["alpha_tstat_df"]
+                    # Issue #1284 (GH #1157, Katalog #1272-1297, P3) — die tatsaechlich fuer
+                    # alpha_tstat_df verwendete Stichprobengroesse, explizit benannt statt eines
+                    # impliziten Alias zu oos_alpha_n_total (siehe _alpha_regression_diagnostics-
+                    # Docstring); Rohmaterial fuer invariants.check_alpha_df_consistency.
+                    oos_metrics["oos_alpha_n_used"] = oos_alpha_diagnostics["n_used"]
                     oos_metrics["oos_alpha_n_total"] = oos_alpha_diagnostics["n_total"]
                     oos_metrics["oos_alpha_n_informative"] = oos_alpha_diagnostics["n_informative"]
                     oos_metrics["oos_alpha_n_y_nonzero"] = oos_alpha_diagnostics["n_y_nonzero"]
                     oos_metrics["oos_alpha_n_x_nonzero"] = oos_alpha_diagnostics["n_x_nonzero"]
                     oos_metrics["oos_alpha_n_both_zero"] = oos_alpha_diagnostics["n_both_zero"]
+                    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer
+                    # invariants.check_alpha_regression_identifiability (siehe dortiger Docstring
+                    # UND _alpha_regression_diagnostics-Docstring fuer die Herleitung).
+                    oos_metrics["oos_alpha_corr_xy"] = oos_alpha_diagnostics["corr_xy"]
+                    oos_metrics["oos_alpha_sd_x"] = oos_alpha_diagnostics["sd_x"]
+                    oos_metrics["oos_alpha_sd_y"] = oos_alpha_diagnostics["sd_y"]
+                    oos_metrics["oos_alpha_cov_xy"] = oos_alpha_diagnostics["cov_xy"]
+                    oos_metrics["oos_alpha_cov_in_market"] = oos_alpha_diagnostics["cov_in_market"]
+                    oos_metrics["oos_alpha_cov_out_of_market"] = oos_alpha_diagnostics[
+                        "cov_out_of_market"]
+                    oos_metrics["oos_alpha_cov_exit_bars"] = oos_alpha_diagnostics["cov_exit_bars"]
+                    oos_metrics["oos_alpha_n_in_market"] = oos_alpha_diagnostics["n_in_market"]
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt
@@ -7114,6 +7277,10 @@ def run_single_backtest_worker(
     # commission_bps/atr_floor_bps_by_asset_class oben — der Worker laedt tournament.json nicht
     # selbst neu).
     min_stop_to_cost_ratio: float = 3.0,
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — asset-class-aufgelöstes
+    # RTH-Fenster (resolve_session_hours_by_asset_class/is_within_session_hours, #1260/GH #1130),
+    # dieselbe EINMAL-im-Elternprozess-geladen-Konvention wie atr_floor_bps_by_asset_class oben.
+    session_hours_by_asset_class: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -7251,7 +7418,10 @@ def run_single_backtest_worker(
                 "atr_floor_bps": atr_floor_bps_resolved,
             })
 
-            ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns, spread_bps)
+            ticks = load_ticks_from_catalog(
+                catalog, inst_id_str, start_ns, end_ns, spread_bps,
+                session_hours_by_asset_class=session_hours_by_asset_class,
+                asset_class_key=asset_class_key)
         except InstrumentMetadataIncompleteError as e:
             wlog_err(f"REJECT_INSTRUMENT_METADATA_INCOMPLETE: {e}", exc=False)
             res = _empty_result(inst_id_str, strategy_class_name, strat)
@@ -7503,6 +7673,16 @@ def run_single_backtest_worker(
                 "value": getattr(strategy, "_exit_close_retries", None),
             })
 
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — Sizing-Cap-Korrektur-
+        # Telemetrie (hourly_strategy_base.on_position_opened's POST-FILL-Deckel), analog zu den
+        # Exit-Close-Zaehlern oben direkt von der eben ausgefuehrten Strategie-Instanz gelesen.
+        # Rohmaterial fuer invariants.check_sizing_cap_enforcement (via parsing.TournamentMetrics's
+        # oos_sizing_cap_*-Felder, holdout-only konsumiert, siehe dortiger Docstring).
+        oos_metrics["sizing_cap_corrections_count"] = getattr(
+            strategy, "_sizing_cap_corrections_count", 0)
+        oos_metrics["sizing_cap_max_overshoot_pre_correction"] = getattr(
+            strategy, "_sizing_cap_max_overshoot_pre_correction", None)
+
         if round_trip_cost_bps is not None:
             metrics["round_trip_cost_bps"] = round_trip_cost_bps
             oos_metrics["round_trip_cost_bps"] = round_trip_cost_bps
@@ -7712,6 +7892,9 @@ def run_backtest() -> None:
     # (resolve_opening_range_session_open_hour).
     opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
         "opening_range_session_open_hour_by_asset_class", {})
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die #1260/GH #1130-
+    # Verdrahtungsluecke (siehe load_ticks_from_catalog/_filter_ticks_to_session_hours-Docstrings).
+    session_hours_by_asset_class = backtest_global_cfg.get("session_hours_by_asset_class", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -8063,6 +8246,7 @@ def run_backtest() -> None:
                         slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
+                        session_hours_by_asset_class=session_hours_by_asset_class,
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -8081,6 +8265,7 @@ def run_backtest() -> None:
                         slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
+                        session_hours_by_asset_class=session_hours_by_asset_class,
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -8124,6 +8309,7 @@ def run_backtest() -> None:
                         slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
+                        session_hours_by_asset_class=session_hours_by_asset_class,
                     )
                     break
                 except Exception as e:
@@ -8218,6 +8404,8 @@ def _run_remaining_sequentially(
     slippage_bps_p50_by_asset_class: dict | None = None,
     # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe run_single_backtest_worker-Docstring.
     min_stop_to_cost_ratio: float = 3.0,
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) — siehe run_single_backtest_worker-Docstring.
+    session_hours_by_asset_class: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -8243,6 +8431,7 @@ def _run_remaining_sequentially(
             slippage_bps_by_asset_class=slippage_bps_by_asset_class,
             slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
             min_stop_to_cost_ratio=min_stop_to_cost_ratio,
+            session_hours_by_asset_class=session_hours_by_asset_class,
         )
         _flush_worker_log(rem_log)
         done_count += 1

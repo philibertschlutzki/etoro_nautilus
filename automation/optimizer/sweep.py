@@ -30,7 +30,8 @@ from automation.optimizer.gate import (
 )
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
 from automation.optimizer.manifest import (
-    WORK, PERSISTENT_CACHE_ROOT, write_json_atomic, catalog_fingerprint, library_versions)
+    WORK, PERSISTENT_CACHE_ROOT, RUN_FINGERPRINT_INDEX_PATH, write_json_atomic,
+    catalog_fingerprint, library_versions, git_commit, sha256_file, read_jsonl)
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
     load_global_best,
@@ -40,6 +41,7 @@ from automation.optimizer.run_optimization import (
     _dispose_storage,
     derive_n_trials,
     assert_structural_min_modelled_trials_valid,
+    resolve_storage,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer import champions
@@ -353,6 +355,109 @@ def assert_instrument_metadata_coherence() -> "_inv.InvariantResult | None":
     return result
 
 
+def assert_run_is_not_duplicate_preflight(
+    *, strategies: list[str], symbols: list[str], run_id: str, opt_data: dict,
+) -> "_inv.InvariantResult | None":
+    """Issue #1285 (GH #1158, Katalog #1272-1297, P1) — Duplikat-Preflight statt Report-Befund.
+    ``invariants.check_run_is_not_duplicate`` (#1252/GH #1122) lief bisher AUSSCHLIESSLICH in
+    ``report._build_report`` — der Befund (``f13f29db`` trug ``duplicate_of``) stand erst nach
+    1584 s Rechenzeit und 1745 abgeschlossenen Trials im Artefakt. ``report.compute_run_
+    fingerprint`` braucht ausschliesslich EINGANGSGROESSEN (Commit, Config-SHAs, Katalog-
+    Fingerabdruck, Seed, Symbole, Strategien, Semantik-Versionen, Salt) — alle bereits VOR dem
+    ersten Trial bekannt. Dieser Preflight zieht denselben Fingerabdruck-Vergleich an den
+    Sweep-Start.
+
+    ``symbols``/``strategies``: die (noch ungefilterte) angeforderte Eingangsmenge dieses Laufs
+    (vor ``enumerate_tunable_pairs``) — dieselbe Grundgesamtheit, die der Report-Zeit-Vergleich
+    aus den TATSAECHLICH gelaufenen ``studies_out`` bildet, hier vorab aus der Anforderung selbst
+    (Symbol-/Strategie-Filterung ist deterministisch aus Config+Katalog, siehe dortiger
+    Docstring) — ein spaeter enumerierter, leerer Rest aendert den Fingerabdruck der
+    EINGANGSMENGE nicht.
+
+    Bei einem Treffer (``check_run_is_not_duplicate`` FAILt): fail-loud (``SystemExit``,
+    Exit-Code 2) mit Hinweis auf ``--seed-salt``/``--allow-duplicate-run``
+    (``OPTIMIZER_ALLOW_DUPLICATE_RUN=1``, gesetzt von ``main()``s ``--allow-duplicate-run``-Flag)
+    als expliziter Opt-in. Liefert ``None``, wenn ``tournament.json``/``optimizer.json`` fehlen
+    (dieselbe No-Op-Konvention wie ``assert_required_config_keys_valid``)."""
+    from automation.optimizer import invariants as _inv
+    tournament_path = config_dir() / "tournament.json"
+    optimizer_path = config_dir() / "optimizer.json"
+    if not tournament_path.exists() or not optimizer_path.exists():
+        return None
+    fingerprint = _inv_compute_run_fingerprint_preflight(
+        strategies=strategies, symbols=symbols, opt_data=opt_data,
+        tournament_path=tournament_path, optimizer_path=optimizer_path,
+    )
+    prior_entries = read_jsonl(RUN_FINGERPRINT_INDEX_PATH)
+    result = _inv.check_run_is_not_duplicate(fingerprint, run_id, prior_entries)
+    if not result.passed and not os.environ.get("OPTIMIZER_ALLOW_DUPLICATE_RUN"):
+        import sys as _sys
+        actual = result.actual or {}
+        print(
+            f"❌ [#1285] RUN_FINGERPRINT_DUPLICATE: dieser Lauf traegt dieselbe Eingangsmenge wie "
+            f"run_id={actual.get('duplicate_of_run_id')} (gestartet "
+            f"{actual.get('duplicate_of_started_at_utc')}) — keine neue Information. Entweder "
+            f"--seed-salt SALT (unabhaengige TPE-Stichprobe) oder --allow-duplicate-run "
+            f"(bewusster bit-identischer Wiederholungslauf) setzen. Exit-Code 2 (Issue #1285).",
+            file=_sys.stderr,
+        )
+        _sys.exit(2)
+    return result
+
+
+def _inv_compute_run_fingerprint_preflight(
+    *, strategies: list[str], symbols: list[str], opt_data: dict,
+    tournament_path: Path, optimizer_path: Path,
+) -> str:
+    """Issue #1285 — Preflight-Variante von ``report.compute_run_fingerprint``s Aufrufstelle
+    (``report.py``, um ``_run_fingerprint_kwargs``): dieselben zehn Komponenten, hier aus dem
+    VOR-Phase-1-Zustand statt aus ``studies_out`` gelesen (siehe Aufrufer-Docstring)."""
+    from automation.optimizer import report as _report_mod
+    return _report_mod.compute_run_fingerprint(
+        git_commit_simulation=git_commit(),
+        tournament_config_sha256=sha256_file(tournament_path),
+        optimizer_config_sha256=sha256_file(optimizer_path),
+        catalog_fingerprint_value=catalog_fingerprint(),
+        seed=opt_data.get("seed"),
+        symbols=symbols,
+        strategies=strategies,
+        reward_semantics_version=opt_data.get("reward_semantics_version"),
+        simulation_semantics_version=opt_data.get("simulation_semantics_version"),
+        seed_salt=os.environ.get("OPTIMIZER_SEED_SALT"),
+    )
+
+
+def assert_invariant_registry_complete() -> "_inv.InvariantResult":
+    """Issue #1293 (GH #1166, Katalog #1272-1297, P2) — FAIL-LOUD beim Sweep-Start (VOR Phase 1)
+    statt erst am Laufende im Report. ``invariants.check_invariant_coverage`` (#1015/#1167) prüft
+    zur REPORT-Zeit, ob jede definierte ``check_*``-Funktion tatsächlich im Ergebnis-Strom eines
+    VOLLSTÄNDIGEN Laufs auftauchte — der Befund (#1280-Symptom: ``check_mandatory_gate_
+    reachability_live`` fehlte im Strom von 4/4 Läufen) kostete jeweils einen kompletten,
+    stundenlangen Sweep, obwohl die Ursache (ein fehlender Emit-Aufruf) rein STATISCH aus dem
+    Quelltext ablesbar ist — dieselbe Introspektion, die ``report._invariant_registry_wiring_check``
+    bereits für den End-of-Run-Report durchführt (Text-Scan über
+    ``report.py``/``sweep.py``/``confirm.py``/``daily_orchestrator.py``/``live_risk.py``/
+    ``momentum_ls_allocator.py`` nach ``check_<name>(``-Aufrufstellen, KEIN Import/keine
+    Codeausführung, < 1 s). Dieser Preflight zieht dieselbe Prüfung an den Sweep-Start vor: eine
+    definierte ``check_*``-Funktion ohne Aufrufstelle UND ohne
+    ``report._DELIBERATELY_UNWIRED_INVARIANT_CHECKS``-Eintrag bricht den Lauf sofort ab, statt das
+    fehlende Ergebnis erst nach dem letzten Symbol zu bemerken. Exit-Code 2, analog
+    ``assert_instrument_metadata_coherence``.
+
+    ``check_invariant_coverage`` selbst (Report-Ende, Laufzeit-Nachweis über den tatsächlich
+    BEOBACHTETEN Strom eines konkreten Laufs) bleibt unverändert bestehen — dieser Preflight prüft
+    eine STRUKTURELLE Vorbedingung (Aufrufstelle existiert), keinen Ersatz für den Laufzeit-Beweis
+    (Aufrufstelle wurde in DIESEM Lauf tatsächlich erreicht)."""
+    from automation.optimizer import report as _report_mod
+    result = _report_mod._invariant_registry_wiring_check()
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#1293] check_invariant_registry_wired FAILt bereits im Preflight (VOR Phase 1): "
+              f"{result.detail}", file=_sys.stderr)
+        _sys.exit(2)
+    return result
+
+
 def warn_if_cost_model_zero_realism() -> bool:
     """Issue #1010/#1162 (Katalog #1170, P0) — Startup-Warnung: sind ``backtest.json``'s
     ``overnight_financing_bps_per_day_by_asset_class`` UND ``slippage_bps_by_asset_class`` fuer
@@ -402,7 +507,8 @@ def _assert_gate_reward_parity() -> None:
     Entfernung einer harten Risikogrenze verleitete, statt den Sweep-Start abzubrechen)."""
     from automation.optimizer.reward import (
         assert_any_condition_parity, assert_gate_priority_coverage,
-        assert_live_threshold_registry_coverage,
+        assert_live_threshold_registry_coverage, assert_eligible_requires_any_not_silently_empty,
+        assert_config_matches_calibration,
     )
     try:
         cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
@@ -415,6 +521,20 @@ def _assert_gate_reward_parity() -> None:
     # sichtbar werden lassen (vgl. #1117-Symptom: check_mandatory_gate_reachability_live lief 13
     # Studies lang unbemerkt leer).
     assert_live_threshold_registry_coverage(cfg)
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) — dieselbe Fail-Loud-Stelle wie die uebrigen
+    # Gate-Konsistenz-Waechter: eine leere eligible_requires_any-Disjunktion muss ein benannter
+    # Beschluss sein, kein stiller Kollaps auf ein einziges verbleibendes eligible_requires_all-Gate.
+    assert_eligible_requires_any_not_silently_empty(cfg)
+    # Issue #1294 (GH #1167, Katalog #1272-1297, P1) — Startup-Invariante: ein Config-Wert, der von
+    # seiner eigenen dokumentierten _schema.calibrations-Kalibrierung abweicht, darf den Sweep-
+    # Start nicht stillschweigend passieren (Referenzfaelle oos_min_trades/sortino_numeric_guard).
+    try:
+        optimizer_cfg_for_calibration = json.loads(
+            (config_dir() / "optimizer.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        optimizer_cfg_for_calibration = {}
+    assert_config_matches_calibration(
+        {"tournament.json": cfg, "optimizer.json": optimizer_cfg_for_calibration})
 
 
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:
@@ -460,6 +580,25 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
 # Issue #807 — Sentinel-"Strategie" fuer symbolweite (statt paar-weise) diagnosed_pairs_cache-
 # Eintraege: EIN Eintrag pro degenerierten Symbol statt 14 unabhaengiger Strategie-Eintraege.
 _SYMBOL_DEGENERACY_SENTINEL_STRATEGY = "__SYMBOL_DATA_DEGENERATE__"
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float | None:
+    """Issue #1272 (GH #1145) — lineare Interpolation zwischen den beiden umgebenden Ordnungs-
+    statistiken (dieselbe Konvention wie ``numpy.percentile``s Default ``'linear'``-Methode), ohne
+    eine numpy-Abhaengigkeit fuer eine einzelne Perzentil-Berechnung einzufuehren.
+    ``sorted_values`` MUSS bereits aufsteigend sortiert sein (Aufrufer-Vertrag, keine eigene
+    Sortierung — vermeidet eine stille zweite O(n log n)-Sortierung bei Aufrufern, die die
+    sortierte Liste ohnehin bereits fuer eine andere Kennzahl halten)."""
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    k = (len(sorted_values) - 1) * pct
+    f = int(k)
+    c = min(f + 1, len(sorted_values) - 1)
+    if f == c:
+        return float(sorted_values[f])
+    return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
 
 
 def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = None, *,
@@ -517,7 +656,14 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         df["mid"] = (df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0
         df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
         df = df.set_index("ts").sort_index()
-        bars = df["mid"].resample("1h").agg(["max", "min", "last"]).dropna()
+        # Issue #1272 (GH #1145, Katalog #1272-1297) — ``count`` je Stundenfenster ZUSAETZLICH zu
+        # max/min/last: die Tick-DICHTE je Bar (nicht nur ihr Aggregat) ist die Vorbedingung, die
+        # jede Stop-/Trigger-Ausloese-Pruefung stillschweigend voraussetzt (siehe
+        # sweep_diagnostics.check_bar_quality-Docstring, Pitfall #458). ``count`` liefert 0 fuer
+        # leere Bins (kein NaN) — der nachfolgende ``dropna(subset=[...])`` filtert ausschliesslich
+        # auf max/min/last, damit besetzte Bars mit ihrer echten Tick-Zahl erhalten bleiben.
+        agg = df["mid"].resample("1h").agg(["max", "min", "last", "count"])
+        bars = agg.dropna(subset=["max", "min", "last"])
         if bars.empty:
             return None
         # Issue #900 Fix 1 — median_delta_t_s (Sekunden zwischen aufeinanderfolgenden BESETZTEN
@@ -532,12 +678,22 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             median_delta_t_s = 3600.0
         calendar_hours = max(1.0, (idx[-1] - idx[0]).total_seconds() / 3600.0)
         bar_coverage_ratio = len(idx) / calendar_hours
+        # Issue #1272 — Tick-Dichte-Kennzahlen ueber die BESETZTEN Bars (dieselbe Populations-
+        # Konvention wie ``bar_range_population_n`` in backtest_runner.py: eine leere Bar traegt
+        # keine Tick-Dichte-Beobachtung, sie wird nicht mitgezaehlt, siehe Pitfall #452).
+        tick_counts = sorted(int(c) for c in bars["count"].tolist())
+        ticks_per_bar_median = float(statistics.median(tick_counts))
+        ticks_per_bar_p05 = _percentile(tick_counts, 0.05)
+        frac_bars_single_tick = sum(1 for c in tick_counts if c <= 1) / len(tick_counts)
         return {
             "highs": bars["max"].tolist(),
             "lows": bars["min"].tolist(),
             "closes": bars["last"].tolist(),
             "median_delta_t_s": median_delta_t_s,
             "bar_coverage_ratio": bar_coverage_ratio,
+            "ticks_per_bar_median": ticks_per_bar_median,
+            "ticks_per_bar_p05": ticks_per_bar_p05,
+            "frac_bars_single_tick": frac_bars_single_tick,
             # Issue #900 Fix 4 — Stichprobenumfang und Fenster im Event, sonst ist die Aussage
             # nicht reproduzierbar.
             "n_sample_ticks": int(len(df)),
@@ -545,6 +701,14 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             "window_end": idx[-1].isoformat(),
         }
     except Exception:
+        # Issue #1272 (GH #1145) — fail-open bleibt (ein Lesefehler darf den Sweep nie
+        # blockieren, siehe Docstring), aber nicht mehr LAUTLOS: der Fallback in
+        # run_per_symbol_sweep braucht diese Zeile, um "passed=None bei existierendem Katalog"
+        # (#1272 Fix Punkt 4) tatsaechlich diagnostizieren zu koennen.
+        logging.getLogger("optimizer").debug(
+            "[#1272] _load_symbol_bar_quality_sample(%s) fehlgeschlagen (fail-open).", symbol,
+            exc_info=True,
+        )
         return None
 
 
@@ -699,6 +863,103 @@ def calibrate_and_write_slippage_cache(
         logging.getLogger("optimizer").debug(
             "[#1204] calibrated_slippage.json-Schreiben fehlgeschlagen (non-fatal).", exc_info=True)
     return calibration
+
+
+def _alpha_tstat_gate_calibration_cache_path(work_dir: Path) -> Path:
+    return Path(work_dir) / "alpha_tstat_gate_calibration.json"
+
+
+def write_alpha_tstat_gate_calibration_cache(
+    work_dir: Path, calibration_points: list[dict], *, run_id: str,
+) -> Path:
+    """Issue #1282 (GH #1155, Katalog #1272-1297, P0) — persistiert das Gitter der
+    ``calibration.calibrate_alpha_tstat_gate``-Kalibrierpunkte, analog
+    ``write_calibrated_slippage_cache``. Traegt ``run_id``/``calibrated_at_utc``, damit ein Leser
+    (Report/Operator) die Provenienz nachvollziehen kann (dieselbe #406/#1168-Konvention: ein Wert
+    ohne Herkunft ist von einem geratenen Wert nicht unterscheidbar)."""
+    path = _alpha_tstat_gate_calibration_cache_path(work_dir)
+    payload = {
+        "run_id": run_id,
+        "calibrated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "calibration_points": calibration_points,
+    }
+    write_json_atomic(path, payload)
+    return path
+
+
+def read_alpha_tstat_gate_calibration_cache(work_dir: Path) -> list[dict]:
+    """Gegenstück zu ``write_alpha_tstat_gate_calibration_cache``. Fehlt die Datei (noch kein
+    Kalibrierlauf) ⇒ ``[]`` (fail-open — ``reward.resolve_alpha_tstat_gate_threshold`` faellt dann
+    auf die statische Konstante zurueck, ``source='static_fallback'``, siehe dortiger Docstring)."""
+    path = _alpha_tstat_gate_calibration_cache_path(work_dir)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text("utf-8"))
+        points = data.get("calibration_points") if isinstance(data, dict) else None
+        return points if isinstance(points, list) else []
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def calibrate_and_write_alpha_tstat_gate_cache(
+    pairs, studies, *, work_dir: Path | None = None, run_id: str,
+    tournament_cfg: dict | None = None, target_fpr: float = 0.05, n_reps: int = 2000, seed: int = 42,
+) -> list[dict]:
+    """Issue #1282 (GH #1155, Katalog #1272-1297, P0) — Fix Punkt 1: ``calibrate_alpha_tstat_gate``
+    als wiederverwendbarer CLI-/Post-Sweep-Einstiegspunkt statt eines handgeschriebenen Test-
+    Fixtures (``automation/tests/fixtures/alpha_tstat_gate_calibration.json``, #1250, dokumentierte
+    bewusst nur EINEN von Hand eingetragenen Referenzpunkt).
+
+    Leitet das GITTER der zu kalibrierenden ``(n_configs, n_periods)``-Punkte aus den TATSAECHLICH
+    persistierten Studies ab: ``n_configs`` ist ``_family_n_stage1_from_studies``s N1 je
+    (Strategie, Symbol) — dieselbe Zahl "gezogener Kandidaten je Study", die
+    ``calibrate_alpha_tstat_gate``s Monte-Carlo-Kalibrierung voraussetzt (siehe dortiger
+    Docstring) —, ``n_periods`` der ``_study_oos_n_periods_median`` derselben Study. Studies mit
+    ``n_configs < 2`` (keine sinnvolle Maximum-ueber-Kandidaten-Verteilung) oder ohne aufloesbaren
+    Median werden uebersprungen. Mehrere Studies mit IDENTISCHEM (gerundetem) Gitterpunkt werden
+    dedupliziert (kein wiederholter, identischer Kalibrierlauf).
+
+    Reine Best-Effort-Telemetrie wie ``calibrate_and_write_slippage_cache``: ein einzelner
+    Kalibrierfehler darf den Sweep nie blockieren. Rueckgabe: die Liste der geschriebenen
+    Kalibrierpunkte (leer, wenn kein Paar ein auswertbares Gitter lieferte — die Datei wird dann
+    NICHT geschrieben, ein vorhandener aelterer Cache bleibt unangetastet)."""
+    from automation.optimizer.calibration import calibrate_alpha_tstat_gate
+
+    n_family_stage1 = _family_n_stage1_from_studies(pairs, studies, tournament_cfg=tournament_cfg,
+                                                     run_id=run_id)
+    distinct_points: dict[tuple[int, int], None] = {}
+    for pair, study in zip(pairs, studies):
+        if study is None:
+            continue
+        strategy, symbol = pair[0], pair[1]
+        n_configs = n_family_stage1.get((strategy, symbol), 0)
+        n_periods_median = _study_oos_n_periods_median(study)
+        if n_configs < 2 or not n_periods_median or n_periods_median <= 0:
+            continue
+        distinct_points[(int(n_configs), int(round(n_periods_median)))] = None
+
+    calibration_points = []
+    for n_configs, n_periods in sorted(distinct_points):
+        try:
+            calibration_points.append(calibrate_alpha_tstat_gate(
+                n_configs=n_configs, n_periods=n_periods, target_fpr=target_fpr,
+                n_reps=n_reps, seed=seed))
+        except Exception:
+            logging.getLogger("optimizer").debug(
+                "[#1282] calibrate_alpha_tstat_gate(n_configs=%s, n_periods=%s) fehlgeschlagen "
+                "(non-fatal).", n_configs, n_periods, exc_info=True)
+
+    if work_dir is None:
+        work_dir = PERSISTENT_CACHE_ROOT
+    if calibration_points:
+        try:
+            write_alpha_tstat_gate_calibration_cache(work_dir, calibration_points, run_id=run_id)
+        except OSError:
+            logging.getLogger("optimizer").debug(
+                "[#1282] alpha_tstat_gate_calibration.json-Schreiben fehlgeschlagen (non-fatal).",
+                exc_info=True)
+    return calibration_points
 
 
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
@@ -1758,7 +2019,20 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict, *,
         applied = False
         skipped_reason = _no_entry_reason or "STORE_EMPTY"
         if skipped_reason == "STORE_EMPTY" and store_found_at_run_start is False:
-            skipped_reason = "STORE_PATH_MISSING"
+            # Issue #1288 (GH #1161, Katalog #1272-1297, P1) Fix Punkt 1 — NUR STORE_PATH_MISSING,
+            # wenn noch KEIN einziger Champion-Eintrag existiert. Root-Cause: die vorherige,
+            # unbedingte Reklassifikation allein auf ``store_found_at_run_start`` meldete STORE_
+            # PATH_MISSING selbst dann, wenn der Store LAENGST waehrend DIESES Laufs angelegt
+            # wurde (mtime_utc = Laufbeginn + wenige Sekunden) — widersprach ``champions_summary
+            # ['store_found']=True`` im selben Report. WICHTIG: ``store_found`` (bloße Verzeichnis-
+            # Existenz) ist KEIN brauchbares Unterscheidungsmerkmal — jeder Lookup (auch dieser
+            # selbst, ueber ``load_champion_entry_with_reason``/``_champion_path`` oben) legt das
+            # Verzeichnis als Seiteneffekt an (``_champions_dir``s ``mkdir(exist_ok=True)``), noch
+            # BEVOR ein einziger Champion je gespeichert wurde. ``entry_count`` (tatsaechliche
+            # ``champion_*.json``-Dateien) ist der einzige Seiteneffekt-freie Nachweis, ob DIESER
+            # Lauf inzwischen wirklich einen Eintrag angelegt hat.
+            _has_any_entry_now = int(champions.store_status().get("entry_count") or 0) > 0
+            skipped_reason = "STORE_CREATED_THIS_RUN" if _has_any_entry_now else "STORE_PATH_MISSING"
         advance_days = None
         corroboration_count = None
         # Issue #1103 (Katalog #936) — WELCHER Store-Schlüssel gesucht wurde und welche tatsächlich
@@ -2187,6 +2461,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if confirm is None:
         confirm = _confirm
 
+    # Issue #1285 (GH #1158, Katalog #1272-1297) — vorgezogen aus dem #799-Checkpoint-Abschnitt
+    # weiter unten: der neue Duplikat-Preflight (``assert_run_is_not_duplicate_preflight`` unten)
+    # braucht einen ``run_id``-Wert, BEVOR die Fingerabdruck-Pruefung laeuft (``check_run_is_not_
+    # duplicate`` behandelt ``not run_id`` als nicht auswertbar). ``default_run_id()`` ist eine
+    # reine, seiteneffektfreie Zufallstoken-Erzeugung — die Vorverlegung aendert den Wert nicht,
+    # nur den Zeitpunkt seiner Ermittlung.
+    if run_id is None:
+        run_id = default_run_id()
+
     # Issue #794 — Lauf-Start-Purge: raeumt jedes trial_*/-Verzeichnis abgebrochener Vorlaeufe ab,
     # BEVOR der neue Lauf beginnt (champions/ und offene proposal_*.json bleiben unberuehrt, siehe
     # retention.collect_referenced_trial_dirs). Nur im echten Storage-Pfad; fail-open, da eine
@@ -2242,6 +2525,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #852 — Bibliotheksversions-Drift-Preflight (teilt den Preflight-Einstieg mit #844):
         # eine installierte Version ausserhalb des gepinnten Bereichs bricht VOR dem ersten Symbol ab.
         assert_pinned_library_versions_valid()
+        # Issue #1293 (GH #1166, Katalog #1272-1297) — Registrierungspflicht fuer check_*-Funktionen
+        # ZUR STARTZEIT statt erst am Laufende ueber check_invariant_coverage (#1015/#1167): eine
+        # fehlende Aufrufstelle ist rein statisch entscheidbar, keine Beobachtung, die einen
+        # vollstaendigen Lauf braucht.
+        preflight_invariant_checks.append(
+            dataclasses.replace(assert_invariant_registry_complete(), phase="preflight").to_dict())
         # Issue #913 Fix 3 — ``sortino_numeric_guard_reference='family_median'`` verlangt einen
         # verdrahteten Injektionspfad (kein Aufrufer, der family_median_n_periods nie übergibt);
         # sonst liefe ein 143-Symbol-Lauf 170 h informationsfrei (AGENTS.md Pitfall #296). Lazy
@@ -2264,6 +2553,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
     available_bars = count_available_bars(syms)
+
+    # Issue #1285 (GH #1158, Katalog #1272-1297) — Duplikat-Preflight: braucht die aufgeloeste
+    # Symbolliste (``syms``, unmittelbar oben) und laeuft deshalb erst HIER statt im
+    # ``using_real_optimize``-Preflight-Block weiter oben — VOR dem teuren #531-Backfill und JEDEM
+    # Symbol-Preflight, damit ein Treffer so wenig Wallclock wie moeglich verbraucht.
+    if using_real_optimize:
+        _preflight_duplicate_result = assert_run_is_not_duplicate_preflight(
+            strategies=strategies, symbols=syms, run_id=run_id, opt_data=opt_data)
+        if _preflight_duplicate_result is not None:
+            preflight_invariant_checks.append(
+                dataclasses.replace(_preflight_duplicate_result, phase="preflight").to_dict())
 
     # Issue #531 — Pre-Sweep-Backfill-Hook: Symbole, deren REAL vorhandene Bar-Spanne die volle
     # Walk-Forward-Geometrie + gate1_buffer_days (z. B. < 435 Tage) unterschreiten, VOR dem Sweep
@@ -2368,6 +2668,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 min_bar_coverage_ratio=_bar_quality_cfg.get("min_bar_coverage_ratio", 0.6),
                 bar_coverage_ratio=_sample.get("bar_coverage_ratio"),
                 median_delta_t_s=_sample.get("median_delta_t_s"),
+                # Issue #1272 (GH #1145) — Tick-Dichte-Kennzahlen der Stichprobe (siehe
+                # _load_symbol_bar_quality_sample); max_frac_bars_single_tick ist ueber
+                # optimizer.json['bar_quality'] konfigurierbar wie die uebrigen Schwellen.
+                ticks_per_bar_median=_sample.get("ticks_per_bar_median"),
+                ticks_per_bar_p05=_sample.get("ticks_per_bar_p05"),
+                frac_bars_single_tick=_sample.get("frac_bars_single_tick"),
+                max_frac_bars_single_tick=_bar_quality_cfg.get("max_frac_bars_single_tick", 0.5),
             )
             _bar_quality_any_measured = True
             _quality_by_symbol[_sym] = {
@@ -2375,6 +2682,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "atr_median_bps": _quality.get("atr_median_bps"),
                 "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
                 "median_delta_t_s": _quality.get("median_delta_t_s"),
+                "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
+                "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
+                "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
                 "passed": _quality["passed"],
             }
             # Issue #900 Fix 3 — BAR_QUALITY_PROFILE-Event je Symbol, UNABHAENGIG vom Pruefergebnis
@@ -2386,6 +2696,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "atr_median_bps": _quality.get("atr_median_bps"),
                 "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
                 "median_delta_t_s": _quality.get("median_delta_t_s"),
+                "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
+                "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
+                "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
                 "n_sample_ticks": _sample.get("n_sample_ticks"),
                 "window_start": _sample.get("window_start"),
                 "window_end": _sample.get("window_end"),
@@ -2401,17 +2714,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "name": "check_bar_quality", "check": "check_bar_quality",
                 "passed": _quality["passed"], "source": "sweep", "scope": _sym,
                 "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
-                           "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
-                           "Schwellen (#807).",
+                           "bar_coverage_ratio/median_delta_t_s/ticks_per_bar_median/"
+                           "frac_bars_single_tick) besteht die konfigurierten Schwellen (#807/"
+                           "#1272).",
                 "actual": {
                     "frac_zero_true_range": _quality.get("frac_zero_true_range"),
                     "atr_median_bps": _quality.get("atr_median_bps"),
                     "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
                     "median_delta_t_s": _quality.get("median_delta_t_s"),
+                    "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
+                    "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
+                    "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
                 } if not _quality["passed"] else None,
                 "detail": _quality.get("reason") if not _quality["passed"] else
                           "Bar-Qualitaets-Preflight bestanden.",
-                "severity": "high",
+                # Issue #1272 (GH #1145) Akzeptanzkriterium 3 — BAR_AXIS_NO_INTRABAR_INFORMATION
+                # meldet sich mit severity='blocking' statt der bisherigen festen 'high'; die
+                # Funktion selbst entscheidet ueber check_bar_quality()['severity'] (siehe dortiger
+                # Docstring), nicht diese Aufrufstelle.
+                "severity": _quality.get("severity", "high"),
             }, level=logging.INFO if _quality["passed"] else logging.WARNING)
             if _quality["passed"]:
                 continue
@@ -2453,17 +2774,62 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ``check_bar_quality`` erscheint TROTZDEM im Strom, als INCONCLUSIVE statt fehlend — dieselbe
     # Tri-State-Konvention wie #995/#1147 ("nicht pruefbar" ist ein Befund, kein Nicht-Ereignis).
     if not _bar_quality_any_measured:
-        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
-            "name": "check_bar_quality", "check": "check_bar_quality",
-            "passed": None, "source": "sweep", "scope": "global",
-            "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
-                       "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
-                       "Schwellen (#807).",
-            "actual": None,
-            "detail": "Kein Symbol tatsaechlich geprueft (using_real_optimize=False oder keine "
-                     "Katalog-Stichprobe verfuegbar) — nicht auswertbar, kein Befund (#1046/#1195).",
-            "severity": "high", "evaluable": False,
-        }, level=logging.INFO)
+        # Issue #1272 (GH #1145) Fix Punkt 4 — "passed=None ist fuer diesen Check nicht mehr
+        # zulaessig, sobald ein Katalogpfad existiert; nur ein fehlender Katalog rechtfertigt
+        # INCONCLUSIVE." Referenzbefund: 4/4 reale Laeufe (using_real_optimize=True, syms nicht
+        # leer, Studies liefen tatsaechlich mit Tick-Daten) meldeten trotzdem ``passed=None`` —
+        # der Katalog EXISTIERTE nachweislich, die Symbol-Stichprobe (``_load_symbol_bar_quality_
+        # sample``) scheiterte aus einem anderen, bisher unbeobachtbaren Grund (ihr eigener
+        # ``except Exception: return None`` ist bewusst fail-open, siehe dortiger Docstring, aber
+        # bis jetzt LAUTLOS). Existiert das Katalog-Wurzelverzeichnis, ist "nicht auswertbar" damit
+        # keine ehrliche Aussage mehr — der Preflight FAILt stattdessen sichtbar.
+        # Dieselbe Eintritts-Bedingung wie der Mess-Block oben (``(using_real_optimize or
+        # bar_quality_fn is not None) and syms``) — ein injizierter Test-``bar_quality_fn`` muss
+        # dieselbe Eskalation ausloesen koennen wie der echte Katalog-Pfad, sonst waere dieser
+        # Fix ausschliesslich gegen einen echten Katalog testbar.
+        _bar_quality_preflight_was_active = (using_real_optimize or bar_quality_fn is not None) and bool(syms)
+        _catalog_root_exists = False
+        if _bar_quality_preflight_was_active:
+            try:
+                _cfg_base = config_dir()
+                _raw_catalog = "data/nautilus"
+                _bt_path = _cfg_base / "backtest.json"
+                if _bt_path.exists():
+                    _raw_catalog = (json.loads(_bt_path.read_text("utf-8")) or {}).get(
+                        "catalog_path", "data/nautilus")
+                _catalog_root_exists = (_cfg_base.parent.parent / _raw_catalog).exists()
+            except (OSError, ValueError):
+                _catalog_root_exists = False
+        if _bar_quality_preflight_was_active and _catalog_root_exists:
+            emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+                "name": "check_bar_quality", "check": "check_bar_quality",
+                "passed": False, "source": "sweep", "scope": "global",
+                "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
+                           "bar_coverage_ratio/median_delta_t_s/ticks_per_bar_median) besteht die "
+                           "konfigurierten Schwellen (#807/#1272), sobald ein Katalogpfad "
+                           "existiert.",
+                "actual": {"symbols_planned": len(syms), "catalog_root_exists": True},
+                "detail": "CATALOG_SAMPLE_UNAVAILABLE_DESPITE_CATALOG: das Katalog-Wurzelverzeichnis "
+                         "existiert, aber fuer KEIN geplantes Symbol konnte eine Bar-Qualitaets-"
+                         "Stichprobe gezogen werden (siehe DEBUG-Log von "
+                         "_load_symbol_bar_quality_sample fuer den Lesefehler je Symbol) — "
+                         "passed=None ist bei existierendem Katalog kein ehrlicher Befund mehr "
+                         "(#1272 Fix Punkt 4).",
+                "severity": "blocking",
+            }, level=logging.ERROR)
+        else:
+            emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+                "name": "check_bar_quality", "check": "check_bar_quality",
+                "passed": None, "source": "sweep", "scope": "global",
+                "expected": "Bar-Qualitaets-Preflight (frac_zero_true_range/atr_median_bps/"
+                           "bar_coverage_ratio/median_delta_t_s) besteht die konfigurierten "
+                           "Schwellen (#807).",
+                "actual": None,
+                "detail": "Kein Symbol tatsaechlich geprueft (using_real_optimize=False, keine "
+                         "geplanten Symbole, oder das Katalog-Wurzelverzeichnis selbst fehlt) — "
+                         "nicht auswertbar, kein Befund (#1046/#1195).",
+                "severity": "high", "evaluable": False,
+            }, level=logging.INFO)
 
     # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
     # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
@@ -2681,6 +3047,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # unabhaengig davon, ob optimize_symbol/confirm injizierte HI-7-Fakes oder die echte
     # Implementierung sind — das macht ihn mit injizierten Fakes testbar (siehe
     # test_issue_799_per_symbol_transaction.py) UND nuetzlich fuer einen HI-7-Dry-Run.
+    # Issue #1285 — ``run_id`` wird jetzt bereits VOR dem #794-Purge-Block oben aufgeloest (der
+    # Duplikat-Preflight braucht ihn frueher); dieser Default bleibt als No-Op-Absicherung stehen,
+    # falls ein zukuenftiger Aufrufer die Vorverlegung umgeht.
     if run_id is None:
         run_id = default_run_id()
 
@@ -3250,6 +3619,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                             logging.getLogger("optimizer").debug(
                                 "[#1135] %s/%s: family_membership-Stempel fehlgeschlagen "
                                 "(non-fatal).", _strategy_deg, _symbol_deg, exc_info=True)
+            # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 1 — kalibriert
+            # oos_min_alpha_tstat_mode='multiplicity_adjusted' aus der SOEBEN ermittelten,
+            # REALISIERTEN Familiengroesse dieses Symbols (analog calibrate_and_write_slippage_
+            # cache oben: additiv/best-effort, ein Kalibrierfehler darf den Sweep nie blockieren).
+            # NACH dem #1135-Degenerations-Ausschluss aufgerufen, damit eine strukturell zu kurze
+            # Study (N1 bereits auf 0 gesetzt) keinen Scheinpunkt ins Kalibrier-Gitter einspeist.
+            try:
+                calibrate_and_write_alpha_tstat_gate_cache(
+                    symbol_pairs, symbol_studies, run_id=run_id,
+                    tournament_cfg=_tournament_cfg_for_family)
+            except Exception:
+                logging.getLogger("optimizer").debug(
+                    "[#1282] Alpha-t(α)-Gate-Kalibrierung fehlgeschlagen (non-fatal).", exc_info=True)
             # Issue #977/#1131 (Katalog #986, Pitfall #408 in AGENTS.md) — die EINGEFRORENE
             # Multiplizitaet wird seit diesem Fix PER STRATEGIE aus ``symbol_n_family_stage1``
             # bezogen (derselben Quelle, die ``deflation_n_family_source`` bereits als
@@ -3779,9 +4161,28 @@ def main(argv: list[str] | None = None) -> list[Path]:
                         help="Zusaetzlicher Lauf-Anteil im Sampler-Seed jeder Study (macht einen "
                              "Wiederholungslauf zu einer unabhaengigen Stichprobe der Suchvarianz "
                              "statt einer Kopie). Aequivalent zu OPTIMIZER_SEED_SALT.")
+    # Issue #1285 (GH #1158, Katalog #1272-1297) — expliziter Opt-in fuer einen bewusst
+    # bit-identischen Wiederholungslauf (z. B. ein Determinismus-Test, siehe #1286/GH #1159): ohne
+    # dieses Flag bricht ``assert_run_is_not_duplicate_preflight`` einen Lauf mit bereits im Index
+    # vorhandenem run_fingerprint sofort ab (siehe dortiger Docstring).
+    parser.add_argument("--allow-duplicate-run", action="store_true", default=False,
+                        help="Ueberspringt den Duplikat-Preflight (#1285): erlaubt einen Lauf mit "
+                             "identischer Eingangsmenge zu einem bereits im Fingerabdruck-Index "
+                             "vorhandenen Lauf. Aequivalent zu OPTIMIZER_ALLOW_DUPLICATE_RUN=1.")
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 1 — eigenstaendiger CLI-Einstiegs-
+    # punkt fuer calibrate_and_write_alpha_tstat_gate_cache (analog --report-only/--corroboration-
+    # pass: liest die BEREITS PERSISTIERTEN Studies der --strategies/--symbols-Auswahl, optimiert
+    # selbst NICHTS Neues, schreibt PERSISTENT_CACHE_ROOT/alpha_tstat_gate_calibration.json).
+    parser.add_argument("--calibrate-alpha-tstat-gate", action="store_true", default=False,
+                        help="Kalibriert oos_min_alpha_tstat_mode='multiplicity_adjusted' aus den "
+                             "PERSISTIERTEN Studies der --strategies/--symbols-Auswahl (keine neue "
+                             "Optimierung) und schreibt das Ergebnis-Gitter nach "
+                             "PERSISTENT_CACHE_ROOT/alpha_tstat_gate_calibration.json (#1282).")
     args = parser.parse_args(argv)
     if args.seed_salt:
         os.environ["OPTIMIZER_SEED_SALT"] = args.seed_salt
+    if args.allow_duplicate_run:
+        os.environ["OPTIMIZER_ALLOW_DUPLICATE_RUN"] = "1"
 
     if args.report_only:
         from automation.optimizer import report as _report
@@ -3792,6 +4193,39 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
+
+    # Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 1 — Standalone-Kalibrierlauf: laedt
+    # JEDE (Strategie, Symbol)-Study der Auswahl, die bereits persistiert ist (fehlende Studies
+    # werden uebersprungen, kein Fehler — ein frischer Store liefert dann ein leeres Gitter), und
+    # kalibriert daraus das (n_configs, n_periods)-Gitter (siehe calibrate_and_write_alpha_tstat_
+    # gate_cache-Docstring).
+    if args.calibrate_alpha_tstat_gate:
+        import optuna as _optuna
+        setup_bot_logging("optimizer", run_id=args.run_id or f"alpha_tstat_calibration_{default_run_id()}")
+        _cal_symbols = symbols if symbols is not None else load_symbol_universe()
+        _cal_pairs, _cal_studies = [], []
+        for _strategy in strategies:
+            for _symbol in _cal_symbols:
+                _study_name = f"study_{_strategy}_{_sanitize(_symbol)}"
+                try:
+                    _storage = resolve_storage(study_name=_study_name)
+                    _study = _optuna.load_study(study_name=_study_name, storage=_storage)
+                except Exception:
+                    continue
+                _cal_pairs.append((_strategy, _symbol, None))
+                _cal_studies.append(_study)
+        _tcfg_for_cal: dict = {}
+        try:
+            _tcfg_for_cal = json.loads((config_dir() / "tournament.json").read_text("utf-8")) or {}
+        except (OSError, ValueError):
+            pass
+        _cal_points = calibrate_and_write_alpha_tstat_gate_cache(
+            _cal_pairs, _cal_studies, run_id=args.run_id or default_run_id(),
+            tournament_cfg=_tcfg_for_cal)
+        print(f"🎯 Alpha-t(α)-Gate-Kalibrierung: {len(_cal_points)} Gitterpunkt(e) aus "
+              f"{len(_cal_pairs)} geladenen Study/Studies — "
+              f"{_alpha_tstat_gate_calibration_cache_path(PERSISTENT_CACHE_ROOT)}")
+        return []
 
     # Issue #1094/#1242 (P1, Fix Punkt 3) — dieselbe --strategies/--symbols-Filterung wie der
     # reguläre Sweep, aber KEIN Enqueue/optimize_symbol/Reporting-Apparat: run_corroboration_pass

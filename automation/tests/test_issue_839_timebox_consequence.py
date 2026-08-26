@@ -77,13 +77,14 @@ def test_trial_beyond_sampled_cap_is_a_violation():
 
 def test_missing_sampled_max_bars_falls_back_to_global_cap():
     """Strategie sampelt max_bars_in_trade nicht ⇒ Fallback auf den globalen #714/GR-01-Deckel
-    (24 Bars) — dieselbe konservative Schranke wie check_holding_time_cap."""
-    attrs = [{"oos_max_holding_time_s": 30 * 3600.0}]  # kein sampled_params, > 24+3 Bars
+    (6 Bars seit Issue #1275, GH #1148, Katalog #1272-1297, P0 -- vormals 24) — dieselbe
+    konservative Schranke wie check_holding_time_cap."""
+    attrs = [{"oos_max_holding_time_s": 30 * 3600.0}]  # kein sampled_params, > 6+3 Bars
     result = inv.compute_trial_timebox_violations(attrs, bar_seconds=_BAR_S)
     assert result["timebox_violated"] is True
     assert result["timebox_cap_source_counts"] == {"global": 1}
 
-    attrs_ok = [{"oos_max_holding_time_s": 20 * 3600.0}]
+    attrs_ok = [{"oos_max_holding_time_s": 5 * 3600.0}]
     result_ok = inv.compute_trial_timebox_violations(attrs_ok, bar_seconds=_BAR_S)
     assert result_ok["timebox_violated"] is False
 
@@ -148,8 +149,10 @@ def test_resolve_effective_bar_cap_falls_back_to_strategy_defaults():
 
 
 def test_resolve_effective_bar_cap_falls_back_to_global():
+    """Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — der globale Deckel wurde von
+    24 (Kalender-Bars) auf 6 (RTH-Bars) umkalibriert (Faktor 0.24)."""
     cap, source = inv.resolve_effective_bar_cap(None, strategy="S", strategy_defaults={})
-    assert (cap, source) == (24.0, "global")
+    assert (cap, source) == (6.0, "global")
 
 
 # ── invariants.check_holding_time_cap (#861 — unified contract; #971 — trade-, not trial-level) ──

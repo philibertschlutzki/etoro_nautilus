@@ -354,9 +354,14 @@ def test_check_cost_basis_coherence_is_wired_in_report():
 # ---------------------------------------------------------------------------------------------
 
 def test_extract_metrics_gates_the_mtm_deduction_behind_the_same_switch():
+    """Issue #1277 (GH #1150) ergaenzte ``_bar_axis_supports_selection_cost`` als UND-Bedingung
+    in DASSELBE Gate (siehe dortiger Docstring) -- die urspruengliche "dasselbe Gate wie der
+    Round-Trip-Abzug"-Garantie bleibt bestehen, nur der Gate-Ausdruck selbst ist erweitert."""
     import inspect
     source = inspect.getsource(backtest_runner.extract_metrics)
-    idx_gate = source.rindex("if _read_apply_calibrated_slippage_in_selection():")
+    idx_gate = source.rindex(
+        "if _read_apply_calibrated_slippage_in_selection() and "
+        "_bar_axis_supports_selection_cost:")
     idx_call = source.index("_apply_calibrated_slippage_to_mtm_series(")
     assert idx_gate < idx_call
 

@@ -102,23 +102,26 @@ def test_expired_position_liquidated_immediately_via_bar_cache(strategy_env):
 def test_survivor_position_rehydrates_bars_in_position(strategy_env):
     """Nicht abgelaufene Position: kein Close, aber _bars_in_position_rehydrated korrekt gesetzt,
     und wird vom nächsten _check_exits_and_update-Aufruf übernommen (nicht auf 0 zurückgesetzt)."""
-    strategy, mock_cache = strategy_env(max_bars_in_trade=24)
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — max_bars_in_trade=24 wuerde vom
+    # Konstruktor auf den (umkalibrierten) MAX_BARS_IN_TRADE_HARD_CAP=6 geklemmt; explizit 6 gesetzt
+    # UND die Bar-Anzahl unten proportional (10 -> 3, deutlich unter der Deadline) angepasst.
+    strategy, mock_cache = strategy_env(max_bars_in_trade=6)
     entry_ns = 0
     pos = _make_position(ts_opened=entry_ns)
     mock_cache.positions_open.return_value = [pos]
-    # 10 Bars seit Entry -> deutlich unter der 24-Bar-Deadline.
-    mock_cache.bars.return_value = [_FakeBar(ts_event=(i + 1) * _NS_PER_HOUR) for i in range(10)]
+    # 3 Bars seit Entry -> deutlich unter der 6-Bar-Deadline.
+    mock_cache.bars.return_value = [_FakeBar(ts_event=(i + 1) * _NS_PER_HOUR) for i in range(3)]
 
     strategy.on_start()
 
     strategy.submit_order.assert_not_called()
-    assert strategy._bars_in_position_rehydrated == 10
+    assert strategy._bars_in_position_rehydrated == 3
 
     # Der nächste _check_exits_and_update-Aufruf übernimmt den rehydrierten Wert statt auf 0
     # zurückzusetzen (+1 für den gerade verarbeiteten Bar). ATR ist naturgemäss noch nicht
     # initialisiert (kein Bar verarbeitet) — irrelevant für diesen Test.
-    strategy._check_exits_and_update(_real_bar(ts_ns=11 * _NS_PER_HOUR))
-    assert strategy._bars_in_position == 11
+    strategy._check_exits_and_update(_real_bar(ts_ns=4 * _NS_PER_HOUR))
+    assert strategy._bars_in_position == 4
     assert strategy._bars_in_position_rehydrated is None  # einmalig konsumiert
 
 

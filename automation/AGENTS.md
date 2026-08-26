@@ -7001,3 +7001,27 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 
 ### 🟡 Pitfall #457 — Eine Fail-Fast-Probe, deren Auslöser erst am Laufende eintritt, ist kein Fail-Fast [Katalog #1247+, GitHub-Issue #1142 (interne Nr. #1269/GH #1139)]
 **Verbatim (Issue #1142 Abschnitt 8):** `_fail_fast_min_symbols = 1` bei einem geplanten Symbol klingt nach „sofort" und bedeutet „nach allen 14 Studies". Die Auslöse-Einheit einer Frühabbruch-Probe muss feiner sein als die Einheit, deren Abschluss den Lauf beendet. Die Wallclock-Fraktion des Abbruchs gehört als Kennzahl in den Report.
+
+### 🔴 Pitfall #458 — Eine aggregierte Bar ohne Intrabar-Information trägt keine Auslöse-Distanz [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1272/GH #1145)]
+**Verbatim (Issue #1144 Abschnitt 8):** Eine aggregierte Bar ohne Intrabar-Information (`high == low`) kann keine Stop-/Target-Auslösung tragen. Jede Prüfung, die eine Auslöse-Distanz bewertet, braucht die Tick-Dichte je Bar als deklarierte Vorbedingung.
+
+### 🔴 Pitfall #459 — Eine gemessene Ausführungsgrösse braucht den Nachweis, dass sie keine Achsen-Artefakt ist, bevor sie in die Zielfunktion darf [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1277/GH #1150)]
+**Verbatim (Issue #1144 Abschnitt 8):** Eine gemessene Ausführungsgrösse gehört erst dann in die Zielfunktion, wenn nachgewiesen ist, dass sie eine Ausführungsgrösse ist und kein Artefakt der Datenachse. Ein korrekter Fix an der falschen Datengrundlage verstärkt den Defekt, statt ihn zu beheben.
+
+### 🟡 Pitfall #460 — Zwei ähnlich benannte Felder mit verschiedener Auflösungsebene brauchen die Ebene im Namen [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1276/GH #1149)]
+**Verbatim (Issue #1144 Abschnitt 8):** Zwei Felder mit fast identischem Namen und verschiedener Auflösungsebene (`applied_slippage_bps` vs. `slippage_p50_bps_calibrated`) sind eine Fehlerquelle, sobald eine Invariante sie gegeneinander prüft. Die Auflösungsebene gehört in den Feldnamen oder in ein Nachbarfeld.
+
+### 🟠 Pitfall #461 — Ein `requires_all`-Befund darf nie unter dem Namen einer `requires_any`-Prüfung erscheinen [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1281/GH #1154)]
+**Verbatim (Issue #1144 Abschnitt 8):** Ein Befund über ein `requires_all`-Gate darf nie unter dem Namen oder mit dem Text einer `requires_any`-Prüfung emittiert werden — die Konsequenz („kollabiert auf die übrigen Arme" vs. „jeder Trial wird abgelehnt") ist gegensätzlich.
+
+### 🟠 Pitfall #462 — Ein Eingangs-Fingerabdruck beweist ein Duplikat nur unter Determinismus [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1286/GH #1159)]
+**Verbatim (Issue #1144 Abschnitt 8):** Ein Fingerabdruck über Eingangsgrössen ist nur dann ein Duplikat-Nachweis, wenn die Ausführung deterministisch ist. Unter Parallelität hängen Abbruchkriterien von der Fertigstellungs-Reihenfolge ab, nicht vom Seed.
+
+### 🟡 Pitfall #463 — Eine in „Symbolen" formulierte Schwelle braucht im Ein-Entitäten-Betrieb eine eigene Formulierung [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1282/GH #1155)]
+**Verbatim (Issue #1144 Abschnitt 8):** Eine Schwelle, die in „Symbolen" formuliert ist, ist im Ein-Symbol-Betrieb entweder unerreichbar oder trivial erfüllt. Für den Ein-Entitäten-Fall braucht sie eine eigene Formulierung in der nächstfeineren Einheit (Fortsetzung von Pitfall #349).
+
+### 🟡 Pitfall #464 — Eine Toleranz gegen ein gerundetes Reportfeld folgt aus dessen Speicherpräzision [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1290/GH #1163)]
+**Verbatim (Issue #1144 Abschnitt 8):** Ein gerundetes Reportfeld darf nicht gegen eine Toleranz unterhalb seiner Speicherpräzision geprüft werden. Die Toleranz folgt aus der Präzision, nicht aus dem Wunsch nach Strenge.
+
+### 🔴 Pitfall #465 — Eine Partition ist erst disjunkt, wenn jede Klasse dieselbe Grundgesamtheit zählt [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1291/GH #1164)]
+**Verbatim (Issue #1144 Abschnitt 8):** Eine Partition ist erst dann disjunkt, wenn jede Klasse über dieselbe Grundgesamtheit gezählt wird. Guard-zensierte Trials sind weder „evaluiert" noch „mit gemessenem Ablehnungsgrund" — sie brauchen eine eigene Klasse.

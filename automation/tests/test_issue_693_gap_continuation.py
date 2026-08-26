@@ -103,7 +103,8 @@ def test_defaults_present_and_match_spec():
     defaults = json.loads(Path("automation/config/strategy_defaults.json").read_text("utf-8"))
     d = defaults["GapContinuationStrategy"]
     assert d["gap_threshold_pct"] == 0.015
-    assert d["max_bars_in_trade"] == 24
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 -> 6 (Faktor 0.24).
+    assert d["max_bars_in_trade"] == 6
     assert d["max_daily_trades"] == 1
 
 

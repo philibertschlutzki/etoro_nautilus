@@ -178,14 +178,18 @@ def diagnose_structural_zero_eligible_gate(
     elif gate_type == "quality":
         binding_cause, proposed_action = "signal_quality", "budget_deprioritization"
     elif gate_type == "gate":
-        # Issue #1264 (GH #1134) Fix Punkt 2 — ``action='none'`` ist HIER bewusst KEIN "kein
-        # Befund" (anders als der allgemeine ``binding_cause in (None, 'none')``-Fall unten): die
-        # Ursache liegt in der KONFIGURIERTEN Gate-Schwelle (``tournament.json``), nicht im
-        # (Strategie, Symbol)-Paar — eine Denylist/Bounds-Weitung fuer DIESES Paar waere hier keine
-        # sinnvolle Konsequenz (ein anderes Paar mit derselben Config-Schwelle traefe dasselbe
-        # strukturelle Limit). ``check_structural_zero_eligible_has_diagnosis`` akzeptiert
-        # ``binding_cause='gate_unreachable'`` dennoch als vollwertigen Diagnose-Eintrag.
-        binding_cause, proposed_action = "gate_unreachable", "none"
+        # Issue #1264 (GH #1134) Fix Punkt 2 — die Ursache liegt in der KONFIGURIERTEN Gate-
+        # Schwelle (``tournament.json``), nicht im (Strategie, Symbol)-Paar — eine Denylist fuer
+        # DIESES Paar waere hier keine sinnvolle Konsequenz (ein anderes Paar mit derselben
+        # Config-Schwelle traefe dasselbe strukturelle Limit). ``check_structural_zero_eligible_
+        # has_diagnosis`` akzeptiert ``binding_cause='gate_unreachable'`` dennoch als vollwertigen
+        # Diagnose-Eintrag.
+        # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — ``proposed_action`` war bislang
+        # ``'none'`` (reine Diagnose ohne Konsequenz, Root-Cause des Katalog-Symptoms: 22 von 46
+        # diagnosed_pairs-Eintraegen mit action='none'). Budget-DEPRIORISIERUNG (nicht Denylist,
+        # siehe Docstring oben) haelt das Paar erreichbar, waehrend die eigentliche Gate-Ursache
+        # unabhaengig davon behoben wird (#1282 Alpha-Regression-Kalibrierung).
+        binding_cause, proposed_action = "gate_unreachable", "budget_deprioritization"
     else:
         binding_cause, proposed_action = "none", "none"
     return {
@@ -492,7 +496,8 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                stop_reason: str | None = None,
                                max_consecutive_structural_runs: int = 2,
                                simulation_semantics_version: int | None = None,
-                               blocking_invariants_failing: bool | None = None) -> dict:
+                               blocking_invariants_failing: bool | None = None,
+                               n_evaluable: int | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -587,6 +592,28 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         nur quarantänisiert) — die Simulationsschicht ist nachweislich gültig, 'signal_quality' ist
         dann eine zulässige Aussage.
 
+    Issue #1296 (GH #1169, Katalog #1272-1297, P1) — zwei weitere Ursachen erhalten seither eine
+    ECHTE Konsequenz statt ``action='none'`` (Root-Cause-Symptom: 22 von 46 ``diagnosed_pairs``-
+    Eintraegen mit ``action='none'``, "Automatisch denylistete Paare: 0", "Budget-deprioritisierte
+    Paare: 0"):
+      * ``'gate_unreachable'`` (ein 100 % homogenes GATE, nicht das Paar selbst, blockiert jeden
+        Trial, siehe ``diagnose_structural_zero_eligible_gate``) ⇒ ``'deprioritized'`` ab der
+        ERSTEN Bestaetigung (``n_runs_confirmed >= 1``, dieselbe Schwelle wie ``'signal_quality'``s
+        Zwischenstufe) — NIEMALS ``'denylist'``: die Ursache liegt in der KONFIGURIERTEN
+        Gate-Schwelle (``tournament.json``, siehe #1282 fuer die eigentliche Behebung), nicht in
+        der Strategie; ein Denylist-Eintrag waere hier eine Aussage ueber das FALSCHE Objekt
+        (#1264 bleibt gueltig — nur die vorherige ``action='none'``-Untätigkeit wird ersetzt).
+      * ``'signal_sparse'`` MIT ``n_evaluable == 0`` (der Aufrufer uebergibt ``n_evaluable`` aus
+        ``diagnose_trade_frequency``s gleichnamigem Feld) UND ``n_runs_confirmed >= 2`` (dieselbe
+        Zwei-Läufe-Bestaetigungsschwelle wie ``'signal_quality'``/``'signal_absent'``, #778) ⇒
+        ``'denylist'`` — eine ERWEITERUNG, keine Aufhebung des #778-Vorsichtsprinzips: #778
+        verhindert eine Deaktivierung nach einer EINZIGEN Beobachtung (Typ-II-Verstaerker-Gefahr);
+        NACH zwei bestaetigten Laeufen mit persistent ``n_evaluable=0`` (SqueezeBreakout-Symptom:
+        115-180 Trials, 4/4 Laeufe, unveraendert erneut budgetiert) ist die Override-Chance (#699)
+        bereits erschoepft und weitere Wiederholung reine Budgetverschwendung. Fehlt ``n_evaluable``
+        (Legacy-/Test-Aufrufer, Default ``None``) ⇒ bit-identisches Pre-#1296-Verhalten (kein
+        Unterschied zu ``n_evaluable != 0``, da ``None == 0`` falsch ist).
+
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
@@ -664,8 +691,20 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
             action = "none"
     elif cause == "signal_absent":
         action = "denylist" if sufficient_evidence else "none"
+    elif cause == "gate_unreachable":
+        # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — siehe Docstring oben: NIEMALS
+        # 'denylist' (die Ursache liegt im Gate, nicht im Paar), aber ab der ersten Bestaetigung
+        # 'deprioritized' statt der bisherigen dauerhaften Untaetigkeit ('none').
+        action = "deprioritized" if n_runs_confirmed >= 1 else "none"
     elif cause in ("signal_sparse", "hold_duration"):
-        if _strategy_supports_search_space_override(strategy) and not has_existing_override:
+        if (cause == "signal_sparse" and n_evaluable == 0
+                and n_runs_confirmed >= max_consecutive_structural_runs):
+            # Issue #1296 — Erweiterung des #778-Vorsichtsprinzips: NACH ausreichender, mehrfach
+            # bestaetigter Evidenz (nicht nach einer einzigen Beobachtung) ist ein persistent
+            # ausbleibendes n_evaluable=0 kein Regime-Artefakt mehr, sondern ein reproduzierter
+            # Befund (siehe Docstring oben).
+            action = "denylist"
+        elif _strategy_supports_search_space_override(strategy) and not has_existing_override:
             action = "search_space_override"
         else:
             action = "none"
@@ -1082,7 +1121,11 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
                       min_atr_median_bps: float = 5.0,
                       min_bar_coverage_ratio: float = 0.6,
                       bar_coverage_ratio: float | None = None,
-                      median_delta_t_s: float | None = None) -> dict:
+                      median_delta_t_s: float | None = None,
+                      ticks_per_bar_median: float | None = None,
+                      ticks_per_bar_p05: float | None = None,
+                      frac_bars_single_tick: float | None = None,
+                      max_frac_bars_single_tick: float = 0.5) -> dict:
     """Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
     degenerierte/konstante Bars VOR Phase 1 eines Symbols, statt erst nach 14 × 16 verbrannten
     Trials ueber 14 unabhaengige ``STRUCTURAL_ALL_UNEVALUABLE``-Diagnosen (siehe
@@ -1108,20 +1151,41 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         Gate 1) kann trotzdem ueberwiegend LUECKEN im Bar-Raster haben (30% Abdeckung ueber 1099
         Tage bestand Gate 1 vor #923 unveraendert); ``None`` (kein Preflight-Aufrufer liefert den
         Wert) ⇒ nicht pruefbar, kein Fail.
+      * ``ticks_per_bar_median``/``ticks_per_bar_p05``/``frac_bars_single_tick`` (Issue #1272/GH
+        #1145, Katalog #1272-1297) — misst die TICK-DICHTE je Bar direkt, statt sie nur aus dem
+        AGGREGIERTEN ``frac_zero_true_range``-Symptom zu erschliessen: ``frac_zero_true_range``
+        (oben) beobachtet, DASS eine Bar keine Intrabar-Spanne traegt, misst aber nicht, WARUM
+        (ein einzelner Tick je Stundenfenster macht ``high == low`` MECHANISCH unvermeidlich,
+        unabhaengig von der tatsaechlichen Marktvolatilitaet — Pitfall #458). Bei
+        ``ticks_per_bar_median <= 1`` ODER ``frac_bars_single_tick > max_frac_bars_single_tick``
+        (Default 0.5) ist die Bar-Achse strukturell UNFAEHIG, eine Intrabar-Ausloese-Distanz zu
+        tragen — dieser Zustand FAILt mit dem eigenen Code ``BAR_AXIS_NO_INTRABAR_INFORMATION``
+        und ``severity='blocking'`` (staerker als die uebrigen, ``'high'``-gewichteten
+        Degenerations-Kriterien dieser Funktion), da er JEDE nachgelagerte Stop-/Trigger-Pruefung
+        (``check_effective_stop_distance`` u. a., siehe #1274/GH #1147) invalidiert. ``None`` (kein
+        Aufrufer liefert die Tick-Zahlen, z. B. ein Legacy-Preflight-Pfad) ⇒ nicht pruefbar fuer
+        DIESES Kriterium, kein Fail allein deswegen.
 
     ``passed=False``, sobald EINE der Schwellen verletzt ist (alle aus
     ``optimizer.json['bar_quality']``, Zero-Hardcoding — Issue #900 verschaerft
     ``max_frac_high_eq_low`` 0.5 → 0.20 und ergaenzt ``max_frac_zero_true_range``/
     ``min_atr_median_bps``). Leere Eingabe ⇒ ``passed=False`` (keine Bars ⇒ nichts zu handeln,
     dieselbe Konsequenz wie degenerierte Bars — kein stiller Pass). Rein, deterministisch, kein
-    I/O."""
+    I/O.
+
+    Rueckgabe traegt seit #1272/GH #1145 zusaetzlich ``severity`` (``'blocking'``, wenn
+    ``BAR_AXIS_NO_INTRABAR_INFORMATION`` unter den Gruenden ist, sonst ``'high'`` — der
+    Aufrufer (``sweep.py``s ``INVARIANT_STREAM_RESULT``-Emission) uebernimmt diesen Wert statt
+    eine feste Severity zu stempeln)."""
     n = len(closes)
     if n == 0:
         return {
             "n_bars": 0, "frac_high_eq_low": None, "frac_identical_consecutive_closes": None,
             "n_distinct_closes": 0, "frac_zero_true_range": None, "atr_median_bps": None,
             "bar_coverage_ratio": bar_coverage_ratio, "median_delta_t_s": median_delta_t_s,
-            "passed": False, "reason": "no_bars",
+            "ticks_per_bar_median": ticks_per_bar_median, "ticks_per_bar_p05": ticks_per_bar_p05,
+            "frac_bars_single_tick": frac_bars_single_tick,
+            "passed": False, "reason": "no_bars", "severity": "high",
         }
     frac_high_eq_low = sum(1 for h, l in zip(highs, lows) if h == l) / n
     if n > 1:
@@ -1149,6 +1213,21 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
     )
 
     reasons = []
+    # Issue #1272 (GH #1145) — die Tick-Dichte-Kriterien werden ZUERST geprueft: ein
+    # BAR_AXIS_NO_INTRABAR_INFORMATION-Befund ist die Ursache, nicht nur ein weiteres Symptom
+    # (siehe check_effective_stop_distance/#1274, das diesen Grund als vorgelagerte Ursache
+    # zitiert) — er soll in der Grunde-Liste VOR den abgeleiteten frac_zero_true_range/
+    # frac_high_eq_low-Symptomen erscheinen.
+    is_blocking = False
+    if ticks_per_bar_median is not None and ticks_per_bar_median <= 1:
+        reasons.append(
+            f"BAR_AXIS_NO_INTRABAR_INFORMATION: ticks_per_bar_median={ticks_per_bar_median:.3f} <= 1")
+        is_blocking = True
+    if frac_bars_single_tick is not None and frac_bars_single_tick > max_frac_bars_single_tick:
+        reasons.append(
+            f"BAR_AXIS_NO_INTRABAR_INFORMATION: frac_bars_single_tick={frac_bars_single_tick:.3f} "
+            f"> {max_frac_bars_single_tick}")
+        is_blocking = True
     if frac_high_eq_low > max_frac_high_eq_low:
         reasons.append(f"frac_high_eq_low={frac_high_eq_low:.3f} > {max_frac_high_eq_low}")
     if frac_identical > max_frac_identical_consecutive_closes:
@@ -1174,6 +1253,10 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         "atr_median_bps": atr_median_bps,
         "bar_coverage_ratio": bar_coverage_ratio,
         "median_delta_t_s": median_delta_t_s,
+        "ticks_per_bar_median": ticks_per_bar_median,
+        "ticks_per_bar_p05": ticks_per_bar_p05,
+        "frac_bars_single_tick": frac_bars_single_tick,
+        "severity": "blocking" if is_blocking else "high",
         "passed": not reasons,
         "reason": "; ".join(reasons) if reasons else "OK",
     }

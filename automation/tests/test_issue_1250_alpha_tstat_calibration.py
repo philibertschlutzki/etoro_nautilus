@@ -97,22 +97,24 @@ def test_resolve_unknown_mode_fails_loud():
         reward.resolve_alpha_tstat_gate_threshold(tcfg)
 
 
-def test_resolve_multiplicity_adjusted_without_fixture_fails_open_to_static():
+def test_resolve_multiplicity_adjusted_without_fixture_fails_open_to_static_fallback():
     """Fail-open (Docstring): 'multiplicity_adjusted' OHNE Kalibrier-Fixture bricht NICHT ab,
-    sondern faellt auf 'static' zurueck — eine fehlende Kalibrierbasis darf den Sweep nie
-    blockieren."""
+    sondern faellt auf die statische Konstante zurueck — eine fehlende Kalibrierbasis darf den
+    Sweep nie blockieren. Issue #1282 (GH #1155) — die Quelle heisst seither 'static_fallback'
+    (nicht 'static'), damit dieser Fall von einer BEWUSSTEN static-Konfiguration unterscheidbar
+    bleibt (siehe invariants.check_alpha_tstat_gate_calibrated)."""
     tcfg = {"oos_min_alpha_tstat": 2.0, "oos_min_alpha_tstat_mode": "multiplicity_adjusted"}
     threshold, source = reward.resolve_alpha_tstat_gate_threshold(tcfg)
     assert threshold == 2.0
-    assert source == "static"
+    assert source == "static_fallback"
 
 
-def test_resolve_multiplicity_adjusted_without_family_size_fails_open_to_static():
+def test_resolve_multiplicity_adjusted_without_family_size_fails_open_to_static_fallback():
     tcfg = {"oos_min_alpha_tstat": 2.0, "oos_min_alpha_tstat_mode": "multiplicity_adjusted"}
     threshold, source = reward.resolve_alpha_tstat_gate_threshold(
         tcfg, calibration_fixture=_load_calibration_fixture())
     assert threshold == 2.0
-    assert source == "static"
+    assert source == "static_fallback"
 
 
 def test_resolve_multiplicity_adjusted_nearest_point_from_fixture():

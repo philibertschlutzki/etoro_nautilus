@@ -191,14 +191,13 @@ def test_backtest_json_schema_documents_session_hours_by_asset_class():
 
 
 # ---------------------------------------------------------------------------
-# Verdrahtungs-Scope-Grenze (dokumentiert die bewusste Nicht-Verdrahtung)
+# Verdrahtungs-Scope-Grenze — GESCHLOSSEN durch #1275 (GH #1148, Katalog #1272-1297, P0)
 # ---------------------------------------------------------------------------
 
-def test_load_ticks_from_catalog_does_not_reference_the_new_session_hours_helpers():
-    """Haelt die dokumentierte Scope-Grenze fest: Fix-Punkt 1 (Live-Verdrahtung in den
-    Tick-Lade-Pfad) ist bewusst NICHT Teil dieser Aenderung — sollte das in einem Folge-Issue
-    nachgeholt werden, MUSS dieser Test angepasst werden (kein stiller Drift)."""
+def test_load_ticks_from_catalog_now_references_the_session_hours_helpers():
+    """Issue #1275 (GH #1148) Fix Punkt 2 — die hier vormals dokumentierte Scope-Grenze ("Fix-Punkt
+    1 ist bewusst NICHT Teil dieser Aenderung") ist geschlossen: ``load_ticks_from_catalog`` filtert
+    seither ueber ``_filter_ticks_to_session_hours`` (siehe dortiger Docstring)."""
     import inspect
     src = inspect.getsource(br.load_ticks_from_catalog)
-    assert "is_within_session_hours" not in src
-    assert "resolve_session_hours_by_asset_class" not in src
+    assert "_filter_ticks_to_session_hours" in src

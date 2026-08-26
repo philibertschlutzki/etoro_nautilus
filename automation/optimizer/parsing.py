@@ -278,6 +278,12 @@ class TournamentMetrics:
     # enforcement.
     oos_f_realized_peak_median: float | None = None
     oos_f_realized_peak_max: float | None = None
+    # Issue #1297 (GH #1170, Katalog #1272-1297, P1) Fix Punkt 3 — Sizing-Cap-Korrektur-Telemetrie
+    # (hourly_strategy_base.on_position_opened's POST-FILL-Deckel), Rohmaterial fuer
+    # invariants.check_sizing_cap_enforcement's Offender-Kontext (macht "Deckel griff post-fill zu
+    # spaet, wurde aber korrigiert" von "Deckel griff nie" unterscheidbar).
+    oos_sizing_cap_corrections_count: int | None = None
+    oos_sizing_cap_max_overshoot_pre_correction: float | None = None
     # Issue #1075/#1223 (Katalog #1247+, P0) — die tatsaechlich ANGEWANDTEN (nicht die
     # konfigurierten) Kostenkomponenten dieses Levels, siehe backtest_runner.extract_metrics
     # (Stempelstelle direkt neben expectancy_round_trip_cost_stress_full_realism). Rohmaterial fuer
@@ -359,19 +365,32 @@ class TournamentMetrics:
     oos_expectancy_capital_weighted_gross: float | None = None
     # Issue #1255 (GH #1125), Pitfall #454-Klasse — HC3-robuster Standardfehler-Schaetzer der
     # Alpha-Regression (siehe backtest_runner._alpha_regression_diagnostics-Docstring) neben dem
-    # bestehenden, homoskedastie-unterstellenden ``oos_alpha_tstat``; ``oos_alpha_tstat_df`` die
-    # AUF DIE INFORMATIVE Zeilenzahl (statt der Kalender-Bar-Zaehlung) gesetzten Freiheitsgrade.
+    # bestehenden, homoskedastie-unterstellenden ``oos_alpha_tstat``. Issue #1284 (GH #1157,
+    # Katalog #1272-1297, P3) — ``oos_alpha_tstat_df`` sind die auf ``oos_alpha_n_used`` (ALLE
+    # Bars, dieselbe Grundgesamtheit wie die Regression selbst) gesetzten Freiheitsgrade, NICHT
+    # mehr auf die informative Zeilenzahl (siehe dortiger Docstring fuer die Root-Cause/Wahl).
     # Issue #1258 (GH #1128) — Regressions-Grundgesamtheit auditierbar: ``oos_alpha_n_total`` (Alias
     # von ``oos_alpha_n_periods``, expliziter Feldname fuer die Akzeptanzkriterien-Liste),
     # ``oos_alpha_n_informative``/``oos_alpha_n_y_nonzero``/``oos_alpha_n_x_nonzero``/
     # ``oos_alpha_n_both_zero``. Defaults rueckwaertskompatibel (Legacy-JSONs vor #1255/#1258).
     oos_alpha_tstat_hc3: float | None = None
     oos_alpha_tstat_df: int | None = None
+    oos_alpha_n_used: int | None = None
     oos_alpha_n_total: int | None = None
     oos_alpha_n_informative: int | None = None
     oos_alpha_n_y_nonzero: int | None = None
     oos_alpha_n_x_nonzero: int | None = None
     oos_alpha_n_both_zero: int | None = None
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — Rohmaterial fuer invariants.check_alpha_
+    # regression_identifiability (siehe backtest_runner._alpha_regression_diagnostics-Docstring).
+    oos_alpha_corr_xy: float | None = None
+    oos_alpha_sd_x: float | None = None
+    oos_alpha_sd_y: float | None = None
+    oos_alpha_cov_xy: float | None = None
+    oos_alpha_cov_in_market: float | None = None
+    oos_alpha_cov_out_of_market: float | None = None
+    oos_alpha_cov_exit_bars: float | None = None
+    oos_alpha_n_in_market: int | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -524,6 +543,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #1085/#1233 (Katalog #1247+, P0) — siehe TournamentMetrics-Docstring.
     oos_f_realized_peak_median = oos_metrics.get("f_realized_peak_median")
     oos_f_realized_peak_max = oos_metrics.get("f_realized_peak_max")
+    # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — siehe TournamentMetrics-Docstring.
+    oos_sizing_cap_corrections_count = oos_metrics.get("sizing_cap_corrections_count")
+    oos_sizing_cap_max_overshoot_pre_correction = oos_metrics.get("sizing_cap_max_overshoot_pre_correction")
     # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
     oos_applied_financing_bps_per_day = oos_metrics.get("applied_financing_bps_per_day")
     oos_applied_slippage_bps = oos_metrics.get("applied_slippage_bps")
@@ -581,11 +603,21 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # 'oos_alpha_n_periods' (Zeile oben), nicht die der #1257-Kostenbasis-Felder.
     oos_alpha_tstat_hc3 = oos_metrics.get("oos_alpha_tstat_hc3")
     oos_alpha_tstat_df = oos_metrics.get("oos_alpha_tstat_df")
+    oos_alpha_n_used = oos_metrics.get("oos_alpha_n_used")
     oos_alpha_n_total = oos_metrics.get("oos_alpha_n_total")
     oos_alpha_n_informative = oos_metrics.get("oos_alpha_n_informative")
     oos_alpha_n_y_nonzero = oos_metrics.get("oos_alpha_n_y_nonzero")
     oos_alpha_n_x_nonzero = oos_metrics.get("oos_alpha_n_x_nonzero")
     oos_alpha_n_both_zero = oos_metrics.get("oos_alpha_n_both_zero")
+    # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — siehe TournamentMetrics-Docstring.
+    oos_alpha_corr_xy = oos_metrics.get("oos_alpha_corr_xy")
+    oos_alpha_sd_x = oos_metrics.get("oos_alpha_sd_x")
+    oos_alpha_sd_y = oos_metrics.get("oos_alpha_sd_y")
+    oos_alpha_cov_xy = oos_metrics.get("oos_alpha_cov_xy")
+    oos_alpha_cov_in_market = oos_metrics.get("oos_alpha_cov_in_market")
+    oos_alpha_cov_out_of_market = oos_metrics.get("oos_alpha_cov_out_of_market")
+    oos_alpha_cov_exit_bars = oos_metrics.get("oos_alpha_cov_exit_bars")
+    oos_alpha_n_in_market = oos_metrics.get("oos_alpha_n_in_market")
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
@@ -829,6 +861,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             float(oos_f_realized_peak_median) if oos_f_realized_peak_median is not None else None),
         oos_f_realized_peak_max=(
             float(oos_f_realized_peak_max) if oos_f_realized_peak_max is not None else None),
+        # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — siehe TournamentMetrics-Docstring.
+        oos_sizing_cap_corrections_count=(
+            int(oos_sizing_cap_corrections_count)
+            if oos_sizing_cap_corrections_count is not None else None),
+        oos_sizing_cap_max_overshoot_pre_correction=(
+            float(oos_sizing_cap_max_overshoot_pre_correction)
+            if oos_sizing_cap_max_overshoot_pre_correction is not None else None),
         # Issue #1075/#1223 — siehe TournamentMetrics-Docstring.
         oos_applied_financing_bps_per_day=(
             float(oos_applied_financing_bps_per_day)
@@ -910,6 +949,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             float(oos_alpha_tstat_hc3) if oos_alpha_tstat_hc3 is not None else None),
         oos_alpha_tstat_df=(
             int(oos_alpha_tstat_df) if oos_alpha_tstat_df is not None else None),
+        oos_alpha_n_used=(int(oos_alpha_n_used) if oos_alpha_n_used is not None else None),
         oos_alpha_n_total=(int(oos_alpha_n_total) if oos_alpha_n_total is not None else None),
         oos_alpha_n_informative=(
             int(oos_alpha_n_informative) if oos_alpha_n_informative is not None else None),
@@ -919,6 +959,21 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             int(oos_alpha_n_x_nonzero) if oos_alpha_n_x_nonzero is not None else None),
         oos_alpha_n_both_zero=(
             int(oos_alpha_n_both_zero) if oos_alpha_n_both_zero is not None else None),
+        # Issue #1283 (GH #1156, Katalog #1272-1297, P0) — siehe TournamentMetrics-Docstring.
+        oos_alpha_corr_xy=(
+            float(oos_alpha_corr_xy) if oos_alpha_corr_xy is not None else None),
+        oos_alpha_sd_x=(float(oos_alpha_sd_x) if oos_alpha_sd_x is not None else None),
+        oos_alpha_sd_y=(float(oos_alpha_sd_y) if oos_alpha_sd_y is not None else None),
+        oos_alpha_cov_xy=(float(oos_alpha_cov_xy) if oos_alpha_cov_xy is not None else None),
+        oos_alpha_cov_in_market=(
+            float(oos_alpha_cov_in_market) if oos_alpha_cov_in_market is not None else None),
+        oos_alpha_cov_out_of_market=(
+            float(oos_alpha_cov_out_of_market)
+            if oos_alpha_cov_out_of_market is not None else None),
+        oos_alpha_cov_exit_bars=(
+            float(oos_alpha_cov_exit_bars) if oos_alpha_cov_exit_bars is not None else None),
+        oos_alpha_n_in_market=(
+            int(oos_alpha_n_in_market) if oos_alpha_n_in_market is not None else None),
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,

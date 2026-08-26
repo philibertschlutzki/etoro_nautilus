@@ -44,16 +44,17 @@ def test_none_fraction_passes_not_inconclusive():
 
 
 def test_fraction_at_or_below_threshold_passes():
+    # Issue #1287 (GH #1160) — Schwelle von 60 % auf 50 % gesenkt.
     assert inv.check_fail_fast_probe_timeliness(0.0).passed is True
-    assert inv.check_fail_fast_probe_timeliness(0.60).passed is True
+    assert inv.check_fail_fast_probe_timeliness(0.50).passed is True
     assert inv.check_fail_fast_probe_timeliness(0.30).passed is True
 
 
 def test_fraction_above_threshold_fails():
-    r = inv.check_fail_fast_probe_timeliness(0.61)
+    r = inv.check_fail_fast_probe_timeliness(0.51)
     assert r.passed is False
     assert r.severity == "medium"
-    assert r.actual == 0.61
+    assert r.actual == 0.51
 
 
 def test_fraction_at_full_wallclock_fails():

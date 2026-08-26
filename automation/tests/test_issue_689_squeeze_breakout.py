@@ -120,7 +120,8 @@ def test_defaults_present_and_match_spec():
     assert d["keltner_period"] == 20
     assert d["keltner_multiplier"] == 1.5
     assert d["min_squeeze_bars"] == 6
-    assert d["max_bars_in_trade"] == 24
+    # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 -> 6 (Faktor 0.24).
+    assert d["max_bars_in_trade"] == 6
 
 
 def test_spaces_branch_produces_valid_params():
@@ -135,8 +136,10 @@ def test_spaces_branch_produces_valid_params():
                 "min_squeeze_bars", "cooldown_bars", "atr_period",
                 "atr_trailing_multiplier", "max_bars_in_trade"):
         assert key in params
-    # Issue #714 (GR-01) — Obergrenze 30 → 24 (24-Bar-Zeitbox über alle 15 Strategien).
-    assert 12 <= params["max_bars_in_trade"] <= 24
+    # Issue #714 (GR-01) — Obergrenze 30 → 24 (24-Bar-Zeitbox über alle 15 Strategien). Issue #1275
+    # (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 → 6 (RTH-Bars, Faktor 0.24), Untergrenze
+    # 12 → 3.
+    assert 3 <= params["max_bars_in_trade"] <= 6
 
 
 def test_squeeze_release_logic_fires_on_realistic_wick_data():

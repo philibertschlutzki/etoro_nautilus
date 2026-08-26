@@ -65,11 +65,15 @@ def test_trial_beyond_slack_tolerance_is_downgraded_to_unevaluated(tmp_path, mon
 
 
 def test_trial_within_watchdog_slack_is_not_a_violation(tmp_path, monkeypatch):
-    """Issue #858 — 25 Bars liegt INNERHALB der neuen Toleranz (24 + 3 = 27 Bars): das ist exakt
-    die vom #836-Watchdog selbst vorgesehene Ausfuehrungslatenz, kein Vertragsbruch mehr (vorher,
-    mit der 0.01-Bar-Toleranz, waere dieser Trial faelschlich als Verletzung gezaehlt worden)."""
+    """Issue #858 — die Haltedauer liegt INNERHALB der Toleranz (sampled max_bars_in_trade + 3
+    Bars Slack): das ist exakt die vom #836-Watchdog selbst vorgesehene Ausfuehrungslatenz, kein
+    Vertragsbruch mehr (vorher, mit der 0.01-Bar-Toleranz, waere dieser Trial faelschlich als
+    Verletzung gezaehlt worden). Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — der
+    max_bars_in_trade-Suchraum ist auf [3, 6] umkalibriert (Faktor 0.24, vormals 24-Bar-Deckel);
+    4h liegt sicher unterhalb des kleinstmoeglichen Schwellenwerts ((3 + 3) Bars = 6h) UNABHAENGIG
+    davon, welcher Wert in diesem Lauf tatsaechlich gesampelt wird (kein fixer Seed hier)."""
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setattr(ro, "run_backtest", _fake_result_factory(max_holding_time_s=25 * 3600.0))
+    monkeypatch.setattr(ro, "run_backtest", _fake_result_factory(max_holding_time_s=4 * 3600.0))
     study = ro.optimize_symbol("SmaCrossoverStrategy", "TSLA.ETORO", n_trials=1)
     trial = study.trials[0]
 

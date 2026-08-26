@@ -158,12 +158,17 @@ def test_optimizer_json_carries_the_switch_and_the_bumped_version():
 def test_extract_metrics_gates_the_deduction_call_behind_the_switch():
     """Strukturbeweis (analog test_issue_1075_1223s Quelltext-Assertions): der Aufruf von
     ``_apply_calibrated_slippage_deduction`` in ``extract_metrics`` steht HINTER
-    ``if _read_apply_calibrated_slippage_in_selection():`` — bei ``false`` wird
-    ``rt_pnls_with_ts`` nicht neu zugewiesen und ``selection_cost_basis`` bleibt beim Default
-    ``'round_trip_only'`` (bit-identisch zum Vorzustand)."""
+    ``_read_apply_calibrated_slippage_in_selection()`` — bei ``false`` wird ``rt_pnls_with_ts``
+    nicht neu zugewiesen und ``selection_cost_basis`` bleibt beim Default ``'round_trip_only'``
+    (bit-identisch zum Vorzustand). Issue #1277 (GH #1150) ergaenzte ein ZWEITES,
+    UND-verknuepftes Gate (``_bar_axis_supports_selection_cost``) in DERSELBEN Bedingung — die
+    urspruengliche Config-Schalter-Semantik bleibt dabei ERHALTEN (``false`` blockiert weiterhin
+    unabhaengig vom Bar-Achsen-Zustand)."""
     source = inspect.getsource(backtest_runner.extract_metrics)
     assert 'selection_cost_basis = "round_trip_only"' in source
-    idx_gate = source.index("if _read_apply_calibrated_slippage_in_selection():")
+    idx_gate = source.index(
+        "if _read_apply_calibrated_slippage_in_selection() and "
+        "_bar_axis_supports_selection_cost:")
     idx_call = source.index(
         "rt_pnls_with_ts, n_slippage_adjusted_round_trips = _apply_calibrated_slippage_deduction(")
     assert idx_gate < idx_call, (

@@ -30,9 +30,12 @@ def _load_optimizer_cfg() -> dict:
         return json.load(f)
 
 
-def test_simulation_semantics_version_is_6():
+def test_simulation_semantics_version_is_at_least_6():
+    """Issue #1275 (GH #1148, Katalog #1272-1297, P0) hat den Wert seither auf 7 weitergebumpt
+    (siehe test_issue_1275_rth_bar_axis_wiring.py) — dieser Test haelt nur die v6-Grundlage fest,
+    ohne den EXAKTEN aktuellen Wert zu behaupten (der gehoert dem neuesten Bump-Test)."""
     cfg = _load_optimizer_cfg()
-    assert cfg["simulation_semantics_version"] == 6
+    assert cfg["simulation_semantics_version"] >= 6
 
 
 def test_simulation_schema_v6_names_its_actual_trigger():
@@ -127,6 +130,6 @@ def test_champion_admissibility_rejects_stale_v5_entries():
 
     opt_data = _load_optimizer_cfg()
     entry_stale = {"integrity": {"simulation_semantics_version": 5}}
-    entry_fresh = {"integrity": {"simulation_semantics_version": 6}}
+    entry_fresh = {"integrity": {"simulation_semantics_version": opt_data["simulation_semantics_version"]}}
     assert champions.champion_simulation_stale(entry_stale, opt_data) is True
     assert champions.champion_simulation_stale(entry_fresh, opt_data) is False
