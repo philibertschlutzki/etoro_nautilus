@@ -3764,7 +3764,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr(
                 "oos_gross_loss_winsorized_mean_bps_trailing_stop",
                 metrics.oos_gross_loss_winsorized_mean_bps_trailing_stop)
-        if metrics.oos_n_trailing_stop_losses_dust_filtered:
+        if metrics.oos_n_trailing_stop_losses_dust_filtered is not None:
             trial.set_user_attr(
                 "oos_n_trailing_stop_losses_dust_filtered",
                 metrics.oos_n_trailing_stop_losses_dust_filtered)
