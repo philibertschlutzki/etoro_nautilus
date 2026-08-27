@@ -46,7 +46,7 @@ run_sweep NVDA.ETORO
 #run_sweep ASML.ETORO
 #run_sweep KRYS.ETORO
 #run_sweep LULU.ETORO
-#run_sweep GOOGL.ETORO
-#run_sweep TSLA.ETORO
+run_sweep GOOGL.ETORO
+run_sweep TSLA.ETORO
 run_sweep NVDA.ETORO
 #run_sweep NATGAS.ETORO
