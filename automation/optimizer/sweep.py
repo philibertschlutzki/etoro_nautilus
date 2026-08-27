@@ -4325,7 +4325,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # Issue #755 — Default max(1, cpu_count()-2), konsistent mit der #726-Empfehlung
         # (ISSUES_concurrent_execution_20260719.md). ``sweep_max_workers`` explizit 0/negativ/nicht
         # gesetzt ⇒ derselbe Fallback (Zero-Hardcoding-Konvention dieses Moduls).
-        import os
+        # Issue #1172 — KEIN lokales ``import os`` hier: das macht ``os`` zu einer lokalen
+        # Variable fuer die GESAMTE main()-Funktion (Python-Scoping-Regel), wodurch der
+        # FRUEHERE Zugriff auf ``os.environ`` (--seed-salt/--allow-duplicate-run oben) mit
+        # UnboundLocalError abbricht. ``os`` ist bereits im Modul-Header importiert (Zeile 18).
         eff_n_jobs = max(1, (os.cpu_count() or 3) - 2)
         n_jobs_source = "DEFAULT_CPU_MINUS_2"
 
