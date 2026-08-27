@@ -5,10 +5,10 @@ __pycache__/
 
 # Trading Daten & Logs
 #/logs/*
-!/logs/.gitkeep
-/logs/backtest_2026*
+#!/logs/.gitkeep
+#/logs/backtest_2026*
 #/logs/optimizer_*.log
-/logs/*.jsonl
+#/logs/*.jsonl
 
 # API Keys & Secrets
 *.env
