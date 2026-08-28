@@ -163,14 +163,15 @@ def test_coherence_check_passes_when_within_factor_two():
 
 
 def test_coherence_check_not_applicable_without_configured_reference():
+    # Issue #1310 (GH #1187, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     result = inv.check_guard_reference_coherence(None, [319.0])
-    assert result.passed is True
+    assert result.passed is None
     assert result.actual is None
 
 
 def test_coherence_check_not_applicable_without_observed_data():
     result = inv.check_guard_reference_coherence(1600, [])
-    assert result.passed is True
+    assert result.passed is None
 
 
 def test_coherence_check_uses_the_median_across_studies():

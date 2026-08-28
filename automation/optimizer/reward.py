@@ -4,6 +4,8 @@ import math
 import statistics
 from typing import TYPE_CHECKING
 
+from automation.optimizer._contracts import TIME_BOX_BARS as _TIME_BOX_BARS
+
 if TYPE_CHECKING:
     from automation.optimizer.parsing import TournamentMetrics
 
@@ -77,12 +79,18 @@ def _time_box_penalty(m: "TournamentMetrics", weights: dict) -> float:
     Kandidaten). ``base`` bleibt ``psr_z`` (#614/#630); dies ist NUR der zusätzliche additive Term aus
     #708-Req-04 (``Obj = E[R]/σ_R⁻ − β·(t_hold/24)²``), ohne die getestete Base zu ersetzen.
 
-    ``time_box_bars`` (Default 24, GR-01 #714) ist die Normierungs-Deadline in Bars — konfigurierbar
-    (Zero-Hardcoding), aber an dieselbe 24-Bar-Zeitbox gebunden wie der harte Bar-Zähler-Exit.
-    Der konvexe Kern ``(t/T_max)²`` bestraft Deadline-Nähe progressiv und lässt kurze Haltedauern
-    nahezu ungestraft. Wie ``_dd_penalty``/``_penalty_scale_vs_base`` gegen die realisierte
-    ``psr_z``-Base-Streuung skaliert (#631) — sonst wäre β entweder wirkungslos (zu klein) oder
-    dominierte das Ranking (zu gross).
+    ``time_box_bars`` ist die Normierungs-Deadline in Bars — konfigurierbar (Zero-Hardcoding), aber
+    an dieselbe Zeitbox gebunden wie der harte Bar-Zähler-Exit (``_contracts.MAX_BARS_IN_TRADE_
+    HARD_CAP``). Fehlt der Config-Schlüssel, faellt dieser Term auf ``_contracts.TIME_BOX_BARS``
+    zurück — DIESELBE Quelle, aus der auch ``optimizer.json['time_box_bars']`` selbst kalibriert
+    ist (Issue #1315/GH #1192: der vormalige, eigene ``24.0``-Fallback lief seit der #1275-RTH-
+    Umkalibrierung (24 Kalender-Bars → 5,76 RTH-Bars) STILL auf der ALTEN, 4,17x zu grossen Achse,
+    sobald der Schlüssel im ``weights``-Dict fehlte — Code-Default und Schema-Default (``optimizer.
+    json``s eigene Dokumentation: "Fehlt der Key ⇒ 5.76") widersprachen sich). Der konvexe Kern
+    ``(t/T_max)²`` bestraft Deadline-Nähe progressiv und lässt kurze Haltedauern nahezu ungestraft.
+    Wie ``_dd_penalty``/``_penalty_scale_vs_base`` gegen die realisierte ``psr_z``-Base-Streuung
+    skaliert (#631) — sonst wäre β entweder wirkungslos (zu klein) oder dominierte das Ranking (zu
+    gross).
 
     Fehlt ``m.oos_median_bars_held`` (None — Legacy-JSON/Fixture ohne #710-Feld, oder ein Trial ohne
     OOS-Trades) ⇒ 0.0 (kein erfundener Wert). Fehlt ``penalty_time_box_weight`` ⇒ 0.0 (Default,
@@ -90,7 +98,7 @@ def _time_box_penalty(m: "TournamentMetrics", weights: dict) -> float:
     weight = float(weights.get("penalty_time_box_weight", 0.0) or 0.0)
     if weight == 0.0 or m.oos_median_bars_held is None:
         return 0.0
-    time_box_bars = float(weights.get("time_box_bars", 24.0) or 24.0)
+    time_box_bars = float(weights.get("time_box_bars", _TIME_BOX_BARS) or _TIME_BOX_BARS)
     if time_box_bars <= 0.0:
         return 0.0
     t_norm = float(m.oos_median_bars_held) / time_box_bars

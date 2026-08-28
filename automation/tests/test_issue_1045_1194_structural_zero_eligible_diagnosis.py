@@ -43,9 +43,15 @@ def test_unknown_detail_is_unclassified():
 
 
 # ── sweep_diagnostics.diagnose_structural_zero_eligible_gate ────────────────────────────────────
+# Issue #1303 (GH #1180) — max_is_trades/median_is_trades sind seither Pflicht-Keywords (nur der
+# STRUCTURAL_ALL_UNEVALUABLE-Zweig wertet sie aus, siehe test_issue_1303_binding_cause_signal_
+# absent.py); alle Tests hier decken ausschliesslich den STRUCTURAL_ZERO_ELIGIBLE-Pfad ab.
+_NOT_APPLICABLE = {"max_is_trades": None, "median_is_trades": None}
+
+
 def test_reference_symptom_123_of_123_reject_oos_min_psr():
     """Das woertliche #1194-Referenzsymptom: 123/123 Trials REJECT_OOS_MIN_PSR."""
-    diagnosis = diagnose_structural_zero_eligible_gate({"REJECT_OOS_MIN_PSR": 123})
+    diagnosis = diagnose_structural_zero_eligible_gate({"REJECT_OOS_MIN_PSR": 123}, **_NOT_APPLICABLE)
     assert diagnosis["dominant_rejection_detail"] == "REJECT_OOS_MIN_PSR"
     assert diagnosis["dominant_fraction"] == 1.0
     assert diagnosis["gate_type"] == "quality"
@@ -54,7 +60,7 @@ def test_reference_symptom_123_of_123_reject_oos_min_psr():
 
 
 def test_homogeneous_frequency_gate_proposes_search_space_override():
-    diagnosis = diagnose_structural_zero_eligible_gate({"REJECT_OOS_MIN_TRADES": 40})
+    diagnosis = diagnose_structural_zero_eligible_gate({"REJECT_OOS_MIN_TRADES": 40}, **_NOT_APPLICABLE)
     assert diagnosis["gate_type"] == "frequency"
     assert diagnosis["binding_cause"] == "signal_sparse"
     assert diagnosis["proposed_action"] == "search_space_override"
@@ -63,20 +69,21 @@ def test_homogeneous_frequency_gate_proposes_search_space_override():
 def test_non_homogeneous_cohort_stays_none():
     """60/40-Split -- kein dominantes Gate erreicht die 100%-Schwelle -- kein Rateversuch."""
     diagnosis = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_MIN_PSR": 60, "REJECT_OOS_MAX_DRAWDOWN": 40})
+        {"REJECT_OOS_MIN_PSR": 60, "REJECT_OOS_MAX_DRAWDOWN": 40}, **_NOT_APPLICABLE)
     assert diagnosis["binding_cause"] == "none"
     assert diagnosis["proposed_action"] == "none"
     assert diagnosis["dominant_rejection_detail"] == "REJECT_OOS_MIN_PSR"  # Telemetrie bleibt.
 
 
 def test_empty_counts_stays_none():
-    diagnosis = diagnose_structural_zero_eligible_gate({})
+    diagnosis = diagnose_structural_zero_eligible_gate({}, **_NOT_APPLICABLE)
     assert diagnosis["binding_cause"] == "none"
     assert diagnosis["dominant_rejection_detail"] is None
 
 
 def test_unclassifiable_dominant_gate_stays_none_despite_full_homogeneity():
-    diagnosis = diagnose_structural_zero_eligible_gate({"REJECT_OOS_MICRO_SIZING": 20})
+    diagnosis = diagnose_structural_zero_eligible_gate(
+        {"REJECT_OOS_MICRO_SIZING": 20}, **_NOT_APPLICABLE)
     assert diagnosis["dominant_fraction"] == 1.0
     assert diagnosis["gate_type"] is None
     assert diagnosis["binding_cause"] == "none"
@@ -84,7 +91,8 @@ def test_unclassifiable_dominant_gate_stays_none_despite_full_homogeneity():
 
 def test_configurable_homogeneity_threshold_allows_near_dominant_gates():
     diagnosis = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_MIN_PSR": 95, "REJECT_OOS_MAX_DRAWDOWN": 5}, homogeneity_threshold=0.9)
+        {"REJECT_OOS_MIN_PSR": 95, "REJECT_OOS_MAX_DRAWDOWN": 5}, homogeneity_threshold=0.9,
+        **_NOT_APPLICABLE)
     assert diagnosis["binding_cause"] == "signal_quality"
 
 

@@ -143,7 +143,17 @@ def active_bounds_overrides() -> list[dict[str, Any]]:
         except Exception:
             default_bounds = {}
         for symbol, params in (symbols or {}).items():
+            # Issue #1316 (GH #1193) — ``params`` traegt seit diesem Fix zusaetzlich zu den
+            # eigentlichen Parameter-Bounds Geschwister-Metadaten-Schluessel (``axis``,
+            # ``calibrated_in_run_id``, ``proposed_rth_bounds`` — ``spaces._OVERRIDE_METADATA_
+            # KEYS``); die muessen hier uebersprungen werden, sonst wuerde z. B.
+            # ``proposed_rth_bounds`` (ein Dict mit zufaellig genau zwei Eintraegen) faelschlich
+            # als ``(low, high)``-Bound-Paar interpretiert (``bound[0]``/``bound[1]`` auf einem
+            # Dict wirft ``KeyError``).
+            override_axis = (params or {}).get("axis")
             for param, bound in (params or {}).items():
+                if param in spaces._OVERRIDE_METADATA_KEYS:
+                    continue
                 if not bound or len(bound) != 2:
                     continue
                 default = default_bounds.get(param)
@@ -154,6 +164,7 @@ def active_bounds_overrides() -> list[dict[str, Any]]:
                     "source": "curated",
                     "set_in_run_id": None,
                     "rationale": curated_rationale,
+                    "axis": override_axis,
                 })
     try:
         from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
@@ -179,5 +190,9 @@ def active_bounds_overrides() -> list[dict[str, Any]]:
                 "source": "auto_proposed",
                 "set_in_run_id": entry.get("first_seen_run_id"),
                 "rationale": entry.get("binding_cause"),
+                # Issue #1316 — der #761-Diagnose-Cache traegt kein axis-Feld (ausserhalb dieses
+                # Fix-Scopes, siehe spaces._bounds_for-Docstring); None statt eines fehlenden
+                # Schluessels, damit jede Zeile in dieser Liste dieselben Felder traegt.
+                "axis": None,
             })
     return out

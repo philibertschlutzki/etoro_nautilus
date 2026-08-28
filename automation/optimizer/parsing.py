@@ -16,6 +16,12 @@ class TournamentMetrics:
     fully_eligible_pairs: int
     is_total_trades: int
     hit_trade_cap: bool = False
+    # Issue #1299 (GH #1176) Fix Punkt 3 — der ``error``-Schluessel aus ``backtest_runner.
+    # _empty_result`` (jetzt Pflichtfeld, siehe dortiger Docstring), fuer diesen Trial repraesentativ
+    # aus ``full_results[0]`` gehoben (dieselbe First-Entry-Konvention wie ``strat_params`` oben).
+    # None ⇒ kein Fehlerpfad (echte Backtest-Ausfuehrung, evtl. trotzdem 0 Trades) ODER Legacy-JSON
+    # ohne den Schluessel (rueckwaertskompatibel).
+    worker_error: str | None = None
     # Issue #401: OOS-total_return als evaluable Reward-Fallback, wenn der Sortino
     # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
     # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
@@ -87,6 +93,11 @@ class TournamentMetrics:
     # Diagnose direkt sichtbar. None, wenn der Block (oder die Felder) fehlen (rückwärtskompatibel).
     fill_ts_min: int | None = None
     fill_ts_max: int | None = None
+    # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Tick-Populations-Zähler (aus dem data_window-Block,
+    # backtest_runner.write_tournament_json). None ⇒ Legacy-JSON ohne #1298 ODER
+    # load_ticks_from_catalog wurde nie mit ``out=`` aufgerufen (rückwärtskompatibel).
+    n_ticks_raw: int | None = None
+    n_ticks_after_session_filter: int | None = None
     # Issue #455 (Pitfall #82) — OOS-Abdeckungs-Telemetrie. Die früheste OOS-Sub-Fenster-Grenze
     # (``start_ns + is_window_ns``) und ob die realen Fills sie erreichen. ``oos_covered=False``
     # macht einen strukturellen OOS=0-Kollaps auf einen Blick DATENseitig statt parameterseitig
@@ -146,6 +157,10 @@ class TournamentMetrics:
     # verwertbarer Zeit-Index (rueckwaertskompatibel zu Pre-#1163-JSONs).
     oos_bars_per_calendar_day: float | None = None
     oos_session_coverage_fraction: float | None = None
+    # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Länge der VOLLEN mtm_series-Bar-Achse (Rohmaterial
+    # für report._study_record's n_bars_delivered_median, §5.3-Abnahmekriterium). None ⇒ kein
+    # verwertbarer Zeit-Index oder Pre-#1298-JSON (rückwärtskompatibel).
+    oos_n_bars_delivered: int | None = None
     # Issue #845 — der Downside-Beobachtungs-Nenner (backtest_runner._calculate_stats
     # "downside_obs", #823 SORTINO_INSUFFICIENT_DOWNSIDE-Schwelle), durchgereicht als eigenes Feld
     # statt einer stillen Re-Interpretation von oos_n_periods: n_periods misst die volle
@@ -474,6 +489,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #1011/#1163 — siehe TournamentMetrics-Docstring.
     oos_bars_per_calendar_day = oos_metrics.get("bars_per_calendar_day")
     oos_session_coverage_fraction = oos_metrics.get("session_coverage_fraction")
+    # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Länge der VOLLEN mtm_series-Bar-Achse (siehe
+    # backtest_runner._bar_calendar_telemetry-Docstring).
+    oos_n_bars_delivered = oos_metrics.get("n_bars_delivered")
     # Issue #845 — Downside-Beobachtungs-Nenner (None-safe ⇒ rückwärtskompatibel zu Pre-#845-JSONs).
     oos_downside_obs = oos_metrics.get("downside_obs")
     oos_ret_skew = oos_metrics.get("ret_skew")
@@ -651,6 +669,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     hit_trade_cap = False
     is_best_total_return = 0.0
     is_best_win_rate = 0.0
+    worker_error = None
     full_results = data.get("full_results") or []
     if full_results and isinstance(full_results, list):
         trades_list = [r.get("metrics", {}).get("total_trades", 0) for r in full_results if isinstance(r, dict)]
@@ -658,6 +677,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
 
         strat_params = full_results[0].get("strat_params", {}) if len(full_results) > 0 and isinstance(full_results[0], dict) else {}
         max_trades_cap = strat_params.get("max_trades_cap")
+        # Issue #1299 (GH #1176) Fix Punkt 3 — dieselbe First-Entry-Konvention wie strat_params
+        # oben: repraesentativer worker_error dieses Trials.
+        worker_error = full_results[0].get("error") if isinstance(full_results[0], dict) else None
 
         hit_trade_cap = False
         if max_trades_cap is not None:
@@ -680,6 +702,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     dw_days = dw.get("days")
     dw_fill_min = dw.get("fill_ts_min")
     dw_fill_max = dw.get("fill_ts_max")
+    # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Tick-Populations-Zähler.
+    dw_n_ticks_raw = dw.get("n_ticks_raw")
+    dw_n_ticks_after_session_filter = dw.get("n_ticks_after_session_filter")
     # Issue #455 — OOS-Abdeckungs-Felder (None-safe, rückwärtskompatibel zu Pre-#455-JSONs).
     dw_oos_start = dw.get("oos_window_start_ns")
     dw_oos_covered = dw.get("oos_covered")
@@ -705,6 +730,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         fully_eligible_pairs=int(fully_eligible_pairs) if fully_eligible_pairs is not None else 0,
         is_total_trades=int(is_total_trades),
         hit_trade_cap=bool(hit_trade_cap),
+        worker_error=worker_error,
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
         # Issue #966 (Katalog A, P0) — None durchreichen statt auf 0.0 zu kollabieren, analog #759
         # fuer oos_win_rate/oos_profit_factor (siehe Dataclass-Feld-Kommentar). Root-Cause: ein
@@ -754,6 +780,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         data_window_days=float(dw_days) if dw_days is not None else None,
         fill_ts_min=int(dw_fill_min) if dw_fill_min is not None else None,
         fill_ts_max=int(dw_fill_max) if dw_fill_max is not None else None,
+        n_ticks_raw=int(dw_n_ticks_raw) if dw_n_ticks_raw is not None else None,
+        n_ticks_after_session_filter=(
+            int(dw_n_ticks_after_session_filter)
+            if dw_n_ticks_after_session_filter is not None else None),
         oos_window_start_ns=int(dw_oos_start) if dw_oos_start is not None else None,
         oos_covered=bool(dw_oos_covered) if dw_oos_covered is not None else None,
         oos_coverage_gap_days=float(dw_oos_gap) if dw_oos_gap is not None else None,
@@ -788,6 +818,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_session_coverage_fraction=(
             float(oos_session_coverage_fraction)
             if oos_session_coverage_fraction is not None else None),
+        oos_n_bars_delivered=(
+            int(oos_n_bars_delivered) if oos_n_bars_delivered is not None else None),
         oos_downside_obs=int(oos_downside_obs) if oos_downside_obs is not None else None,
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,

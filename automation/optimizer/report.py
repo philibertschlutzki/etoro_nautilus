@@ -299,8 +299,8 @@ def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
 def compute_result_fingerprint(study_summaries: list[dict]) -> str:
     """Issue #1286 (GH #1159, Katalog #1272-1297, P1) Fix Punkt 2 — sha256-Fingerabdruck des
     tatsaechlichen ERGEBNISSES eines Sweep-Laufs (im Unterschied zu ``compute_run_fingerprint``s
-    Fingerabdruck der EINGANGSMENGE): sortierte Liste von ``(strategy, n_trials, best_reward,
-    n_eligible)`` je Study.
+    Fingerabdruck der EINGANGSMENGE): sortierte Liste von ``(strategy, symbol, n_trials,
+    best_reward, n_eligible)`` je Study.
 
     Root-Cause #1286: ``run_fingerprint`` (dieselbe Eingangsmenge — Commit/Configs/Katalog/Seed/
     Universum/Semantik) ist unter Parallelitaet (``n_jobs > 1``) KEINE hinreichende Statistik fuer
@@ -312,15 +312,24 @@ def compute_result_fingerprint(study_summaries: list[dict]) -> str:
     ``invariants.check_run_determinism``): zwei Laeufe mit identischem ``run_fingerprint`` MUESSEN
     auch denselben ``result_fingerprint`` tragen, sonst ist der Lauf NICHT reproduzierbar.
 
+    Issue #1319 (GH #1196, P1) — ``symbol`` als FUENFTES Feld ergaenzt. Root-Cause: der
+    Fingerprint identifiziert das ERGEBNIS eines Laufs und MUSS deshalb jede Dimension tragen,
+    ueber die zwei Laeufe sich unterscheiden koennen — ``symbol`` fehlte, obwohl ``(strategy,
+    n_trials, best_reward, n_eligible)`` bei einem degenerierten Ergebnis (z. B. ``n_trials=0,
+    best_reward=None, n_eligible=0`` fuer JEDE Study) ueber VERSCHIEDENE Symbole hinweg identisch
+    kollabiert (Beweis B-11: fuenf Laeufe ueber drei Symbole trugen denselben Fingerprint
+    ``41b770e93373``). Ein Leser konnte zwei Laeufe ueber unterschiedliche Symbol-Universen NICHT
+    von einem echten Nichtdeterminismus-Befund unterscheiden.
+
     Reine Funktion (kein Datei-I/O). Dieselbe Trennzeichen-Konvention wie ``compute_run_
-    fingerprint`` (ASCII Record Separator ``\\x1e`` zwischen den vier Feldern EINER Study-Zeile,
+    fingerprint`` (ASCII Record Separator ``\\x1e`` zwischen den fuenf Feldern EINER Study-Zeile,
     ``\\x1d`` (Group Separator) zwischen den Zeilen — beide in keinem der Eingabefelder gueltig).
     Die Zeilen werden VOR dem Hashen sortiert (deterministisch unabhaengig von der Iterations-
     reihenfolge von ``study_summaries`` selbst — ``studies_out`` ist Store-Iterationsreihenfolge,
     keine garantiert stabile Ordnung)."""
     rows = sorted(
         "\x1e".join([
-            str(s.get("strategy")), str(s.get("n_trials")),
+            str(s.get("strategy")), str(s.get("symbol")), str(s.get("n_trials")),
             str(s.get("best_reward")), str(s.get("n_eligible")),
         ])
         for s in study_summaries
@@ -1105,6 +1114,25 @@ _DELIBERATELY_UNWIRED_INVARIANT_CHECKS: tuple[str, ...] = (
     # stattdessen in ``run.json['report_artifact']`` (written/path/bytes/sha256, siehe
     # sweep.py-Stempelstelle) UND im ``INVARIANT_STREAM_RESULT``-Log-Event.
     "check_report_artifact_written",
+    # Issue #1305 (GH #1182, P1) — dieselbe Selbstreferenz-Klasse wie check_report_artifact_written
+    # oben: dieser Check braucht decision_admissible als Eingabe, das SEINERSEITS ABSICHTLICH ERST
+    # NACH der Abdeckungspruefung aus dem finalen invariant_checks-Stand abgeleitet wird (siehe
+    # dortiger Kommentar) — er kann strukturell NIE im Strom stehen, den DIESE Abdeckungspruefung
+    # selbst beurteilt. Erscheint (PASS/FAIL) trotzdem im finalen invariant_checks-Strom des
+    # Reports, nur eben NACH diesem einen Coverage-Verdikt.
+    "check_diagnosis_writeback_admissible",
+    # Issue #1311 (GH #1188, P2) — ``disk_guard.check_budget`` IST verdrahtet (``run_optimization.
+    # disk_budget_callback`` ruft ihn auf UND emittiert symmetrisch [PASS/PRESSURE/EXCEEDED] ein
+    # ``INVARIANT_STREAM_RESULT``-Event, #1015/#1167) — anders als die fuenf disjunkten-Sidecar-
+    # Eintraege oben ist er aber STRUKTURELL SELTEN: der Callback prueft nur alle
+    # ``disk_check_interval_trials`` (Default 200) ABGESCHLOSSENE Trials EINER Study
+    # ((trial.number + 1) % interval == 0), nicht jeden Lauf. Jeder Lauf mit < 200 Trials je Study
+    # (die uebergrosse Mehrheit kurzer/Entwicklungs-/Test-Laeufe, beide committeten Referenzlaeufe
+    # eingeschlossen) durchlaeuft diesen Callback-Koerper nie — ohne diesen Eintrag wuerde
+    # ``check_invariant_coverage`` in JEDEM solchen Lauf faelschlich FAILen, obwohl die Pruefung
+    # nachweislich existiert und verdrahtet ist (kein toter Check-Name, nur ein SELTEN
+    # feuerndes Ereignis, dessen Abwesenheit ALLEIN aus der Trial-Zahl folgt).
+    "check_budget",
 )
 
 
@@ -1196,6 +1224,32 @@ def _read_external_invariant_results() -> list[dict]:
         d.setdefault("scope", "sweep")
         results.append(d)
     return results
+
+
+def _final_invariant_snapshot(
+    all_checks: list[tuple[str, "_inv.InvariantResult"]],
+    preflight_invariant_checks: list[dict] | None,
+) -> list[dict]:
+    """Issue #1308 (GH #1185, P1) — EINE Quelle fuer "welche Checks haben in diesem Lauf bereits
+    ein Ergebnis (PASS/FAIL/inkonklusiv) gemeldet", geteilt von allen drei fail_fast_invariants-
+    Meta-Wächtern (``check_fail_fast_invariants_wired``/``_actual_convention``/``_are_blocking``).
+
+    Root-Cause: die drei Meta-Wächter lasen bislang AUSSCHLIESSLICH ``all_checks`` — die
+    report-seitig BERECHNETEN Checks. Die sweep-seitigen ``INVARIANT_STREAM_RESULT``-Ereignisse
+    (``_read_external_invariant_results``) UND die Preflight-Ergebnisse werden erst SPAETER, beim
+    eigentlichen Aufbau von ``invariant_checks`` weiter unten, hinzugemischt — derselbe Check
+    (z. B. ``check_bar_quality``, ein reiner Sweep-seitiger Melder) galt fuer die Meta-Wächter
+    faelschlich als "in diesem Lauf ohne jedes Ergebnis", obwohl das FINALE Report-Artefakt sein
+    Ergebnis laengst trug (B-8).
+
+    Fix: dieselben DREI Quellen, aus denen ``invariant_checks`` weiter unten gebaut wird
+    (``all_checks``, ``preflight_invariant_checks``, ``_read_external_invariant_results()``), auch
+    HIER vereint — als reine Snapshot-Funktion (keine Events, keine Kohorten-Stempelung; diese
+    bleiben alleinige Aufgabe des tatsaechlichen ``invariant_checks``-Aufbaus weiter unten)."""
+    snapshot = [result.to_dict() for _label, result in all_checks]
+    snapshot.extend(dict(d) for d in (preflight_invariant_checks or []))
+    snapshot.extend(_read_external_invariant_results())
+    return snapshot
 
 
 def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
@@ -1421,6 +1475,24 @@ def _study_record(proposal: dict, study,
         detail = a.get("is_rejection_detail")
         if detail:
             is_rejection_detail_counts[detail] = is_rejection_detail_counts.get(detail, 0) + 1
+    # Issue #1303 (GH #1180) Fix Punkt 1 — dieselbe IS-Aktivitaets-Grundgesamtheit, die
+    # ``sweep_diagnostics.diagnose_trade_frequency`` (Trial-Ebene) bereits fuer die
+    # signal_absent/signal_sparse-Unterscheidung nutzt, hier auf STUDY-Ebene aggregiert:
+    # ``_structural_zero_eligible_diagnosed_pairs`` braucht sie, um
+    # ``diagnose_structural_zero_eligible_gate``s STRUCTURAL_ALL_UNEVALUABLE-Zweig dieselbe
+    # Unterscheidung treffen zu lassen (statt ihn blind auf 'signal_sparse' zu verdrahten).
+    _is_trade_counts = [int(a["is_total_trades"]) for a in trial_attrs
+                        if a.get("is_total_trades") is not None]
+    median_is_trades = statistics.median(_is_trade_counts) if _is_trade_counts else None
+    max_is_trades = max(_is_trade_counts) if _is_trade_counts else None
+    # Issue #1303 (GH #1180) Fix Punkt 2 — je worker_error-Code gezaehlte Trials dieser Study
+    # (Issue #1299/GH #1176, ``backtest_runner._empty_result``), Rohmaterial fuer den
+    # data_unavailable-Vorrang in ``diagnose_structural_zero_eligible_gate``.
+    worker_error_counts: dict[str, int] = {}
+    for a in trial_attrs:
+        werr = a.get("worker_error")
+        if werr:
+            worker_error_counts[werr] = worker_error_counts.get(werr, 0) + 1
     # Issue #917 Fix 4 — 'ineligible' in zwei disjunkte Klassen zerlegen: nur EINE davon ist eine
     # Aussage über die Strategie. ineligible_unmeasurable zählt REJECT_OOS_STATISTIC_UNAVAILABLE
     # (#917) — ein Gate lief auf einer undefinierten Grösse, keine Messung fand statt.
@@ -1478,6 +1550,43 @@ def _study_record(proposal: dict, study,
     ]
     bars_per_calendar_day_median = (
         statistics.median(_bars_per_calendar_day_values) if _bars_per_calendar_day_values else None)
+    # Issue #1318 (GH #1195, P2) — unterscheidet, WARUM bars_per_calendar_day_median fehlt: kein
+    # einziger Trial dieser Study war oos_evaluated=True ("kein Trade in der Kohorte", strukturell
+    # erwartet — z. B. ein REJECTED_BOUNDARY_SOLUTION-Ergebnis) vs. es GAB oos_evaluated=True-
+    # Trials, aber KEINER trug das Feld (aus #1298 verfuegbares Rohmaterial: ``a["n_ticks_raw"]``
+    # existiert je Trial unabhaengig von oos_evaluated, ``oos_bars_per_calendar_day`` nur bei
+    # oos_evaluated=True) — "Feld nicht gestempelt" (Pre-#1011/#1163-Lauf/Legacy-Trial-JSON).
+    # summary_de.py §3.5 leitet daraus ihren Text ab, statt unbedingt "Pre-#1011/#1163-Lauf" zu
+    # behaupten.
+    _n_oos_evaluated = sum(1 for a in trial_attrs if a.get("oos_evaluated") is True)
+    if bars_per_calendar_day_median is not None:
+        bar_axis_telemetry_missing_reason = None
+    elif _n_oos_evaluated == 0:
+        bar_axis_telemetry_missing_reason = "no_oos_evaluated_trials"
+    else:
+        bar_axis_telemetry_missing_reason = "field_not_stamped"
+    # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Study-Mediane der Tick-/Bar-Populations-Zähler.
+    # ANDERS als bars_per_calendar_day/session_coverage_fraction NICHT auf oos_evaluated=True
+    # gegated: n_ticks_raw/n_ticks_after_session_filter sind gerade dann am aussagekraeftigsten,
+    # wenn oos_evaluated=False ist (z. B. worker_error="no_ticks_in_window") — ein Gate auf
+    # oos_evaluated wuerde genau die Trials ausschliessen, die check_tick_population aufdecken soll.
+    _n_ticks_raw_values = [
+        a["n_ticks_raw"] for a in trial_attrs if a.get("n_ticks_raw") is not None
+    ]
+    n_ticks_raw_median = (
+        statistics.median(_n_ticks_raw_values) if _n_ticks_raw_values else None)
+    _n_ticks_after_filter_values = [
+        a["n_ticks_after_session_filter"] for a in trial_attrs
+        if a.get("n_ticks_after_session_filter") is not None
+    ]
+    n_ticks_after_session_filter_median = (
+        statistics.median(_n_ticks_after_filter_values) if _n_ticks_after_filter_values else None)
+    _n_bars_delivered_values = [
+        a["oos_n_bars_delivered"] for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_n_bars_delivered") is not None
+    ]
+    n_bars_delivered_median = (
+        statistics.median(_n_bars_delivered_values) if _n_bars_delivered_values else None)
     _session_coverage_values = [
         a["oos_session_coverage_fraction"] for a in trial_attrs
         if a.get("oos_evaluated") is True and a.get("oos_session_coverage_fraction") is not None
@@ -1813,8 +1922,19 @@ def _study_record(proposal: dict, study,
     # daher eine STRIKTE (nicht die 2%-tolerante ``boundary_veto_evidence``-)Teilmenge und dient als
     # eigene Report-Zeile: "der Override hat bereits produktiv gewirkt", unterscheidbar von der
     # blossen Naehe zum (unveraenderten) Default-Rand, die das #622/#763-Veto selbst treibt.
+    # Issue #1306 (GH #1183, P1) — die Randlösungs-Erkennung unten prüft ausschliesslich
+    # ``winner_params`` (der GEWINNER-Trial) gegen die Default-Bounds, OHNE zu prüfen, ob der
+    # Gewinner überhaupt INFORMATIV ist. Bei einer degenerierten Kohorte (``n_evaluable == 0``
+    # ODER alle Trials tragen denselben Reward, ``reward_std_total == 0`` — z. B. jeder Trial
+    # ``penalty_unevaluable_oos`` unbedingt) ist "der Gewinner" per Optuna-Konstruktion der ERSTE
+    # Trial in Iterationsreihenfolge einer All-Tie-Kohorte — eine Randlösung daraus ist keine
+    # Suchraum-Aussage, sondern ein Artefakt der Tie-Break-Regel. ``boundary_resolution_skipped_
+    # reason`` macht das im Report explizit sichtbar, statt eine erfundene Randlösung zu melden.
+    _boundary_cohort_degenerate = bool(
+        n_evaluable == 0 or (_reward_std_total is not None and _reward_std_total == 0))
+    boundary_resolution_skipped_reason = "DEGENERATE_COHORT" if _boundary_cohort_degenerate else None
     winner_outside_default_bounds_after_override: dict[str, list] = {}
-    if scored and proposal.get("strategy"):
+    if scored and proposal.get("strategy") and not _boundary_cohort_degenerate:
         try:
             from automation.optimizer.bounds import extract_numeric_bounds
             _default_bounds = extract_numeric_bounds(proposal["strategy"])
@@ -1874,6 +1994,10 @@ def _study_record(proposal: dict, study,
         # Issue #1067 — leer, wenn der Gewinner innerhalb des Default-Suchbands liegt (der weit
         # überwiegende Regelfall, bit-identisch zum Pre-#1067-Bericht).
         "winner_outside_default_bounds_after_override": winner_outside_default_bounds_after_override or None,
+        # Issue #1306 (GH #1183, P1) — gesetzt, wenn die Randlösungs-Erkennung oben WEGEN einer
+        # degenerierten Kohorte (0 evaluable Trials oder reward_std_total == 0) uebersprungen
+        # wurde; ``None`` im Regelfall (Kohorte informativ, Erkennung lief normal).
+        "boundary_resolution_skipped_reason": boundary_resolution_skipped_reason,
         "n_trials": n_trials,
         "n_evaluable": n_evaluable,
         "n_selection_statistic_available": n_selection_statistic_available,
@@ -2064,6 +2188,12 @@ def _study_record(proposal: dict, study,
         "inference_diagnostics_trials_by_code": inference_diagnostics_trials_by_code,
         # Issue #976 — Rohmaterial für invariants.check_window_unreachable_rate.
         "is_rejection_detail_counts": is_rejection_detail_counts,
+        # Issue #1303 (GH #1180) Fix Punkt 1 — Rohmaterial für
+        # _structural_zero_eligible_diagnosed_pairs/diagnose_structural_zero_eligible_gate
+        # (signal_absent- vs. signal_sparse-Unterscheidung bei STRUCTURAL_ALL_UNEVALUABLE).
+        "median_is_trades": median_is_trades,
+        "max_is_trades": max_is_trades,
+        "worker_error_counts": worker_error_counts,
         # Issue #901 — Rohmaterial für invariants.check_guard_reference_coherence.
         "guard_reference_sources": guard_reference_sources,
         # Issue #968 — Rohmaterial für invariants.check_guard_reference_stability.
@@ -2359,6 +2489,14 @@ def _study_record(proposal: dict, study,
         # coherence (asset-class-gated FAIL bei > 8) und Zusatz-Telemetrie zur Session-Abdeckung.
         "bars_per_calendar_day": bars_per_calendar_day_median,
         "session_coverage_fraction": session_coverage_fraction_median,
+        # Issue #1318 (GH #1195, P2) — siehe Berechnungskommentar oben; None, solange
+        # bars_per_calendar_day tatsaechlich gestempelt ist.
+        "bar_axis_telemetry_missing_reason": bar_axis_telemetry_missing_reason,
+        # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Rohmaterial für invariants.check_tick_population
+        # und das §5-Abnahmeprotokoll (n_ticks_raw_median > 0, n_bars_delivered_median > 1500).
+        "n_ticks_raw_median": n_ticks_raw_median,
+        "n_ticks_after_session_filter_median": n_ticks_after_session_filter_median,
+        "n_bars_delivered_median": n_bars_delivered_median,
         "promotion_outcome": proposal.get("status"),
         # Issue #1002/#1154 (Katalog #1170) — die ERSTE verletzte Promotions-Stufe (``None`` bei
         # einer Promotion) UND alle GLEICHZEITIG verletzten Stufen — macht in Abschnitt 2.2 ohne
@@ -2957,8 +3095,21 @@ _STRUCTURAL_DIAGNOSIS_STOP_REASONS = frozenset({
 })
 
 
+# Issue #1304 (GH #1181) Fix Punkt 1 — dieselbe Verzweigung wie ``diagnose_structural_zero_
+# eligible_gate``s STRUCTURAL_ALL_UNEVALUABLE-Zweig (#1303/GH #1180), hier angewandt auf einen
+# BEREITS von der SWEEP-Seite (``sweep_diagnostics.diagnose_trade_frequency``) gemessenen
+# ``binding_cause`` aus dem Ereignisstrom — die volle ``diagnose_trade_frequency``-Ursachen-Menge
+# (``signal_absent``/``signal_sparse``/``hold_duration``/``data_unavailable``) ist GRÖSSER als die,
+# die die report-seitige Neuableitung kennt (nur ``signal_absent``/``signal_sparse``, siehe dortiger
+# Docstring) — genau die "disjunkten Vokabulare", die #1304 auflöst.
+def _action_for_structural_binding_cause(binding_cause: str | None) -> tuple[str | None, str]:
+    if binding_cause == "signal_sparse":
+        return "frequency", "search_space_override"
+    return None, "none"
+
+
 def _structural_zero_eligible_diagnosed_pairs(
-    studies_out: list[dict[str, Any]],
+    studies_out: list[dict[str, Any]], *, events_path: "Path | None" = None,
 ) -> list[dict[str, Any]]:
     """Issue #1045/#1194 — Root-Cause: der #679/#829/#830/#831-Rückschriebpfad
     (``run_optimization.py`` → ``sweep_diagnostics.record_diagnosed_pair``) schreibt AUSSCHLIESSLICH
@@ -2982,25 +3133,61 @@ def _structural_zero_eligible_diagnosed_pairs(
 
     Issue #1096/#1244 — auch ``STRUCTURAL_ALL_UNEVALUABLE``-Studies durchlaufen jetzt dieselbe
     LIVE-Ableitung (``stop_reason`` wird durchgereicht, siehe ``diagnose_structural_zero_eligible_
-    gate``-Docstring für den eigenen, unbedingt frequenzseitigen Zweig dieses ``stop_reason``s)."""
+    gate``-Docstring für den eigenen, unbedingt frequenzseitigen Zweig dieses ``stop_reason``s).
+
+    Issue #1304 (GH #1181) Fix Punkt 1 — Root-Cause: für dieselbe Study meldete der Ereignisstrom
+    (``STRUCTURAL_ALL_UNEVALUABLE``, aus ``sweep_diagnostics.diagnose_trade_frequency``, PER-TRIAL-
+    Daten) einen ANDEREN ``binding_cause`` als dieser Report-Zweig (aus ``is_rejection_detail_
+    counts`` neu abgeleitet über ``diagnose_structural_zero_eligible_gate``) — zwei unabhängige
+    Implementierungen mit disjunkten Vokabularen. Der sweep-seitige Befund wird im
+    ``STRUCTURAL_ALL_UNEVALUABLE``-Ereignis bereits VOLLSTÄNDIG emittiert (``**diagnosis`` aus
+    ``diagnose_trade_frequency``, siehe ``run_optimization.floor_plateau_callback``) — ``events_path``
+    (übergeben, sobald ein Aufrufer ihn über ``jsonl_sidecar_path`` auflösen kann) liest ihn STATT
+    ihn neu abzuleiten. Der Report-Zweig (``diagnose_structural_zero_eligible_gate``) bleibt
+    ausschliesslich als FALLBACK für ``STRUCTURAL_ALL_UNEVALUABLE``-Studies OHNE zugehöriges
+    Ereignis (Legacy-Lauf/fehlender Sidecar) erhalten, gestempelt als ``source="report_fallback"``
+    statt ``"live_derivation"`` — ``STRUCTURAL_ZERO_ELIGIBLE`` (kein äquivalenter Ereignistyp)
+    bleibt unverändert ``"live_derivation"``."""
     from automation.optimizer.sweep_diagnostics import diagnose_structural_zero_eligible_gate
+    event_diagnoses: dict[tuple[Any, Any], dict] = {}
+    if events_path is not None:
+        for ev in _read_jsonl_events(events_path, "STRUCTURAL_ALL_UNEVALUABLE"):
+            key = (ev.get("strategy"), ev.get("symbol"))
+            if key[0] is not None and key[1] is not None and ev.get("binding_cause") is not None:
+                event_diagnoses[key] = ev
     out = []
     for r in studies_out:
         stop_reason = r.get("stop_reason")
         if stop_reason not in _STRUCTURAL_DIAGNOSIS_STOP_REASONS:
             continue
-        diagnosis = diagnose_structural_zero_eligible_gate(
-            r.get("is_rejection_detail_counts"), stop_reason=stop_reason)
-        if diagnosis["binding_cause"] in (None, "none"):
+        key = (r.get("strategy"), r.get("symbol"))
+        event = event_diagnoses.get(key) if stop_reason == "STRUCTURAL_ALL_UNEVALUABLE" else None
+        if event is not None:
+            binding_cause = event["binding_cause"]
+            gate_type, proposed_action = _action_for_structural_binding_cause(binding_cause)
+            dominant_rejection_detail = None
+            dominant_fraction = None
+            source = "event"
+        else:
+            diagnosis = diagnose_structural_zero_eligible_gate(
+                r.get("is_rejection_detail_counts"), stop_reason=stop_reason,
+                max_is_trades=r.get("max_is_trades"), median_is_trades=r.get("median_is_trades"),
+                worker_error_counts=r.get("worker_error_counts"))
+            binding_cause = diagnosis["binding_cause"]
+            proposed_action = diagnosis["proposed_action"]
+            dominant_rejection_detail = diagnosis["dominant_rejection_detail"]
+            dominant_fraction = diagnosis["dominant_fraction"]
+            source = "report_fallback" if stop_reason == "STRUCTURAL_ALL_UNEVALUABLE" else "live_derivation"
+        if binding_cause in (None, "none"):
             continue
         out.append({
             "strategy": r.get("strategy"), "symbol": r.get("symbol"),
-            "action": diagnosis["proposed_action"], "binding_cause": diagnosis["binding_cause"],
+            "action": proposed_action, "binding_cause": binding_cause,
             "n_runs_confirmed": None, "expires_after_runs": None,
             "budget_executed_fraction": r.get("budget_executed_fraction"),
-            "dominant_rejection_detail": diagnosis["dominant_rejection_detail"],
-            "dominant_fraction": diagnosis["dominant_fraction"],
-            "source": "live_derivation",
+            "dominant_rejection_detail": dominant_rejection_detail,
+            "dominant_fraction": dominant_fraction,
+            "source": source,
         })
     return out
 
@@ -3047,9 +3234,47 @@ def _atr_floor_dominant_diagnosed_pairs(
     return out
 
 
+def _binding_cause_agreement_records(
+    studies_out: list[dict[str, Any]], events_path: "Path | None",
+) -> list[dict[str, Any]]:
+    """Issue #1304 (GH #1181) Fix Punkt 2 — Rohmaterial für
+    ``invariants.check_binding_cause_agreement``: für jede ``STRUCTURAL_ALL_UNEVALUABLE``-Study MIT
+    Ereignis werden BEIDE unabhängig gemessenen ``binding_cause``-Werte (Ereignisstrom, sweep-
+    seitig aus ``sweep_diagnostics.diagnose_trade_frequency``, PER-TRIAL-Daten, VS. Report-
+    Neuableitung aus ``diagnose_structural_zero_eligible_gate``, ``is_rejection_detail_counts``)
+    nebeneinandergestellt — auch wenn ``_structural_zero_eligible_diagnosed_pairs`` selbst bereits
+    den Ereigniswert als Sieger übernimmt (#1304 Fix Punkt 1), macht diese Funktion eine etwaige
+    Divergenz zwischen beiden Quellen für die Invariante messbar."""
+    from automation.optimizer.sweep_diagnostics import diagnose_structural_zero_eligible_gate
+    event_diagnoses: dict[tuple[Any, Any], dict] = {}
+    if events_path is not None:
+        for ev in _read_jsonl_events(events_path, "STRUCTURAL_ALL_UNEVALUABLE"):
+            key = (ev.get("strategy"), ev.get("symbol"))
+            if key[0] is not None and key[1] is not None and ev.get("binding_cause") is not None:
+                event_diagnoses[key] = ev
+    out = []
+    for r in studies_out:
+        if r.get("stop_reason") != "STRUCTURAL_ALL_UNEVALUABLE":
+            continue
+        event = event_diagnoses.get((r.get("strategy"), r.get("symbol")))
+        if event is None:
+            continue
+        report_diagnosis = diagnose_structural_zero_eligible_gate(
+            r.get("is_rejection_detail_counts"), stop_reason=r.get("stop_reason"),
+            max_is_trades=r.get("max_is_trades"), median_is_trades=r.get("median_is_trades"),
+            worker_error_counts=r.get("worker_error_counts"))
+        out.append({
+            "strategy": r.get("strategy"), "symbol": r.get("symbol"),
+            "event_binding_cause": event["binding_cause"],
+            "report_binding_cause": report_diagnosis["binding_cause"],
+        })
+    return out
+
+
 def _diagnosed_pairs_section(
     studies_out: list[dict[str, Any]] | None = None, *,
     atr_floor_dimension_freeze_threshold: float = 0.60,
+    events_path: "Path | None" = None,
 ) -> list[dict[str, Any]]:
     """Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Einträge (nicht nur die ``'denylist'``-
     Teilmenge von ``_diagnosed_pairs_skipped_section``) mit ``action``, ``binding_cause``,
@@ -3071,7 +3296,7 @@ def _diagnosed_pairs_section(
     identischer Paare gewinnt die zuletzt gemergte Quelle, siehe Merge-Reihenfolge unten)."""
     by_key: dict[tuple[Any, Any], dict[str, Any]] = {
         (e["strategy"], e["symbol"]): e
-        for e in _structural_zero_eligible_diagnosed_pairs(studies_out or [])
+        for e in _structural_zero_eligible_diagnosed_pairs(studies_out or [], events_path=events_path)
     }
     for e in _atr_floor_dominant_diagnosed_pairs(
             studies_out or [], freeze_threshold=atr_floor_dimension_freeze_threshold):
@@ -3092,6 +3317,7 @@ def _writeback_search_stagnation_diagnoses(
     search_made_progress_offenders: dict[str, float] | None,
     structural_zero_eligible_missing: list[str] | None,
     *, run_id: str, work_dir: Path | None = None,
+    decision_admissible: bool | None = None,
 ) -> list[dict[str, Any]]:
     """Issue #1069/#1219 (P2, Katalog #1196-1221) — "Diagnose ohne Konsequenz": ``check_search_
     made_progress``-FAIL und ``check_structural_zero_eligible_has_diagnosis``-FAIL werden BEIDE
@@ -3144,7 +3370,8 @@ def _writeback_search_stagnation_diagnoses(
                 strategy, symbol, {"binding_cause": "search_stagnation"},
                 n_runs_confirmed=n_runs_confirmed,
             )
-            record_diagnosed_pair(rec, work_dir=work_dir, run_id=run_id)
+            record_diagnosed_pair(
+                rec, work_dir=work_dir, run_id=run_id, decision_admissible=decision_admissible)
             recommendations.append(rec)
         except Exception:
             _log.debug(
@@ -3155,6 +3382,7 @@ def _writeback_search_stagnation_diagnoses(
 
 def _writeback_gate_unreachable_diagnoses(
     studies_out: list[dict[str, Any]], *, run_id: str, work_dir: Path | None = None,
+    decision_admissible: bool | None = None,
 ) -> list[dict[str, Any]]:
     """Issue #1296 (GH #1169, Katalog #1272-1297, P1) — "Diagnose ohne Konsequenz", dieselbe
     Fehlerklasse wie #1219 (siehe ``_writeback_search_stagnation_diagnoses`` oben): ``binding_
@@ -3209,7 +3437,8 @@ def _writeback_gate_unreachable_diagnoses(
                 budget_executed_fraction=e.get("budget_executed_fraction"),
                 n_runs_confirmed=n_runs_confirmed,
             )
-            record_diagnosed_pair(rec, work_dir=work_dir, run_id=run_id)
+            record_diagnosed_pair(
+                rec, work_dir=work_dir, run_id=run_id, decision_admissible=decision_admissible)
             recommendations.append(rec)
         except Exception:
             _log.debug(
@@ -3263,6 +3492,13 @@ def _boundary_solutions_section(studies_out: list[dict[str, Any]] | None = None)
         ]
     out: list[dict[str, Any]] = []
     for r in studies_out:
+        # Issue #1306 (GH #1183, P1) — bei degenerierter Kohorte ("der Gewinner" ist nur ein
+        # Tie-Break-Artefakt, siehe Feldkommentar bei ``boundary_resolution_skipped_reason`` in
+        # ``_study_record``) wird die Study HIER GANZ uebersprungen, nicht nur ihr strikter
+        # ``winner_outside_default_bounds_after_override``-Bruch — ``boundary_hit_fraction`` waere
+        # dieselbe Tie-Break-Artefakt-Aussage.
+        if r.get("boundary_resolution_skipped_reason") == "DEGENERATE_COHORT":
+            continue
         frac = r.get("boundary_hit_fraction")
         has_strict_override = bool(r.get("winner_outside_default_bounds_after_override"))
         if not (has_strict_override
@@ -3620,9 +3856,29 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
         _label = "STORE_CREATED_THIS_RUN" if _has_any_entry_now else "STORE_PATH_MISSING"
         skipped_by_reason[_label] = skipped_by_reason.pop("STORE_EMPTY")
 
+    # Issue #1321 (GH #1198, P2) — Root-Cause: ``skipped_by_reason`` aggregiert AUSSCHLIESSLICH
+    # die Ebene-2 (``CHAMPION_WRITEBACK``)-Ereignisse; bei einem leeren Store ist diese Ebene
+    # trivialerweise ``STORE_EMPTY`` ("es wurde nie gespeichert") — die eigentliche Ursache, WARUM
+    # nie gespeichert wurde, liegt eine Stufe davor, in den ``champion_store_attempts`` (Ebene 1,
+    # ``CHAMPION_STORE_ATTEMPT``) oben bereits gesammelt, aber bislang NICHT zu einer Reason-
+    # Verteilung aggregiert. Symptom-Beweis: ``skip_detail.reason='EMPTY_PARAMS'`` je Ebene-1-
+    # Versuch, waehrend der Report nur das Ebene-2-Symptom ``{'STORE_EMPTY': 14}`` auswies.
+    #
+    # ``skipped_by_reason`` bleibt UNVERAENDERT bestehen (Ebene 2, Rueckwaertskompatibilitaet zu
+    # bestehenden Konsumenten/Tests) — ``writeback_skipped_by_reason`` ist derselbe Wert unter dem
+    # unzweideutigen Namen; ``store_attempt_skipped_by_reason`` ist NEU (Ebene 1).
+    store_attempt_skipped_by_reason: collections.Counter = collections.Counter()
+    for a in champion_store_attempts.values():
+        if a.get("stored") is False:
+            store_attempt_skipped_by_reason[
+                (a.get("skip_detail") or {}).get("reason") or "UNKNOWN"] += 1
+
     return {
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
         "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
+        # Issue #1321 (GH #1198, P2) — siehe Berechnungskommentar oben.
+        "store_attempt_skipped_by_reason": dict(store_attempt_skipped_by_reason),
+        "writeback_skipped_by_reason": dict(skipped_by_reason),
         "semantics_migrated": semantics_migrated,
         "admissible_despite_simulation_stale": admissible_despite_simulation_stale,
         "max_corroboration_count": max_corroboration_count, "attempts": attempts,
@@ -3963,13 +4219,56 @@ def build_probe_report(proposals: Iterable[Path | dict], *, run_id: str,
     )
 
 
+def diagnosis_writeback_admissible(run_report: dict) -> tuple[bool, str]:
+    """Issue #1305 (GH #1182, P1) Fix Punkt 1 — zentraler Wächter: darf DIESER Lauf Diagnose-
+    Rückschriebe schreiben (``diagnosed_pairs``/``boundary_solutions``/``search_budget_proposal``/
+    Champion-Writeback)? ``False``, wenn:
+      1. ``run_report['decision_admissible'] is False`` (mindestens eine ``severity='blocking'``-
+         Invariante FAILt, siehe ``_compute_decision_admissible``), ODER
+      2. mindestens ein Check in ``run_report['invariant_checks']`` mit ``severity == 'blocking'``
+         ``passed is False`` trägt, ODER
+      3. mindestens ein Check mit ``severity == 'blocking'`` ``passed is None`` trägt (ein
+         nicht auswertbarer blockierender Wächter ist genauso wenig eine tragfähige
+         Entscheidungsgrundlage wie ein FAILender — Bedingungen 2/3 sind bewusst redundant zu
+         Bedingung 1 [dieselbe Definition, die bereits in ``_compute_decision_admissible``
+         steckt] — DIESE Funktion bleibt trotzdem robust, auch wenn ``decision_admissible``
+         selbst fehlt/veraltet ist, z. B. ein Snapshot VOR dem finalen Merge sweep-seitiger
+         Ereignisse, Pitfall #467 in AGENTS.md).
+
+    Root-Cause #1305: ``record_diagnosed_pair``/der ``boundary_solutions``-Rückschrieb waren an
+    KEINE Zulässigkeitsbedingung gekoppelt — ein Lauf, der als ``run_status='completed_invalid'``
+    UND ``decision_admissible=false`` gestempelt war, schrieb trotzdem 14 Suchraum-Empfehlungen in
+    den Diagnose-Cache.
+
+    Rückgabe ``(admissible, reason)`` — ``reason`` ist einer von ``'admissible'``,
+    ``'decision_admissible_false'``, ``'blocking_invariant_failed'``,
+    ``'blocking_invariant_inconclusive'`` (erste zutreffende Bedingung gewinnt, in dieser
+    Reihenfolge geprüft). Rein, deterministisch, kein I/O."""
+    if run_report.get("decision_admissible") is False:
+        return False, "decision_admissible_false"
+    invariant_checks = run_report.get("invariant_checks") or []
+    for c in invariant_checks:
+        if c.get("severity") == "blocking" and c.get("passed") is False:
+            return False, "blocking_invariant_failed"
+    for c in invariant_checks:
+        if c.get("severity") == "blocking" and c.get("passed") is None:
+            return False, "blocking_invariant_inconclusive"
+    return True, "admissible"
+
+
 def _compute_decision_admissible(invariant_checks: list[dict]) -> bool:
     """Issue #942/#1108 (Katalog #960) — eine der drei orthogonalen Achsen, die den vorher
     ueberladenen ``run_status``-String ersetzen (siehe ``_build_report``-Docstring): ``False``
     sobald mindestens eine ``severity='blocking'``-Invariante in ``invariant_checks`` FAILt.
     Reine Funktion (kein Report-Kontext noetig) — dieselbe Definition, die vormals in
     ``sweep._downgrade_run_status_for_blocking_invariants`` unabhaengig REKONSTRUIERT wurde,
-    JETZT die einzige Quelle."""
+    JETZT die einzige Quelle.
+
+    Issue #1310 (GH #1187, P1) Akzeptanzkriterium 3 — ``not c.get("passed", True)`` ist bereits
+    ``True`` fuer ``passed=None`` (Python: ``not None == True``), also identisch zu ``passed=False``
+    behandelt: ein blockierender Fail-Fast-Wächter, der INCONCLUSIVE bleibt (Issue #1309/#1310 Fix
+    Punkt 1), macht einen Lauf GENAUSO ``decision_admissible=False`` wie ein expliziter FAIL — ohne
+    Codeänderung an dieser Stelle, siehe ``test_issue_1310_fail_fast_inconclusive.py``."""
     return not any(
         c.get("severity") == "blocking" and not c.get("passed", True) for c in invariant_checks)
 
@@ -4923,6 +5222,12 @@ def _build_report(
     all_checks.append(("global", _inv.check_timebox_unit_coherence(
         studies_out, declared_axis=_declared_time_box_bars_axis,
         asset_class_by_symbol=_asset_class_by_symbol(_cost_basis_symbols))))
+    # Issue #1314 (GH #1191, P0) — der harte Bar-Cap (_contracts.MAX_BARS_IN_TRADE_HARD_CAP) muss
+    # >= der konfigurierten Zeitbox-Deadline (optimizer.json['time_box_bars']) bleiben, sonst ist
+    # eine den Cap ausschoepfende Position per Konstruktion eine Zeitbox-Verletzung (B-12). Reine
+    # Konfigurations-Pruefung, unabhaengig von studies_out.
+    all_checks.append(("global", _inv.check_timebox_cap_coherence(
+        time_box_bars=float(optimizer_cfg.get("time_box_bars", _contracts.TIME_BOX_BARS)))))
     _stamp_atr_floor_bps_derived(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
         round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
@@ -5154,6 +5459,13 @@ def _build_report(
     # als eigenständiger Wächter neben dem Verdikt selbst; siehe dortiger Docstring.
     all_checks.append(("global", _inv.check_effective_stop_ratio_coverage(studies_out)))
 
+    # Issue #1298 (GH #1175, P0) Fix Punkt 4 — blockierender Tick-/Bar-Populations-Wächter.
+    all_checks.append(("global", _inv.check_tick_population(studies_out)))
+
+    # Issue #1304 (GH #1181, P1) Fix Punkt 2 — Ereignis- vs. Report-binding_cause-Übereinstimmung.
+    all_checks.append(("global", _inv.check_binding_cause_agreement(
+        _binding_cause_agreement_records(studies_out, jsonl_sidecar_path(_log.name)))))
+
     # Issue #1266 (GH #1136) — ein Kostenstress, der jede Study eines Symbols gleich trifft, ist
     # kein Stress (Pitfall #453 in AGENTS.md); siehe dortiger Docstring.
     all_checks.append(("global", _inv.check_cost_stress_discriminates(studies_out)))
@@ -5338,7 +5650,8 @@ def _build_report(
         optimizer_cfg.get("atr_floor_dimension_freeze_threshold", 0.60))
     structural_zero_eligible_diagnosis_check = _inv.check_structural_zero_eligible_has_diagnosis(
         studies_out, _diagnosed_pairs_section(
-            studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold))
+            studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold,
+            events_path=jsonl_sidecar_path(_log.name)))
     all_checks.append(("global", structural_zero_eligible_diagnosis_check))
 
     # Issue #1263 (GH #1133) Fix Punkt 3/4, erweitert #1295 (GH #1168, Katalog #1272-1297, P1) —
@@ -5439,31 +5752,6 @@ def _build_report(
     search_made_progress_check = _inv.check_search_made_progress(studies_out)
     all_checks.append(("global", search_made_progress_check))
 
-    # Issue #1069/#1219 (P2, Katalog #1196-1221) — "Diagnose ohne Konsequenz": beide FAIL-Befunde
-    # oben (Suchstagnation UND STRUCTURAL_ZERO_ELIGIBLE ohne Diagnose) werden jetzt zusätzlich in
-    # den #681/#761-Rückschrieb-Cache geschrieben (siehe _writeback_search_stagnation_diagnoses-
-    # Docstring) — nach 2 Läufen mit demselben Befund für dasselbe Paar 'deprioritized', nach 4
-    # 'denylist'. Fail-open (die Funktion selbst fängt Fehler je Paar ab); ein Fehlschlag hier darf
-    # den Report nicht verhindern.
-    try:
-        _writeback_search_stagnation_diagnoses(
-            search_made_progress_check.actual,
-            (structural_zero_eligible_diagnosis_check.actual or {}).get("missing_diagnosis_for"),
-            run_id=run_id,
-        )
-    except Exception:
-        _log.debug("Issue #1069/#1219: search_stagnation-Rueckschrieb-Batch fehlgeschlagen "
-                   "(non-fatal).", exc_info=True)
-
-    # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — dieselbe "Diagnose ohne Konsequenz"-Klasse
-    # fuer binding_cause='gate_unreachable' (siehe _writeback_gate_unreachable_diagnoses-Docstring):
-    # ab der ersten Bestaetigung 'deprioritized', NIE 'denylist' (die Ursache liegt im Gate).
-    try:
-        _writeback_gate_unreachable_diagnoses(studies_out, run_id=run_id)
-    except Exception:
-        _log.debug("Issue #1296: gate_unreachable-Rueckschrieb-Batch fehlgeschlagen (non-fatal).",
-                   exc_info=True)
-
     # Issue #919 Fix 4 — jede Lücke zwischen dem je-Study aufsummierten Exit-Reason-Histogramm
     # und der tatsächlichen Round-Trip-Zahl bedeutet einen Exit-Pfad ohne Order-Tag-Attribution.
     exit_reason_coverage_check = _inv.check_exit_reason_coverage(studies_out)
@@ -5499,7 +5787,14 @@ def _build_report(
     # Invariante, die in diesem Lauf kein einziges Ergebnis (PASS oder FAIL) meldet, ist nicht
     # verdrahtet. Muss NACH allen anderen Checks stehen (braucht ihre Namen), bevor invariant_checks
     # gebaut wird.
-    _already_evaluated_names = [c.name for _label, c in all_checks]
+    # Issue #1308 (GH #1185, P1) — ``_final_invariant_snapshot`` statt nur ``all_checks``: ein rein
+    # sweep-seitig gemeldeter Check (z. B. check_bar_quality) zaehlt seither ebenfalls als
+    # "ausgewertet" (siehe dortiger Docstring).
+    _already_evaluated_names = [
+        d.get("name") or d.get("check")
+        for d in _final_invariant_snapshot(all_checks, preflight_invariant_checks)
+        if d.get("name") or d.get("check")
+    ]
     fail_fast_wired_check = _inv.check_fail_fast_invariants_wired(
         _already_evaluated_names, fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
     all_checks.append(("global", fail_fast_wired_check))
@@ -5524,18 +5819,33 @@ def _build_report(
     # sweep._offending_pairs_for_fail_fast_check die #1016-Breitenschwelle nie auswerten (stiller
     # Konservativ-Abbruch). Muss ebenfalls NACH allen anderen Checks stehen (braucht ihre
     # actual/passed-Werte).
-    _already_evaluated_dicts = [c.to_dict() for _label, c in all_checks]
+    # Issue #1308 (GH #1185, P1) — eigene ``_final_invariant_snapshot``-Call-Site (dieselbe
+    # Hilfsfunktion wie oben/unten, damit alle drei Meta-Wächter garantiert dieselbe, vollstaendige
+    # Sicht auf den Strom teilen, statt wieder auseinanderzulaufen).
     fail_fast_actual_convention_check = _inv.check_fail_fast_actual_convention(
-        _already_evaluated_dicts, fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
+        _final_invariant_snapshot(all_checks, preflight_invariant_checks),
+        fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
     all_checks.append(("global", fail_fast_actual_convention_check))
 
     # Issue #983/#1137 (Katalog #986, Pitfall #410 in AGENTS.md) — EINE Quelle fuer "darf einen
     # Sweep abbrechen": severity='blocking' IMPLIZIERT fail-fast-Faehigkeit; fail_fast_invariants
     # darf nur Namen von Checks listen, deren beobachtete severity in DIESEM Lauf 'blocking' war.
     # Muss ebenfalls NACH allen anderen Checks stehen (braucht ihre severity-Werte).
+    # Issue #1308 (GH #1185, P1) — dritte, eigene ``_final_invariant_snapshot``-Call-Site (siehe
+    # Kommentar oben).
     fail_fast_are_blocking_check = _inv.check_fail_fast_invariants_are_blocking(
-        _already_evaluated_dicts, fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
+        _final_invariant_snapshot(all_checks, preflight_invariant_checks),
+        fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
     all_checks.append(("global", fail_fast_are_blocking_check))
+
+    # Issue #1310 (GH #1187, P1) — vierter Meta-Wächter derselben Familie: selbst wenn kein
+    # fail-fast-Check explizit FAILt, ist ein Lauf, dessen Fail-Fast-Waechter UEBERWIEGEND
+    # passed=None tragen, nicht entscheidungsfaehig. Eigene ``_final_invariant_snapshot``-Call-Site
+    # (dieselbe Konvention wie die drei Wächter oben).
+    fail_fast_inconclusive_budget_check = _inv.check_fail_fast_inconclusive_budget(
+        _final_invariant_snapshot(all_checks, preflight_invariant_checks),
+        fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
+    all_checks.append(("global", fail_fast_inconclusive_budget_check))
 
     # Issue #941/#1107 (Katalog #960) — JEDER Eintrag in ``invariant_checks`` traegt am Ende die
     # Population, die er tatsaechlich gesehen hat (``InvariantResult.cohort``-Docstring): ein Check,
@@ -5693,6 +6003,58 @@ def _build_report(
         if o.get("symbol") in _active_bounds_overrides_run_symbols
     ]
 
+    # Issue #1316 (GH #1193, P1) — report-seitiges Gegenstueck zum fail-loud-Waechter in
+    # ``spaces._bounds_for`` (``StaleAxisOverrideError``): geprueft gegen das VOLLE kuratierte
+    # Inventar (``_active_bounds_overrides_all_list``, nicht die auf dieses Laufs Symbole gefilterte
+    # Liste) — ein stale Override fuer ein Symbol, das dieser Lauf nicht zieht, bleibt sonst
+    # unsichtbar, bis irgendein Lauf ihn zieht und abbricht.
+    #
+    # Regressionsschutz (aufgedeckt bei der #1320/GH #1197-Implementierung) — ``all_checks``
+    # wird bereits bei Zeile ~5859 EINMALIG in ``invariant_checks`` geflacht; ein ``all_checks.
+    # append(...)`` NACH dieser Stelle landet nie im Report-Artefakt. Direkter ``invariant_checks``-
+    # Append, dieselbe Konvention wie ``_axes_coherence_dict``/``_mandatory_gate_global_dict`` oben
+    # (beide ebenfalls NACH der Flach-Stelle berechnet).
+    override_axis_coherence_check = _inv.check_override_axis_coherence(
+        _active_bounds_overrides_all_list, run_axis=optimizer_cfg.get("time_box_bars_axis"))
+    _override_axis_coherence_dict = override_axis_coherence_check.to_dict()
+    _override_axis_coherence_dict["scope"] = "global"
+    _override_axis_coherence_dict["source"] = "report"
+    invariant_checks.append(_override_axis_coherence_dict)
+
+    # Issue #1320 (GH #1197, P2) — ein Ergebnis ist INFORMATIONSFREI (kein einziger Deploy-
+    # relevanter Unterschied zwischen den Studies dieses Laufs herleitbar), OHNE dass irgendeine
+    # bestehende Kennzahl das als eigenen Befund ausweist: Root-Cause-Beweis (Referenzlauf
+    # da354bc2) — best_reward = -20,0 in 14/14 Studies, n_eligible = 0 in 14/14, reward_std_total
+    # nicht gesetzt. Zwei UNABHAENGIGE Bedingungen, JEDE fuer sich hinreichend:
+    # 1. Alle (>= 2) Studies tragen DENSELBEN best_reward — die Suche hat keinen einzigen
+    #    unterscheidbaren Kandidaten hervorgebracht (ein einzelner Study-Lauf hat per Konstruktion
+    #    nur einen Wert und ist daher von dieser Bedingung ausgenommen — "alle tragen denselben"
+    #    ist bei n=1 keine Aussage ueber KOLLABIERTE Varianz).
+    # 2. n_evaluable == 0 in JEDER Study (auch bei n=1) — keine einzige Study konnte ueberhaupt
+    #    einen OOS-evaluierten Trial hervorbringen, das Ergebnis ist strukturell leer.
+    #
+    # Placement (Regressionsschutz, aufgedeckt bei dieser Implementierung): MUSS wie ``check_
+    # override_axis_coherence`` VOR ``_stream_check_names``/``check_invariant_coverage`` unten
+    # stehen (direkter ``invariant_checks``-Append, braucht nur ``studies_out`` — bereits vollstaendig
+    # verfuegbar) — danach angehaengt wuerde ``check_result_not_degenerate`` als "fehlt im Strom"
+    # gemeldet, obwohl es tatsaechlich (nur zu spaet fuer DIESE Momentaufnahme) im Artefakt steht.
+    _result_degenerate_reasons: list[str] = []
+    if len(studies_out) >= 2:
+        _best_rewards_seen = {s.get("best_reward") for s in studies_out}
+        if len(_best_rewards_seen) == 1:
+            _result_degenerate_reasons.append("SAME_BEST_REWARD_ACROSS_ALL_STUDIES")
+    if studies_out and all((s.get("n_evaluable") or 0) == 0 for s in studies_out):
+        _result_degenerate_reasons.append("ZERO_EVALUABLE_IN_ALL_STUDIES")
+    _result_degenerate = bool(_result_degenerate_reasons)
+    _result_degenerate_reason = (
+        " + ".join(_result_degenerate_reasons) if _result_degenerate_reasons else None)
+    _result_not_degenerate_check = _inv.check_result_not_degenerate(
+        _result_degenerate, _result_degenerate_reason)
+    _result_not_degenerate_dict = _result_not_degenerate_check.to_dict()
+    _result_not_degenerate_dict["scope"] = "global"
+    _result_not_degenerate_dict["source"] = "report"
+    invariant_checks.append(_result_not_degenerate_dict)
+
     # Issue #1039/#1188 (Katalog #1188) — einmal berechnet (statt zweimal wie zuvor implizit
     # angenommen), damit die Sektion selbst UND die Regressions-Gegenprobe garantiert dieselbe
     # Liste sehen.
@@ -5703,6 +6065,27 @@ def _build_report(
     _boundary_solutions_dict["scope"] = "global"
     _boundary_solutions_dict["source"] = "report"
     invariant_checks.append(_boundary_solutions_dict)
+
+    # Issue #1309 (GH #1186, P1) — generischer Regressionswaechter: kein Eintrag darf ``passed=
+    # true`` tragen, waehrend sein ``detail`` die eigene Nicht-Auswertbarkeit bekennt (Pitfall #413
+    # in AGENTS.md, siebte Wiederkehr). Bewusst VOR ``_stream_check_names``/``check_invariant_
+    # coverage`` unten angehaengt (statt danach, wie ``check_diagnosis_writeback_admissible``) —
+    # anders als jener braucht dieser Check keine spaeter abgeleitete Grosse (nur den bereits
+    # vollstaendigen ``invariant_checks``-Stand bis hierher), kann also OHNE Selbstreferenz-Problem
+    # noch VOR der Abdeckungspruefung erscheinen und braucht deshalb KEINEN Eintrag in
+    # ``_DELIBERATELY_UNWIRED_INVARIANT_CHECKS``.
+    inconclusive_not_pass_check = _inv.check_inconclusive_not_reported_as_pass(invariant_checks)
+    _inconclusive_not_pass_dict = inconclusive_not_pass_check.to_dict()
+    _inconclusive_not_pass_dict["scope"] = "global"
+    _inconclusive_not_pass_dict["source"] = "report"
+    invariant_checks.append(_inconclusive_not_pass_dict)
+    if not inconclusive_not_pass_check.passed:
+        emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
+            "scope": "global", "check": inconclusive_not_pass_check.name,
+            "expected": inconclusive_not_pass_check.expected,
+            "actual": inconclusive_not_pass_check.actual,
+            "detail": inconclusive_not_pass_check.detail, "report_source": report_source,
+        }, level=logging.ERROR)
 
     # Issue #1015/#1167 (Katalog #1170) — die neue Meta-Invariante selbst: erschien jede definierte
     # check_*-Funktion im soeben zusammengefuehrten Strom oder auf der Allowlist? Muss NACH JEDEM
@@ -5730,6 +6113,61 @@ def _build_report(
     # Stand abgeleitet (dieselbe Reihenfolge wie vor #1037 — unveraendert).
     _decision_admissible = _compute_decision_admissible(invariant_checks)
 
+    # Issue #1305 (GH #1182, P1) Fix Punkt 1/2 — Rückschrieb-Zulässigkeit dieses Laufs, EINMAL aus
+    # dem FINALEN invariant_checks-Stand berechnet (Pitfall #467 in AGENTS.md: ein Snapshot VOR dem
+    # Merge sweep-seitiger Ereignisse würde einen Befund erzeugen, der dem eigenen Artefakt
+    # widerspricht — deshalb stehen die beiden folgenden Rückschriebe ERST hier, NACH
+    # _decision_admissible, statt an ihrer ursprünglichen, früheren Stelle im Funktionsverlauf).
+    _writeback_admissible, _writeback_admissible_reason = diagnosis_writeback_admissible({
+        "decision_admissible": _decision_admissible, "invariant_checks": invariant_checks,
+    })
+
+    # Issue #1069/#1219 (P2, Katalog #1196-1221) — "Diagnose ohne Konsequenz": beide FAIL-Befunde
+    # oben (Suchstagnation UND STRUCTURAL_ZERO_ELIGIBLE ohne Diagnose) werden zusätzlich in den
+    # #681/#761-Rückschrieb-Cache geschrieben (siehe _writeback_search_stagnation_diagnoses-
+    # Docstring) — nach 2 Läufen mit demselben Befund für dasselbe Paar 'deprioritized', nach 4
+    # 'denylist'. Fail-open (die Funktion selbst fängt Fehler je Paar ab); ein Fehlschlag hier darf
+    # den Report nicht verhindern. Issue #1305 (GH #1182) — NUR, wenn dieser Lauf selbst
+    # entscheidungsfähig ist (``_writeback_admissible``); sonst unterdrückt bereits
+    # ``record_diagnosed_pair`` jeden Schreibvorgang, aber der Batch-Aufruf selbst bleibt hier
+    # zusätzlich gegated, damit ``recommend_diagnosis_action`` (das ``n_runs_confirmed`` aus dem
+    # bestehenden Cache LIEST) den Cache in einem unzulässigen Lauf nicht einmal SIEHT.
+    if _writeback_admissible:
+        try:
+            _writeback_search_stagnation_diagnoses(
+                search_made_progress_check.actual,
+                (structural_zero_eligible_diagnosis_check.actual or {}).get("missing_diagnosis_for"),
+                run_id=run_id, decision_admissible=_writeback_admissible,
+            )
+        except Exception:
+            _log.debug("Issue #1069/#1219: search_stagnation-Rueckschrieb-Batch fehlgeschlagen "
+                       "(non-fatal).", exc_info=True)
+
+        # Issue #1296 (GH #1169, Katalog #1272-1297, P1) — dieselbe "Diagnose ohne Konsequenz"-
+        # Klasse fuer binding_cause='gate_unreachable' (siehe _writeback_gate_unreachable_
+        # diagnoses-Docstring): ab der ersten Bestaetigung 'deprioritized', NIE 'denylist'.
+        try:
+            _writeback_gate_unreachable_diagnoses(
+                studies_out, run_id=run_id, decision_admissible=_writeback_admissible)
+        except Exception:
+            _log.debug("Issue #1296: gate_unreachable-Rueckschrieb-Batch fehlgeschlagen "
+                       "(non-fatal).", exc_info=True)
+    else:
+        emit_execution_event(_log, "DIAGNOSIS_WRITEBACK_SUPPRESSED", {
+            "scope": "global", "reason": _writeback_admissible_reason,
+            "detail": "search_stagnation-/gate_unreachable-Rueckschrieb-Batch uebersprungen "
+                     "(Lauf nicht entscheidungsfaehig).",
+        }, level=logging.WARNING)
+
+    # Issue #1305 (GH #1182, P1) Fix Punkt 3 — Regressions-Wächter, direkt an invariant_checks
+    # angehängt (braucht _decision_admissible/_writeback_admissible, beide erst oben verfügbar).
+    _writeback_admissibility_check = _inv.check_diagnosis_writeback_admissible(
+        _decision_admissible, _writeback_admissible)
+    _writeback_admissibility_dict = _writeback_admissibility_check.to_dict()
+    _writeback_admissibility_dict["scope"] = "global"
+    _writeback_admissibility_dict["source"] = "report"
+    invariant_checks.append(_writeback_admissibility_dict)
+
     # Issue #1077/#1225 (P1) — aus den gemessenen ``applied_*``-Feldern JEDER Study abgeleitet
     # (siehe _cost_model_realism_from_applied-Docstring), NICHT mehr aus backtest.json direkt.
     (_cost_model_zero_realism, _cost_model_realism_source,
@@ -5747,6 +6185,12 @@ def _build_report(
         # Docstring. Zwei Läufe mit identischem run_fingerprint MUESSEN denselben Wert tragen,
         # sonst FAILt invariants.check_run_determinism.
         "result_fingerprint": _result_fingerprint,
+        # Issue #1320 (GH #1197, P2) — siehe Berechnungskommentar oben (_result_degenerate_
+        # reasons). ``invariants.check_result_not_degenerate`` bewacht ``result_degenerate`` als
+        # eigene, blockierende Invariante; ``summary_de.py`` §1 nennt "informationsfreies Ergebnis"
+        # statt nur "0 deploybar".
+        "result_degenerate": _result_degenerate,
+        "result_degenerate_reason": _result_degenerate_reason,
         # Issue #1275 (GH #1148, Katalog #1272-1297, P0) — die DEKLARIERTE Zeitbox-Zaehl-Achse
         # (optimizer.json['time_box_bars_axis']), fuer summary_de._section_4_longest_trades: die
         # "Handels-Bars (geschätzt)"-Spalte entfaellt nur, wenn dieser Wert tatsaechlich 'rth' ist
@@ -5955,7 +6399,8 @@ def _build_report(
             # Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Eintraege (denylist UND deprioritized
             # UND none-mit-Ursache), nicht nur die uebersprungene Teilmenge oben.
             "diagnosed_pairs": _diagnosed_pairs_section(
-                studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold),
+                studies_out, atr_floor_dimension_freeze_threshold=_atr_floor_freeze_threshold,
+                events_path=jsonl_sidecar_path(_log.name)),
             # Issue #831 Fix Punkt 4 — Randlösungen (boundary_hit_fraction > 0.3) mit ihrem
             # konkreten Bounds-Vorschlag, unabhängig davon, ob die Study eligible Trials hatte.
             # Issue #1039/#1188 — primär aus ``studies_out`` selbst abgeleitet (siehe dortiger

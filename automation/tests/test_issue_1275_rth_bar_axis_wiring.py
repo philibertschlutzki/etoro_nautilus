@@ -60,15 +60,26 @@ def _ts_ns(iso: str) -> int:
 # ---------------------------------------------------------------------------------------------
 
 def test_filter_drops_ticks_outside_the_session_window():
-    ticks = [
-        _FakeTick(_ts_ns("2026-08-24T10:00:00Z")),  # Montag, vor Open (13:30 UTC)
-        _FakeTick(_ts_ns("2026-08-24T15:00:00Z")),  # Montag, innerhalb 13:30-20:00
-        _FakeTick(_ts_ns("2026-08-24T21:00:00Z")),  # Montag, nach Close
-    ]
+    # Issue #1300 (GH #1177, P0) — die Fenstergrenzen werden gegen das beobachtete Tick-Raster
+    # gesnappt (``_snap_session_window_to_tick_grid``, ``_median_tick_delta_t_s``). Drei ISOLIERTE
+    # Einzel-Ticks (11 Stunden auseinander) sind keine realistische Tick-Dichte — ihr Median-Delta
+    # (Stunden) snappte das Fenster faelschlich um mehrere Stunden auf, statt der urspruenglich
+    # beabsichtigten exakten 13:30-20:00-Grenze nahezukommen. Drei DICHTE Cluster (1s-Kadenz, wie
+    # echte Marktdaten) um dieselben drei Zeitpunkte halten den Median klein (die Mehrheit der
+    # aufeinanderfolgenden Deltas bleibt 1s, nur 2 von 14 sind die grossen Cluster-Luecken) und
+    # bilden dieselbe "vor/innerhalb/nach"-Testabsicht auf realistischer Tick-Dichte ab.
+    def _cluster(start_iso: str, n: int = 5) -> list["_FakeTick"]:
+        base = _ts_ns(start_iso)
+        return [_FakeTick(base + i * 1_000_000_000) for i in range(n)]
+
+    before = _cluster("2026-08-24T10:00:00Z")   # Montag, vor Open (13:30 UTC)
+    inside = _cluster("2026-08-24T15:00:00Z")   # Montag, innerhalb 13:30-20:00
+    after = _cluster("2026-08-24T21:00:00Z")    # Montag, nach Close
+    ticks = before + inside + after
+
     session_hours_by_asset_class = {"EQUITY": {"open_utc": "13:30", "close_utc": "20:00"}}
     out = br._filter_ticks_to_session_hours(ticks, session_hours_by_asset_class, "EQUITY")
-    assert len(out) == 1
-    assert out[0] is ticks[1]
+    assert set(out) == set(inside)
 
 
 def test_filter_drops_weekend_ticks():
@@ -196,9 +207,12 @@ def test_max_bars_in_trade_hard_cap_is_6():
     assert MAX_BARS_IN_TRADE_HARD_CAP == 6
 
 
-def test_min_bars_in_trade_floor_is_1():
+def test_min_bars_in_trade_floor_is_2():
+    """Issue #1317/GH #1194 — der Floor wurde von der 0,24-Achsen-Skalierung (Wert 1) auf eine
+    achsen-unabhaengige Rausch-Schwelle (Wert 2) umgestellt; siehe test_issue_1317_min_bars_floor_
+    axis_independent.py fuer die volle #1194-Akzeptanzpruefung."""
     from automation.optimizer._contracts import MIN_BARS_IN_TRADE_FLOOR
-    assert MIN_BARS_IN_TRADE_FLOOR == 1
+    assert MIN_BARS_IN_TRADE_FLOOR == 2
 
 
 def test_search_space_overrides_json_rescaled():

@@ -84,6 +84,57 @@ def test_empty_list_is_deterministic():
 
 
 # ---------------------------------------------------------------------------------------------
+# Issue #1319 (GH #1196, P1) — symbol als fuenftes Feld (Beweis B-11: fuenf Laeufe ueber drei
+# Symbole trugen denselben result_fingerprint 41b770e93373, weil ein degeneriertes Ergebnis
+# (strategy, n_trials, best_reward, n_eligible) ueber JEDES Symbol identisch war).
+# ---------------------------------------------------------------------------------------------
+
+def test_differs_on_symbol_change_with_otherwise_identical_metrics():
+    """Akzeptanzkriterium #1319/1 — zwei Laeufe mit identischen Study-Kennzahlen, aber
+    verschiedenen Symbolen, tragen verschiedene result_fingerprint."""
+    a = rpt.compute_result_fingerprint([
+        {"strategy": "DonchianStrategy", "symbol": "TSLA.ETORO", "n_trials": 0,
+         "best_reward": None, "n_eligible": 0},
+    ])
+    b = rpt.compute_result_fingerprint([
+        {"strategy": "DonchianStrategy", "symbol": "NVDA.ETORO", "n_trials": 0,
+         "best_reward": None, "n_eligible": 0},
+    ])
+    assert a != b
+
+
+def test_reproduces_b11_three_symbols_no_longer_collide():
+    """Direkte B-11-Reproduktion: dieselbe degenerierte Study-Zeile (strategy, n_trials,
+    best_reward, n_eligible identisch) ueber drei verschiedene Symbole ergibt drei VERSCHIEDENE
+    Fingerprints (vor diesem Fix: alle drei == 41b770e93373-artig identisch)."""
+    def _degenerate(symbol):
+        return [{"strategy": "AdxAtrMomentumStrategy", "symbol": symbol, "n_trials": 0,
+                  "best_reward": None, "n_eligible": 0}]
+
+    fp_tsla = rpt.compute_result_fingerprint(_degenerate("TSLA.ETORO"))
+    fp_nvda = rpt.compute_result_fingerprint(_degenerate("NVDA.ETORO"))
+    fp_googl = rpt.compute_result_fingerprint(_degenerate("GOOGL.ETORO"))
+    assert len({fp_tsla, fp_nvda, fp_googl}) == 3
+
+
+def test_identical_inputs_including_symbol_still_share_the_same_fingerprint():
+    """Akzeptanzkriterium #1319/2 — Determinismus-Vertrag von #1286 bleibt erhalten: zwei Laeufe
+    mit identischer Eingangsmenge (INKLUSIVE Symbol) und identischem Ergebnis tragen weiterhin
+    denselben result_fingerprint."""
+    a = rpt.compute_result_fingerprint(_summaries())
+    b = rpt.compute_result_fingerprint(_summaries())
+    assert a == b
+
+
+def test_symbol_field_uses_the_same_record_separator_convention():
+    import inspect
+
+    source = inspect.getsource(rpt.compute_result_fingerprint)
+    assert 'str(s.get("symbol"))' in source
+    assert "\\x1e" in source or "x1e" in source
+
+
+# ---------------------------------------------------------------------------------------------
 # invariants.check_run_determinism
 # ---------------------------------------------------------------------------------------------
 

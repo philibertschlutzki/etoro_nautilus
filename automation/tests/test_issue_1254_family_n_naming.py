@@ -90,25 +90,124 @@ def test_matching_values_pass():
 def test_reference_symptom_diverging_values_fail():
     # Faktor 813 aus dem #1254-Symptom (2 vs. 1627) — hier reproduziert mit den korrigierten
     # Feldnamen: eine kuenstliche Divergenz muss trotzdem sichtbar bleiben.
+    # Issue #1322 (GH #1199) — ``actual`` traegt seither zwei getrennte Kategorien
+    # (``mismatches``/``missing_with_empty_family``); eine ECHTE Werte-Abweichung (Schluessel in
+    # BEIDEN Dicts vorhanden) landet unter ``mismatches``.
     r = inv.check_family_n_event_report_agreement(
         {"TSLA.ETORO": 2}, {"TSLA.ETORO": 1627})
     assert r.passed is False
     assert r.severity == "medium"
-    assert r.actual["TSLA.ETORO"] == {"event": 2, "report": 1627}
+    assert r.actual["mismatches"]["TSLA.ETORO"] == {"event": 2, "report": 1627}
+    assert "missing_with_empty_family" not in r.actual
 
 
 def test_symbol_only_in_event_is_a_mismatch():
+    """AAPL.ETORO ist im Ereignis, fehlt aber im Report (report=None != event=100) -- eine echte
+    MISMATCH. TSLA.ETORO fehlt im Ereignis, traegt aber report-seitig einen NICHT-Null-Wert (1627)
+    -- Issue #1322: MISSING bei report != 0 bleibt ein FAIL (mismatches), nur MISSING bei
+    report == 0 waere strukturell erwartet (missing_with_empty_family, siehe eigene Tests unten)."""
     r = inv.check_family_n_event_report_agreement(
         {"AAPL.ETORO": 100}, {"TSLA.ETORO": 1627})
     assert r.passed is False
-    assert "AAPL.ETORO" in r.actual
-    assert "TSLA.ETORO" in r.actual
+    assert "AAPL.ETORO" in r.actual["mismatches"]
+    assert "TSLA.ETORO" in r.actual["mismatches"]
+    assert r.actual["mismatches"]["TSLA.ETORO"] == {"event": "MISSING", "report": 1627}
 
 
 def test_multiple_symbols_all_matching_pass():
     r = inv.check_family_n_event_report_agreement(
         {"TSLA.ETORO": 1627, "AAPL.ETORO": 42}, {"TSLA.ETORO": 1627, "AAPL.ETORO": 42})
     assert r.passed is True
+
+
+# ---------------------------------------------------------------------------------------------
+# Issue #1322 (GH #1199, P2) — check_family_n_event_report_agreement vergleicht "fehlt" gegen
+# "ist 0". Symptom: {'TSLA.ETORO': {'event': None, 'report': 0}} FAILte, obwohl das
+# sweep_completed-Ereignis das Feld bei einer leeren Familie strukturell nie befuellt.
+# ---------------------------------------------------------------------------------------------
+
+# ── Akzeptanzkriterium 3 — MISSING + report == 0 ⇒ passed=None, nicht false ──────────────────────
+
+def test_reference_symptom_b14_missing_with_zero_report_is_inconclusive_not_fail():
+    """Direkte B-14-Reproduktion: {'TSLA.ETORO': {'event': None, 'report': 0}}."""
+    r = inv.check_family_n_event_report_agreement({}, {"TSLA.ETORO": 0})
+    assert r.passed is None
+    assert r.actual["missing_with_empty_family"]["TSLA.ETORO"] == {
+        "event": "MISSING", "report": 0}
+    assert "mismatches" not in r.actual
+
+
+def test_missing_with_nonzero_report_is_still_a_fail():
+    """MISSING bei einem NICHT-Null Report-Wert bleibt ein echtes FAIL (mismatches) -- die
+    'leere Familie'-Ausnahme gilt NUR bei report == 0."""
+    r = inv.check_family_n_event_report_agreement({}, {"TSLA.ETORO": 5})
+    assert r.passed is False
+    assert r.actual["mismatches"]["TSLA.ETORO"] == {"event": "MISSING", "report": 5}
+
+
+def test_mismatch_dominates_over_a_coexisting_missing_empty_family_case():
+    """Ein Lauf kann BEIDE Kategorien gleichzeitig tragen -- eine echte Abweichung (MISMATCH)
+    entscheidet dann trotzdem passed=False, unabhaengig von zusaetzlichen, strukturell erwarteten
+    MISSING-Faellen."""
+    r = inv.check_family_n_event_report_agreement(
+        {"AAPL.ETORO": 2}, {"AAPL.ETORO": 5, "TSLA.ETORO": 0})
+    assert r.passed is False
+    assert "AAPL.ETORO" in r.actual["mismatches"]
+    assert "TSLA.ETORO" in r.actual["missing_with_empty_family"]
+
+
+# ── Akzeptanzkriterium 2 — der Check unterscheidet MISSING und MISMATCH in actual ────────────────
+
+def test_actual_separates_missing_and_mismatch_categories():
+    r = inv.check_family_n_event_report_agreement(
+        {"AAPL.ETORO": 2}, {"AAPL.ETORO": 5, "TSLA.ETORO": 0, "NVDA.ETORO": 3})
+    assert set(r.actual.keys()) == {"mismatches", "missing_with_empty_family"}
+    assert set(r.actual["mismatches"].keys()) == {"AAPL.ETORO", "NVDA.ETORO"}
+    assert set(r.actual["missing_with_empty_family"].keys()) == {"TSLA.ETORO"}
+
+
+def test_symbol_present_in_both_with_matching_zero_values_is_not_flagged_at_all():
+    """Ein Symbol, das in BEIDEN Dicts mit demselben Wert 0 auftaucht, ist weder MISSING noch
+    MISMATCH -- keine Kategorie faengt es (es stimmt einfach ueberein)."""
+    r = inv.check_family_n_event_report_agreement(
+        {"TSLA.ETORO": 0}, {"TSLA.ETORO": 0})
+    assert r.passed is True
+    assert r.actual is None
+
+
+def test_detail_names_the_correct_reason_for_each_verdict():
+    r_inconclusive = inv.check_family_n_event_report_agreement({}, {"TSLA.ETORO": 0})
+    assert "strukturell erwartet" in r_inconclusive.detail
+    r_fail = inv.check_family_n_event_report_agreement({"TSLA.ETORO": 2}, {"TSLA.ETORO": 1627})
+    assert "echter Abweichung" in r_fail.detail
+
+
+# ── Akzeptanzkriterium 1 — sweep_completed.n_family_attempted[_frozen] enthaelt jedes Symbol,
+# auch mit Wert 0 (Quelltext-/Aggregationslogik-Regressionsschutz gegen sweep.py) ─────────────────
+
+def test_sweep_py_zero_fills_every_symbol_of_the_run_source_inspection():
+    """sweep.py's Emissionspfad muss JEDES Symbol aus 'pairs' explizit mit 0 vorbelegen, bevor die
+    (moeglicherweise unvollstaendige) proposals-Aggregation ueberschreibt -- Quelltextpruefung, da
+    ein voller run_per_symbol_sweep-Durchlauf fuer diesen Regressionsschutz zu aufwendig waere."""
+    import inspect
+    from automation.optimizer import sweep as sweep_mod
+
+    source = inspect.getsource(sweep_mod.run_per_symbol_sweep)
+    assert "_all_symbols_this_run = {sym for _, sym, _ in pairs}" in source
+    assert 'family_n.setdefault(_sym, 0)' in source
+    assert 'n_family_attempted_frozen.setdefault(_sym, 0)' in source
+
+
+def test_zero_fill_logic_produces_a_complete_zero_stamped_dict():
+    """Repliziert die sweep.py-Fuellschleife direkt gegen ein konstruiertes Beispiel: ein Symbol
+    OHNE jeden proposals-Beitrag (TSLA.ETORO) erhaelt trotzdem einen 0-Eintrag, ein Symbol MIT
+    Beitrag (AAPL.ETORO) bleibt unveraendert."""
+    pairs = [("StratA", "TSLA.ETORO", None), ("StratB", "AAPL.ETORO", None)]
+    n_family_attempted_frozen = {"AAPL.ETORO": 7}  # TSLA.ETORO fehlt (kein gueltiger Beitrag).
+    all_symbols_this_run = {sym for _, sym, _ in pairs}
+    for sym in all_symbols_this_run:
+        n_family_attempted_frozen.setdefault(sym, 0)
+    assert n_family_attempted_frozen == {"AAPL.ETORO": 7, "TSLA.ETORO": 0}
 
 
 # ---------------------------------------------------------------------------------------------

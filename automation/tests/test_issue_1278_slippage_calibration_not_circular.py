@@ -64,8 +64,9 @@ def _study(strategy, symbol, *, slippage_bps, basis):
 
 
 def test_no_measured_slippage_is_inconclusive():
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     r = inv.check_slippage_calibration_not_circular([{"strategy": "A", "symbol": "X"}])
-    assert r.passed is True
+    assert r.passed is None
     assert r.inconclusive is True
 
 

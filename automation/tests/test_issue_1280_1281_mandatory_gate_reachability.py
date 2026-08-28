@@ -90,8 +90,9 @@ def test_two_separate_emit_call_sites_in_the_live_reachability_block():
 # ---------------------------------------------------------------------------------------------
 
 def test_no_results_is_inconclusive():
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     r = inv.check_mandatory_gate_reachability_global([])
-    assert r.passed is True
+    assert r.passed is None
     assert r.inconclusive is True
 
 

@@ -15,6 +15,7 @@ import dataclasses
 import fcntl
 import json
 import logging
+import math
 import os
 import statistics
 import time
@@ -22,6 +23,7 @@ from pathlib import Path
 
 import datetime as dt
 
+from automation.catalog_paths import resolve_quote_tick_files, resolve_quote_tick_columns
 from automation.optimizer import bounds
 from automation.optimizer import invariants
 from automation.optimizer._contracts import pair_key, split_pair_key, ReportCohortUnresolvable
@@ -556,25 +558,138 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
     out: dict[str, int] = {}
     for sym in symbols:
         n = 0
-        pq_file = Path(catalog_path) / "data" / "quote_tick" / sym / "data.parquet"
-        if pq_file.exists():
+        pq_files = resolve_quote_tick_files(catalog_path, sym)
+        if pq_files:
             try:
                 import pyarrow.parquet as pq
-                pf = pq.ParquetFile(str(pq_file))
-                if "ts_event" in pf.schema.names:
+                oldest = newest = None
+                for pq_file in pq_files:
+                    pf = pq.ParquetFile(str(pq_file))
+                    if "ts_event" not in pf.schema.names:
+                        continue
                     idx = pf.schema.names.index("ts_event")
-                    oldest = newest = None
                     for rg in range(pf.metadata.num_row_groups):
                         st = pf.metadata.row_group(rg).column(idx).statistics
                         lo, hi = int(st.min), int(st.max)
                         oldest = lo if oldest is None else min(oldest, lo)
                         newest = hi if newest is None else max(newest, hi)
-                    if oldest is not None and newest is not None:
-                        n = max(0, int((newest - oldest) / (3600 * 1_000_000_000)))
+                if oldest is not None and newest is not None:
+                    n = max(0, int((newest - oldest) / (3600 * 1_000_000_000)))
             except Exception:
                 n = 0
         out[sym] = n
     return out
+
+
+def _resolve_asset_class_key_for_symbol_lightweight(symbol: str) -> str | None:
+    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — bewusst VEREINFACHTE Variante von
+    ``backtest_runner._resolve_asset_class_for_symbol`` (kein ``UNKNOWN``-Policy-Fail-Loud, siehe
+    dortiger #898-Fix-3-Docstring): dieser Preflight ist eine reine Wächter-Grobheuristik VOR
+    Phase 1, kein Kosten-/Risiko-Auflösungspfad — ``None`` bei fehlendem/nicht auflösbarem Eintrag
+    ist hier fail-open korrekt (kein Session-Fenster ⇒ ``n_ticks_after_session_filter ==
+    n_ticks_raw``, dieselbe Konvention wie ``resolve_session_hours_by_asset_class``)."""
+    try:
+        path = config_dir() / "instrument_map.json"
+        if not path.exists():
+            return None
+        inst_map = (json.loads(path.read_text("utf-8")) or {}).get("instruments", {})
+        for _, inst_data in inst_map.items():
+            if inst_data.get("symbol") == symbol:
+                ac = inst_data.get("asset_class")
+                return str(ac).upper() if ac else None
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _resolve_session_window_utc(asset_class_key: str | None,
+                                session_hours_by_asset_class: dict | None) -> tuple[str, str] | None:
+    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — reine Konfigurationsauflösung, dieselbe Semantik wie
+    ``backtest_runner.resolve_session_hours_by_asset_class``, hier DUPLIZIERT statt importiert:
+    jeder Import aus ``backtest_runner.py`` zieht dessen volle ``nautilus_trader``-Importkette mit
+    (dieselbe Begründung wie ``count_available_bars``/``_load_symbol_bar_quality_sample`` oben,
+    die aus demselben Grund pyarrow statt der vollen ``ParquetDataCatalog`` verwenden)."""
+    if not session_hours_by_asset_class or not asset_class_key:
+        return None
+    entry = session_hours_by_asset_class.get(asset_class_key)
+    if entry is None:
+        return None
+    return entry["open_utc"], entry["close_utc"]
+
+
+def _is_ts_ns_within_session_utc(ts_ns: int, open_utc: str, close_utc: str) -> bool:
+    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — reine Funktion, dieselbe Semantik wie
+    ``backtest_runner.is_within_session_hours`` (dupliziert, siehe ``_resolve_session_window_utc``-
+    Docstring)."""
+    import datetime as _dt
+    dt = _dt.datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=_dt.timezone.utc)
+    if dt.weekday() >= 5:
+        return False
+    open_h, open_m = (int(x) for x in open_utc.split(":"))
+    close_h, close_m = (int(x) for x in close_utc.split(":"))
+    time_of_day = dt.hour * 60 + dt.minute
+    return (open_h * 60 + open_m) <= time_of_day < (close_h * 60 + close_m)
+
+
+def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, *,
+                                 session_hours_by_asset_class: dict | None = None,
+                                 asset_class_key: str | None = None,
+                                 max_ticks: int = 200_000) -> dict | None:
+    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — EIN Probe-Paar je Symbol, VOR Phase 1: liefert
+    ``n_ticks_raw``/``n_ticks_after_session_filter`` (dieselbe RTH-Filterlogik wie
+    ``backtest_runner._filter_ticks_to_session_hours``, hier dupliziert) über die LETZTEN
+    ``max_ticks`` Zeilen (rückwärts über die Row-Groups, analog
+    ``_load_symbol_bar_quality_sample`` — haelt den Preflight unter der <2s-Vorgabe unabhaengig von
+    der Katalog-Groesse), OHNE volle NautilusTrader-``ParquetDataCatalog``-Materialisierung.
+
+    ``None`` bei fehlender Datei/fehlender ``ts_event``-Spalte/JEDEM Lesefehler (fail-open — ein
+    eigener Lesefehler blockiert den Sweep nie; die ``REJECT_DATA_UNAVAILABLE``-Entscheidung selbst
+    trifft der Aufrufer anhand des Rückgabewerts, nicht diese Funktion)."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+    pq_files = resolve_quote_tick_files(catalog_path, symbol)
+    if not pq_files:
+        return None
+    try:
+        import pyarrow.parquet as pq
+        ts_values: list[int] = []
+        n_read = 0
+        for pq_file in reversed(pq_files):
+            pf = pq.ParquetFile(str(pq_file))
+            if "ts_event" not in pf.schema.names:
+                continue
+            for rg in range(pf.metadata.num_row_groups - 1, -1, -1):
+                col = pf.read_row_group(rg, columns=["ts_event"])["ts_event"].to_pylist()
+                ts_values.extend(col)
+                n_read += len(col)
+                if n_read >= max_ticks:
+                    break
+            if n_read >= max_ticks:
+                break
+        if not ts_values:
+            return None
+        if len(ts_values) > max_ticks:
+            ts_values = ts_values[-max_ticks:]
+        n_ticks_raw = len(ts_values)
+        window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
+        if window is None:
+            n_ticks_after_session_filter = n_ticks_raw
+        else:
+            open_utc, close_utc = window
+            n_ticks_after_session_filter = sum(
+                1 for ts in ts_values if _is_ts_ns_within_session_utc(int(ts), open_utc, close_utc))
+        return {"n_ticks_raw": n_ticks_raw, "n_ticks_after_session_filter": n_ticks_after_session_filter}
+    except Exception:
+        return None
 
 
 # Issue #807 — Sentinel-"Strategie" fuer symbolweite (statt paar-weise) diagnosed_pairs_cache-
@@ -601,22 +716,42 @@ def _percentile(sorted_values: list[float], pct: float) -> float | None:
     return float(sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f))
 
 
+def _emit_bar_quality_sample_unavailable(symbol: str, reason: str, extra: dict | None = None) -> None:
+    """Issue #1301 (GH #1178) Fix Punkt 3 — jeder ``None``-Rueckgabepfad von
+    ``_load_symbol_bar_quality_sample`` emittiert ein ``BAR_QUALITY_SAMPLE_UNAVAILABLE``-Ereignis
+    mit strukturiertem ``reason`` STATT nur auf DEBUG-Level zu loggen. Fail-open bleibt erhalten
+    (der Aufrufer bekommt weiterhin ``None``) — aber nicht mehr stumm."""
+    emit_execution_event(
+        logging.getLogger("optimizer"), "BAR_QUALITY_SAMPLE_UNAVAILABLE",
+        {"symbol": symbol, "reason": reason, **(extra or {})}, level=logging.WARNING,
+    )
+
+
 def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = None, *,
-                                    max_ticks: int = 200_000) -> dict | None:
+                                    max_ticks: int = 200_000,
+                                    unavailable_reasons: list[str] | None = None) -> dict | None:
     """Issue #807 — liest eine BESCHRAENKTE Stichprobe roher Quote-Ticks (``bid_price``/
     ``ask_price``/``ts_event``, direkt via pyarrow — analog ``count_available_bars`` oben, OHNE die
     volle NautilusTrader-``ParquetDataCatalog``-Materialisierung) und aggregiert sie zu
     synthetischen 1h-Mid-Price-Bars (High/Low/Close) fuer die Bar-Qualitaetspruefung
     (``sweep_diagnostics.check_bar_quality``).
 
-    Liest bewusst nur die LETZTEN ``max_ticks`` Zeilen (rueckwaerts ueber die Row-Groups) statt der
-    vollen Historie — haelt den Preflight unter der <2s-Vorgabe (#807-Akzeptanzkriterium)
-    unabhaengig von der Gesamtgroesse des Katalogs; die juengste Teilspanne ist fuer die
-    AKTUELLE Bar-Qualitaet ohnehin die massgebliche.
+    Liest bewusst nur die LETZTEN ``max_ticks`` Zeilen (rueckwaerts ueber die Row-Groups, ueber
+    MEHRERE Dateien bei einem partitionierten ``part-*.parquet``-Layout hinweg) statt der vollen
+    Historie — haelt den Preflight unter der <2s-Vorgabe (#807-Akzeptanzkriterium) unabhaengig von
+    der Gesamtgroesse des Katalogs; die juengste Teilspanne ist fuer die AKTUELLE Bar-Qualitaet
+    ohnehin die massgebliche.
+
+    Issue #1301 (GH #1178) — Datei- und Spaltenauflösung laufen ueber
+    ``automation.catalog_paths`` (Single Source of Truth, siehe Issue #1302/GH #1179) statt einen
+    einzelnen hart kodierten Dateinamen und exakte Spaltennamen anzunehmen.
 
     Rueckgabe ``None`` bei fehlender Datei, fehlenden Spalten, leerer Bar-Serie oder JEDEM
     Lesefehler (fail-open — ein eigener Lesefehler darf den Sweep nie blockieren; Gate 1
-    [Datenspanne] bleibt die unabhaengige, bereits bestehende Absicherung)."""
+    [Datenspanne] bleibt die unabhaengige, bereits bestehende Absicherung) — JEDER dieser Pfade
+    emittiert zusaetzlich ``BAR_QUALITY_SAMPLE_UNAVAILABLE`` mit einem strukturierten ``reason``
+    (``unavailable_reasons``, falls uebergeben, sammelt dieselben Gruende fuer den Aufrufer ein,
+    der sie z. B. im ``CATALOG_SAMPLE_UNAVAILABLE_DESPITE_CATALOG``-Ereignis aggregiert)."""
     if catalog_path is None:
         base = config_dir()
         raw = "data/nautilus"
@@ -628,30 +763,47 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             except (OSError, ValueError):
                 pass
         catalog_path = base.parent.parent / raw
-    pq_file = Path(catalog_path) / "data" / "quote_tick" / symbol / "data.parquet"
-    if not pq_file.exists():
+
+    def _unavailable(reason: str, extra: dict | None = None) -> None:
+        if unavailable_reasons is not None:
+            unavailable_reasons.append(reason)
+        _emit_bar_quality_sample_unavailable(symbol, reason, extra)
+
+    pq_files = resolve_quote_tick_files(catalog_path, symbol)
+    if not pq_files:
+        _unavailable("FILE_NOT_FOUND")
         return None
     try:
         import pyarrow as pa
         import pyarrow.parquet as pq
         import pandas as pd
-        pf = pq.ParquetFile(str(pq_file))
-        cols = [c for c in ("bid_price", "ask_price", "ts_event") if c in pf.schema.names]
-        if len(cols) < 3:
+        schema_names = pq.read_schema(str(pq_files[0])).names
+        col_map = resolve_quote_tick_columns(schema_names)
+        if col_map is None:
+            _unavailable("COLUMNS_MISSING", {"schema_names": list(schema_names)})
             return None
+        read_cols = [col_map["bid_price"], col_map["ask_price"], col_map["ts_event"]]
         tables = []
         n_read = 0
-        for rg in range(pf.metadata.num_row_groups - 1, -1, -1):
-            t = pf.read_row_group(rg, columns=cols)
-            tables.append(t)
-            n_read += t.num_rows
+        for pq_file in reversed(pq_files):
+            pf = pq.ParquetFile(str(pq_file))
+            for rg in range(pf.metadata.num_row_groups - 1, -1, -1):
+                t = pf.read_row_group(rg, columns=read_cols)
+                tables.append(t)
+                n_read += t.num_rows
+                if n_read >= max_ticks:
+                    break
             if n_read >= max_ticks:
                 break
         table = pa.concat_tables(list(reversed(tables)))
-        df = table.to_pandas()
+        df = table.to_pandas().rename(columns={
+            col_map["bid_price"]: "bid_price", col_map["ask_price"]: "ask_price",
+            col_map["ts_event"]: "ts_event",
+        })
         if len(df) > max_ticks:
             df = df.tail(max_ticks)
         if df.empty:
+            _unavailable("EMPTY_AFTER_RESAMPLE")
             return None
         df["mid"] = (df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0
         df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
@@ -665,6 +817,7 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         agg = df["mid"].resample("1h").agg(["max", "min", "last", "count"])
         bars = agg.dropna(subset=["max", "min", "last"])
         if bars.empty:
+            _unavailable("EMPTY_AFTER_RESAMPLE")
             return None
         # Issue #900 Fix 1 — median_delta_t_s (Sekunden zwischen aufeinanderfolgenden BESETZTEN
         # Bars, nicht der Kalenderraster-Default) und bar_coverage_ratio (besetzte Stunden /
@@ -700,11 +853,12 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             "window_start": idx[0].isoformat(),
             "window_end": idx[-1].isoformat(),
         }
-    except Exception:
+    except Exception as e:
         # Issue #1272 (GH #1145) — fail-open bleibt (ein Lesefehler darf den Sweep nie
-        # blockieren, siehe Docstring), aber nicht mehr LAUTLOS: der Fallback in
-        # run_per_symbol_sweep braucht diese Zeile, um "passed=None bei existierendem Katalog"
-        # (#1272 Fix Punkt 4) tatsaechlich diagnostizieren zu koennen.
+        # blockieren, siehe Docstring). Issue #1301 (GH #1178) — nicht mehr LAUTLOS: zusaetzlich
+        # zum DEBUG-Log emittiert ``_unavailable`` jetzt ein ``BAR_QUALITY_SAMPLE_UNAVAILABLE``-
+        # Ereignis mit ``reason="EXCEPTION"`` in den Strom, statt nur ins DEBUG-Log zu schreiben.
+        _unavailable("EXCEPTION", {"exception_type": type(e).__name__})
         logging.getLogger("optimizer").debug(
             "[#1272] _load_symbol_bar_quality_sample(%s) fehlgeschlagen (fail-open).", symbol,
             exc_info=True,
@@ -984,12 +1138,14 @@ def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[st
     out: dict[str, int | None] = {}
     for sym in symbols:
         newest: int | None = None
-        pq_file = Path(catalog_path) / "data" / "quote_tick" / sym / "data.parquet"
-        if pq_file.exists():
+        pq_files = resolve_quote_tick_files(catalog_path, sym)
+        if pq_files:
             try:
                 import pyarrow.parquet as pq
-                pf = pq.ParquetFile(str(pq_file))
-                if "ts_event" in pf.schema.names:
+                for pq_file in pq_files:
+                    pf = pq.ParquetFile(str(pq_file))
+                    if "ts_event" not in pf.schema.names:
+                        continue
                     idx = pf.schema.names.index("ts_event")
                     for rg in range(pf.metadata.num_row_groups):
                         st = pf.metadata.row_group(rg).column(idx).statistics
@@ -1027,12 +1183,14 @@ def earliest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[
     out: dict[str, int | None] = {}
     for sym in symbols:
         oldest: int | None = None
-        pq_file = Path(catalog_path) / "data" / "quote_tick" / sym / "data.parquet"
-        if pq_file.exists():
+        pq_files = resolve_quote_tick_files(catalog_path, sym)
+        if pq_files:
             try:
                 import pyarrow.parquet as pq
-                pf = pq.ParquetFile(str(pq_file))
-                if "ts_event" in pf.schema.names:
+                for pq_file in pq_files:
+                    pf = pq.ParquetFile(str(pq_file))
+                    if "ts_event" not in pf.schema.names:
+                        continue
                     idx = pf.schema.names.index("ts_event")
                     for rg in range(pf.metadata.num_row_groups):
                         st = pf.metadata.row_group(rg).column(idx).statistics
@@ -2344,6 +2502,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                          n_jobs_source: str = "DEFAULT",
                          optimize_symbol=None, confirm=None,
                          run_id: str | None = None, bar_quality_fn=None,
+                         tick_population_fn=None,
                          max_wallclock_h_override: float | None = None) -> list[Path]:
     """Dispatcht für jedes enumerierte Paar optimize_symbol → confirm_per_symbol_promotion →
     export_symbol_proposal und gibt die Proposal-Pfade zurück. Betritt NIE Phase 5.
@@ -2616,6 +2775,75 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _span_stats["n_symbols_below_required"], len(syms),
     )
 
+    # Issue #1298 (GH #1175, P0) Fix Punkt 5 — Tick-Populations-Preflight VOR Phase 1 je Symbol,
+    # EIN Probe-Paar (dieselbe "Preflight statt Post-Mortem"-Logik wie der #807-Bar-Qualitaets-
+    # Preflight direkt unten — derselbe Mechanismus, REJECT_DATA_UNAVAILABLE statt
+    # REJECT_DATA_DEGENERATE): ein Symbol mit 0 Ticks nach dem Session-Filter wird EINMAL
+    # abgewiesen, bevor auch nur eine einzige Study fuer es gestartet wird, statt N unabhaengige
+    # Strategien je 0-Trade-Studies zu verbrennen (Root-Cause #1303/B-4).
+    if (using_real_optimize or tick_population_fn is not None) and syms:
+        _probe_tick_population = tick_population_fn or probe_symbol_tick_population
+        _use_default_tick_population_fn = _probe_tick_population is probe_symbol_tick_population
+        _bt_cfg = {}
+        try:
+            _bt_path = config_dir() / "backtest.json"
+            if _bt_path.exists():
+                _bt_cfg = json.loads(_bt_path.read_text("utf-8")) or {}
+        except (OSError, ValueError):
+            _bt_cfg = {}
+        _session_hours_by_asset_class = _bt_cfg.get("session_hours_by_asset_class")
+        _data_unavailable_syms: list[str] = []
+        _log = logging.getLogger("optimizer")
+        for _sym in syms:
+            try:
+                if _use_default_tick_population_fn:
+                    _asset_class_key = _resolve_asset_class_key_for_symbol_lightweight(_sym)
+                    _probe = _probe_tick_population(
+                        _sym, session_hours_by_asset_class=_session_hours_by_asset_class,
+                        asset_class_key=_asset_class_key)
+                else:
+                    _probe = _probe_tick_population(_sym)  # injizierter Test-Fake.
+            except Exception:
+                _probe = None  # fail-open — ein eigener Lesefehler blockiert den Sweep nie.
+            if _probe is None:
+                continue
+            emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
+                "name": "check_tick_population", "check": "check_tick_population",
+                "passed": _probe["n_ticks_after_session_filter"] > 0, "source": "sweep",
+                "scope": _sym,
+                "expected": "n_ticks_after_session_filter > 0 (Probe-Paar vor Phase 1, #1298).",
+                "actual": {"n_ticks_raw": _probe["n_ticks_raw"],
+                          "n_ticks_after_session_filter": _probe["n_ticks_after_session_filter"]},
+                "detail": (
+                    "Preflight-Probe fand 0 Ticks nach Session-Filter."
+                    if _probe["n_ticks_after_session_filter"] == 0
+                    else "Preflight-Probe bestanden."),
+                "severity": "blocking",
+            }, level=(logging.WARNING if _probe["n_ticks_after_session_filter"] == 0
+                     else logging.INFO))
+            if _probe["n_ticks_after_session_filter"] > 0:
+                continue
+            _data_unavailable_syms.append(_sym)
+            emit_execution_event(_log, "REJECT_DATA_UNAVAILABLE", {"symbol": _sym, **_probe},
+                                 level=logging.WARNING)
+            _log.warning(
+                "[#1298] %s: REJECT_DATA_UNAVAILABLE — 0 Ticks nach Session-Filter in der "
+                "Preflight-Probe (n_ticks_raw=%s). Symbol wird VOR Phase 1 fuer ALLE Strategien "
+                "abgewiesen (0 Studies), statt N unabhaengige 0-Trade-Studies zu verbrennen.",
+                _sym, _probe["n_ticks_raw"],
+            )
+            try:
+                record_diagnosed_pair({
+                    "strategy": _SYMBOL_DEGENERACY_SENTINEL_STRATEGY, "symbol": _sym,
+                    "action": "denylist", "binding_cause": "data_unavailable",
+                    "median_is_trades": None, "median_oos_trades": None,
+                }, work_dir=WORK, run_id=run_id)
+            except Exception:
+                _log.debug("[#1298] Diagnose-Rueckschrieb fehlgeschlagen (non-fatal).",
+                          exc_info=True)
+        if _data_unavailable_syms:
+            syms = [s for s in syms if s not in _data_unavailable_syms]
+
     # Issue #807 — Bar-QUALITAETS-Preflight VOR Phase 1 je Symbol (Preflight statt Post-Mortem):
     # ``HYPE.ETORO`` bestand Gate 1 (Datenspanne, oben) UND erzeugte trotzdem ueber SECHS
     # strukturell verschiedene Strategien 0 auswertbare Trials — je eigenem
@@ -2640,8 +2868,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # unveraendert die bestehende Je-Symbol-Emission unten (die bleibt die praezisere,
     # scope-spezifische Quelle).
     _bar_quality_any_measured = False
+    # Issue #1301 (GH #1178) Fix Punkt 3 — sammelt die ``BAR_QUALITY_SAMPLE_UNAVAILABLE``-Gruende
+    # ueber alle Symbole dieses Laufs, damit der ``CATALOG_SAMPLE_UNAVAILABLE_DESPITE_CATALOG``-
+    # Fallback unten sie aggregiert in ``actual`` mitfuehren kann.
+    _bar_quality_unavailable_reasons: list[str] = []
     if (using_real_optimize or bar_quality_fn is not None) and syms:
         _load_sample = bar_quality_fn or _load_symbol_bar_quality_sample
+        # Identitaetsvergleich statt ``bar_quality_fn is None``: ein Aufrufer, der explizit die
+        # ECHTE Default-Funktion als ``bar_quality_fn`` durchreicht, bekommt weiterhin die
+        # ``unavailable_reasons``-Sammlung — nur ein FREMDER Test-Fake (andere Signatur) nicht.
+        _use_default_sample_fn = _load_sample is _load_symbol_bar_quality_sample
         _bar_quality_cfg = opt_data.get("bar_quality") or {}
         _degenerate_syms = []
         # Issue #923 Fix 1/3 — je Symbol persistiert (write_symbol_bar_quality_cache), damit
@@ -2652,7 +2888,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _log = logging.getLogger("optimizer")
         for _sym in syms:
             try:
-                _sample = _load_sample(_sym)
+                if _use_default_sample_fn:
+                    _sample = _load_sample(_sym, unavailable_reasons=_bar_quality_unavailable_reasons)
+                else:
+                    _sample = _load_sample(_sym)  # injizierter Test-Fake, feste Ein-Arg-Signatur.
             except Exception:
                 _sample = None  # fail-open — ein eigener Lesefehler blockiert den Sweep nie.
             if _sample is None:
@@ -2808,7 +3047,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                            "bar_coverage_ratio/median_delta_t_s/ticks_per_bar_median) besteht die "
                            "konfigurierten Schwellen (#807/#1272), sobald ein Katalogpfad "
                            "existiert.",
-                "actual": {"symbols_planned": len(syms), "catalog_root_exists": True},
+                "actual": {
+                    "symbols_planned": len(syms), "catalog_root_exists": True,
+                    # Issue #1301 (GH #1178) Fix Punkt 3 — aggregierte reason-Zaehler statt nur
+                    # "irgendetwas ist fehlgeschlagen" (vorher nur im DEBUG-Log je Symbol sichtbar).
+                    "reasons": dict(collections.Counter(_bar_quality_unavailable_reasons)),
+                },
                 "detail": "CATALOG_SAMPLE_UNAVAILABLE_DESPITE_CATALOG: das Katalog-Wurzelverzeichnis "
                          "existiert, aber fuer KEIN geplantes Symbol konnte eine Bar-Qualitaets-"
                          "Stichprobe gezogen werden (siehe DEBUG-Log von "
@@ -3345,6 +3589,36 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if _n_symbols_planned == 1:
         _fail_fast_min_symbols = 1
         _total_studies_single_symbol = len(next(iter(pairs_by_symbol.values()), []))
+    # Issue #1312 (GH #1189, P2) — die Probe-Schwelle war ausschliesslich in SYMBOLEN formuliert
+    # (``_fail_fast_min_symbols``); ``executor.sh`` faehrt in der Praxis genau EIN Symbol je Sweep,
+    # die Schwelle wurde dadurch strukturell erst am Lauf-Ende erreicht (B-10:
+    # ``blocking_invariant_probe_triggered_at_wallclock_fraction = 0,9946`` in 5/5 Laeufen).
+    # ``fail_fast_min_completed_studies_frac`` (bislang dokumentiert, aber NICHT verdrahtet — siehe
+    # dortiger Schema-Kommentar in optimizer.json) wird HIER als ZUSAETZLICHE, FRUEHER erreichbare
+    # Alternative zur Symbol-Schwelle verdrahtet: die Probe feuert, sobald EINE der beiden Schwellen
+    # erreicht ist (Symbole ODER kumulative exportierte Studies).
+    #
+    # Bewusst NICHT auf echte Study-Granularitaet INNERHALB eines einzelnen, noch laufenden Symbols
+    # umgestellt (das war Fix Punkt 1 aus GH #1139, dann erneut aus #1287/GH-1160 — beide Male
+    # explizit NICHT implementiert, siehe test_issue_1269_fail_fast_study_scope.py-Docstring): die
+    # Familien-Statistik-Maschine (``_run_confirm_and_export``/``deflation_n_family_frozen``)
+    # stempelt ihr Ergebnis EINMALIG und NIE NEU BERECHNET auf die echten Optuna-Study-Objekte,
+    # UND wird erst aufgerufen, NACHDEM saemtliche Strategien-Studies EINES Symbols bereits
+    # abgeschlossen sind (siehe die ``symbol_n_family_stage1 = _family_n_stage1_from_studies(...)``-
+    # Berechnung weiter unten, die genau diese Vollstaendigkeit voraussetzt). Ein Probe-Trigger
+    # MITTEN in der Optimierungs-Dispatch-Batch eines Symbols (vor deren gemeinsamem Abschluss)
+    # haette KEINE zusaetzlichen, sicher auswertbaren Proposals zur Verfuegung — dieselbe
+    # Korrektheits-Grenze, die die beiden Vorlaeufer-Fixe bereits dokumentiert haben. Diese
+    # Verdrahtung bleibt daher auf die bereits SICHERE Symbol-Grenze beschraenkt (Proposals nur aus
+    # VOLLSTAENDIG abgeschlossenen Symbolen) — sie verbessert den DOMINANTEN Mehrsymbol-Fall
+    # (kumulative Studies statt Symbol-ANZAHL erreichen die Schwelle i. d. R. frueher, siehe
+    # Akzeptanzkriterium 2 in GH #1189), OHNE die dokumentierte Korrektheits-Grenze fuer den
+    # Ein-Symbol-Fall zu verletzen.
+    _n_studies_planned_total = sum(len(v) for v in pairs_by_symbol.values())
+    _fail_fast_min_completed_studies_frac = float(
+        opt_data.get("fail_fast_min_completed_studies_frac", 0.2))
+    _fail_fast_study_threshold = _fail_fast_probe_study_threshold(
+        _n_studies_planned_total, _fail_fast_min_completed_studies_frac)
     _fail_fast_min_offending_studies = int(opt_data.get("fail_fast_min_offending_studies", 3))
     _fail_fast_min_offending_studies_frac = float(
         opt_data.get("fail_fast_min_offending_studies_frac", 0.25))
@@ -3825,8 +4099,14 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Aussage abgeschlossen sind. Reine Lesefunktion (``report._build_report`` schreibt nichts
         # auf die Platte) über die bereits im Speicher gesammelten Proposal-Pfade dieses Laufs —
         # kein zusätzlicher Backtest, keine Doppelarbeit.
+        # Issue #1312 (GH #1189, P2) — zusaetzlich zur Symbol-Schwelle feuert die Probe auch, sobald
+        # GENUEGEND STUDIES kumulativ exportiert wurden (``len(proposals) >= _fail_fast_study_
+        # threshold``, siehe Berechnung/Scope-Dokumentation oben) — je nachdem, welche der beiden
+        # Schwellen zuerst erreicht wird. Verbessert den dominanten Mehrsymbol-Fall (viele kleine
+        # Symbol-Batches erreichen die Study-Schwelle oft VOR der Symbol-Schwelle).
         if (using_real_optimize and _fail_fast_invariants
-                and len(completed_symbols) >= _fail_fast_min_symbols
+                and (len(completed_symbols) >= _fail_fast_min_symbols
+                     or len(proposals) >= _fail_fast_study_threshold)
                 and sweep_fail_fast_invariant is None):
             # Issue #1269 (GH #1139) — Zeitpunkt DIESER Probe-Auswertung (unabhaengig davon, ob sie
             # gleich feuert), damit report._build_report am Laufende den Wallclock-ANTEIL berechnen
@@ -3925,13 +4205,27 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                             "scheitern.", sweep_fail_fast_invariant, len(completed_symbols),
                             len(_offending_symbols),
                         )
+                    # Issue #1313 (GH #1190, P2) — jedes Abbruchereignis nennt seinen Grund: entweder
+                    # benannte (Strategie, Symbol)-Offender (``abort_scope='pairs'``) oder, wenn die
+                    # Streuung strukturell nicht ermittelbar ist (z. B. ``check_bar_quality``, global-
+                    # skopiert), das ``detail`` des ausloesenden Checks (``abort_scope='global'`` +
+                    # ``global_reason``). Ein Abbruch ohne beides ist ein Programmierfehler im
+                    # Emissionspfad selbst, kein stiller Randfall — daher ``assert``, nicht ``if``.
+                    _abort_scope, _global_reason = _fail_fast_abort_scope_and_reason(
+                        _probe_invariant_checks, sweep_fail_fast_invariant, _offending_pairs)
+                    assert _abort_scope in ("pairs", "global"), (
+                        f"[#1313] unbekannter abort_scope={_abort_scope!r}")
+                    assert _abort_scope != "global" or _global_reason, (
+                        "[#1313] abort_scope='global' ohne global_reason")
                     emit_execution_event(
                         logging.getLogger("optimizer"), "SWEEP_ABORTED_ON_FAIL_FAST_INVARIANT",
                         {"check": sweep_fail_fast_invariant,
                          "symbols_completed": len(completed_symbols),
                          "offending_symbols": sorted(_offending_symbols),
                          "offending_studies": _offending_pairs,
-                         "symbols_probed": len(completed_symbols)},
+                         "symbols_probed": len(completed_symbols),
+                         "abort_scope": _abort_scope,
+                         "global_reason": _global_reason},
                         level=logging.ERROR,
                     )
                     break
@@ -4024,6 +4318,24 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _, n_family_attempted_frozen = family_n_frozen_stage1_from_proposals(proposals)
     except Exception:
         n_family_attempted_frozen = {}
+
+    # Issue #1322 (GH #1199, P2) — Root-Cause: ``family_n_frozen_stage1_from_proposals`` (wie auch
+    # ``_family_n_from_proposals`` oben) leitet ausschliesslich aus ``proposals`` ab und traegt fuer
+    # ein Symbol OHNE einen einzigen (Symbol, Strategie)-Beitrag mit gueltigem
+    # ``deflation_n_family_frozen``-Feld GAR KEINEN Eintrag — ein leeres Familien-Ergebnis (0) ist
+    # von "Symbol wurde in diesem Lauf nie betrachtet" (Schluessel fehlt komplett) dadurch nicht
+    # unterscheidbar. Symptom-Beweis: ``check_family_n_event_report_agreement`` meldete
+    # ``{'TSLA.ETORO': {'event': None, 'report': 0}}`` — der REPORT (der ``proposals`` spaeter,
+    # ggf. mit inzwischen nachgetragenen Feldern, erneut von der Platte liest) sah bereits ``0``,
+    # dieses In-Prozess-Ereignis (frueher im Lauf emittiert) noch gar keinen Eintrag. Jedes Symbol,
+    # das DIESER Lauf tatsaechlich in ``pairs`` enumeriert hat, wird deshalb explizit mit ``0``
+    # vorbelegt, bevor die (moeglicherweise unvollstaendige) proposals-Aggregation ueberschreibt —
+    # ``check_family_n_event_report_agreement`` behandelt eine verbleibende Divergenz (Symbol war
+    # NICHT in ``pairs``, aber doch im Report) weiterhin als MISSING/INCONCLUSIVE, keinen FAIL.
+    _all_symbols_this_run = {sym for _, sym, _ in pairs}
+    for _sym in _all_symbols_this_run:
+        family_n.setdefault(_sym, 0)
+        n_family_attempted_frozen.setdefault(_sym, 0)
 
     emit_execution_event(_log, "sweep_completed", {
         "pairs": len(pairs),
@@ -4712,6 +5024,48 @@ def _offending_pairs_for_fail_fast_check(
             return parsed
         return {}, set()
     return {}, set()
+
+
+def _fail_fast_abort_scope_and_reason(
+    invariant_checks: list[dict] | None, check_name: str, offending_pairs: dict,
+) -> tuple[str, str | None]:
+    """Issue #1313 (GH #1190, P2) — reine Entscheidungsfunktion: ``SWEEP_ABORTED_ON_FAIL_FAST_
+    INVARIANT`` trug bislang ``offending_studies: {}``/``offending_symbols: []`` OHNE jeden
+    Hinweis, WARUM — ein Abbruchereignis, das seinen eigenen Grund nicht nennt. Root-Cause:
+    ``check_bar_quality`` ist global-skopiert (kein ``"<strategy>/<symbol>"``-``actual``) und kann
+    die Pair-Konvention strukturell nicht erfüllen; ``_offending_pairs_for_fail_fast_check`` faellt
+    dann auf den Konservativ-Zweig zurueck (leere Mengen), der aber nichts weiter stempelt.
+
+    ``abort_scope='pairs'``, wenn ``offending_pairs`` (bereits geparst, siehe ``_offending_pairs_
+    for_fail_fast_check``) nicht leer ist — die Offender SIND benannt (``offending_studies``/
+    ``offending_symbols`` im Event tragen die eigentliche Erklaerung). ``abort_scope='global'``
+    sonst — ``global_reason`` ist dann das ``detail`` des AUSLOESENDEN Checks (``chk.get("name") ==
+    check_name`` in ``invariant_checks``), mit einem generischen, aber nie leeren Fallback-Text,
+    falls dieser Check aus irgendeinem Grund kein ``detail`` traegt."""
+    if offending_pairs:
+        return "pairs", None
+    triggering = next(
+        (c for c in (invariant_checks or []) if c.get("name") == check_name), None)
+    reason = (triggering or {}).get("detail") or None
+    if not reason:
+        reason = (
+            f"{check_name} FAILt ohne parsbare (Strategie, Symbol)-Offender (kein "
+            "'<strategy>/<symbol>'-actual, z. B. ein global-skopierter Check) — die Streuung "
+            "ist nicht ermittelbar."
+        )
+    return "global", reason
+
+
+def _fail_fast_probe_study_threshold(n_studies_planned_total: int, frac: float) -> int:
+    """Issue #1312 (GH #1189, P2) — reine Arithmetik-Funktion: wie viele kumulativ exportierte
+    (bereits vollstaendig confirm'te) Studies loesen die Fail-Fast-Probe zusaetzlich zur Symbol-
+    Schwelle (``_fail_fast_min_symbols``) aus? ``max(1, ceil(frac * n_studies_planned_total))`` —
+    mindestens 1 (nie 0, sonst wuerde die Probe bereits VOR jeder Arbeit "erreicht" gelten), ``0``
+    geplante Studies ⇒ ``1`` (dieselbe Konvention: nie eine unerreichbare oder eine bereits-erfuellte
+    Schwelle aus einer Divison durch 0)."""
+    if n_studies_planned_total <= 0:
+        return 1
+    return max(1, math.ceil(frac * n_studies_planned_total))
 
 
 def _fail_fast_systemic_verdict(

@@ -14,21 +14,46 @@ Import-Zyklus zu riskieren.
 """
 from __future__ import annotations
 
+import math
+
+# Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — der Faktor, mit dem die RTH-
+# (Regular-Trading-Hours-)Bar-Achse gegen die frühere 24-KALENDER-Bar-Achse rebasiert wird
+# (derselbe Faktor wie ``backtest.json['session_hours_by_asset_class']``s gemessenes
+# ``session_coverage_fraction``, 0,2389-0,2402 im #1275-Referenzlauf) — NICHT die frühere
+# ~0,583-Faustregel aus #1030/#1179 (jene schätzte die reale HALTEDAUER ueber Session-Luecken
+# hinweg, dieser Faktor rebasiert die BAR-ACHSE SELBST auf dieselbe reale Zeitspanne, die vorher 24
+# KALENDER-Bars brauchte). Nur zulässig, WEIL die Bar-Erzeugung selbst jetzt tatsächlich auf
+# RTH-Ticks filtert (siehe ``backtest_runner._filter_ticks_to_session_hours``) — vor diesem Fix
+# (#1260/#1130) wäre eine Rekalibrierung hier die Konfiguration von der Realität entkoppelt.
+#
+# Issue #1314 (GH #1191, P0) — EINZIGE Quelle fuer den Faktor selbst: vor diesem Fix leitete
+# ``MAX_BARS_IN_TRADE_HARD_CAP`` ihn UNABHAENGIG von ``optimizer.json['time_box_bars']`` ab
+# (``round(24 * 0.24) = 6`` hier vs. das UNGERUNDETE ``24.0 * 0.24 = 5.76`` dort) — zwei getrennt
+# gepflegte Ableitungen DESSELBEN Faktors konnten (und taten es: B-12) auseinanderlaufen. Eine
+# Position, die den Cap ausschoepft, war dadurch PER KONSTRUKTION eine Zeitbox-Verletzung
+# (t_norm = 6 / 5,76 = 1,042).
+RTH_AXIS_FACTOR = 0.24
+
+# Issue #1314 (GH #1191, P0) — dieselbe Normierungs-Deadline (Bars) wie ``optimizer.
+# json['time_box_bars']`` (``t_norm = oos_median_bars_held / time_box_bars``, Issue #711),
+# hier als EINZIGE, importierbare Quelle dieses UNGERUNDETEN Werts — ``reward.py`` konsumiert sie
+# seit #1315/GH #1192 direkt, statt ein eigenes ``24.0``-Fallback-Literal zu pflegen; ``optimizer.
+# json``s eigener Wert bleibt bestehen (er ist die tatsaechlich vom Reward-Pfad gelesene Config),
+# ``check_timebox_cap_coherence`` (invariants.py) bewacht die Uebereinstimmung dauerhaft.
+TIME_BOX_BARS = RTH_AXIS_FACTOR * 24.0
+
 # Issue #714/GR-01 — die Bar-Zeitbox-Obergrenze für ``max_bars_in_trade``. Der Bar-Zähler-Exit
 # in ``HourlyStrategyBase`` erzwingt sie unabhängig vom je Trial gesampelten Wert; der Optuna-
 # Suchraum (``spaces.py``) und die Report-Invarianten (``invariants.py``) dürfen NIE grösser
 # suchen/prüfen als dieser Deckel.
 #
-# Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — UMKALIBRIERT von 24 (Kalender-Bars,
-# #1260/#1130s dokumentierter EHRLICHER IST-Zustand vor diesem Fix) auf 6 (RTH-Bars), Faktor 0.24
-# (round(24 * 0.24) = 6), derselbe Faktor wie ``backtest.json['session_hours_by_asset_class']``s
-# gemessenes ``session_coverage_fraction`` (0,2389-0,2402 im #1275-Referenzlauf) — NICHT die
-# frühere ~0,583-Faustregel aus #1030/#1179 (jene schätzte die reale HALTEDAUER ueber Session-
-# Luecken hinweg, dieser Faktor rebasiert die BAR-ACHSE SELBST auf dieselbe reale Zeitspanne, die
-# vorher 24 KALENDER-Bars brauchte). Nur zulässig, WEIL die Bar-Erzeugung selbst jetzt tatsächlich
-# auf RTH-Ticks filtert (siehe ``backtest_runner._filter_ticks_to_session_hours``) — vor diesem Fix
-# (#1260/#1130) wäre eine Rekalibrierung hier die Konfiguration von der Realität entkoppelt.
-MAX_BARS_IN_TRADE_HARD_CAP = 6
+# Issue #1314 (GH #1191, P0) — ab jetzt ``math.ceil(TIME_BOX_BARS)`` statt eines unabhängig
+# gepflegten, GERUNDETEN Literals: der Cap ist damit PER KONSTRUKTION >= der Deadline
+# (``ceil(5.76) = 6 >= 5.76``) — ein Trade, der den Cap exakt ausschoepft, kann keine Zeitbox-
+# Verletzung mehr sein, UND beide Werte bewegen sich fortan gemeinsam, sobald ``RTH_AXIS_FACTOR``
+# sich aendert (bit-identisch zum Pre-Fix-Wert 6, da ``round(24 * 0.24) == ceil(5.76) == 6`` bereits
+# zufaellig uebereinstimmten — die Garantie war vorher aber Zufall, nicht Konstruktion).
+MAX_BARS_IN_TRADE_HARD_CAP = math.ceil(TIME_BOX_BARS)
 
 # Issue #1067 (Pitfall #372) — die GR-01-Zeitbox war bislang NUR nach oben verdrahtet
 # (``MAX_BARS_IN_TRADE_HARD_CAP``); seit der automatische Suchraum-Rückschrieb (#761/#763) auch
@@ -37,11 +62,22 @@ MAX_BARS_IN_TRADE_HARD_CAP = 6
 # kein Zeitbox-Handel mehr, sondern Rauschen-Traden ohne Informationsgewinn (vgl. #908-Befund zu
 # AdxAtrMomentum).
 #
-# Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — UMKALIBRIERT von 4 auf 1
-# (round(4 * 0.24) = 1, derselbe Faktor/dieselbe Begründung wie ``MAX_BARS_IN_TRADE_HARD_CAP``
-# oben). Der Floor begrenzt NUR den automatischen Rückschrieb, er verengt keinen bestehenden
-# kuratierten Suchraum.
-MIN_BARS_IN_TRADE_FLOOR = 1
+# Issue #1317 (GH #1194, P1) — ANDERS als ``MAX_BARS_IN_TRADE_HARD_CAP``/``TIME_BOX_BARS`` ist
+# dieser Floor ABSICHTLICH NICHT von ``RTH_AXIS_FACTOR`` abgeleitet. Root-Cause #1317: die
+# vormalige #1275-Umskalierung (``round(4 * 0.24) = 1``) übernahm nur die ZAHL der alten
+# Kalibrierung, nicht ihre Begründung — die Begründung oben ("Rauschen-Traden ohne
+# Informationsgewinn") ist eine inhaltliche Rausch-Schwelle (mindestens EIN vollständiger
+# Bar-Übergang zwischen Ein- und Ausstieg, unabhängig davon, wie viel Wall-Clock-Zeit eine Bar auf
+# der jeweiligen Achse repräsentiert), keine Achsen-Grösse wie der Cap/die Zeitbox-Deadline. Der
+# RTH-Referenzlauf selbst widerlegte den skalierten Wert 1 empirisch: ``HourlyMeanReversionStrategy``
+# trug ``max_bars_in_trade_median = 2,0`` UND einen Randlösungs-Befund bei 1 — eine 1-Bar-Position
+# ist auf der RTH-Achse (1 Bar = 1 Handelsstunde) keine Zeitbox-Position mehr, sondern eine
+# Einzel-Bar-Wette. Der Floor begrenzt weiterhin NUR den automatischen Rückschrieb (``spaces.
+# _PARAM_DOMAIN_REGISTRY``/``clamp_param_bounds``, ueber ``sweep_diagnostics._widen_bounds_
+# toward``), er verengt keinen bestehenden kuratierten Suchraum (der kuratierte Fall ist seit
+# #1316/GH #1193 separat ueber ``spaces._bounds_for``s ``StaleAxisOverrideError`` abgedeckt — NICHT
+# ueber diesen Floor, der dort bewusst NICHT erzwungen wird).
+MIN_BARS_IN_TRADE_FLOOR = 2
 
 # Issue #938 (Katalog A, Pitfall #294) — EINZIGER Konstruktor für den (Strategie, Symbol)-Paar-
 # Schlüssel. Vor diesem Fix baute jede Stelle (``invariants.py``, ``report.py``, ``confirm.py``,

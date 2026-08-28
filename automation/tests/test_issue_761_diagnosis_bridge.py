@@ -208,8 +208,10 @@ def test_bounds_for_applies_auto_proposed_bounds_when_no_curated_override(monkey
 def test_bounds_for_curated_override_takes_precedence_over_auto(monkeypatch):
     import automation.optimizer.spaces as spaces_mod
 
+    # Issue #1316 (GH #1193) — "axis" ist Pflicht fuer den bar-denominierten cooldown_bars;
+    # reale config_dir() (nicht monkeypatched hier) ⇒ run_axis='rth' (echtes optimizer.json).
     monkeypatch.setattr(spaces_mod, "_search_space_overrides_cache", {
-        "TrendPullbackStrategy": {"TSLA.ETORO": {"cooldown_bars": [5.0, 40.0]}},
+        "TrendPullbackStrategy": {"TSLA.ETORO": {"axis": "rth", "cooldown_bars": [5.0, 40.0]}},
     })
     monkeypatch.setattr(spaces_mod, "_auto_proposed_bounds_cache", {
         "TrendPullbackStrategy": {"TSLA.ETORO": {"cooldown_bars": [1.0, 36.0]}},

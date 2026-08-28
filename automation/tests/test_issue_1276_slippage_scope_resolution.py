@@ -87,8 +87,9 @@ def _study(strategy, symbol, p50_scope, applied_scope):
 
 
 def test_no_studies_with_both_fields_is_inconclusive():
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     r = inv.check_slippage_scope_agreement([{"strategy": "A", "symbol": "X"}])
-    assert r.passed is True
+    assert r.passed is None
     assert r.inconclusive is True
 
 

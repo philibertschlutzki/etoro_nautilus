@@ -68,8 +68,9 @@ def test_holding_time_cap_fails_beyond_the_714_boundary():
 
 
 def test_holding_time_cap_is_a_noop_without_telemetry():
+    # Issue #1310 (GH #1187, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     result = inv.check_holding_time_cap([{"strategy": "S", "symbol": "A.ETORO"}])
-    assert result.passed is True
+    assert result.passed is None
 
 
 def test_holding_time_cap_respects_the_study_tolerance():

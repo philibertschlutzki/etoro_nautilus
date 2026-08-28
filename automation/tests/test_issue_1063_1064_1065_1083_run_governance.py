@@ -95,6 +95,38 @@ def test_fail_fast_actual_convention_ignores_passing_checks():
     assert result.passed is True
 
 
+# ── #1307 (GH #1184, P1): passed=None (Tri-State, inkonklusiv) ist KEIN Konventionsverstoss ─────
+def test_fail_fast_actual_convention_ignores_inconclusive_none_passed():
+    """Root-Cause: ``chk.get('passed', True)`` behandelte ``None`` (falsy) wie ein fehlendes Feld
+    und liess den ``continue`` nicht greifen — ``check_effective_stop_distance`` bei leerer Kohorte
+    (``passed=None``, ``actual=None``) wurde faelschlich als Offender gemeldet."""
+    checks = [{"name": "check_effective_stop_distance", "passed": None, "actual": None}]
+    result = inv.check_fail_fast_actual_convention(
+        checks, fail_fast_invariants=["check_effective_stop_distance"])
+    assert result.passed is True
+    assert "check_effective_stop_distance" not in (result.actual or {})
+
+
+def test_fail_fast_actual_convention_still_flags_explicit_fail_with_none_actual():
+    """Regressionsschutz: eine EXPLIZIT FAILende Auswertung (``passed=False``) bleibt ein Offender,
+    unveraendert durch die Tri-State-Praezisierung."""
+    checks = [{"name": "check_holding_time_cap", "passed": False, "actual": None}]
+    result = inv.check_fail_fast_actual_convention(
+        checks, fail_fast_invariants=["check_holding_time_cap"])
+    assert result.passed is False
+    assert "check_holding_time_cap" in result.actual
+
+
+def test_fail_fast_actual_convention_still_passes_explicit_fail_with_conforming_actual():
+    """Regressionsschutz: eine FAILende Auswertung mit konformem ``actual`` bleibt kein Offender,
+    unveraendert durch die Tri-State-Praezisierung."""
+    checks = [{"name": "check_holding_time_cap", "passed": False,
+               "actual": {"S/SYM": 1.0}}]
+    result = inv.check_fail_fast_actual_convention(
+        checks, fail_fast_invariants=["check_holding_time_cap"])
+    assert result.passed is True
+
+
 # ── #1064: check_coverage_ledger_continuity bootstrap exemption ─────────────────────────────────
 def test_coverage_ledger_continuity_fails_without_bootstrap():
     result = inv.check_coverage_ledger_continuity(1, True)

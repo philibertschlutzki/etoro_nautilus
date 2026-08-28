@@ -75,6 +75,7 @@ def test_both_branches_can_fail_on_the_same_study_independently():
 
 
 def test_not_applicable_without_any_holding_time_telemetry():
+    # Issue #1310 (GH #1187, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     result = inv.check_holding_time_cap([{"strategy": "S", "symbol": "X"}])
-    assert result.passed is True
+    assert result.passed is None
     assert result.actual is None

@@ -23,9 +23,16 @@ from automation.optimizer.sweep_diagnostics import diagnose_structural_zero_elig
 
 # ── sweep_diagnostics.diagnose_structural_zero_eligible_gate(stop_reason=...) ───────────────────
 
+# Issue #1303 (GH #1180) — diagnose_structural_zero_eligible_gate erfordert seither max_is_trades/
+# median_is_trades (Pflicht-Keywords, siehe test_issue_1303_binding_cause_signal_absent.py). None
+# haelt diese vorbestehenden Tests unveraendert auf dem alten "signal_sparse"-Pfad (None == 0 ist
+# falsch, siehe dortige Fix-Dokumentation) — sie sagen nichts ueber die IS-Aktivitaet aus.
+_NOT_APPLICABLE = {"max_is_trades": None, "median_is_trades": None}
+
+
 def test_structural_all_unevaluable_is_unconditionally_frequency():
     diagnosis = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_INACTIVE": 40}, stop_reason="STRUCTURAL_ALL_UNEVALUABLE")
+        {"REJECT_OOS_INACTIVE": 40}, stop_reason="STRUCTURAL_ALL_UNEVALUABLE", **_NOT_APPLICABLE)
     assert diagnosis["gate_type"] == "frequency"
     assert diagnosis["binding_cause"] == "signal_sparse"
     assert diagnosis["proposed_action"] == "search_space_override"
@@ -36,7 +43,7 @@ def test_structural_all_unevaluable_stays_frequency_even_with_mixed_details():
     Mischung der vier 'nie OOS erreicht'-Codes bleibt frequenzseitig."""
     diagnosis = diagnose_structural_zero_eligible_gate(
         {"REJECT_OOS_WINDOW_UNREACHABLE": 25, "REJECT_OOS_INACTIVE": 15},
-        stop_reason="STRUCTURAL_ALL_UNEVALUABLE")
+        stop_reason="STRUCTURAL_ALL_UNEVALUABLE", **_NOT_APPLICABLE)
     assert diagnosis["binding_cause"] == "signal_sparse"
     assert diagnosis["dominant_rejection_detail"] == "REJECT_OOS_WINDOW_UNREACHABLE"
     assert diagnosis["dominant_fraction"] == 0.625
@@ -46,7 +53,8 @@ def test_structural_all_unevaluable_with_empty_counts_still_gets_a_verdict():
     """0 evaluable Trials koennen strukturell KEINE is_rejection_detail-Zaehlung tragen (das Feld
     wird erst bei einer OOS-Auswertung gestempelt) — der Befund bleibt trotzdem frequenzseitig,
     nicht 'none' (im Unterschied zum STRUCTURAL_ZERO_ELIGIBLE-Zweig bei leeren counts)."""
-    diagnosis = diagnose_structural_zero_eligible_gate(None, stop_reason="STRUCTURAL_ALL_UNEVALUABLE")
+    diagnosis = diagnose_structural_zero_eligible_gate(
+        None, stop_reason="STRUCTURAL_ALL_UNEVALUABLE", **_NOT_APPLICABLE)
     assert diagnosis["binding_cause"] == "signal_sparse"
     assert diagnosis["dominant_rejection_detail"] is None
     assert diagnosis["dominant_fraction"] is None
@@ -57,7 +65,7 @@ def test_structural_zero_eligible_branch_is_unaffected_by_the_new_stop_reason_pa
     bleibt exakt wie vor #1096/#1244 — insbesondere bleibt eine 60/40-Mischung ZWEIER
     Qualitaets-Gates weiterhin 'none' (kein Rateversuch, siehe test_issue_1045_1194)."""
     diagnosis = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_MIN_PSR": 60, "REJECT_OOS_MAX_DRAWDOWN": 40})
+        {"REJECT_OOS_MIN_PSR": 60, "REJECT_OOS_MAX_DRAWDOWN": 40}, **_NOT_APPLICABLE)
     assert diagnosis["binding_cause"] == "none"
 
 
@@ -84,7 +92,10 @@ def test_structural_all_unevaluable_study_now_yields_a_diagnosed_pairs_entry(mon
                 and e["symbol"] == "TSLA.ETORO")
     assert entry["binding_cause"] == "signal_sparse"
     assert entry["action"] == "search_space_override"
-    assert entry["source"] == "live_derivation"
+    # Issue #1304 (GH #1181) Fix Punkt 1 — ohne STRUCTURAL_ALL_UNEVALUABLE-Ereignis (kein
+    # events_path/kein passendes Ereignis) bleibt der Report-Zweig als FALLBACK aktiv, jetzt
+    # gestempelt als "report_fallback" statt des vormaligen "live_derivation".
+    assert entry["source"] == "report_fallback"
 
 
 def test_structural_all_unevaluable_study_with_no_rejection_detail_counts_still_diagnosed(

@@ -46,6 +46,55 @@ def _load_auto_proposed_bounds() -> dict:
     return _auto_proposed_bounds_cache
 
 
+# Issue #1316 (GH #1193, P1) — bar-denominierte Parameter: ihre Suchraum-Bounds sind an die
+# Bar-ACHSE gebunden (Kalender-24/7 vor #1275, RTH seit #1275, Faktor RTH_AXIS_FACTOR=0.24
+# zwischen beiden) — ein Bound, der auf der ALTEN Achse kalibriert wurde, ist auf der neuen um
+# denselben Faktor 4,17x zu weit. Reine Schwellwert-/Verhältnis-Parameter (z. B. ``rsi_oversold``,
+# ``keltner_multiplier``, ``squeeze_ratio``) sind NICHT betroffen (keine Bar-Einheit) und bleiben
+# ausserhalb dieser Menge. Konsumiert von ``_bounds_for`` (fail-loud) UND
+# ``invariants.check_override_axis_coherence`` (report-seitig, dieselbe Menge).
+_BAR_DENOMINATED_PARAMS: frozenset[str] = frozenset({
+    "cooldown_bars", "max_bars_in_trade", "keltner_period", "ema_period", "adx_period", "or_bars",
+})
+
+# Issue #1316 — Metadaten-Schluessel je Override-Block in ``search_space_overrides.json``
+# (Geschwister der eigentlichen Parameter-Bounds im selben Symbol-Dict, siehe Datei-Schema-
+# Dokumentation). MUESSEN von jedem Code, der einen Override-Block als ``{param: [lo, hi]}``
+# durchiteriert (hier UND ``bounds.active_bounds_overrides``), explizit uebersprungen werden.
+_OVERRIDE_METADATA_KEYS: frozenset[str] = frozenset({
+    "axis", "calibrated_in_run_id", "proposed_rth_bounds",
+})
+
+
+class StaleAxisOverrideError(ValueError):
+    """Issue #1316 (GH #1193, P1) — ein kuratierter, bar-denominierter Suchraum-Override
+    (``search_space_overrides.json``) traegt entweder KEINE ``axis``-Deklaration oder eine, die
+    von der Achse DIESES Laufs (``optimizer.json['time_box_bars_axis']``) abweicht. FAIL-LOUD statt
+    eines stillen Weiterverwendens der potenziell falsch skalierten Bounds (Faktor 4,17 zwischen
+    Kalender-24/7- und RTH-Achse, ``RTH_AXIS_FACTOR=0.24`` — siehe #1275 fuer die volle
+    Herleitung). Kein Default fuer eine fehlende ``axis``: die Migration (#1316) ist eine bewusste
+    PR-Entscheidung, kein automatisch angenommener Zustand."""
+
+
+def _current_time_box_bars_axis() -> str | None:
+    """Issue #1316 — liest ``optimizer.json['time_box_bars_axis']`` UNGECACHED (anders als
+    ``_load_search_space_overrides``/``_load_auto_proposed_bounds``): dieser Pfad wird nur bei
+    einem TATSAECHLICHEN kuratierten Override-Treffer erreicht (eine Handvoll (strategy, symbol,
+    param)-Kombinationen, kein Hot-Path pro Trial/Parameter) — ein Modul-Cache wuerde hier nur ein
+    Test-Isolationsrisiko einfuehren (``config_dir()``-Monkeypatches zwischen Tests), ohne einen
+    messbaren Performance-Vorteil. Fehlt die Datei/der Schluessel ⇒ ``None`` (die Divergenzpruefung
+    in ``_bounds_for`` behandelt das als "nicht bestimmbar", nicht als Verstoss)."""
+    try:
+        from automation.optimizer.trial_config import config_dir
+        path = config_dir() / "optimizer.json"
+        if not path.exists():
+            return None
+        data = _json.loads(path.read_text("utf-8")) or {}
+        return data.get("time_box_bars_axis")
+    except Exception:
+        return None
+
+
 def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
     """Issue #669/#761 — löst die effektiven ``(low, high)``-Suchraumgrenzen für ``param`` auf, in
     Prioritätsreihenfolge: (1) eine kuratierte symbol-spezifische Überschreibung
@@ -55,12 +104,28 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
     bis ein Operator die permanente Kalibrierung per PR einträgt), (3) die universellen Default-
     Bounds. Fehlt ``symbol`` ODER ist weder ein kuratierter noch ein automatischer Override für
     (``strategy``, ``symbol``, ``param``) vorhanden ⇒ ``(low, high)`` UNVERÄNDERT (bit-identisch,
-    Zero-Hardcoding)."""
+    Zero-Hardcoding).
+
+    Issue #1316 (GH #1193) — trägt der kuratierte Treffer einen bar-denominierten Parameter
+    (``_BAR_DENOMINATED_PARAMS``), MUSS der Override-Block eine ``axis`` tragen, die mit
+    ``optimizer.json['time_box_bars_axis']`` übereinstimmt — sonst ``StaleAxisOverrideError``
+    (siehe dortigen Docstring). Der AUTOMATISCHE #761-Diagnose-Cache-Pfad bleibt unberührt (kein
+    ``axis``-Feld in diesem Format, ausserhalb des #1316-Scopes)."""
     if not symbol:
         return low, high
     entry = (_load_search_space_overrides().get(strategy) or {}).get(symbol) or {}
     bound = entry.get(param)
     if bound and len(bound) == 2:
+        if param in _BAR_DENOMINATED_PARAMS:
+            override_axis = entry.get("axis")
+            run_axis = _current_time_box_bars_axis()
+            if override_axis is None or (run_axis is not None and override_axis != run_axis):
+                raise StaleAxisOverrideError(
+                    f"STALE_AXIS_OVERRIDE: kuratierter Override {strategy}/{symbol}.{param}="
+                    f"{bound!r} traegt axis={override_axis!r}, Lauf-Achse ist {run_axis!r} "
+                    "(optimizer.json['time_box_bars_axis']) — search_space_overrides.json "
+                    "aktualisieren (axis-Feld + Bounds, siehe proposed_rth_bounds) (#1316)."
+                )
         # Issue #1066 — eine kuratierte Überschreibung ist eine menschliche PR-Entscheidung
         # (``search_space_overrides.json``); ein Wert ausserhalb des Domänenregisters ist ein
         # Config-Fehler und wird FAIL-LOUD abgelehnt, statt negativ/degeneriert zu sampeln
