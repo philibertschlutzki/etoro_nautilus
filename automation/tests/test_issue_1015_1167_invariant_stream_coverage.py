@@ -191,8 +191,16 @@ def test_the_three_structurally_disjoint_checks_are_allowlisted():
         assert name in rpt._DELIBERATELY_UNWIRED_INVARIANT_CHECKS, name
 
 
-def test_the_six_actually_wired_checks_are_not_on_the_allowlist():
-    for name in ("check_bar_quality", "check_wallclock_budget", "check_budget",
+def test_the_five_actually_wired_checks_are_not_on_the_allowlist():
+    # Issue #1311 (GH #1188, P2) — ``check_budget`` wurde HIER entfernt: es HAT zwar eine
+    # Aufrufstelle (``disk_guard.check_budget``, aufgerufen von ``run_optimization.disk_budget_
+    # callback``), diese feuert aber nur alle ``disk_check_interval_trials`` (Default 200)
+    # abgeschlossene Trials EINER Study — "hat eine Aufrufstelle" (die urspruengliche #1015/#1167-
+    # Definition von "wired") ist NICHT dasselbe wie "erscheint verlaesslich im Strom eines
+    # tatsaechlichen Laufs" (B-14: 0/2 committete Referenzlaeufe enthalten einen check_budget-
+    # Eintrag). ``check_budget`` steht seither bewusst in ``_DELIBERATELY_UNWIRED_INVARIANT_
+    # CHECKS`` (siehe dortiger Kommentar) statt hier.
+    for name in ("check_bar_quality", "check_wallclock_budget",
                 "check_study_coherence_violation_rate", "check_any_arm_reachability",
                 "check_any_arm_reachability_live"):
         assert name not in rpt._DELIBERATELY_UNWIRED_INVARIANT_CHECKS, name

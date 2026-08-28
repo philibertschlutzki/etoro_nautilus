@@ -130,7 +130,12 @@ def test_sample_params_applies_configured_symbol_override(monkeypatch, tmp_path)
     (tmp_path / "search_space_overrides.json").write_text(json.dumps({
         "overrides": {
             "TrendPullbackStrategy": {
-                "TSLA.ETORO": {"ema_period": [20, 120], "cooldown_bars": [1, 12]}
+                # Issue #1316 (GH #1193) — "axis" ist Pflicht fuer bar-denominierte Parameter
+                # (ema_period, cooldown_bars); dieser tmp_path hat kein eigenes optimizer.json
+                # (run_axis unbestimmbar), daher genuegt jeder nicht-null-Wert.
+                "TSLA.ETORO": {
+                    "axis": "rth", "ema_period": [20, 120], "cooldown_bars": [1, 12],
+                }
             }
         }
     }), encoding="utf-8")
@@ -147,8 +152,10 @@ def test_sample_params_applies_configured_symbol_override(monkeypatch, tmp_path)
 def test_sample_params_override_is_symbol_scoped():
     """Ein Override für TSLA.ETORO wirkt NICHT auf ein anderes Symbol (kein globaler Bleed)."""
     import automation.optimizer.spaces as spaces_mod
+    # Issue #1316 (GH #1193) — reale config_dir() (nicht monkeypatched hier) ⇒ run_axis='rth'
+    # (echtes optimizer.json); "axis" muss uebereinstimmen, sonst StaleAxisOverrideError.
     spaces_mod._search_space_overrides_cache = {
-        "TrendPullbackStrategy": {"TSLA.ETORO": {"ema_period": [20, 120]}}
+        "TrendPullbackStrategy": {"TSLA.ETORO": {"axis": "rth", "ema_period": [20, 120]}}
     }
     try:
         t_other = _RecordingTrial()
@@ -200,7 +207,9 @@ def test_bounds_calibration_increases_trade_frequency_share_above_min_trades(mon
 
     # Und: der Override-Mechanismus selbst liefert exakt diesen engeren Bereich an trial.suggest_int.
     (tmp_path / "search_space_overrides.json").write_text(json.dumps({
-        "overrides": {"TrendPullbackStrategy": {"TSLA.ETORO": {"ema_period": [override_lo, override_hi]}}}
+        "overrides": {"TrendPullbackStrategy": {"TSLA.ETORO": {
+            # Issue #1316 (GH #1193) — Pflichtfeld fuer den bar-denominierten ema_period.
+            "axis": "rth", "ema_period": [override_lo, override_hi]}}}
     }), encoding="utf-8")
     monkeypatch.setattr(spaces, "_search_space_overrides_cache", None)
     monkeypatch.setattr("automation.optimizer.trial_config.config_dir", lambda: tmp_path)

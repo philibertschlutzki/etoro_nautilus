@@ -212,11 +212,23 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
                 "Invarianten nicht entscheidungsfähig — siehe unten."
             )
     if n_deployable == 0:
+        # Issue #1320 (GH #1197, P2) — "0 deploybar" allein beantwortet nicht, OB die Kohorte
+        # ueberhaupt unterscheidbare Kandidaten hervorgebracht hat: ``result_degenerate`` (siehe
+        # report._build_report-Berechnungskommentar) unterscheidet "0 deploybar, aber eine echte,
+        # bloss nicht ausreichende Streuung" von "0 deploybar, WEIL jede Study informationsfrei
+        # denselben Wert traegt" (Referenzlauf da354bc2: best_reward=-20,0 in 14/14 Studies).
+        _degenerate_note = ""
+        if report.get("result_degenerate"):
+            _degenerate_note = (
+                " Das Ergebnis ist zudem **informationsfrei** "
+                f"({report.get('result_degenerate_reason') or 'result_degenerate'}) — kein Study "
+                "unterscheidet sich messbar von einem anderen (siehe `check_result_not_degenerate`)."
+            )
         sentence = (
             f"{n_studies} Studies, {n_promotions_sweep} Sweep-Promotion(en), **0 deploybar** — "
             "kein Kandidat hat sowohl die Holdout-Validierung als auch das Deployment-Gate "
             "(``deployment_gate.evaluate_deployment_eligibility``) bestanden. Es gibt kein "
-            "deploybares Ergebnis aus diesem Lauf."
+            "deploybares Ergebnis aus diesem Lauf." + _degenerate_note
         )
     else:
         sentence = (
@@ -1060,9 +1072,39 @@ def _section_3_duration(report: dict) -> str:
         if r.get("bars_per_calendar_day") is not None or r.get("session_coverage_fraction") is not None
     ]
     if not _bar_axis_rows:
-        lines.append(
-            "Keine Bar-Achsen-Telemetrie in diesem Report (Pre-#1011/#1163-Lauf oder leere Kohorte)."
-        )
+        # Issue #1318 (GH #1195, P2) — statt unbedingt "Pre-#1011/#1163-Lauf" zu behaupten (Symptom:
+        # in DIESEM Lauf fehlt die Telemetrie aus einem ANDEREN Grund), wird der tatsaechliche
+        # Fehlgrund aus report._study_record["bar_axis_telemetry_missing_reason"] abgeleitet
+        # (#1298-Rohmaterial: unterscheidet strukturell "kein Trade in der Kohorte" von "Feld nicht
+        # gestempelt", siehe dortigen Berechnungskommentar).
+        if not studies:
+            lines.append("Keine Studies in diesem Report.")
+        else:
+            _reasons = {
+                r.get("bar_axis_telemetry_missing_reason") for r in studies
+                if r.get("bar_axis_telemetry_missing_reason") is not None
+            }
+            if _reasons == {"no_oos_evaluated_trials"}:
+                lines.append(
+                    "Keine Bar-Achsen-Telemetrie in diesem Report — kein Trade in der Kohorte "
+                    "(kein Trial dieses Laufs war oos_evaluated=True, z. B. REJECTED_BOUNDARY_"
+                    "SOLUTION/strukturell erschoepfte Studies)."
+                )
+            elif _reasons == {"field_not_stamped"}:
+                lines.append(
+                    "Keine Bar-Achsen-Telemetrie in diesem Report — Feld nicht gestempelt "
+                    "(Pre-#1011/#1163-Lauf oder Legacy-Trial-JSON ohne dieses Feld, trotz "
+                    "vorhandener oos_evaluated=True-Trials)."
+                )
+            elif _reasons:
+                lines.append(
+                    "Keine Bar-Achsen-Telemetrie in diesem Report — gemischte Ursache je Study: "
+                    "teils kein Trade in der Kohorte, teils Feld nicht gestempelt."
+                )
+            else:
+                lines.append(
+                    "Keine Bar-Achsen-Telemetrie in diesem Report (leere Kohorte)."
+                )
     else:
         lines.append(
             "`bars_per_calendar_day` > 8 auf EQUITY/COMMODITY ist die Signatur einer 24/7-"
@@ -1097,18 +1139,32 @@ def _section_4_longest_trades(report: dict) -> str:
         "Entscheidung (Katalog #832 Fix Punkt 1)."
     )
     lines.append("")
-    # Issue #1011/#1163 (Katalog #1170, Fix Punkt 3, Akzeptanzkriterium 2) — die synthetische 1h-
-    # Bar-Achse ist ueber einen 24/7-Kalender aufgefuellt (siehe invariants.check_session_calendar_
-    # coherence): "24,00 h" ist deshalb NICHT "~1 Handelstag" (RTH-Naeherung), sondern buchstaeblich
-    # 1 KALENDERtag. Die Entscheidung, die Bar-Erzeugung auf RTH umzustellen, ist ein eigener
-    # Folge-Issue -- diese Sektion stellt nur die Messung/Lesart klar.
-    lines.append(
-        "**Lesart-Hinweis:** die Haltedauer beruht auf der synthetischen 1h-Bar-Achse, die "
-        "aktuell über einen 24/7-Kalender aufgefüllt wird (siehe `invariants.check_session_"
-        "calendar_coherence`) — \"24,00 h\" bedeutet **24 synthetische Bars = 1 Kalendertag**, "
-        "NICHT \"~1 Handelstag\". Eine Umstellung der Bar-Erzeugung auf reale Handelszeiten (RTH) "
-        "ist ein eigener Folge-Issue (#1011/#1163)."
-    )
+    # Issue #1318 (GH #1195, P2) — Symptom: dieser Hinweis behauptete UNBEDINGT eine 24/7-
+    # Kalenderfuellung, obwohl seit #1275 ``report['time_box_bars_axis']`` bereits auf 'rth' stehen
+    # kann (B-14). Aus dem Report-Feld abgeleitet, analog der bereits axis-bewussten §4.1 direkt
+    # unterhalb dieser Sektion.
+    _lesart_axis = report.get("time_box_bars_axis")
+    if _lesart_axis == "rth":
+        lines.append(
+            "**Lesart-Hinweis:** die Haltedauer beruht auf der synthetischen 1h-Bar-Achse, die "
+            "seit Issue #1275 (GH #1148) tatsächlich Handels-Bars zählt (`time_box_bars_axis="
+            "'rth'`, `invariants.check_timebox_unit_coherence` hält das gegen die gemessene "
+            "`bars_per_calendar_day`-Achse konsistent) — \"24,00 h\" bedeutet **24 reale "
+            "Handels-Bars**, keine Kalenderstunden; die Kalendertag-Angabe daneben ist eine grobe "
+            "Wall-Clock-Näherung, keine Handelstags-Zählung."
+        )
+    else:
+        # Issue #1011/#1163 (Katalog #1170, Fix Punkt 3, Akzeptanzkriterium 2) — die synthetische
+        # 1h-Bar-Achse ist ueber einen 24/7-Kalender aufgefuellt (siehe invariants.check_session_
+        # calendar_coherence): "24,00 h" ist deshalb NICHT "~1 Handelstag" (RTH-Naeherung), sondern
+        # buchstaeblich 1 KALENDERtag.
+        lines.append(
+            "**Lesart-Hinweis:** die Haltedauer beruht auf der synthetischen 1h-Bar-Achse, die "
+            "aktuell über einen 24/7-Kalender aufgefüllt wird (siehe `invariants.check_session_"
+            "calendar_coherence`) — \"24,00 h\" bedeutet **24 synthetische Bars = 1 Kalendertag**, "
+            "NICHT \"~1 Handelstag\". Eine Umstellung der Bar-Erzeugung auf reale Handelszeiten "
+            "(RTH) ist ein eigener Folge-Issue (#1011/#1163)."
+        )
     lines.append("")
     longest = (report.get("cross_study") or {}).get("longest_holding_studies") or []
     if not longest:
@@ -1299,6 +1355,11 @@ def _section_5_anomalies(report: dict) -> str:
     n_guard_dominated = len(_guard_dominated_studies)
     total_liquidated = sum(r.get("liquidated_trials") or 0 for r in studies)
     total_boundary = len((report.get("cross_study") or {}).get("boundary_solutions") or [])
+    # Issue #1306 (GH #1183, P1) — Studies, deren Randlösungs-Erkennung wegen einer degenerierten
+    # Kohorte (0 evaluable Trials oder reward_std_total == 0) uebersprungen wurde; separat
+    # ausgewiesen, damit "0 Randlösungen" nicht mit "0 degenerierte Studies" verwechselt wird.
+    n_boundary_skipped_degenerate = sum(
+        1 for r in studies if r.get("boundary_resolution_skipped_reason") == "DEGENERATE_COHORT")
     diagnosed = (report.get("cross_study") or {}).get("diagnosed_pairs") or []
     n_denylisted = sum(1 for d in diagnosed if d.get("action") == "denylist")
     n_deprioritized = sum(1 for d in diagnosed if d.get("action") == "deprioritized")
@@ -1312,6 +1373,8 @@ def _section_5_anomalies(report: dict) -> str:
         lines.append(f"  - {', '.join(sorted(_guard_dominated_studies))}")
     lines.append(f"- Wirtschaftlich ruinierte Trials (EQUITY_NONPOSITIVE, #801/#825): {total_liquidated}")
     lines.append(f"- Randlösungen mit Bounds-Vorschlag (#831): {total_boundary}")
+    lines.append(
+        f"- Randlösungen übersprungen (degenerierte Kohorte, #1183): {n_boundary_skipped_degenerate}")
     lines.append(f"- Automatisch denylistete Paare (#829/#830): {n_denylisted}")
     lines.append(f"- Budget-deprioritisierte Paare (#830): {n_deprioritized}")
     # Issue #1026/#1175 (Katalog #866-2) — ATR-Floor-Bindung war bislang NUR im rohen
@@ -1363,8 +1426,10 @@ def _section_5_anomalies(report: dict) -> str:
     if not _active_overrides:
         lines.append("Keine aktiven Overrides für die Symbole dieses Laufs.")
     else:
-        lines.append("| Strategie | Symbol | Parameter | Aktiv | Default | Quelle | Lauf | Begründung |")
-        lines.append("|---|---|---|---|---|---|---|---|")
+        lines.append(
+            "| Strategie | Symbol | Parameter | Aktiv | Default | Quelle | Lauf | Achse | "
+            "Begründung |")
+        lines.append("|---|---|---|---|---|---|---|---|---|")
         for o in sorted(_active_overrides, key=lambda o: (
                 o.get("strategy") or "", o.get("symbol") or "", o.get("parameter") or "")):
             active_b = o.get("active_bounds")
@@ -1374,10 +1439,16 @@ def _section_5_anomalies(report: dict) -> str:
             # bounds.active_bounds_overrides-Docstring) — das ist kein "unbekannt" (k. A.), sondern
             # die explizite Herkunftsangabe "curated".
             _lauf = "curated" if o.get("source") == "curated" else (o.get("set_in_run_id") or "k. A.")
+            # Issue #1316 (GH #1193) — ``axis`` ist NUR fuer kuratierte, bar-denominierte
+            # Parameter gepflegt (spaces._BAR_DENOMINATED_PARAMS); "k. A." deckt sowohl fehlende
+            # (stale, siehe check_override_axis_coherence) als auch nicht-bar-denominierte
+            # Parameter ab — die Spalte selbst trifft keine eigene Unterscheidung, das leistet der
+            # Invarianten-Check.
+            _achse = o.get("axis") or "k. A."
             lines.append(
                 f"| {o.get('strategy')} | {o.get('symbol')} | {o.get('parameter')} | "
                 f"{active_b if active_b else 'k. A.'} | {default_b if default_b else 'k. A.'} | "
-                f"{o.get('source') or 'k. A.'} | {_lauf} | "
+                f"{o.get('source') or 'k. A.'} | {_lauf} | {_achse} | "
                 f"{o.get('rationale') or 'k. A.'} |"
             )
     return "\n".join(lines)

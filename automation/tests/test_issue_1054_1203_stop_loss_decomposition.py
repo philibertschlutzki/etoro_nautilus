@@ -146,8 +146,10 @@ def _study(strategy, symbol, *, checked, violations):
 
 
 def test_inconclusive_without_any_checked_round_trips():
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr
+    # (vormals passed=True trotz inconclusive=True, siehe InvariantResult.passed-Feld-Docstring).
     result = inv.check_stop_loss_decomposition_identity([_study("A", "X.ETORO", checked=0, violations=0)])
-    assert result.passed is True
+    assert result.passed is None
     assert result.inconclusive is True
 
 

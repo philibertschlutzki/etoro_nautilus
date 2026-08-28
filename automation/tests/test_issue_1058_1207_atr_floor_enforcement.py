@@ -30,9 +30,10 @@ def _study(strategy, symbol, *, atr_raw, atr_median, floor, k, c_rt):
 
 def test_inconclusive_without_any_floor_binding_study():
     # atr_raw >= floor => nicht floor-gebunden.
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     result = inv.check_atr_floor_enforcement(
         [_study("A", "X.ETORO", atr_raw=50.0, atr_median=50.0, floor=10.0, k=2.0, c_rt=3.0)])
-    assert result.passed is True
+    assert result.passed is None
     assert result.inconclusive is True
     assert result.evaluable is False
 
@@ -68,10 +69,11 @@ def test_non_binding_study_is_not_checked_even_with_low_ratio():
     """Eine Study, die NICHT floor-gebunden ist, darf niemals als Offender erscheinen, selbst wenn
     ihr Verhaeltnis < 3.0 ist -- das ist die Zustaendigkeit von check_stop_cost_ratio, nicht dieses
     Checks."""
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     result = inv.check_atr_floor_enforcement([
         _study("A", "X.ETORO", atr_raw=50.0, atr_median=1.0, floor=10.0, k=1.0, c_rt=3.0),
     ])
-    assert result.passed is True
+    assert result.passed is None
     assert result.inconclusive is True
 
 

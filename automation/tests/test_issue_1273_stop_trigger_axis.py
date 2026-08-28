@@ -23,8 +23,9 @@ def _study(strategy, symbol, zero_range_bar_fraction):
 # ---------------------------------------------------------------------------------------------
 
 def test_none_axis_is_inconclusive():
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     r = inv.check_stop_trigger_axis_coherence(None, [])
-    assert r.passed is True
+    assert r.passed is None
     assert r.inconclusive is True
     assert r.severity == "blocking"
 

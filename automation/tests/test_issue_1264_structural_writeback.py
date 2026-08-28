@@ -55,7 +55,8 @@ def test_reference_symptom_13_alpha_gate_studies_get_gate_unreachable_no_denylis
     # Denylist" bleibt unveraendert gueltig (Budget-Deprioritisierung ist keine Denylist), nur die
     # vorherige Untaetigkeit wird ersetzt (siehe report._writeback_gate_unreachable_diagnoses).
     diagnosis = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_MIN_ALPHA_TSTAT": 123}, stop_reason="STRUCTURAL_ZERO_ELIGIBLE")
+        {"REJECT_OOS_MIN_ALPHA_TSTAT": 123}, stop_reason="STRUCTURAL_ZERO_ELIGIBLE",
+        max_is_trades=None, median_is_trades=None)
     assert diagnosis["binding_cause"] == "gate_unreachable"
     assert diagnosis["proposed_action"] == "budget_deprioritization"
     assert diagnosis["proposed_action"] != "denylist"
@@ -67,7 +68,7 @@ def test_reference_symptom_13_alpha_gate_studies_get_gate_unreachable_no_denylis
 def test_mixed_cohort_below_homogeneity_threshold_stays_unclassified():
     diagnosis = diagnose_structural_zero_eligible_gate(
         {"REJECT_OOS_MIN_ALPHA_TSTAT": 80, "REJECT_OOS_MIN_PSR": 20},
-        stop_reason="STRUCTURAL_ZERO_ELIGIBLE")
+        stop_reason="STRUCTURAL_ZERO_ELIGIBLE", max_is_trades=None, median_is_trades=None)
     assert diagnosis["binding_cause"] == "none"
 
 
@@ -76,7 +77,8 @@ def test_squeeze_breakout_reference_signal_sparse_still_works():
     # max_is_trades = 4, bereits im Event vorhanden)" — der STRUCTURAL_ALL_UNEVALUABLE-Zweig ist
     # unconditional (kein homogeneity-Torwaechter) und war bereits vor diesem Fix korrekt.
     diagnosis = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_WINDOW_UNREACHABLE": 178}, stop_reason="STRUCTURAL_ALL_UNEVALUABLE")
+        {"REJECT_OOS_WINDOW_UNREACHABLE": 178}, stop_reason="STRUCTURAL_ALL_UNEVALUABLE",
+        max_is_trades=4, median_is_trades=0)
     assert diagnosis["binding_cause"] == "signal_sparse"
     assert diagnosis["gate_type"] == "frequency"
 

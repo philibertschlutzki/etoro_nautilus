@@ -86,8 +86,9 @@ def _decomposed(measured, rt, slip, fin):
 
 
 def test_no_telemetry_is_inconclusive():
+    # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung: "nicht auswertbar" ist KEIN PASS mehr.
     r = inv.check_cost_drag_decomposition([{"strategy": "A", "symbol": "X"}])
-    assert r.passed is True
+    assert r.passed is None
     assert r.inconclusive is True
 
 

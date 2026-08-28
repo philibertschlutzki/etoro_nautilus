@@ -58,7 +58,8 @@ def _enable_diagnostic_writeback(monkeypatch):
 
 def test_gate_branch_now_proposes_budget_deprioritization_not_none():
     result = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_MIN_ALPHA_TSTAT": 40}, stop_reason="STRUCTURAL_ZERO_ELIGIBLE")
+        {"REJECT_OOS_MIN_ALPHA_TSTAT": 40}, stop_reason="STRUCTURAL_ZERO_ELIGIBLE",
+        max_is_trades=None, median_is_trades=None)
     assert result["binding_cause"] == "gate_unreachable"
     assert result["proposed_action"] == "budget_deprioritization"
 
@@ -66,7 +67,8 @@ def test_gate_branch_now_proposes_budget_deprioritization_not_none():
 def test_gate_branch_never_proposes_denylist():
     """#1264 bleibt gültig: die Ursache liegt in der konfigurierten Gate-Schwelle, nicht im Paar."""
     result = diagnose_structural_zero_eligible_gate(
-        {"REJECT_OOS_MIN_ALPHA_TSTAT": 100}, stop_reason="STRUCTURAL_ZERO_ELIGIBLE")
+        {"REJECT_OOS_MIN_ALPHA_TSTAT": 100}, stop_reason="STRUCTURAL_ZERO_ELIGIBLE",
+        max_is_trades=None, median_is_trades=None)
     assert result["proposed_action"] != "denylist"
 
 

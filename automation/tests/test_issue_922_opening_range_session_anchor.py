@@ -131,8 +131,10 @@ def test_spaces_search_space_overrides_are_wired_for_opening_range_breakout(monk
     import automation.optimizer.spaces as sp
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+    # Issue #1316 (GH #1193) — "axis" ist Pflicht fuer den bar-denominierten or_bars; reale
+    # config_dir() (nicht monkeypatched hier) ⇒ run_axis='rth' (echtes optimizer.json).
     monkeypatch.setattr(sp, "_search_space_overrides_cache", {
-        "OpeningRangeBreakoutStrategy": {"XOM.ETORO": {"or_bars": [4, 5]}}
+        "OpeningRangeBreakoutStrategy": {"XOM.ETORO": {"axis": "rth", "or_bars": [4, 5]}}
     })
     study = optuna.create_study()
     for _ in range(20):

@@ -2962,8 +2962,29 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 if _d:
                     _rejection_detail_counts_for_writeback[_d] = (
                         _rejection_detail_counts_for_writeback.get(_d, 0) + 1)
+            # Issue #1303 (GH #1180) Fix Punkt 1/2 — dieselbe IS-Aktivitaets-/worker_error-
+            # Grundgesamtheit wie report._study_record, hier direkt aus den Trial-User-Attrs
+            # gehoben (dieser Block laeuft VOR jedem Report-Lauf, siehe Docstring oben).
+            _is_trade_counts_for_writeback = [
+                int(v) for v in (getattr(t, "user_attrs", {}).get("is_total_trades") for t in trials)
+                if v is not None
+            ]
+            _median_is_trades_for_writeback = (
+                statistics.median(_is_trade_counts_for_writeback)
+                if _is_trade_counts_for_writeback else None)
+            _max_is_trades_for_writeback = (
+                max(_is_trade_counts_for_writeback) if _is_trade_counts_for_writeback else None)
+            _worker_error_counts_for_writeback: dict[str, int] = {}
+            for _t in trials:
+                _werr = getattr(_t, "user_attrs", {}).get("worker_error")
+                if _werr:
+                    _worker_error_counts_for_writeback[_werr] = (
+                        _worker_error_counts_for_writeback.get(_werr, 0) + 1)
             _structural_diagnosis = diagnose_structural_zero_eligible_gate(
-                _rejection_detail_counts_for_writeback, stop_reason=budget_execution["stop_reason"])
+                _rejection_detail_counts_for_writeback, stop_reason=budget_execution["stop_reason"],
+                max_is_trades=_max_is_trades_for_writeback,
+                median_is_trades=_median_is_trades_for_writeback,
+                worker_error_counts=_worker_error_counts_for_writeback)
             if _structural_diagnosis["binding_cause"] not in (None, "none"):
                 _structural_rec = {
                     "strategy": strategy, "symbol": symbol,
@@ -3910,6 +3931,10 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         if metrics.oos_session_coverage_fraction is not None:
             trial.set_user_attr(
                 "oos_session_coverage_fraction", metrics.oos_session_coverage_fraction)
+        # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Länge der VOLLEN mtm_series-Bar-Achse je Trial
+        # persistiert, Rohmaterial für report._study_record's n_bars_delivered_median.
+        if metrics.oos_n_bars_delivered is not None:
+            trial.set_user_attr("oos_n_bars_delivered", metrics.oos_n_bars_delivered)
         # Issue #845 — Downside-Beobachtungs-Nenner je Trial persistiert (None-safe, siehe
         # parsing.TournamentMetrics.oos_downside_obs-Feldkommentar), damit confirm.py/invariants.py
         # n_periods-Heterogenität einer Familie gegen die tatsaechlich downside-tragende
@@ -3928,6 +3953,19 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         trial.set_user_attr("oos_total_trades", int(metrics.oos_total_trades))
         trial.set_user_attr("is_total_trades", int(metrics.is_total_trades))
         trial.set_user_attr("hit_trade_cap", bool(metrics.hit_trade_cap))
+        # Issue #1299 (GH #1176) Fix Punkt 3 — der backtest_runner._empty_result-Fehlergrund dieses
+        # Trials (None bei echter Ausfuehrung), Rohmaterial fuer sweep_diagnostics.diagnose_trade_
+        # frequency/diagnose_structural_zero_eligible_gate's data_unavailable-Unterscheidung (#1303).
+        if metrics.worker_error is not None:
+            trial.set_user_attr("worker_error", metrics.worker_error)
+        # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Tick-Populations-Zähler je Trial persistiert,
+        # Rohmaterial für report._study_record (n_ticks_raw_median/n_ticks_after_session_filter_
+        # median) und invariants.check_tick_population.
+        if metrics.n_ticks_raw is not None:
+            trial.set_user_attr("n_ticks_raw", metrics.n_ticks_raw)
+        if metrics.n_ticks_after_session_filter is not None:
+            trial.set_user_attr(
+                "n_ticks_after_session_filter", metrics.n_ticks_after_session_filter)
         # Issue #660 — die per-Trial OOS-Win-Rate persistiert, damit die Study-Summary
         # (_emit_study_summary) die tatsächlich BEOBACHTETE Symbol-/Strategie-spezifische
         # Win-Rate-Verteilung gegen die konfigurierte oos_min_win_rate-Schwelle prüfen kann (LIVE,

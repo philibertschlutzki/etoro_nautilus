@@ -25,6 +25,7 @@ from typing import Any
 
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 from automation.optimizer._contracts import BAR_SECONDS_DEFAULT as _BAR_SECONDS_DEFAULT
+from automation.optimizer._contracts import TIME_BOX_BARS as _TIME_BOX_BARS
 
 _log = logging.getLogger("optimizer")
 
@@ -471,23 +472,35 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
                     "im Produktivbetrieb unzulässiger Kaltstart ohne Bootstrap-Guard (Issue #915)."),
         )
     if configured_min_periods is None or not observed_n_periods_medians:
+        # Issue #1310 (GH #1187, P1) — dieselbe #995/#1147-Tri-State-Konvention: ein Fail-Fast-
+        # Wächter mit Abbruchvollmacht ("blocking") darf "ich konnte nicht pruefen" nicht als
+        # "geprueft und in Ordnung" (passed=True) melden.
         return InvariantResult(
             name="check_guard_reference_coherence",
-            passed=True,
+            passed=None,
             expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
                      "beobachtetem Median(n_periods)",
             actual=None,
             severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "no_configured_reference_or_no_telemetry",
+                         "n_studies_measured": 0},
             detail="sortino_numeric_guard_min_periods nicht konfiguriert oder keine Studies mit "
                    "n_periods-Telemetrie — nicht anwendbar.",
         )
     observed_median = statistics.median(observed_n_periods_medians)
     if observed_median <= 0:
         return InvariantResult(
-            name="check_guard_reference_coherence", passed=True,
+            name="check_guard_reference_coherence", passed=None,
             expected=f"Faktor <= {max_factor}", actual=None,
             severity="blocking",
-            detail="beobachteter Median(n_periods) <= 0 — nicht anwendbar.",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "observed_median_non_positive",
+                         "n_studies_measured": len(observed_n_periods_medians)},
+            detail="beobachteter Median(n_periods) <= 0 — nicht auswertbar.",
         )
     ratio = configured_min_periods / observed_median
     passed = (1.0 / max_factor) <= ratio <= max_factor
@@ -870,13 +883,20 @@ def check_selection_statistic_availability(study_records: list[dict], *,
     Issue #913 Katalog-Vorbemerkung: 2187 Trials, 0 mit definiertem Sortino/PSR)."""
     with_evaluated = [r for r in study_records if (r.get("n_evaluable") or 0) > 0]
     if not with_evaluated:
+        # Issue #1310 (GH #1187, P1) — dieselbe #995/#1147-Tri-State-Konvention: ein Fail-Fast-
+        # Wächter mit Abbruchvollmacht ("blocking") darf "ich konnte nicht pruefen" nicht als
+        # "geprueft und in Ordnung" (passed=True) melden.
         return InvariantResult(
             name="check_selection_statistic_availability",
-            passed=True,
+            passed=None,
             expected=f"Anteil oos_evaluated-Trials mit definiertem oos_psr >= "
                      f"{min_available_fraction} je Study",
             actual=None,
             severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_evaluated_trials",
+                         "n_studies_measured": 0},
             detail="Keine Study mit oos_evaluated-Trials — nicht anwendbar.",
         )
     offenders: dict[str, float] = {}
@@ -3407,7 +3427,20 @@ def check_family_n_event_report_agreement(
     #1254) ⇒ ``inconclusive=True``, nicht auswertbar. ``severity='medium'`` (Fix-Vorgabe) — eine
     Divergenz ist ein Beobachtbarkeits-/Konsistenzbefund, keine Korrektheitsverletzung der
     Multiple-Testing-Korrektur selbst (die liest ausschliesslich die Report-Seite, nie das
-    Ereignis)."""
+    Ereignis).
+
+    Issue #1322 (GH #1199, P2) — Root-Cause: ein fehlender Schluessel im Ereignis-Dict
+    (``.get(sym) is None``, weil ``sym`` dort NIE aufgetaucht ist) wurde bislang IDENTISCH zu
+    einer echten Werte-Abweichung behandelt (beide liefen ueber denselben ``!=``-Vergleich in
+    ``mismatches``). Symptom-Beweis: ``{'TSLA.ETORO': {'event': None, 'report': 0}}`` — das
+    Ereignis-Feld war fuer dieses Symbol schlicht NICHT befuellt (leere Familie, siehe
+    ``sweep.py``s Emissions-Kommentar), der Report zeigte bereits korrekt ``0``. Ab diesem Fix:
+    ``MISSING`` (Schluessel fehlt im Ereignis) wird von ``MISMATCH`` (Schluessel in BEIDEN
+    vorhanden, Werte weichen ab) getrennt ausgewiesen. ``MISSING`` bei GLEICHZEITIG
+    ``report == 0`` ist STRUKTURELL erwartet (eine leere Familie stempelt das Ereignis-Feld nicht)
+    ⇒ ``passed=None`` (kein FAIL) fuer den Gesamt-Check, sofern KEINE echte ``MISMATCH`` vorliegt.
+    ``MISSING`` bei ``report != 0`` bleibt ein FAIL (das Ereignis haette eine tatsaechliche
+    Familien-Groesse tragen muessen)."""
     if n_family_attempted_frozen_by_event is None:
         return InvariantResult(
             name="check_family_n_event_report_agreement",
@@ -3420,23 +3453,54 @@ def check_family_n_event_report_agreement(
                    "vor Sweep-Abschluss, oder Legacy-Report vor #1254) — nicht auswertbar.",
             inconclusive=True,
         )
-    mismatches = {
-        sym: {"event": n_family_attempted_frozen_by_event.get(sym),
-             "report": n_family_frozen_by_report.get(sym)}
-        for sym in set(n_family_attempted_frozen_by_event) | set(n_family_frozen_by_report)
-        if n_family_attempted_frozen_by_event.get(sym) != n_family_frozen_by_report.get(sym)
-    }
-    passed = not mismatches
+    mismatches: dict[str, dict] = {}
+    missing_with_empty_family: dict[str, dict] = {}
+    for sym in sorted(set(n_family_attempted_frozen_by_event) | set(n_family_frozen_by_report)):
+        report_val = n_family_frozen_by_report.get(sym)
+        if sym not in n_family_attempted_frozen_by_event:
+            if report_val == 0:
+                missing_with_empty_family[sym] = {"event": "MISSING", "report": report_val}
+            else:
+                mismatches[sym] = {"event": "MISSING", "report": report_val}
+            continue
+        event_val = n_family_attempted_frozen_by_event.get(sym)
+        if event_val != report_val:
+            mismatches[sym] = {"event": event_val, "report": report_val}
+    if mismatches:
+        passed = False
+    elif missing_with_empty_family:
+        passed = None
+    else:
+        passed = True
+    actual = None
+    if mismatches or missing_with_empty_family:
+        actual = {}
+        if mismatches:
+            actual["mismatches"] = mismatches
+        if missing_with_empty_family:
+            actual["missing_with_empty_family"] = missing_with_empty_family
+    if passed is True:
+        detail = "OK"
+    elif passed is None:
+        detail = (
+            f"{len(missing_with_empty_family)} Symbol(e) fehlen im sweep_completed-Ereignis, "
+            f"tragen aber report-seitig 0 (leere Familie, Ereignis-Feld nicht befuellt): "
+            f"{missing_with_empty_family} — strukturell erwartet, kein FAIL (#1322).")
+    else:
+        detail = (
+            f"{len(mismatches)} Symbol(e) mit echter Abweichung zwischen sweep_completed-Ereignis "
+            f"und Report: {mismatches} (#1254/#1322)."
+            + (f" Ausserdem {len(missing_with_empty_family)} strukturell erwartete MISSING-Faelle "
+               f"(leere Familie): {missing_with_empty_family}." if missing_with_empty_family else ""))
     return InvariantResult(
         name="check_family_n_event_report_agreement",
         passed=passed,
         expected="sweep_completed.n_family_attempted_frozen == "
-                 "run_json.cross_study.n_family.frozen je Symbol",
-        actual=mismatches or None,
+                 "run_json.cross_study.n_family.frozen je Symbol (MISSING bei report==0 ist "
+                 "strukturell erwartet, kein FAIL)",
+        actual=actual,
         severity="medium",
-        detail=("OK" if passed else
-                f"{len(mismatches)} Symbol(e) mit Abweichung zwischen sweep_completed-Ereignis "
-                f"und Report: {mismatches} (#1254)."),
+        detail=detail,
     )
 
 
@@ -4076,6 +4140,115 @@ def check_timebox_unit_coherence(
                 "— die Zeitbox-Einheit (optimizer.json['time_box_bars']) und die tatsaechliche "
                 "Bar-Zaehlung sind inkohaerent (#1261/#1131)."),
         provenance={"offenders": offenders} if offenders else None,
+    )
+
+
+def check_timebox_cap_coherence(
+    max_bars_in_trade_hard_cap: float = _MAX_BARS_IN_TRADE_CAP,
+    time_box_bars: float = _TIME_BOX_BARS, *,
+    max_slack_bars: float = 1.0,
+) -> InvariantResult:
+    """Issue #1314 (GH #1191, P0) — der harte Bar-Cap (``_contracts.MAX_BARS_IN_TRADE_HARD_CAP``,
+    der Bar-Zähler-Exit-Deckel in ``HourlyStrategyBase``) und die Zeitbox-Normierungs-Deadline
+    (``optimizer.json['time_box_bars']``, ``t_norm = oos_median_bars_held / time_box_bars``, Issue
+    #711) sind ZWEI unabhängig konsumierte Grössen für DENSELBEN Vertrag — vor #1314 leitete der
+    Cap seinen Wert UNABHÄNGIG von ``time_box_bars`` ab (``round(24 * 0.24) = 6`` vs. das
+    ungerundete ``24.0 * 0.24 = 5.76``). Eine Position, die den Cap AUSSCHÖPFT, war dadurch PER
+    KONSTRUKTION eine Zeitbox-Verletzung (``t_norm = 6 / 5,76 = 1,042 > 1``) — der Cap erlaubte
+    strukturell MEHR Bars, als die Deadline je toleriert.
+
+    ZWEI Klauseln, BEIDE müssen erfüllt sein:
+    1. ``max_bars_in_trade_hard_cap >= time_box_bars`` — der Cap darf NIE unter der Deadline
+       liegen (sonst ist jede volle Position automatisch eine Verletzung, s. o.).
+    2. ``max_bars_in_trade_hard_cap - time_box_bars < max_slack_bars`` (Default 1.0 Bar) — der Cap
+       darf aber auch nicht BELIEBIG viel WEITER als die Deadline liegen (sonst waere er gegen eine
+       ANDERE, nicht mehr an ``time_box_bars`` gekoppelte Achse kalibriert — ein still
+       auseinanderlaufendes Wertepaar waere GENAUSO ein #1314-Rueckfall, nur in die andere
+       Richtung, und bliebe ohne diese zweite Klausel unentdeckt).
+
+    FAIL (severity ``blocking`` — derselbe Rang wie andere Konfigurationskohärenz-Wächter dieser
+    Vertragsklasse, siehe ``check_timebox_unit_coherence``s Nachbarschaft): eine der beiden
+    Klauseln verletzt. Reine Konfigurations-Funktion (keine Study-Kohorte, daher kein Tri-State —
+    beide Eingaben sind IMMER bekannt, es gibt keinen "nicht auswertbar"-Zustand)."""
+    cap_covers_deadline = max_bars_in_trade_hard_cap >= time_box_bars
+    slack = max_bars_in_trade_hard_cap - time_box_bars
+    slack_within_bound = slack < max_slack_bars
+    passed = cap_covers_deadline and slack_within_bound
+    expected = (
+        f"max_bars_in_trade_hard_cap >= time_box_bars UND (max_bars_in_trade_hard_cap - "
+        f"time_box_bars) < {max_slack_bars}")
+    if passed:
+        detail = "OK"
+    elif not cap_covers_deadline:
+        detail = (
+            f"max_bars_in_trade_hard_cap={max_bars_in_trade_hard_cap:g} liegt UNTER der Zeitbox-"
+            f"Deadline time_box_bars={time_box_bars:g} — eine Position, die den Cap ausschöpft, "
+            "ist per Konstruktion eine Zeitbox-Verletzung, unabhängig von der tatsächlichen "
+            "Haltedauer (#1314).")
+    else:
+        detail = (
+            f"max_bars_in_trade_hard_cap={max_bars_in_trade_hard_cap:g} liegt {slack:.2f} Bars "
+            f"über der Zeitbox-Deadline time_box_bars={time_box_bars:g} (Schwelle "
+            f"{max_slack_bars:g}) — der Cap ist gegen eine andere Achse kalibriert als die "
+            "Zeitbox-Deadline (#1314).")
+    return InvariantResult(
+        name="check_timebox_cap_coherence",
+        passed=passed,
+        expected=expected,
+        actual={"max_bars_in_trade_hard_cap": max_bars_in_trade_hard_cap,
+               "time_box_bars": time_box_bars, "slack": round(slack, 4)} if not passed else None,
+        severity="blocking",
+        detail=detail,
+    )
+
+
+def check_override_axis_coherence(
+    active_bounds_overrides: list[dict], *, run_axis: str | None,
+) -> InvariantResult:
+    """Issue #1316 (GH #1193, P1) — jeder KURATIERTE, bar-denominierte Suchraum-Override
+    (``search_space_overrides.json``, ``bounds.active_bounds_overrides``-Eintraege mit
+    ``source == 'curated'``) muss eine ``axis`` tragen, die mit der Achse DIESES Laufs
+    (``optimizer.json['time_box_bars_axis']``) übereinstimmt — report-seitiges Gegenstück zum
+    fail-loud-Wächter in ``spaces._bounds_for`` (``StaleAxisOverrideError``): DORT bricht ein
+    tatsaechlich GEZOGENER Override sofort ab, HIER wird das GESAMTE kuratierte Inventar
+    ausgewiesen (auch Overrides fuer Symbole, die dieser Lauf nicht enthaelt — ein stale Override
+    fuer ein Symbol ausserhalb dieses Laufs bleibt sonst unsichtbar, bis irgendein Lauf es zieht).
+
+    Nur Parameter aus ``spaces._BAR_DENOMINATED_PARAMS`` sind betroffen — reine Schwellwert-/
+    Verhaeltnis-Parameter (z. B. ``rsi_oversold``, ``keltner_multiplier``) haben keine Bar-Einheit
+    und bleiben unbetroffen. Ein fehlendes ``axis``-Feld ist IMMER ein Verstoss (kein Default,
+    unabhaengig von ``run_axis``); eine ABWEICHENDE ``axis`` nur, wenn ``run_axis`` bekannt ist.
+
+    severity ``high`` (ein stales Override verfaelscht den Suchraum, ist aber — anders als eine
+    aktiv falsch skalierte Zeitbox-Deadline — kein sofortiger Entscheidungsfehler DIESES Laufs,
+    solange der betroffene Override nicht gezogen wurde)."""
+    from automation.optimizer.spaces import _BAR_DENOMINATED_PARAMS
+
+    offenders = []
+    for o in active_bounds_overrides or []:
+        if o.get("source") != "curated":
+            continue
+        param = o.get("parameter")
+        if param not in _BAR_DENOMINATED_PARAMS:
+            continue
+        axis = o.get("axis")
+        if axis is None or (run_axis is not None and axis != run_axis):
+            offenders.append({
+                "strategy": o.get("strategy"), "symbol": o.get("symbol"), "parameter": param,
+                "override_axis": axis, "run_axis": run_axis,
+            })
+    passed = not offenders
+    return InvariantResult(
+        name="check_override_axis_coherence",
+        passed=passed,
+        expected="jeder kuratierte, bar-denominierte Override traegt axis == "
+                 "optimizer.json['time_box_bars_axis']",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Override(s) mit fehlender/abweichender axis: {offenders} — "
+                "search_space_overrides.json aktualisieren (axis-Feld + Bounds, siehe "
+                "proposed_rth_bounds) (#1316)."),
+        severity="high",
     )
 
 
@@ -5268,9 +5441,11 @@ def check_atr_floor_enforcement(
     expected = (f"floor_binding == True ⇒ effective_stop_distance_bps >= "
                 f"{min_stop_to_cost_ratio} · c_rt - max(1e-6, 5e-5·k)")
     if n_binding_measured == 0:
+        # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung (dieselbe Konvention wie #995/#1147,
+        # siehe InvariantResult.passed-Feld-Docstring): "nicht auswertbar" ist KEIN PASS.
         return InvariantResult(
             name="check_atr_floor_enforcement",
-            passed=True,
+            passed=None,
             expected=expected,
             actual=None,
             severity="high",
@@ -5674,7 +5849,18 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
     stored = int(champions_summary.get("stored") or 0)
     written_back = int(champions_summary.get("written_back") or 0)
     attempts = champions_summary.get("attempts")
-    skipped_by_reason = champions_summary.get("skipped_by_reason") or {}
+    # Issue #1321 (GH #1198, P2) — zweistufig: Ebene 1 (``store_attempt_skipped_by_reason``, WARUM
+    # ein Kandidat nie speicherwuerdig war — z. B. 'EMPTY_PARAMS') ist die ERSTE Ursache in der
+    # Kette; Ebene 2 (``writeback_skipped_by_reason``, WARUM ein admissibler Store-Eintrag nicht
+    # zurueckgeschrieben wurde — z. B. 'STORE_EMPTY') ist bei einem leeren Store nur die triviale
+    # FOLGE der Ebene-1-Ursache, keine eigene Erklaerung. ``skipped_by_reason`` (Alias fuer
+    # ``writeback_skipped_by_reason``, Rueckwaertskompatibilitaet zu Reports vor diesem Fix) dient
+    # nur noch als Fallback, wenn KEINE Ebene-1-Telemetrie vorliegt (aeltere Reports ohne
+    # ``store_attempt_skipped_by_reason``-Feld).
+    store_attempt_skipped_by_reason = champions_summary.get("store_attempt_skipped_by_reason") or {}
+    writeback_skipped_by_reason = (
+        champions_summary.get("writeback_skipped_by_reason")
+        or champions_summary.get("skipped_by_reason") or {})
     if stored == 0 and not attempts:
         return InvariantResult(
             name="check_champion_writeback_reachability",
@@ -5684,16 +5870,30 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
             detail="Kein Champion-Store-Eintrag — nicht anwendbar.",
         )
     writeback_passed = written_back > 0
+    cohort_text = f"{attempts} Versuche" if attempts is not None else f"{stored} Store-Eintraege"
     if writeback_passed:
         detail = "OK"
+    elif store_attempt_skipped_by_reason:
+        # Issue #1321 — die erste nicht-triviale Ursache in der Kette: ein Ebene-1-Ablehnungscode
+        # (z. B. 'EMPTY_PARAMS') erklaert, WARUM nie ein admissibler Kandidat entstand — das
+        # triviale Ebene-2-Symptom 'STORE_EMPTY' waere hier nur eine Umformulierung von "0
+        # Eintraege", keine eigenstaendige Ursache.
+        reasons_text = ", ".join(
+            f"{v}x {k}" for k, v in sorted(
+                store_attempt_skipped_by_reason.items(), key=lambda kv: -kv[1])
+        )
+        detail = (f"{cohort_text}, 0 Writebacks — Ebene-1-Ursache (Speicherversuch, die erste "
+                  f"nicht-triviale Ursache in der Kette): {reasons_text} (#1321: die Ursache ist "
+                  "gemessen, nicht geraten).")
     elif attempts == 0:
         detail = ("0 Champion-Writeback-Versuche beobachtet — Ebene 2 (#706) hat KEINE "
                   "Produktions-Call-Site erreicht.")
     else:
+        # Fallback: keine Ebene-1-Telemetrie verfuegbar (aelterer Report) — auf die Ebene-2-
+        # Verteilung zurueckfallen (unveraendertes Pre-#1321-Verhalten).
         reasons_text = ", ".join(
-            f"{v}x {k}" for k, v in sorted(skipped_by_reason.items(), key=lambda kv: -kv[1])
-        ) if skipped_by_reason else "unbekannt (keine skipped_by_reason-Telemetrie)"
-        cohort_text = f"{attempts} Versuche" if attempts is not None else f"{stored} Store-Eintraege"
+            f"{v}x {k}" for k, v in sorted(writeback_skipped_by_reason.items(), key=lambda kv: -kv[1])
+        ) if writeback_skipped_by_reason else "unbekannt (keine skipped_by_reason-Telemetrie)"
         detail = (f"{cohort_text}, 0 Writebacks — beobachtete Ursachen: {reasons_text} (#1084: "
                   "die Ursache ist gemessen, nicht geraten).")
 
@@ -5727,7 +5927,11 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
         expected="written_back > 0, sobald stored > 0 oder ein Schreibversuch stattfand; jeder "
                  "Ebene-1-Speicherversuch traegt einen aufloesbaren skip_detail['reason']",
         actual={"stored": stored, "written_back": written_back, "attempts": attempts,
-               "skipped_by_reason": skipped_by_reason,
+               # Issue #1321 (GH #1198) — beide Ebenen getrennt sichtbar, plus der Alias fuer
+               # Rueckwaertskompatibilitaet.
+               "store_attempt_skipped_by_reason": store_attempt_skipped_by_reason,
+               "writeback_skipped_by_reason": writeback_skipped_by_reason,
+               "skipped_by_reason": writeback_skipped_by_reason,
                "unresolved_champion_store_attempts": unresolved_attempts or None},
         severity=severity,
         detail=detail,
@@ -6155,17 +6359,30 @@ def check_holding_time_cap(study_records: list[dict], *,
         for r in with_data
         if (r.get("timebox_violating_trades_frac") or 0.0) > study_tolerance
     }
+    # Issue #1310 (GH #1187, P1) — ``magnitude_offenders`` allein ist LEER sowohl bei fehlender
+    # ``max_holding_time_s``-Telemetrie ALS AUCH bei vorhandener, aber unauffaelliger Telemetrie
+    # (gemessen, keine Verletzung) — die beiden Faelle sind NICHT dieselbe Aussage. Der eigentliche
+    # Inkonklusiv-Test braucht daher ein SEPARATES "wurde ueberhaupt gemessen"-Signal, unabhaengig
+    # vom Offender-Ausgang.
+    with_magnitude_data = [r for r in study_records if r.get("max_holding_time_s") is not None]
 
-    if not with_data and not magnitude_offenders:
+    if not with_data and not with_magnitude_data:
+        # Issue #1310 (GH #1187, P1) — dieselbe #995/#1147-Tri-State-Konvention: ein Fail-Fast-
+        # Wächter mit Abbruchvollmacht ("blocking") darf "ich konnte nicht pruefen" nicht als
+        # "geprueft und in Ordnung" (passed=True) melden.
         return InvariantResult(
             name="check_holding_time_cap",
-            passed=True,
+            passed=None,
             expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} UND "
                      f"max_holding_time_s <= {hard_multiple}x cap je Study",
             actual=None,
             detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
                    "nicht anwendbar.",
             severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_holding_time_telemetry",
+                         "n_studies_measured": 0},
         )
     passed = not fraction_offenders and not magnitude_offenders
     # Issue #971 Fix Punkt 2 — Herkunftspflicht für blockierende Invarianten: numerator/denominator/
@@ -6601,6 +6818,159 @@ def check_effective_stop_distance(study_records: list[dict], *,
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None,
                       "n_candidates": len(candidates), "n_measured": len(with_data)},
+    )
+
+
+def check_tick_population(study_records: list[dict]) -> InvariantResult:
+    """Issue #1298 (GH #1175, P0) Fix Punkt 4 — blockierender Wächter: FAILt für eine Study, deren
+    ``n_ticks_after_session_filter_median`` (``report._study_record``, Issue #1298 Fix Punkt 3)
+    ODER ``n_bars_delivered_median`` 0 ist. Beide Felder werden VOR jedem Filter/jeder Aggregation
+    gestempelt (``backtest_runner.load_ticks_from_catalog``/``_bar_calendar_telemetry``) — ein
+    Trial ohne Ticks oder ohne gelieferte Bars ist damit an der QUELLE sichtbar, statt erst
+    stromabwärts als "0 Trades" fehlinterpretiert zu werden (Root-Cause #1303/B-4: 2 810 Trials über
+    fünf Läufe ohne einen einzigen Trade, ohne dass je gestempelt wurde, ob überhaupt Ticks geladen
+    wurden).
+
+    Eine Study OHNE beide Felder (``None``, Legacy-Report vor #1298 ODER
+    ``load_ticks_from_catalog`` nie mit ``out=`` aufgerufen) wird NICHT gewertet — sie trägt weder
+    zum PASS noch zum FAIL bei (dieselbe Konvention wie andere additive #1298-Telemetriefelder,
+    kein stiller Rückfall auf einen der beiden Zustände). Keine gewertete Study ⇒ ``passed=None``
+    (INCONCLUSIVE, Pitfall #413) statt eines stillen PASS.
+
+    ``actual`` in der Pair-Konvention (``{"strategy/symbol": {...}}``), damit
+    ``sweep._offending_pairs_for_fail_fast_check`` (#1063) die Offender parsen kann."""
+    candidates = [
+        r for r in study_records
+        if r.get("n_ticks_after_session_filter_median") is not None
+        or r.get("n_bars_delivered_median") is not None
+    ]
+    if not candidates:
+        return InvariantResult(
+            name="check_tick_population",
+            passed=None,
+            expected="n_ticks_after_session_filter_median > 0 UND n_bars_delivered_median > 0 "
+                     "je Study",
+            actual=None,
+            detail="Keine Studies mit Tick-/Bar-Populations-Telemetrie (Issue #1298) — "
+                   "nicht auswertbar (n_candidates=0).",
+            severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_tick_population_telemetry",
+                          "n_candidates": 0},
+        )
+    offenders: dict[str, dict] = {}
+    for r in candidates:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        n_ticks = r.get("n_ticks_after_session_filter_median")
+        n_bars = r.get("n_bars_delivered_median")
+        if (n_ticks is not None and n_ticks == 0) or (n_bars is not None and n_bars == 0):
+            offenders[key] = {
+                "n_ticks_after_session_filter_median": n_ticks,
+                "n_bars_delivered_median": n_bars,
+            }
+    return InvariantResult(
+        name="check_tick_population",
+        passed=not offenders,
+        expected="n_ticks_after_session_filter_median > 0 UND n_bars_delivered_median > 0 "
+                 "je Study",
+        actual=offenders if offenders else None,
+        detail=(
+            f"{len(offenders)} Study/ies mit 0 Ticks nach Session-Filter oder 0 gelieferten Bars: "
+            f"{sorted(offenders)}." if offenders
+            else "Alle gewerteten Studies lieferten Ticks und Bars."
+        ),
+        severity="blocking",
+    )
+
+
+def check_diagnosis_writeback_admissible(
+    decision_admissible: bool | None, writeback_attempted: bool,
+) -> InvariantResult:
+    """Issue #1305 (GH #1182, P1) Fix Punkt 3 — Regressions-Wächter: FAILt, wenn dieser Lauf
+    ``decision_admissible=false`` trägt UND ein Diagnose-Rückschrieb-Batch (``diagnosed_pairs``/
+    ``boundary_solutions``/``search_budget_proposal``/Champion-Writeback) TROTZDEM versucht wurde.
+    Die eigentliche Verhinderung passiert bereits in
+    ``report.diagnosis_writeback_admissible``/``sweep_diagnostics.record_diagnosed_pair`` — dieser
+    Wächter sichert nur GEGEN ein erneutes Entkoppeln beider Mechanismen ab (dieselbe Pitfall-
+    Klasse, die #1305 selbst behoben hat: eine Konsequenz, die an keine Zulässigkeitsbedingung
+    gekoppelt ist).
+
+    ``decision_admissible is not False`` (``True``/``None``) ⇒ ``passed=True`` mit erklärendem
+    Detail ("nicht anwendbar") — dieser Wächter urteilt ausschliesslich über den
+    ``decision_admissible=false``-Fall."""
+    if decision_admissible is not False:
+        return InvariantResult(
+            name="check_diagnosis_writeback_admissible",
+            passed=True,
+            expected="Kein Diagnose-Rückschrieb-Versuch, wenn decision_admissible=false.",
+            actual=None,
+            detail="decision_admissible ist nicht false — nicht anwendbar.",
+            severity="high",
+        )
+    return InvariantResult(
+        name="check_diagnosis_writeback_admissible",
+        passed=not writeback_attempted,
+        expected="Kein Diagnose-Rückschrieb-Versuch, wenn decision_admissible=false.",
+        actual={"decision_admissible": False, "writeback_attempted": writeback_attempted}
+        if writeback_attempted else None,
+        detail=(
+            "Ein Diagnose-Rückschrieb-Batch wurde trotz decision_admissible=false versucht."
+            if writeback_attempted
+            else "decision_admissible=false — kein Rückschrieb-Versuch (korrekt unterdrückt)."
+        ),
+        severity="high",
+    )
+
+
+def check_binding_cause_agreement(agreement_records: list[dict]) -> InvariantResult:
+    """Issue #1304 (GH #1181, P1) — FAILt, wenn für dasselbe (Strategie, Symbol) der Ereignis-
+    ``binding_cause`` (sweep-seitig, ``sweep_diagnostics.diagnose_trade_frequency``, PER-TRIAL-
+    Daten) und der Report-``binding_cause`` (``diagnose_structural_zero_eligible_gate``,
+    ``is_rejection_detail_counts``) divergieren — zwei unabhängige Implementierungen derselben
+    Frage mit disjunkten Vokabularen (Root-Cause #1304: ``diagnose_trade_frequency`` kennt
+    ``signal_absent``, der Report-Zweig kannte ihn nicht, siehe #1303/GH #1180).
+
+    ``agreement_records`` (``report._binding_cause_agreement_records``): Liste von
+    ``{'strategy', 'symbol', 'event_binding_cause', 'report_binding_cause'}`` — bereits auf
+    Studies mit BEIDEN Quellen eingeschränkt (kein Rateversuch bei fehlendem Ereignis).
+
+    Keine gewertete Study (leere Liste) ⇒ ``passed=None`` (INCONCLUSIVE, Pitfall #413) statt eines
+    stillen PASS. ``actual`` in der Pair-Konvention (``{"strategy/symbol": {...}}``)."""
+    if not agreement_records:
+        return InvariantResult(
+            name="check_binding_cause_agreement",
+            passed=None,
+            expected="event_binding_cause == report_binding_cause je (Strategie, Symbol)",
+            actual=None,
+            detail="Keine Studies mit beiden Quellen (Ereignis UND Report-Ableitung) — "
+                   "nicht auswertbar (n_candidates=0).",
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "no_dual_source_studies",
+                          "n_candidates": 0},
+        )
+    offenders: dict[str, dict] = {}
+    for rec in agreement_records:
+        key = f"{rec.get('strategy')}/{rec.get('symbol')}"
+        event_cause = rec.get("event_binding_cause")
+        report_cause = rec.get("report_binding_cause")
+        if event_cause != report_cause:
+            offenders[key] = {
+                "event_binding_cause": event_cause, "report_binding_cause": report_cause,
+            }
+    return InvariantResult(
+        name="check_binding_cause_agreement",
+        passed=not offenders,
+        expected="event_binding_cause == report_binding_cause je (Strategie, Symbol)",
+        actual=offenders if offenders else None,
+        detail=(
+            f"{len(offenders)} Study/ies mit divergierendem binding_cause zwischen Ereignis und "
+            f"Report: {sorted(offenders)}." if offenders
+            else "Alle gewerteten Studies stimmen zwischen Ereignis und Report überein."
+        ),
+        severity="high",
     )
 
 
@@ -7599,6 +7969,39 @@ def check_run_determinism(run_fingerprint: str | None, result_fingerprint: str |
     )
 
 
+def check_result_not_degenerate(
+    result_degenerate: bool, result_degenerate_reason: str | None,
+) -> InvariantResult:
+    """Issue #1320 (GH #1197, P2) — FAILt, wenn ``report['result_degenerate']`` wahr ist: das
+    Ergebnis dieses Laufs ist INFORMATIONSFREI (siehe ``report._build_report``s Berechnungs-
+    kommentar fuer die beiden hinreichenden Bedingungen — derselbe ``best_reward`` in ALLEN (>= 2)
+    Studies, ODER ``n_evaluable == 0`` in JEDER Study), OHNE dass eine bestehende Kennzahl das als
+    eigenen Befund ausweist.
+
+    Root-Cause-Beweis (Referenzlauf ``da354bc2``): ``best_reward = -20,0`` in 14/14 Studies,
+    ``n_eligible = 0`` in 14/14, ``reward_std_total`` nicht gesetzt — ein Leser konnte diesen
+    Zustand nur durch manuelles Durchsehen ALLER 14 Study-Zeilen erkennen, kein einzelner Befund
+    benannte ihn.
+
+    severity ``high`` (kein Entscheidungsfehler DIESES Laufs allein — der Lauf mag korrekt
+    AUSGEFUEHRT worden sein, sein Ergebnis traegt nur keine verwertbare Information — aber ein
+    Leser darf keinen der 14 Studies-Werte fuer eine echte Differenzierung halten). Reine
+    Konfigurations-/Aggregat-Funktion, kein Tri-State: ``result_degenerate`` ist immer ein
+    bekannter bool."""
+    return InvariantResult(
+        name="check_result_not_degenerate",
+        passed=not result_degenerate,
+        expected="result_degenerate == False (mindestens zwei Studies mit unterschiedlichem "
+                 "best_reward ODER mindestens eine Study mit n_evaluable > 0)",
+        actual={"result_degenerate": result_degenerate,
+               "result_degenerate_reason": result_degenerate_reason} if result_degenerate else None,
+        severity="high",
+        detail=("OK" if not result_degenerate else
+                f"Ergebnis dieses Laufs ist informationsfrei ({result_degenerate_reason}) — siehe "
+                "report._build_report-Berechnungskommentar (#1320)."),
+    )
+
+
 def check_fail_fast_probe_timeliness(
     fail_fast_probe_triggered_at_wallclock_fraction: float | None,
 ) -> InvariantResult:
@@ -8240,9 +8643,12 @@ def check_stop_trigger_axis_coherence(
     expected = ("stop_trigger_axis='intrabar' ⇒ KEINE Study mit zero_range_bar_fraction > "
                f"{zero_range_bar_fraction_threshold}")
     if stop_trigger_axis is None:
+        # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung (dieselbe Konvention wie #995/#1147,
+        # siehe InvariantResult.passed-Feld-Docstring): "nicht auswertbar" ist KEIN PASS. Der
+        # Docstring oben sagte es bereits ("kein stiller PASS") — der Code hatte es nicht eingeloest.
         return InvariantResult(
             name="check_stop_trigger_axis_coherence",
-            passed=True,
+            passed=None,
             expected=expected,
             actual=None,
             severity="blocking",
@@ -8316,9 +8722,11 @@ def check_cost_drag_decomposition(
     expected = (f"Σ(component_round_trip_bps, _slippage_bps, _financing_bps) == "
                f"holdout_cost_drag_bps_per_round_trip (Toleranz {tolerance_fraction:.0%})")
     if not candidates:
+        # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung (dieselbe Konvention wie #995/#1147,
+        # siehe InvariantResult.passed-Feld-Docstring): "nicht auswertbar" ist KEIN PASS.
         return InvariantResult(
             name="check_cost_drag_decomposition",
-            passed=True,
+            passed=None,
             expected=expected,
             actual=None,
             severity="high",
@@ -8381,9 +8789,11 @@ def check_slippage_scope_agreement(study_records: list[dict]) -> InvariantResult
     ]
     expected = "slippage_p50_calibration_scope == slippage_calibration_scope je Study"
     if not candidates:
+        # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung (dieselbe Konvention wie #995/#1147,
+        # siehe InvariantResult.passed-Feld-Docstring): "nicht auswertbar" ist KEIN PASS.
         return InvariantResult(
             name="check_slippage_scope_agreement",
-            passed=True,
+            passed=None,
             expected=expected,
             actual=None,
             severity="high",
@@ -8437,9 +8847,11 @@ def check_slippage_calibration_not_circular(study_records: list[dict]) -> Invari
         r for r in study_records if r.get("holdout_stop_exit_slippage_bps") is not None]
     expected = "holdout_stop_exit_slippage_bps definiert ⇒ slippage_measurement_basis == 'pre_cost_price'"
     if not candidates:
+        # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung (dieselbe Konvention wie #995/#1147,
+        # siehe InvariantResult.passed-Feld-Docstring): "nicht auswertbar" ist KEIN PASS.
         return InvariantResult(
             name="check_slippage_calibration_not_circular",
-            passed=True,
+            passed=None,
             expected=expected,
             actual=None,
             severity="high",
@@ -8488,9 +8900,11 @@ def check_mandatory_gate_reachability_global(
     diesem Check ausgewertet)."""
     expected = f"< {min_affected_fraction:.0%} der Studies mit unerreichbarem MANDATORY-Gate"
     if not mandatory_gate_live_results:
+        # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung (dieselbe Konvention wie #995/#1147,
+        # siehe InvariantResult.passed-Feld-Docstring): "nicht auswertbar" ist KEIN PASS.
         return InvariantResult(
             name="check_mandatory_gate_reachability_global",
-            passed=True,
+            passed=None,
             expected=expected,
             actual=None,
             severity="blocking",
@@ -8723,9 +9137,11 @@ def check_stop_loss_decomposition_identity(
     oder ein Lauf ganz ohne TRAILING_STOP-Exits)."""
     checked_total = sum(int(r.get("n_stop_loss_identity_checked") or 0) for r in study_records)
     if checked_total == 0:
+        # Issue #1309 (GH #1186, P1) — Tri-State-Praezisierung (dieselbe Konvention wie #995/#1147,
+        # siehe InvariantResult.passed-Feld-Docstring): "nicht auswertbar" ist KEIN PASS.
         return InvariantResult(
             name="check_stop_loss_decomposition_identity",
-            passed=True,
+            passed=None,
             expected=f"Verletzungsanteil <= {max_violation_fraction} je Study",
             actual=None,
             severity="blocking",
@@ -9247,6 +9663,54 @@ def check_invariant_coverage(
     )
 
 
+def check_inconclusive_not_reported_as_pass(invariant_checks: list[dict]) -> InvariantResult:
+    """Issue #1309 (GH #1186, P1, Pitfall #413 in AGENTS.md) — generischer Regressionswaechter
+    GEGEN die Fehlerklasse selbst, nicht nur gegen ihre fuenf bekannten Instanzen (``check_stop_
+    loss_decomposition_identity``/``check_atr_floor_enforcement``/``check_cost_drag_decomposition``/
+    ``check_slippage_calibration_not_circular``/``check_slippage_scope_agreement`` — und, bei der
+    Implementierung dieses Waechters selbst aufgedeckt, zwei WEITERE: ``check_stop_trigger_axis_
+    coherence``/``check_mandatory_gate_reachability_global``).
+
+    Symptom: ein Check stand in Report §5.1b als "nicht auswertbar", trug im JSON aber
+    ``passed=true`` — dieselbe Aussage widerspricht sich zwischen Text und Wahrheitswert; jeder
+    Konsument, der nur ``passed`` liest (nicht ``evaluable``), haelt einen NIE GEPRUEFTEN Befund
+    faelschlich fuer bestanden.
+
+    Bewusst GEGEN das strukturierte ``evaluable``-Feld geprueft, NICHT gegen einen Text-Musterabgleich
+    auf ``detail``: die uebergrosse Mehrheit der bestehenden ``inconclusive=True``-Checks traegt
+    ABSICHTLICH ``passed=True`` fuer eine vacuose "nichts zu pruefen"-Situation (0 Konfigurations-
+    Eintraege, 0 Vergleichspaare — siehe ``InvariantResult.evaluable``-Feld-Docstring: "die
+    uebergrosse Mehrheit der bestehenden inconclusive-Checks" bleibt ``passed=True``). Ein simpler
+    Textabgleich auf "nicht auswertbar"/"nicht anwendbar" faengt genau DIESE Mehrheit faelschlich mit
+    ein (empirisch verifiziert: > 40 Falsch-Treffer gegen einen realen Report). ``evaluable=False``
+    dagegen ist eine EXPLIZITE, vom Check-Autor selbst gesetzte Erklaerung "ich kann mein eigenes
+    Urteil nicht faellen" (Issue #973/#1127) — genau DANN, und nur dann, verlangt die #995/#1147-
+    Konvention ``passed=None`` statt ``passed=True``.
+
+    FAIL (severity ``high``), sobald ein Eintrag GLEICHZEITIG ``evaluable is False`` UND
+    ``passed is True`` traegt — ein interner Widerspruch INNERHALB desselben Eintrags, unabhaengig
+    vom Check-Namen, damit eine KUENFTIGE Instanz derselben Fehlerklasse denselben Wächter trifft.
+    Leere/fehlende ``invariant_checks`` ⇒ trivial PASS (keine Eintraege zu pruefen)."""
+    offenders: dict[str, str] = {}
+    for c in invariant_checks or []:
+        if c.get("passed") is not True or c.get("evaluable") is not False:
+            continue
+        name = c.get("name") or c.get("check")
+        if name:
+            offenders[name] = c.get("detail") or ""
+    passed = not offenders
+    return InvariantResult(
+        name="check_inconclusive_not_reported_as_pass",
+        passed=passed,
+        expected="kein Eintrag traegt evaluable=False UND passed=True gleichzeitig",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Check(s) melden Nicht-Auswertbarkeit ueber evaluable=False, "
+                f"tragen aber passed=true statt passed=None: {offenders} (#1309)."),
+    )
+
+
 def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
                                      fail_fast_invariants: list[str] | None = None) -> InvariantResult:
     """Issue #907 Fix 3 — symmetrisch zum Gate-Kollinearitäts-Fix: eine in
@@ -9336,6 +9800,58 @@ def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
                 f"'blocking': {offenders} — zwei entkoppelte Taxonomien fuer dieselbe Frage "
                 "(Issue #983, Pitfall #410 in AGENTS.md); entweder severity auf 'blocking' heben "
                 "oder aus fail_fast_invariants entfernen."),
+    )
+
+
+def check_fail_fast_inconclusive_budget(
+    invariant_checks: list[dict], *, fail_fast_invariants: list[str] | None = None,
+) -> InvariantResult:
+    """Issue #1310 (GH #1187, P1) — vierter Meta-Wächter derselben Familie (nach ``check_fail_fast_
+    invariants_wired``/``_actual_convention``/``_are_blocking``): SELBST wenn jeder fail-fast-Check
+    korrekt ``passed=None`` statt eines stillen ``True`` traegt (Issue #1309/#1310 Fix Punkt 1),
+    bleibt eine zweite Frage offen — ein Lauf, dessen Fail-Fast-Waechter UEBERWIEGEND kein Verdikt
+    faellen koennen, ist strukturell nicht entscheidungsfaehig, selbst wenn KEINER von ihnen explizit
+    FAILt. "Fail-open ist fuer einen Diagnose-Check vertretbar, fuer einen Waechter mit
+    Abbruchvollmacht nicht" (Issue-Root-Cause) gilt nicht nur pro Check, sondern auch AGGREGIERT.
+
+    FAIL (severity ``blocking``), wenn MEHR ALS DIE HAELFTE der in ``fail_fast_invariants``
+    konfigurierten Checks in ``invariant_checks`` mit ``passed=None`` erscheinen ODER GAR NICHT im
+    Strom auftauchen (beides bedeutet "kein Verdikt" — ein fehlender Eintrag ist die extremste Form
+    von "nicht auswertbar"; ``check_fail_fast_invariants_wired`` bleibt fuer die getrennte Frage
+    "fehlt der Check komplett" zustaendig, DIESER Wächter fragt nur "wie viele UEBERHAUPT ein
+    Verdikt gefaellt haben", unabhaengig vom Grund). Bei einer Mehrfachnennung desselben Namens im
+    Strom zaehlt das ERSTE Vorkommen (dieselbe Konvention wie ``check_fail_fast_invariants_are_
+    blocking``). ``fail_fast_invariants`` leer/fehlend ⇒ nicht anwendbar (PASS)."""
+    configured = sorted(set(fail_fast_invariants or []))
+    if not configured:
+        return InvariantResult(
+            name="check_fail_fast_inconclusive_budget",
+            passed=True,
+            expected="<= 50% der konfigurierten fail_fast_invariants tragen passed=None",
+            actual=None,
+            severity="blocking",
+            detail="fail_fast_invariants leer/fehlt — nicht anwendbar.",
+        )
+    passed_by_name: dict[str, bool | None] = {}
+    for c in invariant_checks or []:
+        name = c.get("name") or c.get("check")
+        if name in configured and name not in passed_by_name:
+            passed_by_name[name] = c.get("passed")
+    inconclusive = sorted(n for n in configured if passed_by_name.get(n) is None)
+    n_configured = len(configured)
+    n_inconclusive = len(inconclusive)
+    passed = n_inconclusive <= n_configured / 2.0
+    return InvariantResult(
+        name="check_fail_fast_inconclusive_budget",
+        passed=passed,
+        expected="<= 50% der konfigurierten fail_fast_invariants tragen passed=None (kein Verdikt)",
+        actual={"inconclusive": inconclusive, "n_configured": n_configured} if not passed else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{n_inconclusive}/{n_configured} konfigurierte fail_fast_invariants tragen kein "
+                f"Verdikt (passed=None oder gar nicht im Strom): {inconclusive} — dieser Lauf ist "
+                "nicht entscheidungsfaehig, unabhaengig davon, dass keiner von ihnen explizit "
+                "FAILt (Issue #1310)."),
     )
 
 
@@ -9508,7 +10024,13 @@ def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
     offenders = []
     for chk in invariant_checks or []:
         name = chk.get("name") or chk.get("check")
-        if name not in configured or chk.get("passed", True):
+        # Issue #1307 (GH #1184, P1) — ``passed=None`` (Tri-State: nicht auswertbar, siehe
+        # InvariantResult-Docstring) ist falsy, der vormalige ``chk.get("passed", True)`` liess den
+        # `continue` deshalb NICHT greifen und meldete inkonklusive Checks (z. B.
+        # check_effective_stop_distance bei leerer Kohorte) faelschlich als Konventionsverstoss.
+        # Nur eine EXPLIZIT FAILende Auswertung (``passed is False``) zaehlt, wie der Docstring
+        # oben bereits festhaelt.
+        if name not in configured or chk.get("passed") is not False:
             continue
         actual = chk.get("actual")
         conforms = (

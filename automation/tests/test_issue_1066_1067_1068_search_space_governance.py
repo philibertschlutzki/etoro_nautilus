@@ -86,8 +86,12 @@ def test_widen_bounds_toward_repeated_application_converges_not_diverges():
 
 # ── #1066: spaces._bounds_for validation ─────────────────────────────────────────────────────────
 def test_bounds_for_rejects_inadmissible_curated_override_fail_loud(monkeypatch):
+    # Issue #1316 (GH #1193) — "axis" (Geschwister der Bounds) muss der Lauf-Achse entsprechen,
+    # sonst wuerde StaleAxisOverrideError VOR der hier eigentlich getesteten Admissibilitaets-
+    # pruefung greifen.
     monkeypatch.setattr(spaces, "_search_space_overrides_cache",
-                        {"TrendPullbackStrategy": {"TSLA.ETORO": {"ema_period": [-325.0, 300]}}})
+                        {"TrendPullbackStrategy": {"TSLA.ETORO": {
+                            "axis": "rth", "ema_period": [-325.0, 300]}}})
     monkeypatch.setattr(spaces, "_auto_proposed_bounds_cache", {})
     with pytest.raises(ValueError, match="SEARCH_SPACE_OVERRIDE_INADMISSIBLE"):
         spaces._bounds_for("TrendPullbackStrategy", "TSLA.ETORO", "ema_period", 50, 300)
@@ -191,6 +195,82 @@ def test_max_bars_in_trade_widen_never_drops_below_floor():
         {"max_bars_in_trade": "low"}, {"max_bars_in_trade": (12.0, 24.0)}, widen_fraction=3.0)
     lo, _hi = proposal["max_bars_in_trade"]
     assert lo >= MIN_BARS_IN_TRADE_FLOOR
+
+
+# ── Issue #1317 (GH #1194, P1) — MIN_BARS_IN_TRADE_FLOOR ist eine achsen-unabhaengige
+# Rausch-Schwelle, NICHT aus RTH_AXIS_FACTOR abgeleitet (anders als MAX_BARS_IN_TRADE_HARD_CAP/
+# TIME_BOX_BARS). Symptom: der Floor wurde von 4 auf 1 umskaliert (round(4 * 0.24) = 1); auf der
+# RTH-Achse ist eine Bar eine Handelsstunde, ein max_bars_in_trade=1-Trade schliesst nach einer
+# Stunde — HourlyMeanReversionStrategy trug im #1275-Referenzlauf bereits max_bars_in_trade_median
+# = 2,0 UND einen Randloesungs-Befund bei 1.
+def test_min_bars_in_trade_floor_is_2_not_the_axis_scaled_1():
+    assert MIN_BARS_IN_TRADE_FLOOR == 2
+
+
+def test_min_bars_in_trade_floor_is_not_derived_from_rth_axis_factor():
+    """Akzeptanzkriterium #1317/1 — der Floor ist NICHT mehr aus RTH_AXIS_FACTOR abgeleitet
+    (anders als MAX_BARS_IN_TRADE_HARD_CAP/TIME_BOX_BARS, die BEIDE ``RTH_AXIS_FACTOR`` in ihrer
+    Definition referenzieren) — Quelltextpruefung auf der ZUWEISUNGSZEILE selbst, nicht auf dem
+    umgebenden Kommentar (der RTH_AXIS_FACTOR zu Vergleichszwecken durchaus erwaehnen darf)."""
+    import inspect
+
+    from automation.optimizer import _contracts
+
+    src = inspect.getsource(_contracts)
+    assignment_line = next(
+        line for line in src.splitlines() if line.startswith("MIN_BARS_IN_TRADE_FLOOR ="))
+    assert "RTH_AXIS_FACTOR" not in assignment_line
+    assert assignment_line.strip() == "MIN_BARS_IN_TRADE_FLOOR = 2"
+
+
+def test_min_bars_in_trade_floor_docstring_names_the_noise_rationale():
+    """Akzeptanzkriterium #1317/1 — der Docstring nennt die inhaltliche Rausch-Begruendung
+    (mindestens ein vollstaendiger Bar-Uebergang zwischen Ein- und Ausstieg), nicht nur eine
+    skalierte Zahl."""
+    import inspect
+
+    from automation.optimizer import _contracts
+
+    src = inspect.getsource(_contracts)
+    idx = src.index("MIN_BARS_IN_TRADE_FLOOR = 2")
+    preceding_comment = src[max(0, idx - 2200):idx]
+    assert "Rausch" in preceding_comment
+    assert "Bar-Übergang" in preceding_comment
+    assert "#1317" in preceding_comment or "#1194" in preceding_comment
+
+
+def test_min_bars_in_trade_floor_docstring_explicitly_excludes_axis_scaling():
+    import inspect
+
+    from automation.optimizer import _contracts
+
+    src = inspect.getsource(_contracts)
+    idx = src.index("MIN_BARS_IN_TRADE_FLOOR = 2")
+    preceding_comment = src[max(0, idx - 2200):idx]
+    assert "NICHT" in preceding_comment
+    assert "abgeleitet" in preceding_comment
+
+
+def test_max_bars_in_trade_widen_never_drops_below_the_new_floor_of_2():
+    """Akzeptanzkriterium #1317/2 — ein automatischer Rueckschrieb kann max_bars_in_trade nicht
+    unter den (neuen) Floor absenken, konkret gegen den Zahlenwert 2 gepinnt (Regressionsschutz
+    gegen ein versehentliches Zurueckfallen auf 1)."""
+    proposal = sd._widen_bounds_toward(
+        {"max_bars_in_trade": "low"}, {"max_bars_in_trade": (12.0, 24.0)}, widen_fraction=3.0)
+    lo, _hi = proposal["max_bars_in_trade"]
+    assert lo == 2
+
+
+def test_curated_search_space_overrides_are_unaffected_by_the_floor_change():
+    """Der Floor begrenzt NUR den automatischen Rueckschrieb — ein bestehender kuratierter
+    Suchraum (search_space_overrides.json, hier TSLA.ETORO/max_bars_in_trade=[1, 4]) wird davon
+    NICHT verengt; die Untergrenze 1 bleibt unterhalb des neuen Floors 2 unveraendert bestehen
+    (die Achsen-Staleness dieses konkreten Eintrags ist Gegenstand von #1316/GH #1193, nicht
+    dieses Tests)."""
+    cfg = json.loads(
+        open("automation/config/search_space_overrides.json", encoding="utf-8").read())
+    lo, _hi = cfg["overrides"]["VwapExhaustionStrategy"]["TSLA.ETORO"]["max_bars_in_trade"]
+    assert lo == 1
 
 
 # ── #1067: report._study_record winner_outside_default_bounds_after_override ───────────────────────────────────

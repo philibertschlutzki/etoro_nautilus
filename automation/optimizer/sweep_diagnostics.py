@@ -22,7 +22,18 @@ from pathlib import Path
 # Pitfall #229).
 _BINDING_CAUSES = frozenset(
     {"signal_absent", "signal_sparse", "hold_duration", "signal_quality", "inference_unavailable",
-     "none", "no_data"}
+     "none", "no_data",
+     # Issue #1299/#1303 (GH #1176/#1180) — 0 Ticks geladen/Katalog-Lesefehler/Datenspanne zu kurz.
+     # Weder Suchraum- noch Signal-Qualitaets-Aussage: die Daten wurden nie erreicht.
+     "data_unavailable"}
+)
+
+# Issue #1303 (GH #1180) Fix Punkt 2 — dieselben worker_error-Codes wie
+# backtest_runner._empty_result (#1299/GH #1176, #1300/GH #1177): jeder von ihnen bedeutet, der
+# Trial hat NIE echte Marktdaten gesehen (Datenpfad-Fehler, nicht Signal-Absenz).
+_DATA_UNAVAILABLE_WORKER_ERRORS = frozenset(
+    {"no_ticks_in_window", "tick_load_failed", "insufficient_data",
+     "session_filter_removed_all_ticks"}
 )
 
 
@@ -113,6 +124,20 @@ def classify_rejection_detail_gate_type(is_rejection_detail: str | None) -> str 
 def diagnose_structural_zero_eligible_gate(
     is_rejection_detail_counts: dict[str, int] | None, *, homogeneity_threshold: float = 1.0,
     stop_reason: str | None = None,
+    # Issue #1303 (GH #1180) Fix Punkt 1 — PFLICHT-Keyword-Argumente (kein Default): jeder Aufrufer
+    # muss die IS-Aktivitaets-Grundgesamtheit explizit benennen, sonst kollabiert der
+    # STRUCTURAL_ALL_UNEVALUABLE-Zweig unbedingt auf 'signal_sparse'/'search_space_override', selbst
+    # wenn die Strategie im GESAMTEN Suchraum nie feuerte (max_is_trades==0, echte Datengeometrie/
+    # Indikator-Degeneration statt eines tunebaren Frequenz-Problems — 70 falsch etikettierte
+    # diagnosed_pairs-Eintraege in einem einzigen Batch waren die Konsequenz). ``median_is_trades``
+    # wird mitgefuehrt (Telemetrie-/Vertragsparitaet zu ``diagnose_trade_frequency``), auch wenn nur
+    # ``max_is_trades`` die Verzweigung hier entscheidet.
+    max_is_trades: int | None,
+    median_is_trades: float | None,
+    # Issue #1303 (GH #1180) Fix Punkt 2 — optional: je worker_error-Code gezaehlte Trials dieser
+    # Study (siehe #1299/GH #1176 ``backtest_runner._empty_result``). ``None``/leer ⇒ kein Signal
+    # (rueckwaertskompatibel).
+    worker_error_counts: dict[str, int] | None = None,
 ) -> dict:
     """Issue #1045/#1194 — Root-Cause: ``resolve_ineligible_binding_cause`` klassifiziert einen
     ZERO_ELIGIBLE-Kollaps zwar bereits korrekt als ``'signal_quality'`` (voll evaluierte Kohorte,
@@ -151,12 +176,43 @@ def diagnose_structural_zero_eligible_gate(
     (unklassifiziertes oder nicht-homogenes Gate). Rein, deterministisch, kein I/O — DER Vorschlag
     wird HIER nur FORMULIERT, nicht angewendet (siehe ``report._structural_zero_eligible_diagnosed_
     pairs``-Docstring fuer die Report-Verdrahtung; die Anwendung bleibt ein separater, bestaetigter
-    Schritt, exakt wie im Issue-Text gefordert)."""
+    Schritt, exakt wie im Issue-Text gefordert).
+
+    Issue #1303 (GH #1180) — ``max_is_trades == 0`` schaltet den STRUCTURAL_ALL_UNEVALUABLE-Zweig
+    auf ``binding_cause='signal_absent'``/``proposed_action='none'`` um (PARAMETERUNABHAENGIG, siehe
+    ``diagnose_trade_frequency``-Docstring fuer dieselbe Unterscheidung auf Trial-Ebene) — ein
+    constrained TPE kann eine Strategie, die im GESAMTEN Suchraum nie einen einzigen IS-Trade
+    erzeugt, nicht durch Bounds-Erweiterung "lösen". Ein dominanter ``worker_error`` (>= 50 % der
+    gezaehlten Trials, ``worker_error_counts``) geht JEDER anderen Klassifikation vor
+    (``binding_cause='data_unavailable'``, ``proposed_action='none'``) — weder eine Frequenz- noch
+    eine Qualitaetsaussage ist ehrlich, wenn die Daten nie geladen wurden."""
     counts = is_rejection_detail_counts or {}
     total = sum(counts.values())
+    # Issue #1303 (GH #1180) Fix Punkt 2 — dominierender data_unavailable-Befund VOR jeder anderen
+    # Verzweigung (auch vor STRUCTURAL_ALL_UNEVALUABLE).
+    if worker_error_counts:
+        n_worker_trials = sum(worker_error_counts.values())
+        n_data_unavailable = sum(
+            v for k, v in worker_error_counts.items() if k in _DATA_UNAVAILABLE_WORKER_ERRORS)
+        if n_worker_trials and (n_data_unavailable / n_worker_trials) >= 0.5:
+            return {
+                "dominant_rejection_detail": None, "dominant_fraction": None,
+                "gate_type": None, "binding_cause": "data_unavailable",
+                "proposed_action": "none",
+            }
     if stop_reason == "STRUCTURAL_ALL_UNEVALUABLE":
         dominant_detail, dominant_count = (
             max(counts.items(), key=lambda kv: kv[1]) if counts else (None, 0))
+        # Issue #1303 (GH #1180) Fix Punkt 1 — max_is_trades==0 ⇒ 'signal_absent' statt unbedingt
+        # 'signal_sparse'; nur bei ECHTER (wenn auch unzureichender) IS-Aktivitaet bleibt der Befund
+        # frequenzseitig/tunebar.
+        if max_is_trades == 0:
+            return {
+                "dominant_rejection_detail": dominant_detail,
+                "dominant_fraction": round(dominant_count / total, 4) if total else None,
+                "gate_type": None, "binding_cause": "signal_absent",
+                "proposed_action": "none",
+            }
         return {
             "dominant_rejection_detail": dominant_detail,
             "dominant_fraction": round(dominant_count / total, 4) if total else None,
@@ -242,6 +298,21 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     oos_trade_counts = [int(t.get("oos_total_trades") or 0) for t in trials]
     median_oos_trades = statistics.median(oos_trade_counts) if oos_trade_counts else 0
     frac_hit_cap = sum(1 for t in trials if t.get("hit_trade_cap")) / n
+
+    # Issue #1299/#1303 (GH #1176/#1180) Fix Punkt 4 — data_unavailable geht JEDER anderen
+    # Klassifikation VOR: sind >= 50% der Trials mit einem worker_error markiert, der Tick-Daten nie
+    # erreichte (backtest_runner._empty_result), waere WEDER eine Suchraum-Aussage
+    # (signal_absent/signal_sparse) NOCH eine Qualitaets-Aussage (signal_quality) ehrlich — das
+    # Signal wurde nie gemessen, nur die Datenladung ist gescheitert.
+    n_data_unavailable = sum(
+        1 for t in trials if t.get("worker_error") in _DATA_UNAVAILABLE_WORKER_ERRORS)
+    if (n_data_unavailable / n) >= 0.5:
+        return {
+            "n_trials": n, "n_evaluable": n_evaluable, "n_eligible": n_eligible,
+            "median_oos_trades": median_oos_trades, "median_is_trades": None,
+            "max_is_trades": None,
+            "frac_hit_trade_cap": frac_hit_cap, "binding_cause": "data_unavailable",
+        }
 
     if n_evaluable == 0:
         is_trade_counts = [int(t.get("is_total_trades") or 0) for t in trials]
@@ -736,6 +807,13 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
             action = "deprioritized"
         else:
             action = "none"
+    elif cause == "data_unavailable":
+        # Issue #1303 (GH #1180) Fix Punkt 3 — NIEMALS 'search_space_override' (und nie
+        # 'denylist'): keine Bounds-Kalibrierung kann einen Trial beheben, der die Tickdaten nie
+        # geladen hat — die Ursache liegt im Datenpfad (#1298/GH #1175, #1301/GH #1178), nicht im
+        # (Strategie, Symbol)-Paar. Explizit statt ueber den generischen else-Zweig, damit diese
+        # Garantie robust gegen kuenftige Erweiterungen dieser Funktion bleibt.
+        action = "none"
     else:
         action = "none"
     result = {
@@ -868,7 +946,8 @@ def study_fingerprint(study_name: str | None, study_started_at_utc: str | None,
 
 
 def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
-                          run_id: str | None = None) -> Path:
+                          run_id: str | None = None,
+                          decision_admissible: bool | None = None) -> Path:
     """Issue #681/#761 — schreibt/aktualisiert den (Symbol, Strategie)-Diagnose-Eintrag im
     automatisch gepflegten Cache (siehe ``load_diagnosed_pairs_cache``-Docstring). Ein No-Op-Eintrag
     (``action == 'none'``) wird NICHT gespeichert (kein Kollaps ⇒ nichts zu cachen). Idempotent:
@@ -923,6 +1002,25 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     (nicht 0, nicht neu gezählt). Fehlt der Fingerprint (``None``, Legacy-/Test-Aufrufer ohne
     Study-Kontext) fällt die Zählung auf das alte, ungedupte Verhalten zurück."""
     if not _read_diagnostic_writeback_enabled():
+        return _diagnosed_pairs_cache_path(work_dir)
+    if decision_admissible is False:
+        # Issue #1305 (GH #1182, P1) Fix Punkt 2 — Default None ⇒ bit-identisches Alt-Verhalten für
+        # Aufrufer OHNE fertige Lauf-Zulässigkeitsbewertung (z. B. LIVE Per-Trial-Callbacks in
+        # run_optimization.py, die vor dem finalen Report laufen). False unterdrueckt JEDEN
+        # Schreibvorgang und emittiert DIAGNOSIS_WRITEBACK_SUPPRESSED statt zu schreiben — ein
+        # Diagnose-Rueckschrieb aus einem Lauf, der selbst als nicht entscheidungsfaehig gestempelt
+        # ist (report.diagnosis_writeback_admissible), ist eine Rueckkopplung ohne Messung.
+        try:
+            import logging as _logging_writeback
+            from automation.log_manager import emit_execution_event as _emit_writeback_event
+            _emit_writeback_event(
+                _logging_writeback.getLogger("optimizer"), "DIAGNOSIS_WRITEBACK_SUPPRESSED", {
+                    "strategy": recommendation.get("strategy"), "symbol": recommendation.get("symbol"),
+                    "binding_cause": recommendation.get("binding_cause"),
+                    "reason": "decision_admissible_false",
+                }, level=_logging_writeback.WARNING)
+        except Exception:
+            pass
         return _diagnosed_pairs_cache_path(work_dir)
     if recommendation.get("binding_cause") in (None, "none", "no_data"):
         return _diagnosed_pairs_cache_path(work_dir)

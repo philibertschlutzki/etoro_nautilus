@@ -46,13 +46,17 @@ def test_sma_crossover_now_samples_both_risk_layer_parameters():
 def test_sma_crossover_symbol_override_still_applies_to_the_shared_risk_layer(monkeypatch):
     """_sample_risk_layer nutzt _bounds_for -- ein kuratierter/automatischer Override fuer
     max_bars_in_trade muss auch fuer SmaCrossover wirksam werden."""
+    # Issue #1316 (GH #1193) — "axis" ist Pflicht fuer den bar-denominierten max_bars_in_trade;
+    # reale config_dir() (nicht monkeypatched hier) ⇒ run_axis='rth' (echtes optimizer.json).
+    # Issue #1317 (GH #1194) — Untergrenze 2 statt 1 (MIN_BARS_IN_TRADE_FLOOR wurde angehoben;
+    # [1, 4] waere seither SEARCH_SPACE_OVERRIDE_INADMISSIBLE).
     monkeypatch.setattr(spaces, "_load_search_space_overrides", lambda: {
-        "SmaCrossoverStrategy": {"TSLA.ETORO": {"max_bars_in_trade": [1, 4]}},
+        "SmaCrossoverStrategy": {"TSLA.ETORO": {"axis": "rth", "max_bars_in_trade": [2, 4]}},
     })
     trial = _RecordingTrial()
     params = spaces.sample_params("SmaCrossoverStrategy", trial, symbol="TSLA.ETORO")
-    assert trial.numeric["max_bars_in_trade"] == (1, 4)
-    assert params["max_bars_in_trade"] == 1
+    assert trial.numeric["max_bars_in_trade"] == (2, 4)
+    assert params["max_bars_in_trade"] == 2
 
 
 def test_all_other_strategies_are_unaffected_by_the_fix():

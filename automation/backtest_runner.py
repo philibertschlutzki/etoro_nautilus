@@ -38,6 +38,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 from automation.utils import _fallback_precisions
+from automation.catalog_paths import resolve_quote_tick_files, resolve_quote_tick_columns
 import importlib
 from dotenv import load_dotenv
 
@@ -56,9 +57,11 @@ def read_precisions_from_parquet(parquet_path: str | Path, instrument_id: str = 
     try:
         # Check if parquet_path is a directory and instrument_id is provided
         if instrument_id and (Path(parquet_path) / "data").exists():
-            path = Path(parquet_path) / "data" / "quote_tick" / instrument_id
-            # Get first parquet file
-            parquet_files = list(path.glob("*.parquet"))
+            # Issue #1302 (GH #1179) — dieselbe Datei-Auflösung wie alle anderen Quote-Tick-
+            # Lesepfade (klassische Einzeldatei -> part-*-Layout -> beliebige *.parquet-Datei,
+            # deterministisch sortiert), statt eines eigenen unsortierten Globs mit willkürlichem
+            # erstem Treffer.
+            parquet_files = resolve_quote_tick_files(parquet_path, instrument_id)
             if not parquet_files:
                 raise FileNotFoundError()
             target_path = parquet_files[0]
@@ -1075,6 +1078,15 @@ class InstrumentMetadataIncompleteError(ValueError):
     Kostenkonstante versorgt zu werden (REJECT_INSTRUMENT_METADATA_INCOMPLETE)."""
 
 
+class SessionFilterEmptyError(ValueError):
+    """Issue #1300 (GH #1177, P0) Fix Punkt 2 — der RTH-Session-Filter (``_filter_ticks_to_session_
+    hours``) hat die GESAMTE Tick-Menge verworfen, obwohl vor dem Filter Ticks vorlagen. Ein stilles
+    ``[]`` ist von "kein Fenster konfiguriert" (``ticks`` unveraendert) nur am Aufrufer unterscheidbar
+    und bricht dort in aller Regel still ab (Pitfall #462 in AGENTS.md) — dieser Fehler macht den
+    Zustand explizit und traegt ``n_before``/``session_window``/``session_window_snapped``/das
+    beobachtete Zeit-of-Day-Histogramm im Fehlertext."""
+
+
 def _resolve_asset_class_for_symbol(inst_id_str: str, *, policy: str = "reject") -> str:
     """Issue #566/#775 — Asset-Class-Lookup über ``instrument_map.json`` (Symbol → ``asset_class``),
     Single Source of Truth für JEDEN Aufrufer, der eine Asset-Class-Konstante für die
@@ -1158,17 +1170,23 @@ def _quick_median_price_from_catalog(catalog_path, inst_id_str: str,
     Pre-#956-Zustand)."""
     try:
         import pyarrow.parquet as pq
-        pq_file = Path(catalog_path) / "data" / "quote_tick" / inst_id_str / "data.parquet"
-        if not pq_file.exists():
+        # Issue #1302 (GH #1179) — Datei-/Spaltenauflösung über die gemeinsame Single Source of
+        # Truth (automation.catalog_paths), statt eines eigenen Dateinamen-/bid_price-Literals.
+        pq_files = resolve_quote_tick_files(catalog_path, inst_id_str)
+        if not pq_files:
             return None
+        pq_file = pq_files[-1]  # jüngste Partition bei part-*.parquet-Layout.
         pf = pq.ParquetFile(str(pq_file))
-        cols = [c for c in ("bid_price", "ask_price") if c in pf.schema.names]
-        if len(cols) < 2:
+        col_map = resolve_quote_tick_columns(pf.schema.names)
+        if col_map is None:
             return None
+        cols = [col_map["bid_price"], col_map["ask_price"]]
         last_rg = pf.metadata.num_row_groups - 1
         if last_rg < 0:
             return None
-        df = pf.read_row_group(last_rg, columns=cols).to_pandas()
+        df = pf.read_row_group(last_rg, columns=cols).to_pandas().rename(columns={
+            col_map["bid_price"]: "bid_price", col_map["ask_price"]: "ask_price",
+        })
         if df.empty:
             return None
         if len(df) > max_rows:
@@ -1546,8 +1564,48 @@ def is_within_session_hours(
     return open_minutes <= time_of_day < close_minutes
 
 
+def _median_tick_delta_t_s(ticks: list) -> float | None:
+    """Issue #1300 (GH #1177, P0) Fix Punkt 1 — Median-Δt (Sekunden) zwischen aufeinanderfolgenden
+    Ticks (nach ``ts_event`` sortiert). ``None`` bei < 2 Ticks oder wenn alle Deltas <= 0 sind
+    (entartete/unsortierbare Eingabe — fail-open, der Aufrufer snapt dann nicht)."""
+    if len(ticks) < 2:
+        return None
+    ts_sorted = sorted(int(t.ts_event) for t in ticks)
+    deltas = [(b - a) / 1_000_000_000 for a, b in zip(ts_sorted, ts_sorted[1:])]
+    deltas = [d for d in deltas if d > 0]
+    if not deltas:
+        return None
+    return statistics.median(deltas)
+
+
+def _snap_session_window_to_tick_grid(
+    open_utc: str, close_utc: str, median_delta_t_s: float | None,
+) -> tuple[str, str]:
+    """Issue #1300 (GH #1177, P0) Fix Punkt 1 — snapt ``open_utc`` ABWAERTS und ``close_utc``
+    AUFWAERTS auf das naechste Vielfache des beobachteten Tick-Rasters (``median_delta_t_s``, auf
+    volle Minuten gerundet, Untergrenze 1). Root-Cause: eine Fenstergrenze darf nie feiner
+    aufgeloest sein als das Raster der Daten, auf die sie angewandt wird (Pitfall #463 in
+    AGENTS.md) — ``13:30`` gegen ein Stundenraster verwirft sonst systematisch die erste
+    Session-Bar (13:00-Tick faellt unter ``open_minutes=810``), ohne dass irgendetwas fehlschlaegt.
+
+    ``median_delta_t_s`` fehlend/<=0 (kein Raster ermittelbar) ⇒ ``open_utc``/``close_utc``
+    UNVERAENDERT (fail-open, bit-identisches Alt-Verhalten)."""
+    if not median_delta_t_s or median_delta_t_s <= 0:
+        return open_utc, close_utc
+    grid_minutes = max(1, round(median_delta_t_s / 60.0))
+    open_h, open_m = (int(x) for x in open_utc.split(":"))
+    close_h, close_m = (int(x) for x in close_utc.split(":"))
+    open_total = open_h * 60 + open_m
+    close_total = close_h * 60 + close_m
+    snapped_open_total = (open_total // grid_minutes) * grid_minutes
+    snapped_close_total = min(24 * 60, -(-close_total // grid_minutes) * grid_minutes)
+    return (f"{snapped_open_total // 60:02d}:{snapped_open_total % 60:02d}",
+            f"{snapped_close_total // 60:02d}:{snapped_close_total % 60:02d}")
+
+
 def _filter_ticks_to_session_hours(
     ticks: list, session_hours_by_asset_class: dict | None, asset_class_key: str | None,
+    *, out: dict | None = None,
 ) -> list:
     """Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die in #1260 (GH
     #1130) dokumentierte Verdrahtungsluecke: ``resolve_session_hours_by_asset_class``/
@@ -1559,6 +1617,11 @@ def _filter_ticks_to_session_hours(
     UND ``session_coverage_fraction=0,2389-0,2402`` in 56/56 Studies — eine 24-Bar-Zeitbox entsprach
     nur 2,15-5,02 geschaetzten Handels-Bars).
 
+    Issue #1300 (GH #1177, P0) Fix Punkt 1/2 — die Fenstergrenzen werden vor der Anwendung auf das
+    beobachtete Tick-Raster GESNAPPT (``_snap_session_window_to_tick_grid``, siehe dortiger
+    Docstring), und ein harter Wächter wirft ``SessionFilterEmptyError`` STATT eines stillen ``[]``,
+    wenn der Filter die GESAMTE (nicht-leere) Eingabemenge verwirft.
+
     ``None`` (kein Fenster konfiguriert ODER ``asset_class_key`` fehlt/``None``, z. B. FOREX/CRYPTO,
     siehe ``resolve_session_hours_by_asset_class``-Docstring) ⇒ ``ticks`` UNVERAENDERT (bit-
     identisches Alt-Verhalten, dieselbe Fail-open-Konvention)."""
@@ -1568,7 +1631,68 @@ def _filter_ticks_to_session_hours(
     if window is None:
         return ticks
     open_utc, close_utc = window
-    return [t for t in ticks if is_within_session_hours(int(t.ts_event), open_utc, close_utc)]
+    n_before = len(ticks)
+    median_delta_t_s = _median_tick_delta_t_s(ticks)
+    snapped_open_utc, snapped_close_utc = _snap_session_window_to_tick_grid(
+        open_utc, close_utc, median_delta_t_s)
+    if out is not None:
+        # Issue #1298 (GH #1175) — dieselbe Telemetrie-Konvention wie load_ticks_from_catalogs
+        # eigenes out-Dict: session_window_snapped erscheint in derselben Struktur.
+        out["session_window_snapped"] = (snapped_open_utc, snapped_close_utc)
+    filtered = [
+        t for t in ticks
+        if is_within_session_hours(int(t.ts_event), snapped_open_utc, snapped_close_utc)
+    ]
+    # Issue #1300 (GH #1177, P0) Fix Punkt 2 — harter Wächter: ein leeres Ergebnis aus einer
+    # nicht-leeren Eingabe ist von "kein Fenster konfiguriert" nur hier unterscheidbar; der
+    # Aufrufer (backtest_runner.load_ticks_from_catalog) darf diesen Unterschied nicht verlieren.
+    #
+    # Bewusst NUR, wenn mindestens ein Eingabe-Tick ueberhaupt auf einen HANDELSTAG (Mo-Fr) faellt:
+    # ``is_within_session_hours`` schliesst Wochenend-Ticks UNBEDINGT aus (``weekdays_only=True``),
+    # unabhaengig vom (gesnappten) Tagesfenster — eine Eingabemenge, die AUSSCHLIESSLICH aus
+    # Wochenend-Ticks besteht (z. B. ein schmales Abfragefenster, das zufaellig nur ein Wochenende
+    # ueberdeckt), liefert deshalb IMMER ein leeres Ergebnis, VOELLIG unabhaengig davon, ob das
+    # Tagesfenster/Snapping korrekt ist — das ist kein degeneriertes Fenster, sondern die korrekte,
+    # erwartete Wochenend-Ausschluss-Antwort (Root-Cause einer sonst zu breiten Eskalation: der
+    # urspruengliche Waechter warf hier faelschlich, obwohl kein einziger Handelstag-Tick je eine
+    # Chance auf Aufnahme hatte).
+    from datetime import datetime, timezone
+    _any_weekday_tick = any(
+        datetime.fromtimestamp(int(t.ts_event) / 1_000_000_000, tz=timezone.utc).weekday() < 5
+        for t in ticks
+    )
+    if not filtered and n_before > 0 and _any_weekday_tick:
+        histogram: dict[int, int] = {}
+        for t in ticks:
+            hour = datetime.fromtimestamp(int(t.ts_event) / 1_000_000_000, tz=timezone.utc).hour
+            histogram[hour] = histogram.get(hour, 0) + 1
+        raise SessionFilterEmptyError(
+            f"Session-Filter verwarf alle {n_before} Ticks. "
+            f"session_window=({open_utc}, {close_utc}) "
+            f"session_window_snapped=({snapped_open_utc}, {snapped_close_utc}) "
+            f"n_before={n_before} "
+            f"time_of_day_histogram_utc_hour={dict(sorted(histogram.items()))}"
+        )
+    # Issue #1300 (GH #1177, P0) Fix Punkt 3 — weicher Wächter: liegt der Verwurfsanteil ausserhalb
+    # [0,5 ; 0,95] (theoretisch fuer EQUITY erwartet: 1 − 7/24 × 5/7 ≈ 0,79), ist das ein Signal fuer
+    # eine falsch kalibrierte Achse, ohne den Lauf abzubrechen (reine Telemetrie).
+    if n_before > 0:
+        discard_fraction = 1.0 - (len(filtered) / n_before)
+        if discard_fraction < 0.5 or discard_fraction > 0.95:
+            try:
+                import logging as _logging_session_filter
+                from automation.log_manager import emit_execution_event as _emit_session_filter_event
+                _emit_session_filter_event(
+                    _logging_session_filter.getLogger("backtest_worker"), "SESSION_FILTER_YIELD", {
+                        "n_before": n_before, "n_after": len(filtered),
+                        "discard_fraction": round(discard_fraction, 4),
+                        "expected_discard_fraction_equity": round(1.0 - 7.0 / 24.0 * 5.0 / 7.0, 4),
+                        "session_window": [open_utc, close_utc],
+                        "session_window_snapped": [snapped_open_utc, snapped_close_utc],
+                    }, level=_logging_session_filter.WARNING)
+            except Exception:
+                pass
+    return filtered
 
 
 def load_ticks_from_catalog(
@@ -1579,6 +1703,12 @@ def load_ticks_from_catalog(
     spread_bps: float = 0.0,
     session_hours_by_asset_class: dict | None = None,
     asset_class_key: str | None = None,
+    # Issue #1298 (GH #1175, P0) Fix Punkt 1 — optionales Ausgabe-Dict (statt eines Tupel-
+    # Rückgabewerts, der alle bestehenden Aufrufer brechen würde): wird, wenn übergeben, IN-PLACE
+    # mit den Tick-/Fenster-Zählern dieses Aufrufs befüllt (``n_ticks_raw``,
+    # ``n_ticks_after_session_filter``, ``session_window``, ``asset_class_key``). ``None`` (Default)
+    # ⇒ bit-identisches Alt-Verhalten (kein zusätzliches I/O, keine Seiteneffekte).
+    out: dict | None = None,
 ) -> list:
     try:
         ticks = catalog.quote_ticks(
@@ -1586,12 +1716,24 @@ def load_ticks_from_catalog(
             start=start_ns,
             end=end_ns,
         )
+        if out is not None:
+            out["n_ticks_raw"] = len(ticks) if ticks else 0
+            out["asset_class_key"] = asset_class_key
+            out["session_window"] = (
+                resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
+                if asset_class_key else None
+            )
         if not ticks:
+            if out is not None:
+                out["n_ticks_after_session_filter"] = 0
             return []
         # Issue #1275 (GH #1148) Fix Punkt 2 — VOR jeder Precision-/Spread-Normalisierung unten:
         # eine ausserhalb der Session verworfene Tick braucht keine der beiden nachfolgenden
         # Transformationen mehr zu durchlaufen.
-        ticks = _filter_ticks_to_session_hours(ticks, session_hours_by_asset_class, asset_class_key)
+        ticks = _filter_ticks_to_session_hours(
+            ticks, session_hours_by_asset_class, asset_class_key, out=out)
+        if out is not None:
+            out["n_ticks_after_session_filter"] = len(ticks) if ticks else 0
         if not ticks:
             return []
 
@@ -1640,6 +1782,12 @@ def load_ticks_from_catalog(
                 )
             return normalized
         return ticks
+    except SessionFilterEmptyError:
+        # Issue #1300 (GH #1177, P0) Fix Punkt 2 — unveraendert durchreichen: der Aufrufer
+        # (run_single_backtest_worker) braucht den SPEZIFISCHEN Fehlertyp, um ihn von einem
+        # generischen Katalog-Lesefehler zu unterscheiden (error="session_filter_removed_all_ticks"
+        # statt "tick_load_failed", siehe dortiger except-Block).
+        raise
     except Exception as e:
         raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
 
@@ -3294,7 +3442,12 @@ def _bar_calendar_telemetry(mtm_series: "pd.Series | None") -> dict:
     dieselbe Rueckfallbedingung wie ``_get_annualization_factor_with_source``)."""
     bars_per_calendar_day = _bars_per_calendar_day_from_mtm_series(mtm_series)
     if bars_per_calendar_day is None:
-        return {"bars_per_calendar_day": None, "session_coverage_fraction": None}
+        # Issue #1298 (GH #1175, P0) Fix Punkt 3 — n_bars_delivered bleibt None nur, wenn KEIN
+        # verwertbarer Zeit-Index vorliegt; bei einer leeren/1-Bar-Serie mit gueltigem Index (len < 2,
+        # derselbe Rueckfall wie oben) waere 0/1 zwar bekannt, aber dieselbe fail-open-Konvention wie
+        # die uebrigen beiden Felder hier gilt einheitlich.
+        return {"bars_per_calendar_day": None, "session_coverage_fraction": None,
+                "n_bars_delivered": None}
     idx = mtm_series.index
     hour = idx.hour
     is_weekday = idx.weekday < 5
@@ -3304,6 +3457,10 @@ def _bar_calendar_telemetry(mtm_series: "pd.Series | None") -> dict:
     return {
         "bars_per_calendar_day": round(bars_per_calendar_day, 4),
         "session_coverage_fraction": round(session_coverage_fraction, 4),
+        # Issue #1298 (GH #1175, P0) Fix Punkt 3 — Länge der VOLLEN (ggf. 24/7-aufgefuellten)
+        # mtm_series-Bar-Achse; Rohmaterial fuer report._study_record's n_bars_delivered_median
+        # (§5.3-Abnahmekriterium: > 1500 Bars bei EQUITY/RTH ueber die Kampagnen-Fensterlaenge).
+        "n_bars_delivered": int(len(idx)),
     }
 
 
@@ -7070,6 +7227,25 @@ def write_tournament_json(
     _oos_covereds = [r.get("_oos_covered") for r in all_results if r.get("_oos_covered") is not None]
     oos_covered = any(_oos_covereds) if _oos_covereds else None
 
+    # Issue #1298 (GH #1175, P0) Fix Punkt 2 — Tick-/Bar-Populations-Zähler über alle Worker dieses
+    # Trials aggregiert (MAX statt MIN/Summe: ein einzelner Worker mit vollständig geladenem
+    # Fenster ist die aussagekräftigste Beobachtung, ein fehlgeschlagener Nachbar-Worker mit 0
+    # Ticks soll den Befund nicht verdünnen — dieselbe "ein Beleg genügt"-Logik wie oos_covered
+    # oben). Fehlt _tick_population an JEDEM Worker (Legacy-Aufrufer ohne #1298) ⇒ None.
+    _n_ticks_raw_vals = [
+        r["_tick_population"].get("n_ticks_raw") for r in all_results
+        if isinstance(r.get("_tick_population"), dict)
+        and r["_tick_population"].get("n_ticks_raw") is not None
+    ]
+    _n_ticks_after_filter_vals = [
+        r["_tick_population"].get("n_ticks_after_session_filter") for r in all_results
+        if isinstance(r.get("_tick_population"), dict)
+        and r["_tick_population"].get("n_ticks_after_session_filter") is not None
+    ]
+    n_ticks_raw = max(_n_ticks_raw_vals) if _n_ticks_raw_vals else None
+    n_ticks_after_session_filter = (
+        max(_n_ticks_after_filter_vals) if _n_ticks_after_filter_vals else None)
+
     if start_ns is not None or end_ns is not None or fill_ts_min is not None:
         _day_ns = 86400 * 1_000_000_000
         if oos_window_start_ns is not None and fill_ts_max is not None and oos_covered is not None:
@@ -7096,6 +7272,11 @@ def write_tournament_json(
             "oos_window_start": (pd.Timestamp(oos_window_start_ns, unit="ns", tz="UTC").isoformat()
                                  if oos_window_start_ns is not None else None),
             "oos_covered": oos_covered,
+            # Issue #1298 (GH #1175, P0) Fix Punkt 2/3 — Tick-Populations-Zähler, von
+            # parsing.parse_tournament in TournamentMetrics gehoben und von run_optimization.
+            # make_symbol_objective als Trial-User-Attrs gestempelt.
+            "n_ticks_raw": n_ticks_raw,
+            "n_ticks_after_session_filter": n_ticks_after_session_filter,
             "oos_coverage_gap_days": oos_coverage_gap_days,
         }
 
@@ -7201,7 +7382,16 @@ def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str)
 
 
 
-def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float = 100000.0) -> dict:
+def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float = 100000.0,
+                  *, error: str | None) -> dict:
+    """Issue #1299 (GH #1176, P0) — ``error`` ist ein PFLICHT-Keyword-Argument (kein Default): jeder
+    Aufrufer muss explizit benennen, WARUM dieser Trial leer ist. Vorher liessen zwei Datenpfade
+    (Tick-Ladefehler, leere Tick-Menge) ``error`` unausgefüllt — ein leeres Ergebnis ohne Grund ist
+    stromabwärts (``parsing.parse_tournament``/``sweep_diagnostics.diagnose_zero_evaluable_cause``)
+    von einem legitimen Null-Ergebnis (0 Trades bei tatsächlich geladenen Daten) nicht
+    unterscheidbar und wird dann fälschlich als Eigenschaft der STRATEGIE statt der DATEN
+    diagnostiziert (Pitfall #464). ``error=None`` bleibt für einen echten, fehlerfreien Leerlauf
+    erlaubt (kein Call-Site nutzt das aktuell), aber niemals mehr ein stiller Default."""
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
@@ -7210,14 +7400,17 @@ def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float 
         "losses_count": 0,
         "median_position_notional": 0.0,
     }
-    return {
+    res = {
         "symbol": symbol,
         "strategy": strategy,
         "metrics": NULL,
         "oos_metrics": NULL if strat.get("_walk_forward_dict") else {},
         "strat_params": strat.get("params", {}),
-        "start_capital": start_capital
+        "start_capital": start_capital,
     }
+    if error is not None:
+        res["error"] = error
+    return res
 
 def check_data_span(ticks: list, required_days: int, span_tolerance_days: float) -> tuple[bool, float, float]:
     """
@@ -7302,11 +7495,17 @@ def run_single_backtest_worker(
     if not module_name or not config_class_name:
         msg = f"Fehlende Metadaten ('strategy_module' oder 'config_class') für Strategie {strategy_class_name}."
         wlog_err(msg)
-        return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
+        return _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                             error="missing_strategy_metadata")
 
     wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
     temp_catalog_dir = None
+    # Issue #1298 (GH #1175, P0) Fix Punkt 2 — VOR beiden try-Bloecken deklariert: jeder
+    # Fehlerpfad (auch einer VOR dem load_ticks_from_catalog-Aufruf) muss dieses Dict referenzieren
+    # koennen, ohne einen NameError zu riskieren. Bleibt {} (kein Zaehler gestempelt), solange der
+    # Aufruf nicht erreicht wurde.
+    _tick_population: dict = {}
     try:
         # --- Ticks laden (mit Schema Injection falls nötig) ---
         try:
@@ -7418,22 +7617,47 @@ def run_single_backtest_worker(
                 "atr_floor_bps": atr_floor_bps_resolved,
             })
 
+            # Issue #1298 (GH #1175, P0) Fix Punkt 2 — Tick-/Fenster-Zähler dieses Aufrufs, ins
+            # Trial-Ergebnis-Dict durchgereicht (analog _fill_ts_min/_fill_ts_max), UNABHÄNGIG vom
+            # Ausgang (Erfolg oder einer der beiden folgenden Datenpfade).
             ticks = load_ticks_from_catalog(
                 catalog, inst_id_str, start_ns, end_ns, spread_bps,
                 session_hours_by_asset_class=session_hours_by_asset_class,
-                asset_class_key=asset_class_key)
+                asset_class_key=asset_class_key, out=_tick_population)
         except InstrumentMetadataIncompleteError as e:
             wlog_err(f"REJECT_INSTRUMENT_METADATA_INCOMPLETE: {e}", exc=False)
-            res = _empty_result(inst_id_str, strategy_class_name, strat)
-            res["error"] = "instrument_metadata_incomplete"
+            res = _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                error="instrument_metadata_incomplete")
+            res["_tick_population"] = _tick_population
+            return res
+        except SessionFilterEmptyError as e:
+            # Issue #1300 (GH #1177, P0) Fix Punkt 2 — der RTH-Session-Filter hat ALLE Ticks
+            # verworfen; ein eigener, benannter Fehlergrund statt des generischen
+            # "tick_load_failed" (die Ursache ist eine falsch kalibrierte Fenstergrenze, kein
+            # Katalog-Lesefehler).
+            wlog_err(f"SESSION_FILTER_REMOVED_ALL_TICKS: {e}", exc=False)
+            res = _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                error="session_filter_removed_all_ticks")
+            res["_tick_population"] = _tick_population
             return res
         except RuntimeError as e:
+            # Issue #1299 (GH #1176) Fix Punkt 1 — vorher OHNE "error"-Schlüssel: ein Tick-
+            # Ladefehler war stromabwärts nicht von einem echten Null-Ergebnis unterscheidbar.
             wlog_err(f"Tick-Ladefehler: {e}", exc=True)
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            res = _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                error="tick_load_failed")
+            res["_tick_population"] = _tick_population
+            return res
 
         if not ticks:
+            # Issue #1299 (GH #1176) Fix Punkt 1 — derselbe Fix wie oben, fuer den zweiten der
+            # beiden ungestempelten Datenpfade (Root-Cause von #1303/B-4: ohne diesen Schluessel
+            # ist ein Backtest OHNE Ticks von einem Backtest OHNE Signale nicht unterscheidbar).
             wlog(f"   ⚠️ 0 Ticks im Zeitraum — überspringe.")
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            res = _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                error="no_ticks_in_window")
+            res["_tick_population"] = _tick_population
+            return res
 
         first_tick_ts = ticks[0].ts_event
         # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
@@ -7480,9 +7704,8 @@ def run_single_backtest_worker(
                 })
                 msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage, Toleranz: {span_tolerance_days} Tage). Überspringe Backtest."
                 wlog_err(msg)
-                res = _empty_result(inst_id_str, strategy_class_name, strat)
-                res["error"] = "insufficient_data"
-                return res
+                return _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                     error="insufficient_data")
             elif span_days < required_days:
                 wlog(f"   ⚠️ Knappe Datenspanne, fahre fort: {span_days:.1f} Tage (benötigt: {required_days} Tage, Defizit von {required_days - span_days:.1f} Tagen liegt innerhalb der Toleranz von {span_tolerance_days} Tagen).")
 
@@ -7539,7 +7762,8 @@ def run_single_backtest_worker(
 
         except Exception as e:
             wlog_err(f"Engine-Setup fehlgeschlagen: {e}", exc=True)
-            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                 error="engine_setup_failed")
 
         # --- Strategie konfigurieren ---
         try:
@@ -7589,7 +7813,8 @@ def run_single_backtest_worker(
             engine.add_strategy(strategy)
         except Exception as e:
             wlog_err(f"Strategie-Setup fehlgeschlagen: {e}", exc=True)
-            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                 error="strategy_setup_failed")
 
         # --- Backtest ausführen ---
         try:
@@ -7600,11 +7825,13 @@ def run_single_backtest_worker(
         except RuntimeError as e:
             wlog_err(f"Backtest RuntimeError (wahrscheinlich Precision Mismatch): {e}")
             engine.dispose()
-            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                 error="backtest_runtime_error")
         except Exception as e:
             wlog_err(f"Backtest gecrasht: {e}", exc=True)
             engine.dispose()
-            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital,
+                                 error="backtest_crashed")
 
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
@@ -7777,6 +8004,10 @@ def run_single_backtest_worker(
             # Issue #455 — OOS-Abdeckungs-Grenze + Coverage-Flag pro Worker.
             "_oos_window_start_ns": oos_window_start_ns,
             "_oos_covered": oos_covered,
+            # Issue #1298 (GH #1175, P0) Fix Punkt 2 — Tick-/Fenster-Zähler dieses Workers (analog
+            # _fill_ts_min/_fill_ts_max oben), Rohmaterial für die #1298-Preflight-Telemetrie
+            # (n_ticks_raw_median/n_ticks_after_session_filter_median in report._study_record).
+            "_tick_population": _tick_population,
         }
         # Issue #508 — Fill-Match-Diagnostik (Sekundärebene) nur beilegen, wenn vorhanden;
         # `metrics`/`oos_metrics` bleiben die primären Round-Trip-Gate-Metriken.
@@ -8076,9 +8307,11 @@ def run_backtest() -> None:
     cohorts: dict[str, list[str]] = {}
 
     for iid in instrument_ids:
-        parquet_file = Path(catalog_path) / "data" / "quote_tick" / iid / "data.parquet"
-        if not parquet_file.exists():
+        # Issue #1302 (GH #1179) — dieselbe Datei-Auflösung wie die uebrigen Quote-Tick-Lesepfade.
+        _cohort_pq_files = resolve_quote_tick_files(catalog_path, iid)
+        if not _cohort_pq_files:
             continue
+        parquet_file = _cohort_pq_files[0]
         try:
             pf = pq.ParquetFile(str(parquet_file))
             if "ts_event" in pf.schema.names:
