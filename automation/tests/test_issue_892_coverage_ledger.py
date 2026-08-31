@@ -79,6 +79,40 @@ def test_gate1_only_symbol_is_marked_covered_via_sweep(monkeypatch, tmp_path):
     assert ledger["symbols"]["A.ETORO"].get("covered_gate1") is not True
 
 
+def test_gate1_covered_symbols_are_clamped_to_the_actually_requested_set(monkeypatch, tmp_path):
+    """Issue #1324 (Katalog #1323-1329, P1) — ``mark_gate1_covered`` darf NIE ein Symbol
+    persistieren, das der CLI-Aufruf gar nicht angefordert hat, selbst wenn ein (hier absichtlich
+    simulierter) Bug in ``enumerate_tunable_pairs`` mehr Symbole in ``gate1_rejected_symbols``
+    eintraegt als angefordert (das #1323-Symptom: ein Ein-Symbol-Lauf markierte faelschlich fast
+    das gesamte Universum als 'diesen Lauf an Gate 1 gescheitert'). Der Fix schneidet
+    ``_gate1_rejected_symbols`` auf die ursprünglich angeforderte Symbolmenge (``_requested_syms``,
+    VOR jeder Degenerations-Filterung gesichert) zu — eine vom Aufrufer UNABHAENGIGE Obergrenze."""
+    from automation.optimizer import sweep
+
+    def _fake_enumerate_leaking_extra_symbols(strategies, symbols, *, tier, available_bars,
+                                              config, **kwargs):
+        gate1_rejected = kwargs.get("gate1_rejected_symbols")
+        if gate1_rejected is not None:
+            # Simuliert den #1323-Bug: enumerate_tunable_pairs traegt hier ein Symbol ein, das
+            # NIE angefordert wurde (der Aufrufer forderte nur A.ETORO an).
+            gate1_rejected.add("A.ETORO")
+            gate1_rejected.add("Z_NEVER_REQUESTED.ETORO")
+        return []
+
+    monkeypatch.setattr(sweep, "enumerate_tunable_pairs", _fake_enumerate_leaking_extra_symbols)
+    _patch_common(monkeypatch, sweep, tmp_path)
+
+    sweep.run_per_symbol_sweep(
+        ["S"], ["A.ETORO"], tier="all", n_jobs=1, run_id="run-leak-guard",
+        optimize_symbol=lambda strategy, symbol, **k: object(),
+        confirm=lambda *a, **k: {"promote": False, "status": "REJECTED", "symbol_params": {}},
+    )
+
+    ledger = sc.load_coverage(path=tmp_path / "symbol_coverage.json")
+    assert ledger["symbols"]["A.ETORO"]["covered_gate1"] is True
+    assert "Z_NEVER_REQUESTED.ETORO" not in ledger["symbols"]
+
+
 def test_symbol_with_at_least_one_ok_pair_is_not_gate1_marked(monkeypatch, tmp_path):
     """Ein Symbol mit MINDESTENS einem 'OK'-Paar durchläuft den regulären _record_coverage-Pfad,
     auch wenn eine ANDERE Strategie für dasselbe Symbol an Gate 1 scheiterte."""

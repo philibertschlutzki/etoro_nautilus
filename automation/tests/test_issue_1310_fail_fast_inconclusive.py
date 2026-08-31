@@ -82,12 +82,18 @@ def test_check_gate_collinearity_decision_required_warn_policy_is_a_deliberate_o
 
 _FAIL_FAST_INVARIANTS = [
     "check_holding_time_cap", "check_guard_reference_coherence", "check_effective_stop_distance",
-    "check_selection_statistic_availability", "check_gate_collinearity_decision_required",
-    "check_bar_quality", "check_tick_population",
+    "check_selection_statistic_availability", "check_bar_quality", "check_tick_population",
 ]
+# Issue #1328 (Katalog #1323-1329, P3) — ``check_gate_collinearity_decision_required`` stand
+# frueher ebenfalls hier (Issue #907/#1249), wurde aber aus ``optimizer.json['fail_fast_
+# invariants']`` entfernt: der Check braucht bereits vorliegende Trial-Daten EINER Study
+# (``report._study_record``) und ist damit strukturell nie ein VOR-Phase-1-Preflight — sein
+# einziger Aufrufer feuerte nie bei ``n_studies=0``, wodurch ``check_fail_fast_invariants_wired``
+# in JEDEM leeren Lauf FAILte, obwohl die Entscheidungspflicht selbst (severity='blocking' je
+# Study, wenn auswertbar) unveraendert aktiv bleibt.
 
 
-def test_production_optimizer_json_lists_exactly_these_seven_fail_fast_checks():
+def test_production_optimizer_json_lists_exactly_these_six_fail_fast_checks():
     import json
     from automation.optimizer.trial_config import config_dir
     cfg = json.loads((config_dir() / "optimizer.json").read_text("utf-8"))
@@ -143,10 +149,23 @@ def test_budget_trivially_passes_without_any_configured_fail_fast_invariants():
     assert result.passed is True
 
 
-def test_budget_uses_the_first_occurrence_when_a_name_repeats():
+def test_budget_lets_a_later_real_verdict_win_over_an_earlier_none_stub():
+    """Issue #1326 — ein frueher None-Stub (z. B. ein global-skopierter Check bei n_studies=0)
+    darf einen spaeteren echten Verdikt fuer denselben Namen nicht mehr als 'kein Verdikt'
+    verdecken, unabhaengig von der Position im Strom (vormals: "erstes Vorkommen gewinnt" liess
+    hier faelschlich None gewinnen und den Check als inconclusive zaehlen)."""
     checks = [_check("A", None), _check("A", True)]
     result = inv.check_fail_fast_inconclusive_budget(checks, fail_fast_invariants=["A"])
-    assert result.passed is False  # das ERSTE Vorkommen (None) zaehlt.
+    assert result.passed is True  # A gilt jetzt als bewertet (nicht mehr inconclusive).
+    assert inv._first_non_none_by_name(checks, value_field="passed") == {"A": True}
+
+
+def test_budget_helper_keeps_first_occurrence_among_multiple_real_verdicts():
+    """Mehrere ECHTE (nicht-None), widersprechende Verdikte fuer denselben Namen (z. B. zwei
+    Symbole) behalten weiterhin die "erstes Vorkommen zaehlt"-Regel — keine Verhaltensaenderung
+    fuer den Mehrsymbol-Fall durch #1326."""
+    checks = [_check("A", False), _check("A", True)]
+    assert inv._first_non_none_by_name(checks, value_field="passed") == {"A": False}
 
 
 def test_budget_severity_is_blocking():
@@ -170,13 +189,12 @@ def test_reference_run_da354bc2_reconstruction_fails_the_budget(monkeypatch, tmp
         _check("check_guard_reference_coherence", None),
         _check("check_effective_stop_distance", None),
         _check("check_selection_statistic_availability", None),
-        {**_check("check_gate_collinearity_decision_required", True), "scope": "S/SYM"},
         _check("check_bar_quality", False),
     ]
     result = inv.check_fail_fast_inconclusive_budget(
         reconstructed_checks, fail_fast_invariants=_FAIL_FAST_INVARIANTS)
     assert result.passed is False
-    assert len(result.actual["inconclusive"]) >= 4  # > 50% von 7.
+    assert len(result.actual["inconclusive"]) >= 4  # > 50% von 6.
     # Akzeptanzkriterium 3 — die Begruendung nennt die INCONCLUSIVE-Waechter namentlich.
     for name in ("check_holding_time_cap", "check_guard_reference_coherence",
                  "check_effective_stop_distance", "check_selection_statistic_availability"):

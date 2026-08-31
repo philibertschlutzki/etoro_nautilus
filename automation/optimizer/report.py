@@ -49,7 +49,7 @@ from automation.optimizer.run_optimization import (
 )
 from automation.optimizer.sweep import (
     load_symbol_universe, read_symbol_bar_quality_cache, _family_members,
-    symbol_bar_quality_cache_status,
+    symbol_bar_quality_cache_status, _resolve_strategies,
 )
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
@@ -5335,18 +5335,43 @@ def _build_report(
     # run_optimization.seed_effective-Docstring); None, wenn kein Lauf diesen Sweep gesalzen hat
     # (der Regelfall, bit-identisch zum Pre-#1253-Verhalten).
     _seed_salt = next((r.get("seed_salt") for r in studies_out if r.get("seed_salt")), None)
+    # Issue #1325 — bei ``n_studies=0`` ist ``studies_out`` leer: symbols/strategies wuerden dann
+    # zu leeren Mengen und ``_seed_salt`` zu ``None`` kollabieren, UNABHAENGIG davon, welches
+    # Symbol/welcher Salt tatsaechlich angefordert wurde (mehrere Laeufe mit unterschiedlicher
+    # Anfrage traegen dadurch faelschlich denselben Fingerabdruck). Die tatsaechlich angeforderten
+    # symbols/strategies/seed_salt liegen bereits VOR Phase 1 als ``cli_args`` vor (sweep.py stempelt
+    # sie unbedingt, unabhaengig vom Lauf-Ausgang) — primaere Quelle ist deshalb ``cli_args``,
+    # geparst analog sweep.py's eigener "all"-vs-Komma-Liste-Logik. Fallback auf die bisherige
+    # ``studies_out``-Ableitung nur, wenn ``cli_args`` fehlt (Alt-Artefakte, Tests ohne ``cli_args``)
+    # bzw. dort kein ``seed_salt`` gestempelt ist (Alt-Artefakte vor diesem Fix).
+    if cli_args:
+        _fp_raw_symbols = cli_args.get("symbols")
+        _fp_symbols = (
+            set(load_symbol_universe()) if _fp_raw_symbols in (None, "all")
+            else {s.strip() for s in str(_fp_raw_symbols).split(",") if s.strip()}
+        )
+        _fp_raw_strategies = cli_args.get("strategies")
+        _fp_strategies = (
+            set(_resolve_strategies(_fp_raw_strategies)) if _fp_raw_strategies
+            else {r.get("strategy") for r in studies_out if r.get("strategy")}
+        )
+        _fp_seed_salt = cli_args.get("seed_salt") or _seed_salt
+    else:
+        _fp_symbols = {r.get("symbol") for r in studies_out if r.get("symbol")}
+        _fp_strategies = {r.get("strategy") for r in studies_out if r.get("strategy")}
+        _fp_seed_salt = _seed_salt
     _run_fingerprint_kwargs = dict(
         git_commit_simulation=_git_commit_simulation,
         tournament_config_sha256=_run_fingerprint_tournament_sha,
         optimizer_config_sha256=_run_fingerprint_optimizer_sha,
         catalog_fingerprint_value=catalog_fingerprint(),
         seed=optimizer_cfg.get("seed"),
-        symbols={r.get("symbol") for r in studies_out if r.get("symbol")},
-        strategies={r.get("strategy") for r in studies_out if r.get("strategy")},
+        symbols=_fp_symbols,
+        strategies=_fp_strategies,
         reward_semantics_version=optimizer_cfg.get("reward_semantics_version"),
         simulation_semantics_version=optimizer_cfg.get("simulation_semantics_version"),
     )
-    _run_fingerprint = compute_run_fingerprint(**_run_fingerprint_kwargs, seed_salt=_seed_salt)
+    _run_fingerprint = compute_run_fingerprint(**_run_fingerprint_kwargs, seed_salt=_fp_seed_salt)
     # Issue #1253 (GH #1123) Fix Punkt 3 — der Fingerabdruck OHNE Salt: identifiziert die "Familie"
     # von Läufen, die sich NUR im Salt unterscheiden (Grundlage für search_variance unten).
     _run_fingerprint_base = compute_run_fingerprint(**_run_fingerprint_kwargs, seed_salt=None)
@@ -5386,7 +5411,7 @@ def _build_report(
     _current_run_index_entry = {
         "fingerprint": _run_fingerprint, "fingerprint_base": _run_fingerprint_base,
         "result_fingerprint": _result_fingerprint,
-        "run_id": run_id, "started_at_utc": started_at_utc, "seed_salt": _seed_salt,
+        "run_id": run_id, "started_at_utc": started_at_utc, "seed_salt": _fp_seed_salt,
         "study_summaries": _current_run_study_summaries,
     }
     _search_variance = _compute_search_variance(

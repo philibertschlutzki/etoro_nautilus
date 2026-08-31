@@ -9542,9 +9542,29 @@ def check_gate_collinearity_decision_required(gate_correlations: dict[tuple[str,
     - ``'require_decision'``/``'block'`` — jedes Paar mit ``|ρ| > threshold`` MUSS in
       ``gate_collinearity_accepted_pairs`` stehen (mit den Pflichtfeldern ``rationale`` und
       ``decided_in_issue`` — eine dokumentierte, bewusste Entscheidung, keine stille Duldung).
-      Ein geflaggtes Paar OHNE Eintrag dort FAILt blocking — der Sweep bricht (via
-      ``fail_fast_invariants``) VOR Phase 1 ab, statt nach 24h Rechenzeit erneut sechsmal
-      denselben unbeantworteten Alarm zu protokollieren.
+      Ein geflaggtes Paar OHNE Eintrag dort FAILt blocking.
+
+    Issue #1328 (Katalog #1323-1329, P3, Fortsetzung von #907) — dieser Check braucht
+    ``trial_gate_deltas`` (per-Trial-Gate-Werte EINER Study) als Eingabe und ist damit strukturell
+    NUR post-hoc auswertbar, NACHDEM eine Study bereits Trials produziert hat — nie "VOR Phase 1"
+    im Sinne eines echten Preflights. Er stand dennoch in ``optimizer.json['fail_fast_invariants']``
+    (das Vokabular fuer VOR-Phase-1-Abbruch-Waechter), obwohl kein Code-Pfad ihn dafuer je aufrief;
+    ``check_fail_fast_invariants_wired`` FAILte deshalb in JEDEM Lauf mit ``n_studies=0`` (der
+    einzige Fail-Fast-Eintrag ohne jedes Ergebnis, weil sein einziger Aufrufer — ``report.
+    _study_record``, ``report.py`` Zeile ~1849 — nur je TATSAECHLICH ausgewerteter Study feuert).
+    Fix (Option B, siehe Issue-Katalog §S6): aus ``fail_fast_invariants`` entfernt — die
+    Entscheidungspflicht selbst bleibt VOLL AKTIV und ``severity='blocking'`` fuer jede Study, in
+    der sie auswertbar ist (``report._study_record`` ruft diese Funktion unveraendert je Study auf,
+    ihr Ergebnis landet weiterhin im Report unter dem jeweiligen ``study_label``-Scope); nur die
+    ZUSAETZLICHE Teilnahme an der VOR-Phase-1-Fail-Fast-Abbruchpruefung entfaellt, weil sie dafuer
+    strukturell nie geeignet war. Option A (eine zusaetzliche, unbedingte "global"-Aufrufstelle
+    analog den uebrigen sechs fail_fast_invariants-Checks nachruesten) wurde bewusst verworfen: sie
+    haette entweder eine leere, cross-study aggregierte Kohorte gebraucht (die es an keiner Stelle
+    im Report bereits gibt — trial_gate_deltas ist ausschliesslich ``_study_record``-lokal) oder
+    eine neue, ungetestete Aggregationslogik quer ueber alle Studies eines Laufs eingefuehrt, fuer
+    einen Nutzen, den die bereits bestehende Pro-Study-Auswertung strukturell nicht bieten kann
+    (das Symptom trat ausschliesslich bei ``n_studies=0`` auf, wo es schlicht NICHTS zu bewerten
+    gibt).
 
     ``accepted_pairs``: ``[{"pair": [k1, k2], "rationale": str, "decided_in_issue": int}, ...]``."""
     if policy == "warn":
@@ -9750,6 +9770,29 @@ def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
     )
 
 
+def _first_non_none_by_name(invariant_checks: list[dict], *, value_field: str,
+                            restrict_to: "set[str] | None" = None) -> dict:
+    """Issue #1326 — Aggregationshelfer, gemeinsam genutzt von ``check_fail_fast_inconclusive_
+    budget`` und ``check_fail_fast_invariants_are_blocking``: bei mehreren Eintraegen desselben
+    ``name``s im ``invariant_checks``-Strom gewinnt der erste NICHT-``None``-Wert, unabhaengig von
+    seiner Position im Strom — ein frueher, generischer ``None``-Stub (z. B. ``source='report'``,
+    ``scope='global'``, weil der Check global mit einer zu diesem Zeitpunkt leeren Studies-Menge
+    aufgerufen wurde, etwa bei ``n_studies=0``) darf nicht vor einem spaeteren, echten Verdikt
+    (z. B. ``source='sweep'`` fuer ein konkretes Symbol) "gewinnen". Bei mehreren ECHTEN
+    (nicht-``None``), widersprechenden Werten fuer denselben Namen bleibt weiterhin das ERSTE
+    massgeblich — reihenfolge-unabhaengig ist nur der Zweikampf "echtes Ergebnis vs. ``None``-
+    Stub", nicht der Mehrsymbol-Fall mit mehreren echten Verdikten."""
+    by_name: dict = {}
+    for c in invariant_checks or []:
+        name = c.get("name") or c.get("check")
+        if name is None or (restrict_to is not None and name not in restrict_to):
+            continue
+        value = c.get(value_field)
+        if name not in by_name or by_name[name] is None:
+            by_name[name] = value
+    return by_name
+
+
 def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
                                             fail_fast_invariants: list[str] | None = None,
                                             ) -> InvariantResult:
@@ -9779,11 +9822,12 @@ def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
             actual=None,
             detail="fail_fast_invariants leer/fehlt — nicht anwendbar.",
         )
-    severity_by_name: dict[str, str] = {}
-    for c in invariant_checks or []:
-        name = c.get("name")
-        if name is not None and name not in severity_by_name:
-            severity_by_name[name] = c.get("severity")
+    # Issue #1326 — "erstes Vorkommen gewinnt" bevorzugte bislang einen frueheren, generischen
+    # None-Stub (z. B. ein global-skopierter Check bei n_studies=0) vor einem spaeteren, echten
+    # Verdikt fuer denselben Namen. ``_first_non_none_by_name`` laesst einen Nicht-None-Wert
+    # unabhaengig von seiner Position gewinnen; mehrere ECHTE, widersprechende Werte behalten
+    # weiterhin die alte "erstes Vorkommen"-Regel (siehe dortiger Docstring).
+    severity_by_name = _first_non_none_by_name(invariant_checks, value_field="severity")
     offenders = {
         name: severity_by_name[name] for name in configured
         if name in severity_by_name and severity_by_name[name] != "blocking"
@@ -9832,11 +9876,12 @@ def check_fail_fast_inconclusive_budget(
             severity="blocking",
             detail="fail_fast_invariants leer/fehlt — nicht anwendbar.",
         )
-    passed_by_name: dict[str, bool | None] = {}
-    for c in invariant_checks or []:
-        name = c.get("name") or c.get("check")
-        if name in configured and name not in passed_by_name:
-            passed_by_name[name] = c.get("passed")
+    # Issue #1326 — dieselbe "Nicht-None-Verdikt schlaegt None-Stub, unabhaengig von der Position"-
+    # Korrektur wie ``check_fail_fast_invariants_are_blocking`` (gemeinsamer Helfer); vormals
+    # "erstes Vorkommen gewinnt" liess einen frueheren globalen None-Stub (source='report',
+    # scope='global') faelschlich vor einem spaeteren echten Symbol-Verdikt gewinnen.
+    passed_by_name = _first_non_none_by_name(
+        invariant_checks, value_field="passed", restrict_to=set(configured))
     inconclusive = sorted(n for n in configured if passed_by_name.get(n) is None)
     n_configured = len(configured)
     n_inconclusive = len(inconclusive)
@@ -9989,8 +10034,20 @@ def check_config_matches_calibration(config_docs: dict[str, dict]) -> InvariantR
 
 def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
                                       fail_fast_invariants: list[str] | None = None,
+                                      # Issue #1327 — ``check_bar_quality`` ist strukturell
+                                      # global-skopiert: sein ``actual`` betrifft den gesamten Lauf,
+                                      # nicht ein (Strategie, Symbol)-Paar, und kann die Pair-
+                                      # Konvention daher nie erfuellen (bereits an ZWEI anderen
+                                      # Stellen so behandelt — ``_fail_fast_abort_scope_and_reason``
+                                      # in sweep.py, Issue #1313 — nur diese Ausnahmeliste fehlte).
+                                      # Issue #1328 — ``check_gate_collinearity_decision_required``
+                                      # stand hier frueher ebenfalls (Issue #1249), wurde aber mit
+                                      # Issue #1328 Option B aus ``optimizer.json['fail_fast_
+                                      # invariants']`` entfernt (siehe dortiger Docstring); der
+                                      # Verweis hier waere seither ein toter, nie mehr wirksamer
+                                      # Eintrag und wurde deshalb mitentfernt.
                                       global_scope_checks: frozenset = frozenset(
-                                          {"check_gate_collinearity_decision_required"}),
+                                          {"check_bar_quality"}),
                                       ) -> InvariantResult:
     """Issue #1063 (Pitfall #370) — Meta-Invariante: JEDER FAILende Check, der in
     ``optimizer.json['fail_fast_invariants']`` steht, muss seine Offender in ``actual`` als
@@ -10006,14 +10063,14 @@ def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
     ist dort die korrekte, erwartete Form). Nur eine FAILende Auswertung ohne die Pair-Konvention
     zählt.
 
-    Issue #1249 (GH #1119) — ``global_scope_checks`` (Default: ``check_gate_collinearity_
-    decision_required``) sind bewusst AUSGENOMMEN: ihr ``actual`` listet naturgemaess Gate-PAARE
-    (``{"pair": [...], "rho": ...}``), keine (Strategie, Symbol)-Offender — eine reine
-    Config-/Telemetrie-Entscheidung betrifft den GESAMTEN Lauf, nicht ein einzelnes Paar.
-    ``sweep._offending_pairs_for_fail_fast_check`` behandelt einen so nicht-parsbaren ``actual``-
-    Wert ohnehin bereits korrekt als globalen Abbruchgrund (Pitfall #349-Kommentar dort) — diese
-    Ausnahme verhindert nur, dass dasselbe, INTENDIERTE Verhalten hier als Konventionsverstoss
-    gemeldet wird."""
+    Issue #1249 (GH #1119) — ``global_scope_checks`` (Default seit Issue #1327/#1328:
+    ausschliesslich ``check_bar_quality``) sind bewusst AUSGENOMMEN: ihr ``actual`` listet
+    naturgemaess keine (Strategie, Symbol)-Offender — eine laufweite Bar-Qualitaets-Ablehnung
+    betrifft den GESAMTEN Lauf, nicht ein einzelnes Paar. ``sweep._offending_pairs_for_
+    fail_fast_check`` bzw. ``sweep._fail_fast_abort_scope_and_reason`` (Issue #1313) behandeln
+    einen so nicht-parsbaren ``actual``-Wert ohnehin bereits korrekt als globalen Abbruchgrund
+    (Pitfall #349-Kommentar dort) — diese Ausnahme verhindert nur, dass dasselbe, INTENDIERTE
+    Verhalten hier als Konventionsverstoss gemeldet wird."""
     configured = set(fail_fast_invariants or []) - set(global_scope_checks)
     if not configured:
         return InvariantResult(

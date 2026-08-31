@@ -209,7 +209,7 @@
   "wallclock_forecast_after_symbols": 3,
   "sweep_symbol_order_policy": "least_recently_covered",
   "symbol_coverage_max_age_runs": 3,
-  "fail_fast_invariants": ["check_holding_time_cap", "check_guard_reference_coherence", "check_effective_stop_distance", "check_selection_statistic_availability", "check_gate_collinearity_decision_required", "check_bar_quality", "check_tick_population"],
+  "fail_fast_invariants": ["check_holding_time_cap", "check_guard_reference_coherence", "check_effective_stop_distance", "check_selection_statistic_availability", "check_bar_quality", "check_tick_population"],
   "fail_fast_min_symbols": 2,
   "fail_fast_min_offending_symbols": 2,
   "fail_fast_min_offending_studies": 3,
