@@ -23,7 +23,9 @@ from pathlib import Path
 
 import datetime as dt
 
-from automation.catalog_paths import resolve_quote_tick_files, resolve_quote_tick_columns
+from automation.catalog_paths import (
+    resolve_quote_tick_files, resolve_quote_tick_columns, decode_fsb16_price,
+)
 from automation.optimizer import bounds
 from automation.optimizer import invariants
 from automation.optimizer._contracts import pair_key, split_pair_key, ReportCohortUnresolvable
@@ -805,7 +807,12 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         if df.empty:
             _unavailable("EMPTY_AFTER_RESAMPLE")
             return None
-        df["mid"] = (df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0
+        # Issue #1213 — bid_price/ask_price sind rohe pa.binary(16)-FSB16-Werte (siehe
+        # decode_fsb16_price-Docstring), kein float/decimal — .astype(float) wirft ValueError.
+        df["mid"] = (
+            df["bid_price"].apply(decode_fsb16_price)
+            + df["ask_price"].apply(decode_fsb16_price)
+        ) / 2.0
         df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
         df = df.set_index("ts").sort_index()
         # Issue #1272 (GH #1145, Katalog #1272-1297) — ``count`` je Stundenfenster ZUSAETZLICH zu
