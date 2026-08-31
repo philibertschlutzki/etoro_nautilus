@@ -65,3 +65,26 @@ def resolve_quote_tick_columns(schema_names) -> dict[str, str] | None:
             return None
         resolved[canonical] = hit
     return resolved
+
+
+# Issue #1213 (Katalog-Nummern #1209-#1211) — dieselbe Skala wie ``automation._serde._RAW_SCALE``
+# (Build-Guard dort: ``Price.from_str("1").raw == 10**16``, High-Precision-i128-Build). Hier
+# EIGENSTAENDIG dupliziert statt ``automation._serde`` importiert: dieses Modul bleibt bewusst frei
+# von ``nautilus_trader`` (siehe Moduldocstring), ``_serde.py`` importiert
+# ``nautilus_trader.model.objects`` fuer seinen Build-Guard-Assert. Die Skala ist ein globales
+# Build-Merkmal des Katalogs, NICHT von der je Instrument gespeicherten ``price_precision``
+# abhaengig (dieselbe Konstante fuer jeden Aufrufer von ``_encode_fsb16``/``_to_fsb16``,
+# unabhaengig vom uebergebenen, nur fuer die Rundung vor der Skalierung relevanten
+# ``precision``-Parameter jener Funktionen) — ``read_precisions_from_parquet`` ist fuer DIESE
+# Dekodierung deshalb nicht erforderlich.
+_FSB16_SCALE = 10 ** 16
+
+
+def decode_fsb16_price(raw: bytes) -> float:
+    """Dekodiert einen rohen ``pa.binary(16)``-Preiswert (Nautilus FixedSizeBinary(16),
+    High-Precision-i128-Build) in den dezimalen Preis: 16-Byte little-endian signed int, Skala
+    ``_FSB16_SCALE``. Root-Cause #1213 — ``bid_price``/``ask_price`` aus einem rohen
+    ``pyarrow``-Zugriff (OHNE die volle ``ParquetDataCatalog``-Materialisierung, siehe
+    ``resolve_quote_tick_files``-Docstring) sind dieser rohe Byte-Wert, kein float/decimal —
+    ``.astype(float)`` darauf wirft ``ValueError: could not convert string to float``."""
+    return int.from_bytes(raw[:16], "little", signed=True) / _FSB16_SCALE

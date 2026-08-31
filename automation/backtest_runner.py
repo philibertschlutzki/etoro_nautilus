@@ -38,7 +38,9 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 from automation.utils import _fallback_precisions
-from automation.catalog_paths import resolve_quote_tick_files, resolve_quote_tick_columns
+from automation.catalog_paths import (
+    resolve_quote_tick_files, resolve_quote_tick_columns, decode_fsb16_price,
+)
 import importlib
 from dotenv import load_dotenv
 
@@ -1191,7 +1193,11 @@ def _quick_median_price_from_catalog(catalog_path, inst_id_str: str,
             return None
         if len(df) > max_rows:
             df = df.tail(max_rows)
-        median_mid = float(((df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0).median())
+        # Issue #1213 — bid_price/ask_price sind rohe pa.binary(16)-FSB16-Werte (siehe
+        # decode_fsb16_price-Docstring in automation.catalog_paths), kein float/decimal —
+        # .astype(float) wirft ValueError und liess tick_floor_bps lautlos auf 0.0 fallen.
+        mid = (df["bid_price"].apply(decode_fsb16_price) + df["ask_price"].apply(decode_fsb16_price)) / 2.0
+        median_mid = float(mid.median())
         return median_mid if median_mid > 0 else None
     except Exception:
         return None

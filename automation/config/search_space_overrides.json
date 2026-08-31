@@ -10,202 +10,54 @@
   "overrides": {
     "VwapExhaustionStrategy": {
       "TSLA.ETORO": {
-        "axis": "calendar_24_7",
+        "axis": "rth",
         "calibrated_in_run_id": null,
-        "cooldown_bars": [
-          2,
-          12
-        ],
-        "max_bars_in_trade": [
-          1,
-          4
-        ],
-        "proposed_rth_bounds": {
-          "cooldown_bars": [
-            2,
-            3
-          ],
-          "max_bars_in_trade": [
-            2,
-            2
-          ]
-        }
+        "cooldown_bars": [2, 3]
       }
     },
     "HourlyMeanReversionStrategy": {
       "TSLA.ETORO": {
-        "axis": "calendar_24_7",
+        "axis": "rth",
         "calibrated_in_run_id": null,
-        "keltner_period": [
-          5,
-          20
-        ],
-        "cooldown_bars": [
-          2,
-          12
-        ],
-        "max_bars_in_trade": [
-          1,
-          4
-        ],
-        "proposed_rth_bounds": {
-          "keltner_period": [
-            2,
-            5
-          ],
-          "cooldown_bars": [
-            2,
-            3
-          ],
-          "max_bars_in_trade": [
-            2,
-            2
-          ]
-        }
+        "keltner_period": [2, 5],
+        "cooldown_bars": [2, 3]
       }
     },
     "FlashCrashReversalStrategy": {
       "TSLA.ETORO": {
-        "axis": "calendar_24_7",
+        "axis": "rth",
         "calibrated_in_run_id": null,
-        "cooldown_bars": [
-          2,
-          12
-        ],
-        "max_bars_in_trade": [
-          1,
-          4
-        ],
-        "proposed_rth_bounds": {
-          "cooldown_bars": [
-            2,
-            3
-          ],
-          "max_bars_in_trade": [
-            2,
-            2
-          ]
-        }
+        "cooldown_bars": [2, 3]
       }
     },
     "TrendPullbackStrategy": {
       "TSLA.ETORO": {
-        "axis": "calendar_24_7",
+        "axis": "rth",
         "calibrated_in_run_id": null,
-        "ema_period": [
-          5,
-          25
-        ],
-        "cooldown_bars": [
-          2,
-          12
-        ],
-        "max_bars_in_trade": [
-          1,
-          4
-        ],
-        "proposed_rth_bounds": {
-          "ema_period": [
-            2,
-            6
-          ],
-          "cooldown_bars": [
-            2,
-            3
-          ],
-          "max_bars_in_trade": [
-            2,
-            2
-          ]
-        }
+        "ema_period": [2, 6],
+        "cooldown_bars": [2, 3]
       }
     },
     "AdxAtrMomentumStrategy": {
       "TSLA.ETORO": {
-        "axis": "calendar_24_7",
+        "axis": "rth",
         "calibrated_in_run_id": null,
-        "adx_period": [
-          7,
-          21
-        ],
-        "cooldown_bars": [
-          2,
-          12
-        ],
-        "max_bars_in_trade": [
-          1,
-          4
-        ],
-        "proposed_rth_bounds": {
-          "adx_period": [
-            2,
-            5
-          ],
-          "cooldown_bars": [
-            2,
-            3
-          ],
-          "max_bars_in_trade": [
-            2,
-            2
-          ]
-        }
+        "adx_period": [2, 5],
+        "cooldown_bars": [2, 3]
       }
     },
     "SqueezeBreakoutStrategy": {
       "TSLA.ETORO": {
-        "axis": "calendar_24_7",
+        "axis": "rth",
         "calibrated_in_run_id": null,
-        "cooldown_bars": [
-          2,
-          12
-        ],
-        "max_bars_in_trade": [
-          1,
-          4
-        ],
-        "proposed_rth_bounds": {
-          "cooldown_bars": [
-            2,
-            3
-          ],
-          "max_bars_in_trade": [
-            2,
-            2
-          ]
-        }
+        "cooldown_bars": [2, 3]
       }
     },
     "OpeningRangeBreakoutStrategy": {
       "TSLA.ETORO": {
-        "axis": "calendar_24_7",
+        "axis": "rth",
         "calibrated_in_run_id": null,
-        "or_bars": [
-          1,
-          4
-        ],
-        "cooldown_bars": [
-          2,
-          12
-        ],
-        "max_bars_in_trade": [
-          1,
-          4
-        ],
-        "proposed_rth_bounds": {
-          "or_bars": [
-            2,
-            2
-          ],
-          "cooldown_bars": [
-            2,
-            3
-          ],
-          "max_bars_in_trade": [
-            2,
-            2
-          ]
-        }
+        "cooldown_bars": [2, 3]
       }
     }
   }

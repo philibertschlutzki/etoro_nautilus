@@ -124,14 +124,19 @@ def test_percentile_matches_known_linear_interpolation():
 # ---------------------------------------------------------------------------------------------
 
 def _write_quote_tick_parquet(tmp_path, symbol, ts_ns_list, price=100.0):
+    # Issue #1213 — bid_price/ask_price sind im echten Katalog rohe pa.binary(16)-FSB16-Werte
+    # (automation._serde.encode_price_fsb16, siehe automation.catalog_service/api_backfiller),
+    # kein pa.float64() — eine float64-Fixture wuerde den #1213-Decode-Pfad nicht abdecken.
     import pyarrow as pa
     import pyarrow.parquet as pq
+    from automation._serde import encode_price_fsb16
     d = tmp_path / "data" / "quote_tick" / symbol
     d.mkdir(parents=True, exist_ok=True)
     n = len(ts_ns_list)
+    _FSB16 = pa.binary(16)
     table = pa.table({
-        "bid_price": pa.array([price] * n, type=pa.float64()),
-        "ask_price": pa.array([price + 0.02] * n, type=pa.float64()),
+        "bid_price": pa.array([encode_price_fsb16(price, 2)] * n, type=_FSB16),
+        "ask_price": pa.array([encode_price_fsb16(price + 0.02, 2)] * n, type=_FSB16),
         "ts_event": pa.array(ts_ns_list, type=pa.int64()),
     })
     pq.write_table(table, str(d / "data.parquet"))

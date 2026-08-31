@@ -72,13 +72,13 @@ def test_matching_axis_resolves_normally(monkeypatch):
     assert (lo, hi) == (2, 2)
 
 
-def test_the_real_production_config_currently_diverges_against_rth():
-    """Regressionsschutz/Akzeptanzkriterium 1 gegen die ECHTE, committete Config: die 18
-    vorbestehenden Overrides sind bewusst als axis='calendar_24_7' migriert (Fix Punkt 3), waehrend
-    das echte optimizer.json['time_box_bars_axis'] seit #1275 'rth' ist — ein tatsaechlicher Lauf
-    MUSS also fail-loud abbrechen, bis eine separate PR die Umschaltung vornimmt."""
-    with pytest.raises(spaces.StaleAxisOverrideError):
-        spaces._bounds_for("VwapExhaustionStrategy", "TSLA.ETORO", "max_bars_in_trade", 3, 6)
+def test_the_real_production_config_no_longer_diverges_against_rth():
+    """Regressionsschutz/Akzeptanzkriterium 1 gegen die ECHTE, committete Config: Issue #1212 hat
+    die 7 kuratierten Override-Bloecke auf axis='rth' migriert (die vormals separate, bewusst
+    offen gelassene PR-Entscheidung aus Fix Punkt 3) — ein tatsaechlicher rth-Lauf zieht den
+    kuratierten cooldown_bars-Override jetzt ohne StaleAxisOverrideError."""
+    lo, hi = spaces._bounds_for("VwapExhaustionStrategy", "TSLA.ETORO", "cooldown_bars", 2, 36)
+    assert (lo, hi) == (2, 3)
 
 
 # ── Akzeptanzkriterium 2 — Override ohne axis-Feld bricht ebenfalls ab (kein Default) ─────────────
@@ -152,11 +152,14 @@ def test_active_bounds_overrides_skips_metadata_keys_without_crashing(monkeypatc
     assert rows[0]["axis"] == "calendar_24_7"
 
 
-def test_active_bounds_overrides_on_real_config_has_18_curated_rows_all_calendar_24_7():
+def test_active_bounds_overrides_on_real_config_has_10_curated_rows_all_rth():
+    """Issue #1212 — nach der Streichung von max_bars_in_trade (alle 7 Bloecke) und or_bars
+    (OpeningRangeBreakoutStrategy) verbleiben 10 kuratierte Zeilen (7x cooldown_bars + je 1x
+    keltner_period/ema_period/adx_period), alle auf axis='rth' migriert."""
     rows = bounds.active_bounds_overrides()
     curated = [r for r in rows if r["source"] == "curated"]
-    assert len(curated) == 18
-    assert all(r["axis"] == "calendar_24_7" for r in curated)
+    assert len(curated) == 10
+    assert all(r["axis"] == "rth" for r in curated)
 
 
 def test_auto_proposed_rows_carry_axis_none():
@@ -217,17 +220,20 @@ def test_check_override_axis_coherence_passes_on_matching_axis():
 
 def test_check_override_axis_coherence_on_the_real_config_against_its_own_declared_axis_passes():
     """Regressionsschutz: gegen die EIGENE axis-Deklaration (nicht gegen die Lauf-Achse) sind die
-    18 Eintraege in sich konsistent — der Verstoss entsteht erst im Vergleich mit run_axis='rth'."""
+    10 Eintraege in sich konsistent — Issue #1212 hat die Deklaration auf 'rth' migriert, sodass
+    dieser Selbst-Vergleich unveraendert passt."""
     rows = bounds.active_bounds_overrides()
-    result = inv.check_override_axis_coherence(rows, run_axis="calendar_24_7")
+    result = inv.check_override_axis_coherence(rows, run_axis="rth")
     assert result.passed is True
 
 
-def test_check_override_axis_coherence_on_the_real_config_against_rth_fails():
+def test_check_override_axis_coherence_on_the_real_config_against_calendar_24_7_fails():
+    """Issue #1212 — die Migration kehrt den Vergleich um: gegen die JETZT veraltete
+    calendar_24_7-Achse divergieren alle 10 kuratierten Zeilen (vormals war es umgekehrt)."""
     rows = bounds.active_bounds_overrides()
-    result = inv.check_override_axis_coherence(rows, run_axis="rth")
+    result = inv.check_override_axis_coherence(rows, run_axis="calendar_24_7")
     assert result.passed is False
-    assert len(result.actual) == 18
+    assert len(result.actual) == 10
 
 
 # ── Akzeptanzkriterium 4 — §5.4 des Reports weist je Override die Achse aus ──────────────────────
