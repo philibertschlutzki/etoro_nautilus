@@ -55,6 +55,38 @@ def test_enumeration_deployable_without_stale_symbols_arg_is_bit_identical(monke
     assert pairs == [("SmaCrossoverStrategy", "A.ETORO", "OK")]
 
 
+def test_enumeration_empty_symbol_list_yields_no_pairs_not_the_universe(monkeypatch):
+    """Issue #1323 (Katalog #1323-1329, P0) — eine EXPLIZIT uebergebene leere Symbolliste (``[]``,
+    z. B. weil das einzige angeforderte Symbol degeneriert war und aus ``syms`` herausgefiltert
+    wurde) bedeutet "nichts zu tun", NICHT "kein Filter vorgegeben". Root-Cause vor diesem Fix:
+    ``symbols if symbols else load_symbol_universe()`` (Wahrheitswert-Pruefung) verwechselte ``[]``
+    mit ``None`` und enumerierte faelschlich das GESAMTE Universum (149 Symbole im Original-
+    Symptom) fuer ein Ein-Symbol-Anfrage mit degeneriertem Ziel."""
+    universe_calls = []
+    monkeypatch.setattr(
+        sweep, "load_symbol_universe",
+        lambda *a, **k: (universe_calls.append(1) or ["A.ETORO", "B.ETORO", "C.ETORO"]))
+    monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
+    bars = {}  # count_available_bars([]) waere in der Praxis {}.
+    pairs = sweep.enumerate_tunable_pairs(["SmaCrossoverStrategy"], [],
+                                          tier="all", available_bars=bars, config=_GATE_CFG)
+    assert pairs == []
+    assert not universe_calls, "load_symbol_universe() darf bei symbols=[] nicht aufgerufen werden"
+
+
+def test_enumeration_none_symbols_still_falls_back_to_the_universe(monkeypatch):
+    """Regressionsschutz zum Geschwistertest oben: ``None`` bleibt der EINZIGE Ausloeser fuer
+    ``load_symbol_universe()`` — die #1323-Identitaetspruefung darf den Universums-Fallback fuer
+    den regulaeren ``--symbols all``-Fall nicht mitbrechen."""
+    monkeypatch.setattr(sweep, "load_symbol_universe", lambda *a, **k: ["A.ETORO", "B.ETORO"])
+    monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
+    bars = {"A.ETORO": 10_000, "B.ETORO": 10_000}
+    pairs = sweep.enumerate_tunable_pairs(["SmaCrossoverStrategy"], None,
+                                          tier="all", available_bars=bars, config=_GATE_CFG)
+    assert pairs == [("SmaCrossoverStrategy", "A.ETORO", "OK"),
+                     ("SmaCrossoverStrategy", "B.ETORO", "OK")]
+
+
 def test_enumeration_all_tier_is_cross_product(monkeypatch):
     monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
     bars = {"A.ETORO": 10_000, "B.ETORO": 10_000}

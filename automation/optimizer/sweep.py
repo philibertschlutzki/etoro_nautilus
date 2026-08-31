@@ -731,7 +731,9 @@ def _emit_bar_quality_sample_unavailable(symbol: str, reason: str, extra: dict |
 
 def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = None, *,
                                     max_ticks: int = 200_000,
-                                    unavailable_reasons: list[str] | None = None) -> dict | None:
+                                    unavailable_reasons: list[str] | None = None,
+                                    session_hours_by_asset_class: dict | None = None,
+                                    asset_class_key: str | None = None) -> dict | None:
     """Issue #807 — liest eine BESCHRAENKTE Stichprobe roher Quote-Ticks (``bid_price``/
     ``ask_price``/``ts_event``, direkt via pyarrow — analog ``count_available_bars`` oben, OHNE die
     volle NautilusTrader-``ParquetDataCatalog``-Materialisierung) und aggregiert sie zu
@@ -753,7 +755,22 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
     [Datenspanne] bleibt die unabhaengige, bereits bestehende Absicherung) — JEDER dieser Pfade
     emittiert zusaetzlich ``BAR_QUALITY_SAMPLE_UNAVAILABLE`` mit einem strukturierten ``reason``
     (``unavailable_reasons``, falls uebergeben, sammelt dieselben Gruende fuer den Aufrufer ein,
-    der sie z. B. im ``CATALOG_SAMPLE_UNAVAILABLE_DESPITE_CATALOG``-Ereignis aggregiert)."""
+    der sie z. B. im ``CATALOG_SAMPLE_UNAVAILABLE_DESPITE_CATALOG``-Ereignis aggregiert).
+
+    Issue #1329 (Katalog #1323-1329, P1) — die rohen Ticks werden VOR dem Resampling auf dieselbe
+    RTH-Session-Maske gefiltert wie ``probe_symbol_tick_population``/``backtest_runner.
+    _filter_ticks_to_session_hours`` (seit #1275 die fuer die ECHTE Bar-Konstruktion verbindliche
+    Achse) — ueber dasselbe lokale, leichtgewichtige Helferpaar (``_resolve_session_window_utc``/
+    ``_is_ts_ns_within_session_utc``), das ``probe_symbol_tick_population`` bereits verwendet.
+    Vormals resamplete diese Funktion UNGEFILTERT auf eine reine Kalenderstunden-Achse (24/7),
+    obwohl ``check_tick_population``s ``n_ticks_after_session_filter``-Feld (Issue #1298) fuer
+    DIESELBE Tickmenge desselben Laufs bereits RTH-gefiltert war — zwei Meta-Checks prueften
+    faktisch zwei verschiedene Populationen. ``session_hours_by_asset_class``/``asset_class_key``
+    fehlend/``None`` (z. B. CRYPTO/FOREX ohne Session-Fenster, oder ein Aufrufer ohne
+    ``backtest.json``) ⇒ ``df`` UNVERAENDERT (fail-open, bit-identisches Alt-Verhalten, dieselbe
+    Konvention wie ``_resolve_session_window_utc``/``_filter_ticks_to_session_hours``). Die
+    konfigurierten Schwellenwerte selbst (``bar_coverage_ratio`` u. a.) werden hier NICHT
+    neu kalibriert — nur die Achse der Messung wird korrigiert (siehe §S3 im Issue-Katalog)."""
     if catalog_path is None:
         base = config_dir()
         raw = "data/nautilus"
@@ -815,6 +832,22 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         ) / 2.0
         df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
         df = df.set_index("ts").sort_index()
+        # Issue #1329 (Katalog #1323-1329, P1) — RTH-Session-Filter VOR dem Resampling, dieselbe
+        # Achse wie ``probe_symbol_tick_population``/``check_tick_population.n_ticks_after_
+        # session_filter`` (Issue #1298/#1275). Ticks ausserhalb des Session-Fensters duerfen
+        # weder in die besetzten Stunden-Bins (Zaehler von ``bar_coverage_ratio``) noch in die
+        # Kalenderspanne der Stichprobe (Nenner) einfliessen — beide werden unten AUS ``bars``/
+        # ``idx`` (bereits gefiltert) abgeleitet. ``window is None`` (kein Fenster konfiguriert
+        # ODER ``asset_class_key`` fehlt, z. B. CRYPTO/FOREX) ⇒ ``df`` unveraendert (fail-open,
+        # dieselbe Konvention wie ``_resolve_session_window_utc``).
+        window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
+        if window is not None:
+            open_utc, close_utc = window
+            df = df[df["ts_event"].apply(
+                lambda ts: _is_ts_ns_within_session_utc(int(ts), open_utc, close_utc))]
+            if df.empty:
+                _unavailable("EMPTY_AFTER_SESSION_FILTER")
+                return None
         # Issue #1272 (GH #1145, Katalog #1272-1297) — ``count`` je Stundenfenster ZUSAETZLICH zu
         # max/min/last: die Tick-DICHTE je Bar (nicht nur ihr Aggregat) ist die Vorbedingung, die
         # jede Stop-/Trigger-Ausloese-Pruefung stillschweigend voraussetzt (siehe
@@ -1332,8 +1365,14 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     analog der #1027-Lektion "eine Kennzahl, eine Quelle") — sie werden unter ``tier='deployable'``
     ZUSAETZLICH zu ``winners`` zugelassen, damit ein noch nie (oder lange nicht mehr) optimiertes
     Symbol ueberhaupt eine Chance auf einen Tier-A-Gewinn bekommt, statt dauerhaft von der
-    Kandidatenmenge ausgeschlossen zu bleiben."""
-    syms = symbols if symbols else load_symbol_universe()
+    Kandidatenmenge ausgeschlossen zu bleiben.
+
+    Issue #1323 — ``symbols`` wird gegen ``None`` geprüft (Identitätsprüfung), nicht auf
+    Wahrheitswert. Eine explizit übergebene, aber leere Liste (``[]``, z. B. weil das einzige
+    angeforderte Symbol degeneriert war und aus ``syms`` herausgefiltert wurde) bedeutet
+    "nichts zu tun" und darf NICHT auf ``load_symbol_universe()`` zurückfallen — sonst würde ein
+    Ein-Symbol-Lauf mit degeneriertem Zielsymbol fälschlich das gesamte Universum enumerieren."""
+    syms = symbols if symbols is not None else load_symbol_universe()
     winners = load_tier_a_winners() if tier == "deployable" else {}
     log = logger or logging.getLogger("optimizer")
     # Issue #669 — deklarative (Strategie, Symbol)-Deaktivierungsliste: bereits diagnostizierte,
@@ -2717,6 +2756,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         warn_if_cost_model_zero_realism()
 
     syms = symbols if symbols is not None else load_symbol_universe()
+    # Issue #1324 — die ursprünglich angeforderte Symbolmenge, VOR jeder späteren Degenerations-
+    # Filterung (siehe ``_degenerate_syms``-Block unten, der ``syms`` selbst neu bindet). Dient als
+    # vom Aufrufer unabhängige Obergrenze dafür, welche Symbole unten als "in diesem Lauf tatsächlich
+    # angefordert" ins Coverage-Ledger geschrieben werden dürfen — unabhängig davon, wie viele Symbole
+    # ``enumerate_tunable_pairs`` intern (fälschlich oder korrekt) durchläuft.
+    _requested_syms = syms
     config = _load_gate_config()
     available_bars = count_available_bars(syms)
 
@@ -2887,6 +2932,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _use_default_sample_fn = _load_sample is _load_symbol_bar_quality_sample
         _bar_quality_cfg = opt_data.get("bar_quality") or {}
         _degenerate_syms = []
+        # Issue #1329 (Katalog #1323-1329, P1) — dieselbe backtest.json['session_hours_by_
+        # asset_class']-Auflösung wie der #1298-Tick-Populations-Preflight oben (eigenständig
+        # gelesen statt der dortigen ``_session_hours_by_asset_class`` vertraut: dieser Block laeuft
+        # auch dann, wenn der obige Preflight-Block uebersprungen wurde, z. B. ohne echten
+        # ``tick_population_fn``).
+        _bar_quality_bt_cfg = {}
+        try:
+            _bar_quality_bt_path = config_dir() / "backtest.json"
+            if _bar_quality_bt_path.exists():
+                _bar_quality_bt_cfg = json.loads(_bar_quality_bt_path.read_text("utf-8")) or {}
+        except (OSError, ValueError):
+            _bar_quality_bt_cfg = {}
+        _bar_quality_session_hours = _bar_quality_bt_cfg.get("session_hours_by_asset_class")
         # Issue #923 Fix 1/3 — je Symbol persistiert (write_symbol_bar_quality_cache), damit
         # report._study_record den echten median_delta_t_s als bar_seconds auflösen kann, statt
         # unbedingt auf _contracts.BAR_SECONDS_DEFAULT zurückzufallen (report.py läuft nach dem
@@ -2896,7 +2954,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         for _sym in syms:
             try:
                 if _use_default_sample_fn:
-                    _sample = _load_sample(_sym, unavailable_reasons=_bar_quality_unavailable_reasons)
+                    _sample = _load_sample(
+                        _sym, unavailable_reasons=_bar_quality_unavailable_reasons,
+                        session_hours_by_asset_class=_bar_quality_session_hours,
+                        asset_class_key=_resolve_asset_class_key_for_symbol_lightweight(_sym))
                 else:
                     _sample = _load_sample(_sym)  # injizierter Test-Fake, feste Ein-Arg-Signatur.
             except Exception:
@@ -3316,7 +3377,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # (mark_gate1_covered, zuvor Issue #841 Punkt 5 — implementiert, aber NULL Call-Sites) — es
     # wurde nachweislich DIESEN Lauf geprüft, nur strukturell nie optimiert, und darf
     # check_symbol_coverage nicht dauerhaft rot faerben.
-    _gate1_only_symbols = sorted(_gate1_rejected_symbols - set(pairs_by_symbol.keys()))
+    # Issue #1324 — zusätzlich zu ``pairs_by_symbol`` auf ``_requested_syms`` zugeschnitten: eine
+    # vom Aufrufer UNABHÄNGIGE Obergrenze, damit ein Bug in ``enumerate_tunable_pairs`` (der mehr
+    # Symbole als angefordert zurückliefert bzw. in ``gate1_rejected_symbols`` einträgt) sich nicht
+    # ungebremst in den persistenten Coverage-Zustand fortpflanzt.
+    _gate1_only_symbols = sorted(
+        (_gate1_rejected_symbols & set(_requested_syms)) - set(pairs_by_symbol.keys()))
     for _sym in _gate1_only_symbols:
         _coverage_ledger = symbol_coverage.mark_gate1_covered(
             _coverage_ledger, _sym, run_id=run_id,
@@ -4797,7 +4863,13 @@ def main(argv: list[str] | None = None) -> list[Path]:
                     # Issue #985 (Katalog D, P1) — die aufgeloeste Host-Kernzahl neben n_jobs, damit
                     # ein DEFAULT_CPU_MINUS_2-Lauf im Report nachvollziehbar bleibt, auch wenn der
                     # Host zwischen zwei Laeufen wechselt (Reproduzierbarkeits-Telemetrie, #985 Fix 2).
-                    "host_cpu_count": __import__("os").cpu_count()}
+                    "host_cpu_count": __import__("os").cpu_count(),
+                    # Issue #1325 — der tatsaechlich angeforderte --seed-salt-Wert dieses Laufs
+                    # (bereits VOR dem ersten Trial bekannt, ueber OPTIMIZER_SEED_SALT gesetzt,
+                    # siehe main() oben), unabhaengig davon, ob der Lauf ueberhaupt Studies
+                    # produziert (``report._run_fingerprint_kwargs`` braucht diesen Wert als
+                    # ANFRAGE-Groesse, nicht als aus studies_out abgeleitete ERGEBNIS-Groesse).
+                    "seed_salt": __import__("os").environ.get("OPTIMIZER_SEED_SALT")}
         _wallclock_s = round(time.perf_counter() - main_t0)
         # Issue #941/#1107 — die In-Process-Kohorte der Fail-Fast-Probe (sofern eine stattfand),
         # damit invariants.check_cohort_declaration_consistency sie gegen die Report-Scan-Kohorte

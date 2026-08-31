@@ -202,6 +202,59 @@ def test_run_fingerprint_index_path_survives_work_dir_override(monkeypatch, tmp_
 
 
 # ---------------------------------------------------------------------------------------------
+# Issue #1325 (Katalog #1323-1329, P0) — _build_report liest symbols/strategies/seed_salt primaer
+# aus cli_args (die tatsaechliche ANFRAGE), nicht mehr aus studies_out (das ERGEBNIS). Bei
+# n_studies=0 kollabierten symbols/strategies vormals zu leeren Mengen und seed_salt zu None,
+# UNABHAENGIG vom tatsaechlich angeforderten Symbol/Salt — mehrere Laeufe mit unterschiedlicher
+# Anfrage trugen dadurch denselben run_fingerprint.
+# ---------------------------------------------------------------------------------------------
+
+def test_zero_studies_runs_with_different_cli_args_symbols_get_different_fingerprints(tmp_path):
+    report_nvda = rpt._build_report(
+        [], run_id="run-nvda", started_at_utc="2026-01-01T00:00:00Z", wallclock_s=1.0,
+        cli_args={"symbols": "NVDA.ETORO", "strategies": "SmaCrossoverStrategy"},
+        reports_dir=tmp_path / "nvda",
+    )
+    report_tsla = rpt._build_report(
+        [], run_id="run-tsla", started_at_utc="2026-01-01T00:00:00Z", wallclock_s=1.0,
+        cli_args={"symbols": "TSLA.ETORO", "strategies": "SmaCrossoverStrategy"},
+        reports_dir=tmp_path / "tsla",
+    )
+    assert report_nvda["run_fingerprint"] != report_tsla["run_fingerprint"]
+
+
+def test_zero_studies_runs_with_different_seed_salt_get_different_fingerprints(tmp_path):
+    report_a = rpt._build_report(
+        [], run_id="run-salt-a", started_at_utc="2026-01-01T00:00:00Z", wallclock_s=1.0,
+        cli_args={"symbols": "NVDA.ETORO", "strategies": "all", "seed_salt": "salt-a"},
+        reports_dir=tmp_path / "salt_a",
+    )
+    report_b = rpt._build_report(
+        [], run_id="run-salt-b", started_at_utc="2026-01-01T00:00:00Z", wallclock_s=1.0,
+        cli_args={"symbols": "NVDA.ETORO", "strategies": "all", "seed_salt": "salt-b"},
+        reports_dir=tmp_path / "salt_b",
+    )
+    assert report_a["run_fingerprint"] != report_b["run_fingerprint"]
+
+
+def test_zero_studies_run_without_cli_args_falls_back_to_studies_out_derivation(tmp_path):
+    """``cli_args`` fehlend (Alt-Artefakte/Tests ohne cli_args) ⇒ Fallback auf die bisherige
+    studies_out-Ableitung — bleibt bit-identisch zum Alt-Verhalten, keine Verhaltensaenderung
+    ausserhalb des #1325-Symptomfalls."""
+    report_no_cli_args = rpt._build_report(
+        [], run_id="run-no-cli-args", started_at_utc="2026-01-01T00:00:00Z", wallclock_s=1.0,
+        cli_args=None, reports_dir=tmp_path / "no_cli_args",
+    )
+    report_empty_cli_args = rpt._build_report(
+        [], run_id="run-empty-cli-args", started_at_utc="2026-01-01T00:00:00Z", wallclock_s=1.0,
+        cli_args={}, reports_dir=tmp_path / "empty_cli_args",
+    )
+    # Beide degenerieren identisch auf die leere studies_out-Ableitung (symbols=set(),
+    # strategies=set(), seed_salt=None) -- derselbe Fingerabdruck fuer denselben Rest-Input.
+    assert report_no_cli_args["run_fingerprint"] == report_empty_cli_args["run_fingerprint"]
+
+
+# ---------------------------------------------------------------------------------------------
 # report._compute_search_variance
 # ---------------------------------------------------------------------------------------------
 
