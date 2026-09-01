@@ -185,9 +185,13 @@ def test_time_box_bars_rescaled_by_the_0_24_factor():
     assert cfg["time_box_bars"] == pytest.approx(7.0)
 
 
-def test_simulation_semantics_version_is_7():
+def test_simulation_semantics_version_is_at_least_7():
+    # Issue #1351 (GH #1245) — 7 → 8 (Katalog #1330-1349: O/L/H/C-Tick-Expansion, Zeitstempel-
+    # Semantik, Kostenmodell, Stop-Fill-Telemetrie, siehe optimizer.json's v8-Eintrag). Dieser Test
+    # pinnt nur eine UNTERGRENZE (nicht mehr exakt 7), damit spaetere Bumps ihn nicht erneut
+    # anfassen muessen — die exakte aktuelle Ableitung lebt in der v8-Dokumentation selbst.
     cfg = json.loads(_OPTIMIZER_JSON_PATH.read_text("utf-8"))
-    assert cfg["simulation_semantics_version"] == 7
+    assert cfg["simulation_semantics_version"] >= 7
 
 
 def test_simulation_schema_v7_names_its_actual_trigger():

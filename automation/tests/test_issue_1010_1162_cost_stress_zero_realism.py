@@ -152,15 +152,20 @@ def test_no_warning_when_backtest_json_is_missing(monkeypatch, tmp_path):
     assert sweep.warn_if_cost_model_zero_realism() is False
 
 
-def test_the_shipped_backtest_json_currently_triggers_the_warning():
-    """Akzeptanzkriterium 1 (uebertragen auf die Startup-Warnung statt nur die Report-Invariante):
-    der Check failt/warnt auf dem heutigen, unkalibrierten Datenstand."""
+def test_the_shipped_backtest_json_no_longer_triggers_the_warning():
+    """Issue #1348/#1349 (GH #1242/#1243) — die ehemals ALLE-0.0-Platzhalter sind seit diesem Fix
+    strukturell > 0 (slippage: 0.5*spread-Floor; financing: short-Satz > 0), sodass die
+    'full_realism'-Kostenstress-Stufe kein reines No-Op mehr ist. Der Warnungs-Check MUSS diesen
+    (bewusst gewaehlten, begruendeten) Long-Nullwert korrekt aus einem {'long','short'}-Dict lesen,
+    nicht als reinen Skalar — siehe sweep._flatten_cost_rate_values."""
+    from automation.optimizer.sweep import _flatten_cost_rate_values
     cfg = json.loads((__import__("pathlib").Path("automation/config/backtest.json"))
                       .read_text("utf-8"))
     financing = cfg["overnight_financing_bps_per_day_by_asset_class"]
     slippage = cfg["slippage_bps_by_asset_class"]
-    assert all(v == 0.0 for v in financing.values())
-    assert all(v == 0.0 for v in slippage.values())
+    all_values = _flatten_cost_rate_values(financing) + _flatten_cost_rate_values(slippage)
+    assert any(v > 0.0 for v in all_values)
+    assert any(v == 0.0 for v in all_values)  # der begruendete Long-Nullwert bleibt bestehen
 
 
 # --- report._cost_model_has_zero_realism / summary_de.py Abschnitt 2.4 ----------------------------

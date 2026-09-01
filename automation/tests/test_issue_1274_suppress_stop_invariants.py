@@ -17,9 +17,16 @@ import json
 from automation.optimizer import invariants as inv
 
 
-def _study(strategy="A", symbol="X.ETORO", *, population=100, zero_frac=0.1):
+def _study(strategy="A", symbol="X.ETORO", *, population=100, zero_frac=0.1,
+          intrabar_range_median_bps=5.0, intrabar_path="synthetic_ohlc_adverse_first"):
+    # Issue #1350 (GH #1244, P1) Fix-Punkt 4 — die beiden ZUSAETZLICHEN Kriterien, die
+    # _bar_axis_supports_stop_verdict seit diesem Fix ueber symbol_bar_quality prueft, bevor
+    # SUPPRESSED_UPSTREAM_BAR_AXIS aufgehoben wird. Default hier bildet den POST-#1330-Rebuild-
+    # Zustand ab (gesunde Achse); Tests fuer die neuen Kriterien setzen sie explizit auf None/0.
     return {"strategy": strategy, "symbol": symbol,
-           "bar_range_population_n": population, "zero_range_bar_fraction": zero_frac}
+           "bar_range_population_n": population, "zero_range_bar_fraction": zero_frac,
+           "symbol_bar_quality": {"intrabar_range_median_bps": intrabar_range_median_bps,
+                                  "intrabar_path": intrabar_path}}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -49,6 +56,29 @@ def test_mixed_studies_median_governs():
     records = [_study(zero_frac=0.1), _study(symbol="Y.ETORO", zero_frac=0.2),
               _study(symbol="Z.ETORO", zero_frac=0.9)]
     assert inv._bar_axis_supports_stop_verdict(records) is True
+
+
+def test_zero_intrabar_range_median_bps_does_not_support_verdict_even_if_bar_range_is_healthy():
+    """Akzeptanzkriterium #1350/4 — der ALTE bar_range-Test allein reicht seit diesem Fix nicht
+    mehr: intrabar_range_median_bps=0 (Pre-#1330-Katalog auf der Ein-Tick-Achse) haelt die
+    Suppression aufrecht, obwohl bar_range_population_n/zero_range_bar_fraction gesund sind."""
+    assert inv._bar_axis_supports_stop_verdict(
+        [_study(intrabar_range_median_bps=0.0)]) is False
+
+
+def test_missing_intrabar_path_does_not_support_verdict():
+    """Akzeptanzkriterium #1350/4 — intrabar_path=None (Alt-Katalog vor #1330) haelt die
+    Suppression ebenfalls aufrecht, unabhaengig von intrabar_range_median_bps."""
+    assert inv._bar_axis_supports_stop_verdict(
+        [_study(intrabar_path=None)]) is False
+
+
+def test_positive_intrabar_range_and_stamped_path_together_lift_the_suppression():
+    """Akzeptanzkriterium #1350/2 — nach dem Rebuild (beide Bedingungen erfuellt) wird die
+    Suppression tatsaechlich aufgehoben."""
+    assert inv._bar_axis_supports_stop_verdict(
+        [_study(intrabar_range_median_bps=3.2, intrabar_path="synthetic_ohlc_adverse_first")]
+    ) is True
 
 
 # ---------------------------------------------------------------------------------------------

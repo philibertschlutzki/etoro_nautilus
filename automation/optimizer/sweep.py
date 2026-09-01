@@ -462,6 +462,23 @@ def assert_invariant_registry_complete() -> "_inv.InvariantResult":
     return result
 
 
+def _flatten_cost_rate_values(cost_map: dict | None) -> list[float]:
+    """Issue #1349 (GH #1243, P2) — jeder Asset-Klassen-Eintrag in ``overnight_financing_bps_per_
+    day_by_asset_class`` ist seit #1349 entweder ein reiner Skalar (Alt-Form, ``resolve_financing_
+    bps_per_day`` interpretiert ihn als 'nur Long') oder ein ``{'long': ..., 'short': ...}``-Dict
+    (Neu-Form). ``slippage_bps_by_asset_class`` bleibt unveraendert Skalar-only. Entfaltet BEIDE
+    Formen zu einer flachen Liste numerischer Raten — Single Source fuer jeden Konsumenten (hier
+    ``warn_if_cost_model_zero_realism``, ausserdem ``report._cost_model_has_zero_realism``), der
+    prueft, ob ALLE konfigurierten Raten (ueber jede Asset-Klasse UND Richtung) 0.0 sind."""
+    values: list[float] = []
+    for v in (cost_map or {}).values():
+        if isinstance(v, dict):
+            values.extend(x for x in v.values() if isinstance(x, (int, float)))
+        elif isinstance(v, (int, float)):
+            values.append(v)
+    return values
+
+
 def warn_if_cost_model_zero_realism() -> bool:
     """Issue #1010/#1162 (Katalog #1170, P0) — Startup-Warnung: sind ``backtest.json``'s
     ``overnight_financing_bps_per_day_by_asset_class`` UND ``slippage_bps_by_asset_class`` fuer
@@ -484,8 +501,7 @@ def warn_if_cost_model_zero_realism() -> bool:
         cfg = {}
     financing = cfg.get("overnight_financing_bps_per_day_by_asset_class") or {}
     slippage = cfg.get("slippage_bps_by_asset_class") or {}
-    _all_values = [v for v in financing.values() if isinstance(v, (int, float))] + \
-                  [v for v in slippage.values() if isinstance(v, (int, float))]
+    _all_values = _flatten_cost_rate_values(financing) + _flatten_cost_rate_values(slippage)
     if not _all_values or any(v != 0.0 for v in _all_values):
         return False
     emit_execution_event(
@@ -879,6 +895,7 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         import pyarrow as pa
         import pyarrow.parquet as pq
         import pandas as pd
+        from automation import api_backfiller as _api_backfiller
         schema_names = pq.read_schema(str(pq_files[0])).names
         col_map = resolve_quote_tick_columns(schema_names)
         if col_map is None:
@@ -1018,6 +1035,10 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             "window_end": idx[-1].isoformat(),
             "sample_span_days": sample_span_days,
             "sample_covers_required_span": sample_covers_required_span,
+            # Issue #1350 (GH #1244, P1) Fix-Punkt 5 — der intrabar_path des zuerst aufgeloesten
+            # Katalog-Fragments (pq_files[0], dieselbe Datei, deren Schema oben fuer die
+            # Spaltenaufloesung gelesen wurde) begleitet jede Stop-Kennzahl bis in den Report.
+            "intrabar_path": _api_backfiller.read_intrabar_path(pq_files[0]),
         }
     except Exception as e:
         # Issue #1272 (GH #1145) — fail-open bleibt (ein Lesefehler darf den Sweep nie
@@ -2622,6 +2643,70 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict, *,
                     strategy, symbol, exc_info=True)
 
 
+def _measurement_run_report_path(work_dir: Path, run_id: str) -> Path:
+    return Path(work_dir) / "reports" / f"measurement_run_{run_id}.json"
+
+
+def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None = None) -> dict:
+    """Issue #1342 (GH #1236, P1) Fix-Punkt 2/3 — der reine MESSLAUF, den der #1236-Sperrvermerk
+    verlangt, bevor irgendeine der vier ATR-abgeleiteten Kalibrierungen (``atr_floor_bps_by_
+    asset_class``, ``k_min_bar_range_multiple``, die ``atr_trailing_multiplier``-Bänder in
+    ``spaces.py``, die ``3 · c_rt``-Stopuntergrenze) neu gesetzt werden darf. Protokolliert je
+    Symbol ``intrabar_range_median_bps``/``atr_median_bps`` (beide bereits aus der bestehenden
+    Bar-Qualitäts-Stichprobe verfügbar, ``_load_symbol_bar_quality_sample``/``sweep_diagnostics.
+    check_bar_quality``) — OHNE jede Selektion/Suche/Promotion (kein ``optimize_symbol``-Aufruf,
+    keine Study, kein Champion-Store-Zugriff), als eigenständiger, reproduzierbar aufrufbarer Modus
+    (``--measurement-run``), NICHT als Nebenprodukt eines Sweeps (Akzeptanzkriterium 3 aus #1236).
+
+    Scope-Cut (dokumentiert, analog #1096 Fix Punkt 2/3 an anderer Stelle in dieser Codebasis):
+    ``stop_distance_bps_measured`` — die vierte in #1236 genannte Messgrösse — braucht eine ECHTE
+    Backtest-Ausführung (realisierte Stop-Fills gegen eine gesampelte Parameterkonfiguration), nicht
+    nur eine Tick-/Bar-Stichprobe; dieser rein datengetriebene Preflight-Pass liefert sie deshalb
+    bewusst NICHT — das Feld erscheint im Report als ``null`` mit einer erklärenden ``note``, statt
+    stillschweigend zu fehlen. Eine spätere Erweiterung (ein einzelner, fixparametrisierter
+    Backtest je Symbol ohne Optuna-Suche) ist der nächste Schritt, sobald ein echter Katalog-
+    Rebuild vorliegt.
+
+    ``symbols=None`` ⇒ das volle Symbol-Universum (``load_symbol_universe``). Rückgabe: das
+    geschriebene Report-Dict (auch der Aufrufer/Tests bekommen es, ohne die Datei erneut lesen zu
+    müssen)."""
+    _run_id = run_id or f"measurement_run_{default_run_id()}"
+    _symbols = symbols if symbols is not None else load_symbol_universe()
+    measurements: dict[str, dict] = {}
+    for _sym in _symbols:
+        _sample = _load_symbol_bar_quality_sample(_sym)
+        if _sample is None:
+            measurements[_sym] = {
+                "intrabar_range_median_bps": None, "atr_median_bps": None,
+                "stop_distance_bps_measured": None,
+                "note": "keine Bar-Qualitaets-Stichprobe verfuegbar (siehe "
+                       "BAR_QUALITY_SAMPLE_UNAVAILABLE im Log).",
+            }
+            continue
+        _quality = check_bar_quality(
+            _sample["highs"], _sample["lows"], _sample["closes"],
+            median_delta_t_s=_sample.get("median_delta_t_s"),
+        )
+        measurements[_sym] = {
+            "intrabar_range_median_bps": _quality.get("intrabar_range_median_bps"),
+            "atr_median_bps": _quality.get("atr_median_bps"),
+            # Issue #1342 (GH #1236) — Scope-Cut, siehe Docstring: braucht eine echte
+            # Backtest-Ausfuehrung, die dieser rein datengetriebene Pass nicht durchfuehrt.
+            "stop_distance_bps_measured": None,
+            "note": "stop_distance_bps_measured braucht eine echte Backtest-Ausfuehrung "
+                   "(#1236 Scope-Cut, siehe run_measurement_pass-Docstring).",
+            "window_start": _sample.get("window_start"), "window_end": _sample.get("window_end"),
+            "sample_span_days": _sample.get("sample_span_days"),
+            "intrabar_path": _sample.get("intrabar_path"),
+        }
+    report = {
+        "run_id": _run_id, "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "symbols_measured": len(measurements), "measurements": measurements,
+    }
+    write_json_atomic(_measurement_run_report_path(WORK, _run_id), report)
+    return report
+
+
 def run_corroboration_pass(*, strategies: list[str] | None = None,
                            symbols: list[str] | None = None,
                            run_backtest=None, opt_data: dict | None = None,
@@ -3478,6 +3563,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
                 "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
                 "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
+                # Issue #1350 (GH #1244, P1) Fix-Punkt 4 — beide Bedingungen, die
+                # invariants._bar_axis_supports_stop_verdict seit diesem Fix zusaetzlich prueft,
+                # bevor SUPPRESSED_UPSTREAM_BAR_AXIS aufgehoben wird. Landen ueber
+                # symbol_bar_quality auf jedem Study-Record dieses Symbols (report._study_record).
+                "intrabar_range_median_bps": _quality.get("intrabar_range_median_bps"),
+                "intrabar_path": _sample.get("intrabar_path"),
                 "passed": _quality["passed"],
             }
             # Issue #900 Fix 3 — BAR_QUALITY_PROFILE-Event je Symbol, UNABHAENGIG vom Pruefergebnis
@@ -5098,6 +5189,15 @@ def main(argv: list[str] | None = None) -> list[Path]:
                              "PERSISTIERTEN Studies der --strategies/--symbols-Auswahl (keine neue "
                              "Optimierung) und schreibt das Ergebnis-Gitter nach "
                              "PERSISTENT_CACHE_ROOT/alpha_tstat_gate_calibration.json (#1282).")
+    # Issue #1342 (GH #1236, P1) Fix-Punkt 3 — eigenstaendiger, reproduzierbarer Messlauf-Modus
+    # (analog --corroboration-pass/--calibrate-alpha-tstat-gate): protokolliert intrabar_range_
+    # median_bps/atr_median_bps je Symbol OHNE Selektion/Suche, siehe run_measurement_pass-
+    # Docstring fuer den dokumentierten stop_distance_bps_measured-Scope-Cut.
+    parser.add_argument("--measurement-run", action="store_true", default=False,
+                        help="Reiner Messlauf (keine Selektion/Suche/Promotion): protokolliert "
+                             "intrabar_range_median_bps/atr_median_bps je Symbol der "
+                             "--symbols-Auswahl nach reports/measurement_run_<run_id>.json (#1236 "
+                             "Sperrvermerk-Voraussetzung fuer eine spaetere ATR-Rekalibrierung).")
     args = parser.parse_args(argv)
     if args.seed_salt:
         os.environ["OPTIMIZER_SEED_SALT"] = args.seed_salt
@@ -5157,6 +5257,15 @@ def main(argv: list[str] | None = None) -> list[Path]:
               f"reconfirmed={summary['reconfirmed']} "
               f"writeback_attempts={summary['writeback_attempts']} "
               f"skipped_no_entry={summary['skipped_no_entry']}")
+        return []
+
+    # Issue #1342 (GH #1236, P1) Fix-Punkt 3 — siehe run_measurement_pass-Docstring.
+    if args.measurement_run:
+        _measurement_run_id = args.run_id or f"measurement_run_{default_run_id()}"
+        setup_bot_logging("optimizer", run_id=_measurement_run_id)
+        report = run_measurement_pass(symbols=symbols, run_id=_measurement_run_id)
+        print(f"📏 Messlauf: {report['symbols_measured']} Symbol(e) — "
+              f"{_measurement_run_report_path(WORK, _measurement_run_id)}")
         return []
 
     # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-

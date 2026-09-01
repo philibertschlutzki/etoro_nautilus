@@ -578,6 +578,31 @@ def _read_catalog_schema_version(parquet_file: Path) -> int | None:
         return None
 
 
+def read_intrabar_path(parquet_file: Path) -> str | None:
+    """Issue #1350 (GH #1244, P1) Fix-Punkt 5 — liest `intrabar_path`
+    (`INTRABAR_PATH_SYNTHETIC`/`INTRABAR_PATH_OBSERVED`, siehe `_build_arrow_meta`) aus den
+    Arrow-Schema-Metadaten einer Katalogdatei, analog `_read_catalog_schema_version`. Jede
+    Stop-Kennzahl, die auf dieser Datei beruht, muss diesen Vermerk mitfuehren — solange
+    `intrabar_path == INTRABAR_PATH_SYNTHETIC` gilt, ist die Trigger-Reihenfolge innerhalb einer
+    Bar (adverse-first: low vor high, siehe `_candles_to_arrow_table`) eine KONSERVATIVE ANNAHME,
+    keine Beobachtung.
+
+    `None`, wenn die Datei fehlt, nicht lesbar ist, oder das Feld fehlt (Alt-Katalog vor
+    Issue #1330/GH #1224 — ein Einzeltick-je-Kerze-Katalog kennt gar keinen Pfad-Begriff)."""
+    try:
+        schema = pq.read_schema(str(parquet_file))
+    except Exception:
+        return None
+    meta = schema.metadata or {}
+    raw = meta.get(b"intrabar_path")
+    if raw is None:
+        return None
+    try:
+        return raw.decode()
+    except UnicodeDecodeError:
+        return None
+
+
 # ─── Parquet Merge ────────────────────────────────────────────────────────────
 
 def _get_latest_ts(parquet_file: Path) -> int | None:

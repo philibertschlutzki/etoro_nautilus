@@ -9331,7 +9331,17 @@ def _bar_axis_supports_stop_verdict(study_records: list[dict]) -> bool:
     ueber die Studies mit definiertem Wert ⇒ ``False`` (die Bar-Achse traegt KEIN Urteil). Keine
     Study mit definierten Feldern ⇒ ``False`` (fail-closed — Abwesenheit von Evidenz ist keine
     Evidenz fuer eine gesunde Bar-Achse, dieselbe Haltung wie ``check_stop_loss_vs_bar_range``s
-    ``n_zero_or_negative_bar_range``-Zweig)."""
+    ``n_zero_or_negative_bar_range``-Zweig).
+
+    Issue #1350 (GH #1244, P1) Fix-Punkt 4 — die Aufhebung dieser Suppression erfolgt NICHT
+    automatisch, sobald der ALTE Bar-Range-Test besteht (er kann per Konstruktion nicht zwischen
+    einer echten Intrabar-Achse und einer, deren ``high``/``low`` zufaellig auseinanderfallen,
+    unterscheiden). ZUSAETZLICH zu den obigen Kriterien muss GELTEN: mindestens eine Study traegt
+    ``symbol_bar_quality.intrabar_range_median_bps > 0`` (#1339/GH#1233 — die TR-unabhaengige
+    Intrabar-Spanne, die auf der Ein-Tick-Achse strukturell 0 war) UND
+    ``symbol_bar_quality.intrabar_path`` ist gestempelt (#1330/GH#1224 — ein Katalog vor diesem Fix
+    kennt den Pfad-Begriff gar nicht, ``None``). Beide Bedingungen fehlend/unerfuellt ⇒ ``False``
+    (dieselbe fail-closed-Haltung wie oben)."""
     populations = [r.get("bar_range_population_n") for r in study_records
                   if r.get("bar_range_population_n") is not None]
     if populations and any(int(p) == 0 for p in populations):
@@ -9340,7 +9350,19 @@ def _bar_axis_supports_stop_verdict(study_records: list[dict]) -> bool:
                 if r.get("zero_range_bar_fraction") is not None]
     if not fractions:
         return False
-    return statistics.median(fractions) <= 0.5
+    if statistics.median(fractions) > 0.5:
+        return False
+    _bar_quality_dicts = [
+        r.get("symbol_bar_quality") for r in study_records
+        if isinstance(r.get("symbol_bar_quality"), dict)
+    ]
+    has_positive_intrabar_range = any(
+        (bq.get("intrabar_range_median_bps") or 0) > 0 for bq in _bar_quality_dicts
+    )
+    has_stamped_intrabar_path = any(
+        bq.get("intrabar_path") for bq in _bar_quality_dicts
+    )
+    return has_positive_intrabar_range and has_stamped_intrabar_path
 
 
 def suppress_stop_verdict_if_bar_axis_degenerate(

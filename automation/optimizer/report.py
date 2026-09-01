@@ -49,13 +49,19 @@ from automation.optimizer.run_optimization import (
 )
 from automation.optimizer.sweep import (
     load_symbol_universe, read_symbol_bar_quality_cache, _family_members,
-    symbol_bar_quality_cache_status, _resolve_strategies,
+    symbol_bar_quality_cache_status, _resolve_strategies, _flatten_cost_rate_values,
 )
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
 
 # Issue #785 — die bindend/erwartete Struktur einer Entscheidungs-Stufe. Siehe ``_decision_chain``.
 _DECISION_STAGE_NAMES = ("is_gate", "confirm_or_selection", "holdout", "deflation", "pbo", "boundary")
+
+# Issue #1350 (GH #1244, P1) Fix-Punkt 2 — dieselbe synthetische Tick-Zahl je Kerze wie
+# ``api_backfiller._candles_to_arrow_table`` (Open/Low/High/Close, #1330/GH#1224); Single Source
+# der Roll-Up-Skalierung fuer ``stop_exit_fill_lag_ticks`` unten (kein zweites, unabhaengig
+# gepflegtes Literal).
+_SYNTHETIC_TICKS_PER_BAR = 4
 
 # Issue #785 — welche Confirm-/Holdout-Ablehnungsursache welche Stufe der Entscheidungskette
 # blockiert. ``REJECT_NO_EDGE_OVER_GLOBAL`` faellt konzeptionell unter "holdout" (die R-Edge-
@@ -107,8 +113,7 @@ def _cost_model_has_zero_realism(base_cfg: Path | None = None) -> bool:
     cfg = _load_json(cfg_dir / "backtest.json") or {}
     financing = cfg.get("overnight_financing_bps_per_day_by_asset_class") or {}
     slippage = cfg.get("slippage_bps_by_asset_class") or {}
-    values = [v for v in financing.values() if isinstance(v, (int, float))] + \
-             [v for v in slippage.values() if isinstance(v, (int, float))]
+    values = _flatten_cost_rate_values(financing) + _flatten_cost_rate_values(slippage)
     return bool(values) and all(v == 0.0 for v in values)
 
 
@@ -2018,6 +2023,11 @@ def _study_record(proposal: dict, study,
     # "nie gemessen" ununterscheidbar waere (Tri-State-Mechanik wie #995/#1147).
     _n_ts_exits_with_fill_lag = sum(
         int(a.get("oos_n_trailing_stop_exits_with_fill_lag_telemetry") or 0) for a in trial_attrs)
+    # Issue #1350 (GH #1244, P1) — einmal berechnet, von stop_exit_fill_lag_bars UND dem neuen
+    # stop_exit_fill_lag_ticks (unten) gemeinsam gelesen, statt derselben Median-Berechnung
+    # zweimal.
+    _stop_exit_fill_lag_bars_median = _median_of_trial_field(
+        trial_attrs, "oos_stop_exit_fill_lag_bars_median")
 
     record = {
         "symbol": proposal.get("symbol"),
@@ -2334,8 +2344,20 @@ def _study_record(proposal: dict, study,
         # bar_range_median_bps/realized_stop_loss_ratio die Zerlegung "Verlust = Stopdistanz +
         # Überschiessen + Slippage" (#976 Akzeptanzkriterium).
         "stop_exit_fill_lag_bars": (
-            _median_of_trial_field(trial_attrs, "oos_stop_exit_fill_lag_bars_median")
+            _stop_exit_fill_lag_bars_median
             if _n_ts_exits_with_fill_lag else None),
+        # Issue #1350 (GH #1244, P1) Fix-Punkt 2 — ``stop_exit_fill_lag_ticks`` ERGAENZT
+        # ``stop_exit_fill_lag_bars`` (nicht ersetzt): auf der neuen, mit #1330 synthetisierten
+        # OHLC-Tick-Achse (``_SYNTHETIC_TICKS_PER_BAR``, 4 Ticks je Kerze — Open/Low/High/Close)
+        # ist die Bar-Groesse zu grob, um eine Trigger-zu-Fill-Latenz unterhalb einer Bar
+        # aufzuloesen. Reine Skalierung des BEREITS AGGREGIERTEN ``stop_exit_fill_lag_bars``-Werts
+        # (kein zweiter Rohdaten-Pfad, keine neue Quelle der Wahrheit) — ``None`` faellt mit dem
+        # Bars-Feld zusammen, ``0.0`` bleibt ``0.0`` (Fill am Trigger-Tick, siehe #1350
+        # Akzeptanzkriterium 1).
+        "stop_exit_fill_lag_ticks": (
+            round(_stop_exit_fill_lag_bars_median * _SYNTHETIC_TICKS_PER_BAR, 4)
+            if _n_ts_exits_with_fill_lag and _stop_exit_fill_lag_bars_median is not None
+            else None),
         "stop_exit_slippage_bps": _median_of_trial_field(
             trial_attrs, "oos_stop_exit_slippage_bps_median"),
         # Issue #1059/#1208 — dieselbe Groesse, aber HOLDOUT-skopiert (aus dem promotierten
@@ -6325,6 +6347,10 @@ def _build_report(
         # Issue #1273 (GH #1146, Katalog #1272-1297) — die deklarierte Trigger-Achse dieses Laufs
         # (siehe check_stop_trigger_axis_coherence unten UND optimizer.json-Schema-Dokumentation).
         "stop_trigger_axis": optimizer_cfg.get("stop_trigger_axis"),
+        # Issue #1350 (GH #1244, P1) Fix-Punkt 3 — ergaenzt stop_trigger_axis um die FILL-Seite:
+        # WELCHE Preisbeobachtung fuellt einen Stop-Exit tatsaechlich, nachdem er ausgeloest wurde
+        # (siehe optimizer.json-Schema-Dokumentation fuer den aktuellen Sperrvermerk-Stand).
+        "stop_fill_axis": optimizer_cfg.get("stop_fill_axis"),
         # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
         # im Nachhinein einer Installationsumgebung zuordenbar ist.
         "library_versions": library_versions(),
