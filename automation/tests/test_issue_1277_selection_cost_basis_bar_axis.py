@@ -86,9 +86,14 @@ def test_mtm_series_adjustment_shares_the_same_bar_axis_gate():
 # invariants.check_selection_cost_basis_admissible
 # ---------------------------------------------------------------------------------------------
 
-def _study(strategy, symbol, *, cost_basis, population=100, zero_frac=0.1):
+def _study(strategy, symbol, *, cost_basis, population=100, zero_frac=0.1,
+          intrabar_range_median_bps=5.0, intrabar_path="synthetic_ohlc_adverse_first"):
+    # Issue #1350 (GH #1244, P1) Fix-Punkt 4 — siehe test_issue_1274_suppress_stop_invariants.py
+    # fuer die Begruendung; Default hier bildet den POST-#1330-Rebuild-Zustand ab.
     return {"strategy": strategy, "symbol": symbol, "selection_cost_basis": cost_basis,
-           "bar_range_population_n": population, "zero_range_bar_fraction": zero_frac}
+           "bar_range_population_n": population, "zero_range_bar_fraction": zero_frac,
+           "symbol_bar_quality": {"intrabar_range_median_bps": intrabar_range_median_bps,
+                                  "intrabar_path": intrabar_path}}
 
 
 def test_passes_when_bar_axis_healthy_regardless_of_cost_basis():

@@ -16,43 +16,76 @@ from __future__ import annotations
 
 import math
 
-# Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — der Faktor, mit dem die RTH-
-# (Regular-Trading-Hours-)Bar-Achse gegen die frühere 24-KALENDER-Bar-Achse rebasiert wird
-# (derselbe Faktor wie ``backtest.json['session_hours_by_asset_class']``s gemessenes
-# ``session_coverage_fraction``, 0,2389-0,2402 im #1275-Referenzlauf) — NICHT die frühere
-# ~0,583-Faustregel aus #1030/#1179 (jene schätzte die reale HALTEDAUER ueber Session-Luecken
-# hinweg, dieser Faktor rebasiert die BAR-ACHSE SELBST auf dieselbe reale Zeitspanne, die vorher 24
-# KALENDER-Bars brauchte). Nur zulässig, WEIL die Bar-Erzeugung selbst jetzt tatsächlich auf
-# RTH-Ticks filtert (siehe ``backtest_runner._filter_ticks_to_session_hours``) — vor diesem Fix
-# (#1260/#1130) wäre eine Rekalibrierung hier die Konfiguration von der Realität entkoppelt.
-#
-# Issue #1314 (GH #1191, P0) — EINZIGE Quelle fuer den Faktor selbst: vor diesem Fix leitete
-# ``MAX_BARS_IN_TRADE_HARD_CAP`` ihn UNABHAENGIG von ``optimizer.json['time_box_bars']`` ab
-# (``round(24 * 0.24) = 6`` hier vs. das UNGERUNDETE ``24.0 * 0.24 = 5.76`` dort) — zwei getrennt
-# gepflegte Ableitungen DESSELBEN Faktors konnten (und taten es: B-12) auseinanderlaufen. Eine
-# Position, die den Cap ausschoepft, war dadurch PER KONSTRUKTION eine Zeitbox-Verletzung
-# (t_norm = 6 / 5,76 = 1,042).
-RTH_AXIS_FACTOR = 0.24
+from automation.session_windows import interval_overlaps_session_hours
+
+# Issue #1343 (GH #1237) — die EQUITY/COMMODITY-RTH-Session (dieselbe wie backtest.json
+# ['session_hours_by_asset_class']['EQUITY']) als Referenzachse fuer die Zeitbox-Ableitung unten.
+# Dieses Modul bleibt config-unabhaengig (kein Datei-I/O, siehe Moduldocstring) — die Fenstergrenzen
+# sind hier dupliziert, NICHT aus backtest.json gelesen (dieselbe bewusste Duplizierung wie
+# ``optimizer.sweep._resolve_session_window_utc``).
+_EQUITY_SESSION_OPEN_UTC = "13:30"
+_EQUITY_SESSION_CLOSE_UTC = "20:00"
+_HOURLY_BAR_INTERVAL_NS = 3_600_000_000_000
+
+
+def _bars_per_trading_day(
+    open_utc: str = _EQUITY_SESSION_OPEN_UTC, close_utc: str = _EQUITY_SESSION_CLOSE_UTC,
+    bar_interval_ns: int = _HOURLY_BAR_INTERVAL_NS,
+) -> int:
+    """Issue #1343 (GH #1237) Fix Punkt 2 — DIE Ableitungsfunktion, die sowohl die Modul-Konstanten
+    unten als auch (ueber ``resolve_effective_bar_cap``/den Bar-Zaehler-Exit) ``HourlyStrategyBase``
+    konsumiert, statt zwei parallele Konstanten unabhaengig zu pflegen. Anzahl 1h-Bar-Intervalle je
+    Handelstag, deren Intervall das Session-Fenster SCHNEIDET (dieselbe Ueberlappungs-Konvention wie
+    ``session_windows.interval_overlaps_session_hours``/#1332 — 7 fuer EQUITY bei 13:30-20:00, nicht
+    die alte, aus einer gemessenen ``session_coverage_fraction`` geschaetzte 5,76)."""
+    n_bins_per_day = 86_400_000_000_000 // bar_interval_ns
+    count = 0
+    for i in range(int(n_bins_per_day)):
+        start = i * bar_interval_ns
+        if interval_overlaps_session_hours(
+            start, start + bar_interval_ns, open_utc, close_utc, weekdays_only=False,
+        ):
+            count += 1
+    return count
+
+
+# Issue #1343 (GH #1237) Fix Punkt 1 — mechanisch aus der Bar-Achse abgeleitet (7 fuer EQUITY/
+# 1h-Bars), NICHT mehr aus einer gemessenen ``session_coverage_fraction`` (0,2389-0,2402, der
+# fruehere ``RTH_AXIS_FACTOR``) geschaetzt — ein Wechsel des Bar-Intervalls oder des Session-
+# Fensters aendert diesen Wert automatisch mit, ohne eine unabhaengig gepflegte Konstante
+# nachzufuehren.
+BARS_PER_TRADING_DAY = _bars_per_trading_day()
+
+# Issue #1343 (GH #1237) — die Konfigurationsgroesse selbst (Default 1,0, entspricht der
+# urspruenglichen GR-01-Absicht "Trade schliesst nach etwa einem Handelstag").
+MAX_HANDELSTAGE_DEFAULT = 1.0
+
+# Issue #1275 (GH #1148) Fix Punkt 3, seit #1343 (GH #1237) NEU DEFINIERT als reines
+# Rueckwaerts-kompat-Verhaeltnis (``TIME_BOX_BARS / 24``, siehe unten) statt der primaeren Quelle
+# der Zeitbox-Ableitung — ``TIME_BOX_BARS``/``MAX_BARS_IN_TRADE_HARD_CAP`` unten leiten sich seit
+# #1343 direkt aus ``BARS_PER_TRADING_DAY`` ab, nicht mehr aus diesem Faktor.
+RTH_AXIS_FACTOR = BARS_PER_TRADING_DAY / 24.0
 
 # Issue #1314 (GH #1191, P0) — dieselbe Normierungs-Deadline (Bars) wie ``optimizer.
 # json['time_box_bars']`` (``t_norm = oos_median_bars_held / time_box_bars``, Issue #711),
-# hier als EINZIGE, importierbare Quelle dieses UNGERUNDETEN Werts — ``reward.py`` konsumiert sie
-# seit #1315/GH #1192 direkt, statt ein eigenes ``24.0``-Fallback-Literal zu pflegen; ``optimizer.
-# json``s eigener Wert bleibt bestehen (er ist die tatsaechlich vom Reward-Pfad gelesene Config),
+# hier als EINZIGE, importierbare Quelle dieses Werts — ``reward.py`` konsumiert sie seit #1315/
+# GH #1192 direkt, statt ein eigenes ``24.0``-Fallback-Literal zu pflegen; ``optimizer.json``s
+# eigener Wert bleibt bestehen (er ist die tatsaechlich vom Reward-Pfad gelesene Config),
 # ``check_timebox_cap_coherence`` (invariants.py) bewacht die Uebereinstimmung dauerhaft.
-TIME_BOX_BARS = RTH_AXIS_FACTOR * 24.0
+# Issue #1343 (GH #1237) — jetzt ``MAX_HANDELSTAGE_DEFAULT · BARS_PER_TRADING_DAY`` (7,0 fuer
+# EQUITY bei max_handelstage=1,0), vormals ``RTH_AXIS_FACTOR · 24.0`` (5,76).
+TIME_BOX_BARS = MAX_HANDELSTAGE_DEFAULT * BARS_PER_TRADING_DAY
 
 # Issue #714/GR-01 — die Bar-Zeitbox-Obergrenze für ``max_bars_in_trade``. Der Bar-Zähler-Exit
 # in ``HourlyStrategyBase`` erzwingt sie unabhängig vom je Trial gesampelten Wert; der Optuna-
 # Suchraum (``spaces.py``) und die Report-Invarianten (``invariants.py``) dürfen NIE grösser
 # suchen/prüfen als dieser Deckel.
 #
-# Issue #1314 (GH #1191, P0) — ab jetzt ``math.ceil(TIME_BOX_BARS)`` statt eines unabhängig
-# gepflegten, GERUNDETEN Literals: der Cap ist damit PER KONSTRUKTION >= der Deadline
-# (``ceil(5.76) = 6 >= 5.76``) — ein Trade, der den Cap exakt ausschoepft, kann keine Zeitbox-
-# Verletzung mehr sein, UND beide Werte bewegen sich fortan gemeinsam, sobald ``RTH_AXIS_FACTOR``
-# sich aendert (bit-identisch zum Pre-Fix-Wert 6, da ``round(24 * 0.24) == ceil(5.76) == 6`` bereits
-# zufaellig uebereinstimmten — die Garantie war vorher aber Zufall, nicht Konstruktion).
+# Issue #1314 (GH #1191, P0) — ``math.ceil(TIME_BOX_BARS)`` statt eines unabhängig gepflegten,
+# GERUNDETEN Literals: der Cap ist damit PER KONSTRUKTION >= der Deadline. Issue #1343 (GH #1237)
+# — auf der EQUITY-RTH-Achse ergibt das ``ceil(7.0) = 7`` (vormals 6, unter der VOR #1332
+# gemessenen ``session_coverage_fraction``-Schaetzung 0,24 statt der jetzt mechanisch gezaehlten
+# 7 Bins/Handelstag).
 MAX_BARS_IN_TRADE_HARD_CAP = math.ceil(TIME_BOX_BARS)
 
 # Issue #1067 (Pitfall #372) — die GR-01-Zeitbox war bislang NUR nach oben verdrahtet
@@ -77,6 +110,11 @@ MAX_BARS_IN_TRADE_HARD_CAP = math.ceil(TIME_BOX_BARS)
 # toward``), er verengt keinen bestehenden kuratierten Suchraum (der kuratierte Fall ist seit
 # #1316/GH #1193 separat ueber ``spaces._bounds_for``s ``StaleAxisOverrideError`` abgedeckt — NICHT
 # ueber diesen Floor, der dort bewusst NICHT erzwungen wird).
+#
+# Issue #1343 (GH #1237) — bleibt unangetastet: die Ableitung oben (``BARS_PER_TRADING_DAY``/
+# ``TIME_BOX_BARS``/``MAX_BARS_IN_TRADE_HARD_CAP``) betrifft NUR die Obergrenze. Dieser Floor ist
+# laut #1317 ausdruecklich NICHT von ``RTH_AXIS_FACTOR``/der Bar-Achse abgeleitet (s. o.) — bleibt
+# also ein eigenstaendiges Literal, bit-identisch zum #1317-Wert, unveraendert durch #1343.
 MIN_BARS_IN_TRADE_FLOOR = 2
 
 # Issue #938 (Katalog A, Pitfall #294) — EINZIGER Konstruktor für den (Strategie, Symbol)-Paar-

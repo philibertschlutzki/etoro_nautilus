@@ -179,13 +179,19 @@ def test_time_box_bars_axis_is_rth():
 
 
 def test_time_box_bars_rescaled_by_the_0_24_factor():
+    # Issue #1343 (GH #1237) — 5.76 (geschaetzter Faktor 0.24) → 7.0 (mechanisch aus
+    # BARS_PER_TRADING_DAY=7 * max_handelstage=1.0 abgeleitet).
     cfg = json.loads(_OPTIMIZER_JSON_PATH.read_text("utf-8"))
-    assert cfg["time_box_bars"] == pytest.approx(24.0 * 0.24)
+    assert cfg["time_box_bars"] == pytest.approx(7.0)
 
 
-def test_simulation_semantics_version_is_7():
+def test_simulation_semantics_version_is_at_least_7():
+    # Issue #1351 (GH #1245) — 7 → 8 (Katalog #1330-1349: O/L/H/C-Tick-Expansion, Zeitstempel-
+    # Semantik, Kostenmodell, Stop-Fill-Telemetrie, siehe optimizer.json's v8-Eintrag). Dieser Test
+    # pinnt nur eine UNTERGRENZE (nicht mehr exakt 7), damit spaetere Bumps ihn nicht erneut
+    # anfassen muessen — die exakte aktuelle Ableitung lebt in der v8-Dokumentation selbst.
     cfg = json.loads(_OPTIMIZER_JSON_PATH.read_text("utf-8"))
-    assert cfg["simulation_semantics_version"] == 7
+    assert cfg["simulation_semantics_version"] >= 7
 
 
 def test_simulation_schema_v7_names_its_actual_trigger():
@@ -202,9 +208,11 @@ def test_simulation_schema_v7_names_its_actual_trigger():
 # _contracts.py / spaces.py — Fix Punkt 3 (Faktor 0.24)
 # ---------------------------------------------------------------------------------------------
 
-def test_max_bars_in_trade_hard_cap_is_6():
+def test_max_bars_in_trade_hard_cap_is_7():
+    # Issue #1343 (GH #1237) — 6 → 7, mechanisch aus der Session-Ueberlappung gezaehlt statt aus
+    # der VOR #1332/GH #1226 gemessenen session_coverage_fraction geschaetzt.
     from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
-    assert MAX_BARS_IN_TRADE_HARD_CAP == 6
+    assert MAX_BARS_IN_TRADE_HARD_CAP == 7
 
 
 def test_min_bars_in_trade_floor_is_2():
@@ -232,10 +240,12 @@ def test_strategy_defaults_json_rescaled():
             assert 1 <= params["max_bars_in_trade"] <= 6, f"{strategy}: {params['max_bars_in_trade']}"
 
 
-def test_hourly_strategy_config_default_is_6():
+def test_hourly_strategy_config_default_is_7():
+    # Issue #1343 (GH #1237) — 6 → 7, mechanisch aus der Session-Ueberlappung gezaehlt statt
+    # geschaetzt.
     from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
     cfg = HourlyStrategyConfig(instrument_id="AAPL.ETORO", bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL")
-    assert cfg.max_bars_in_trade == 6
+    assert cfg.max_bars_in_trade == 7
 
 
 # ---------------------------------------------------------------------------------------------

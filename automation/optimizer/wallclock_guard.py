@@ -17,12 +17,15 @@ import json
 import threading
 from pathlib import Path
 
+from automation.optimizer.invariants import invariant_scope
+
 # Issue #828 — prozessweites Signal fuer ein geordnetes Sweep-Ende wegen Laufzeit-Ueberschreitung
 # (getrennt von disk_guard.sweep_abort_requested, damit ein #833-Report den Abbruchgrund
 # unterscheiden kann: aborted_wallclock vs. aborted_disk).
 sweep_wallclock_exceeded = threading.Event()
 
 
+@invariant_scope("run")
 def check_wallclock_budget(elapsed_s: float, *, max_hours: float | None) -> bool:
     """``True``, wenn die verstrichene Laufzeit (``elapsed_s``, Sekunden seit Sweep-Start) das
     konfigurierte Budget (``max_hours``, ``optimizer.json['sweep_max_wallclock_h']``) erreicht oder

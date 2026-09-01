@@ -1374,6 +1374,7 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
         log.warning("[#795] Disk-Budget-Callback fehlgeschlagen (non-fatal).", exc_info=True)
 
 
+@_inv.invariant_scope("study")
 def check_study_coherence_violation_rate(study, opt_data: dict, *,
                                          logger: logging.Logger | None = None) -> bool:
     """Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,

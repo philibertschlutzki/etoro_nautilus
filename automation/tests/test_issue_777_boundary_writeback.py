@@ -203,8 +203,8 @@ def test_max_bars_in_trade_proposal_is_capped_at_714_hard_limit():
     proposals = propose_bounds_from_boundary_hits(
         {"max_bars_in_trade": "high"}, "TrendPullbackStrategy",
         current_bounds={"max_bars_in_trade": (3.0, 5.0)}, widen_fraction=1.5)
-    # Ohne Kappung waere 5 + 1.5*2 = 8.0 — die #714-Zeitbox-Obergrenze ist 6 (seit #1275).
-    assert proposals["max_bars_in_trade"] == [3.0, 6.0]
+    # Ohne Kappung waere 5 + 1.5*2 = 8.0 — die #714-Zeitbox-Obergrenze ist 7 (seit #1343/GH#1237).
+    assert proposals["max_bars_in_trade"] == [3.0, 7.0]
 
 
 def test_max_bars_in_trade_proposal_below_cap_is_unaffected():

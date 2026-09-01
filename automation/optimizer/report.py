@@ -49,13 +49,19 @@ from automation.optimizer.run_optimization import (
 )
 from automation.optimizer.sweep import (
     load_symbol_universe, read_symbol_bar_quality_cache, _family_members,
-    symbol_bar_quality_cache_status, _resolve_strategies,
+    symbol_bar_quality_cache_status, _resolve_strategies, _flatten_cost_rate_values,
 )
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
 
 # Issue #785 — die bindend/erwartete Struktur einer Entscheidungs-Stufe. Siehe ``_decision_chain``.
 _DECISION_STAGE_NAMES = ("is_gate", "confirm_or_selection", "holdout", "deflation", "pbo", "boundary")
+
+# Issue #1350 (GH #1244, P1) Fix-Punkt 2 — dieselbe synthetische Tick-Zahl je Kerze wie
+# ``api_backfiller._candles_to_arrow_table`` (Open/Low/High/Close, #1330/GH#1224); Single Source
+# der Roll-Up-Skalierung fuer ``stop_exit_fill_lag_ticks`` unten (kein zweites, unabhaengig
+# gepflegtes Literal).
+_SYNTHETIC_TICKS_PER_BAR = 4
 
 # Issue #785 — welche Confirm-/Holdout-Ablehnungsursache welche Stufe der Entscheidungskette
 # blockiert. ``REJECT_NO_EDGE_OVER_GLOBAL`` faellt konzeptionell unter "holdout" (die R-Edge-
@@ -107,8 +113,7 @@ def _cost_model_has_zero_realism(base_cfg: Path | None = None) -> bool:
     cfg = _load_json(cfg_dir / "backtest.json") or {}
     financing = cfg.get("overnight_financing_bps_per_day_by_asset_class") or {}
     slippage = cfg.get("slippage_bps_by_asset_class") or {}
-    values = [v for v in financing.values() if isinstance(v, (int, float))] + \
-             [v for v in slippage.values() if isinstance(v, (int, float))]
+    values = _flatten_cost_rate_values(financing) + _flatten_cost_rate_values(slippage)
     return bool(values) and all(v == 0.0 for v in values)
 
 
@@ -1200,6 +1205,37 @@ def _all_defined_check_names() -> list[str]:
     return sorted(names)
 
 
+def _all_defined_check_scopes() -> dict[str, str]:
+    """Issue #1240 (GH #1240, Katalog #1346, P2) — dieselbe Text-Scan-statt-Import-Konvention wie
+    ``_all_defined_check_names()`` (derselbe Dateisatz, derselbe ``backtest_runner.py``-
+    ``nautilus_trader``-Grund), hier fuer die je Funktion deklarierte ``@invariant_scope(...)``-
+    Skope-Anforderung (siehe ``invariants.invariant_scope``-Docstring): das Muster erfasst den
+    Dekorator UNMITTELBAR über der ``def check_*``-Zeile (die einzige unterstützte Platzierung,
+    siehe dortiger Docstring). Ein definierter Check ohne erkennbaren Dekorator fehlt in der
+    Rückgabe — ``check_invariant_coverage`` behandelt das konservativ als ``'run'`` (siehe
+    dortigen Docstring), NIE als automatisch erreichbarkeits-befreit."""
+    import re
+    optimizer_dir = Path(__file__).resolve().parent
+    automation_dir = optimizer_dir.parent
+    candidate_paths = [
+        optimizer_dir / f for f in
+        ("invariants.py", "reward.py", "run_optimization.py", "wallclock_guard.py",
+         "disk_guard.py", "sweep_diagnostics.py")
+    ] + [automation_dir / "backtest_runner.py"]
+    pattern = re.compile(
+        r'(?m)^@(?:[A-Za-z_][A-Za-z0-9_]*\.)?invariant_scope\(\s*[\'"](run|study|trial|promotion)[\'"]\s*\)\s*\n'
+        r'def (check_[A-Za-z0-9_]+)\(')
+    scopes: dict[str, str] = {}
+    for path in candidate_paths:
+        try:
+            source = path.read_text("utf-8")
+        except OSError:
+            continue
+        for scope, name in pattern.findall(source):
+            scopes[name] = scope
+    return scopes
+
+
 def _read_external_invariant_results() -> list[dict]:
     """Issue #1015/#1167 (Katalog #1170) — liest ``INVARIANT_STREAM_RESULT``-Events aus dem "optimizer"-
     Sidecar (derselbe, den ``BAR_QUALITY_PROFILE``/``CHAMPION_WRITEBACK`` bereits nutzen): sechs
@@ -1987,6 +2023,11 @@ def _study_record(proposal: dict, study,
     # "nie gemessen" ununterscheidbar waere (Tri-State-Mechanik wie #995/#1147).
     _n_ts_exits_with_fill_lag = sum(
         int(a.get("oos_n_trailing_stop_exits_with_fill_lag_telemetry") or 0) for a in trial_attrs)
+    # Issue #1350 (GH #1244, P1) — einmal berechnet, von stop_exit_fill_lag_bars UND dem neuen
+    # stop_exit_fill_lag_ticks (unten) gemeinsam gelesen, statt derselben Median-Berechnung
+    # zweimal.
+    _stop_exit_fill_lag_bars_median = _median_of_trial_field(
+        trial_attrs, "oos_stop_exit_fill_lag_bars_median")
 
     record = {
         "symbol": proposal.get("symbol"),
@@ -2303,8 +2344,20 @@ def _study_record(proposal: dict, study,
         # bar_range_median_bps/realized_stop_loss_ratio die Zerlegung "Verlust = Stopdistanz +
         # Überschiessen + Slippage" (#976 Akzeptanzkriterium).
         "stop_exit_fill_lag_bars": (
-            _median_of_trial_field(trial_attrs, "oos_stop_exit_fill_lag_bars_median")
+            _stop_exit_fill_lag_bars_median
             if _n_ts_exits_with_fill_lag else None),
+        # Issue #1350 (GH #1244, P1) Fix-Punkt 2 — ``stop_exit_fill_lag_ticks`` ERGAENZT
+        # ``stop_exit_fill_lag_bars`` (nicht ersetzt): auf der neuen, mit #1330 synthetisierten
+        # OHLC-Tick-Achse (``_SYNTHETIC_TICKS_PER_BAR``, 4 Ticks je Kerze — Open/Low/High/Close)
+        # ist die Bar-Groesse zu grob, um eine Trigger-zu-Fill-Latenz unterhalb einer Bar
+        # aufzuloesen. Reine Skalierung des BEREITS AGGREGIERTEN ``stop_exit_fill_lag_bars``-Werts
+        # (kein zweiter Rohdaten-Pfad, keine neue Quelle der Wahrheit) — ``None`` faellt mit dem
+        # Bars-Feld zusammen, ``0.0`` bleibt ``0.0`` (Fill am Trigger-Tick, siehe #1350
+        # Akzeptanzkriterium 1).
+        "stop_exit_fill_lag_ticks": (
+            round(_stop_exit_fill_lag_bars_median * _SYNTHETIC_TICKS_PER_BAR, 4)
+            if _n_ts_exits_with_fill_lag and _stop_exit_fill_lag_bars_median is not None
+            else None),
         "stop_exit_slippage_bps": _median_of_trial_field(
             trial_attrs, "oos_stop_exit_slippage_bps_median"),
         # Issue #1059/#1208 — dieselbe Groesse, aber HOLDOUT-skopiert (aus dem promotierten
@@ -5235,6 +5288,10 @@ def _build_report(
     # Issue #1279 (GH #1152, Katalog #1272-1297) — NACH round_trip_cost_bps (oben gestempelt).
     _stamp_cost_drag_decomposition(studies_out)
     all_checks.append(("global", _inv.check_cost_drag_decomposition(studies_out)))
+    # Issue #1349 (GH #1243, P2) Fix-Punkt 2 — NACH _stamp_cost_drag_decomposition, dieselbe
+    # Study-Kohorte (braucht applied_financing_bps_per_day/median_bars_held/allow_short, alle
+    # bereits gestempelt).
+    all_checks.append(("global", _inv.check_financing_applies_to_shorts(studies_out)))
     # Issue #1055/#1204 (Katalog #1196-1221) Fix Punkt 4 — die kalibrierte p50-Slippage je Study
     # (ueber die Asset-Klasse ihres Symbols aufgeloest), Rohmaterial fuer die verschaerfte
     # invariants.check_cost_stress_distinctness-Mindestdelta-Pruefung unten. Fail-open: kein
@@ -6112,6 +6169,31 @@ def _build_report(
             "detail": inconclusive_not_pass_check.detail, "report_source": report_source,
         }, level=logging.ERROR)
 
+    # Issue #1341 (GH #1235) — aus den gemessenen ``applied_*``-Feldern JEDER Study abgeleitet
+    # (siehe _cost_model_realism_from_applied-Docstring); MUSS HIER, VOR ``_decision_admissible``
+    # (unten) berechnet und in ``invariant_checks`` eingehaengt werden, damit ein
+    # ``cost_model_realism_source == 'config_zero'``-Befund tatsaechlich Konsequenz hat (vorher:
+    # reine WARNING ohne Wirkung auf die Entscheidungsfaehigkeit). ``_emit_cost_model_realism_event``
+    # unten (unveraendert an ihrer bisherigen Stelle) konsumiert dieselben, hier bereits berechneten
+    # Werte weiter (keine zweite Herleitung).
+    (_cost_model_zero_realism, _cost_model_realism_source,
+     _cost_model_zero_realism_symbols) = _cost_model_realism_from_applied(studies_out)
+    _cost_model_zero_realism_acknowledged = bool(
+        optimizer_cfg.get("cost_model_zero_realism_acknowledged", False))
+    cost_model_admissible_check = _inv.check_cost_model_realism_admissible(
+        _cost_model_realism_source, acknowledged=_cost_model_zero_realism_acknowledged)
+    _cost_model_admissible_dict = cost_model_admissible_check.to_dict()
+    _cost_model_admissible_dict["scope"] = "global"
+    _cost_model_admissible_dict["source"] = "report"
+    invariant_checks.append(_cost_model_admissible_dict)
+    if cost_model_admissible_check.passed is False:
+        emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
+            "scope": "global", "check": cost_model_admissible_check.name,
+            "expected": cost_model_admissible_check.expected,
+            "actual": cost_model_admissible_check.actual,
+            "detail": cost_model_admissible_check.detail, "report_source": report_source,
+        }, level=logging.ERROR)
+
     # Issue #1015/#1167 (Katalog #1170) — die neue Meta-Invariante selbst: erschien jede definierte
     # check_*-Funktion im soeben zusammengefuehrten Strom oder auf der Allowlist? Muss NACH JEDEM
     # Merge oben stehen (braucht den finalen ``invariant_checks``-Stand), daher direkt angehaengt
@@ -6119,9 +6201,21 @@ def _build_report(
     _stream_check_names = sorted({
         d.get("check") or d.get("name") for d in invariant_checks if d.get("check") or d.get("name")
     })
+    # Issue #1240 (GH #1240, Katalog #1346, P2) — Erreichbarkeits-Zaehlstaende DIESES Laufs: ein
+    # Check, dessen deklarierte Skope-Anforderung hier nicht erfuellt ist, zaehlt nicht als
+    # fehlend (siehe check_invariant_coverage-Docstring). n_promotions aus
+    # champions_summary['written_back'] (tatsaechliche Champion-Store-Schreibvorgaenge DIESES
+    # Laufs, dieselbe Quelle wie ``_stamp_cost_drag_decomposition``s Nachbarschaft oben) — ``0``,
+    # falls champions_summary fail-open leer blieb (kein Store/Lesefehler).
+    _n_studies_for_coverage = len(studies_out)
+    _n_trials_for_coverage = sum(int(r.get("n_trials") or 0) for r in studies_out)
+    _n_promotions_for_coverage = int((champions_summary or {}).get("written_back") or 0)
     invariant_coverage_check = _inv.check_invariant_coverage(
         _all_defined_check_names(), _stream_check_names,
-        allowlisted_check_names=list(_DELIBERATELY_UNWIRED_INVARIANT_CHECKS))
+        allowlisted_check_names=list(_DELIBERATELY_UNWIRED_INVARIANT_CHECKS),
+        check_scopes=_all_defined_check_scopes(),
+        n_studies=_n_studies_for_coverage, n_trials=_n_trials_for_coverage,
+        n_promotions=_n_promotions_for_coverage)
     _coverage_dict = invariant_coverage_check.to_dict()
     _coverage_dict["scope"] = "global"
     _coverage_dict["source"] = "report"
@@ -6195,9 +6289,9 @@ def _build_report(
 
     # Issue #1077/#1225 (P1) — aus den gemessenen ``applied_*``-Feldern JEDER Study abgeleitet
     # (siehe _cost_model_realism_from_applied-Docstring), NICHT mehr aus backtest.json direkt.
-    (_cost_model_zero_realism, _cost_model_realism_source,
-     _cost_model_zero_realism_symbols) = _cost_model_realism_from_applied(studies_out)
-
+    # Issue #1341 (GH #1235) — bereits weiter oben (VOR _decision_admissible) berechnet und in
+    # invariant_checks eingehaengt (check_cost_model_realism_admissible); hier nur noch das
+    # Telemetrie-Ereignis mit denselben Werten emittieren (keine zweite Herleitung).
     _emit_cost_model_realism_event(_cost_model_realism_source, studies_out)
 
     report = {
@@ -6253,6 +6347,10 @@ def _build_report(
         # Issue #1273 (GH #1146, Katalog #1272-1297) — die deklarierte Trigger-Achse dieses Laufs
         # (siehe check_stop_trigger_axis_coherence unten UND optimizer.json-Schema-Dokumentation).
         "stop_trigger_axis": optimizer_cfg.get("stop_trigger_axis"),
+        # Issue #1350 (GH #1244, P1) Fix-Punkt 3 — ergaenzt stop_trigger_axis um die FILL-Seite:
+        # WELCHE Preisbeobachtung fuellt einen Stop-Exit tatsaechlich, nachdem er ausgeloest wurde
+        # (siehe optimizer.json-Schema-Dokumentation fuer den aktuellen Sperrvermerk-Stand).
+        "stop_fill_axis": optimizer_cfg.get("stop_fill_axis"),
         # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
         # im Nachhinein einer Installationsumgebung zuordenbar ist.
         "library_versions": library_versions(),
@@ -6306,6 +6404,12 @@ def _build_report(
         # ``run_status`` allein (siehe dortige Sektion 1).
         "work_completed": _work_completed,
         "decision_admissible": _decision_admissible,
+        # Issue #1341 (GH #1235) — namentlicher Grund, WARUM decision_admissible=False ist, wenn
+        # (und nur wenn) das Kostenmodell die Ursache ist — ``None`` in jedem anderen Fall
+        # (inklusive PASS und jedem ANDEREN blockierenden Befund).
+        "promotion_blocked_reason": (
+            "COST_MODEL_ZERO_REALISM"
+            if cost_model_admissible_check.passed is False else None),
         "work_aborted": _work_aborted,
         "blocking_invariant_triggered": blocking_invariant_triggered,
         "symbols_completed": symbols_completed,

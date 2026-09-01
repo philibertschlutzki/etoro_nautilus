@@ -25,6 +25,8 @@ import threading
 import time
 from pathlib import Path
 
+from automation.optimizer.invariants import invariant_scope
+
 # Issue #795 — einfache String-Konstanten statt enum.Enum: Konvention dieses Repos (event_type,
 # rejection_reason, seed_source, ... sind ebenfalls Strings, siehe reward.py/parsing.py).
 STATUS_OK = "OK"
@@ -76,6 +78,7 @@ def free_bytes(work_dir: Path) -> int:
     return shutil.disk_usage(work_dir).free
 
 
+@invariant_scope("run")
 def check_budget(work_dir: Path, *, budget_gb: float, reserve_gb: float,
                  use_cache: bool = True) -> str:
     """Liefert ``STATUS_OK``/``STATUS_PRESSURE``/``STATUS_EXCEEDED`` aus dem aktuellen Verbrauch

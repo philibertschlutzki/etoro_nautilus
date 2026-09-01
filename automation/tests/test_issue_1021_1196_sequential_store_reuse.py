@@ -147,6 +147,17 @@ def test_check_report_artifact_written_fails_on_complete_without_report():
     ok_written = invariants.check_report_artifact_written(run_status="complete", report_written=True)
     assert ok_written.passed is True
 
-    not_applicable = invariants.check_report_artifact_written(
+    # Issue #1347 (GH #1241, P3) — 'aborted_no_report' ist ein TERMINALER Status (nicht mehr
+    # pauschal "nicht anwendbar" wie vor diesem Fix): report_written=False FAILt hier jetzt
+    # ebenso blockierend wie bei 'complete', statt stillschweigend als PASS durchzugehen.
+    aborted_without_report = invariants.check_report_artifact_written(
         run_status="aborted_no_report", report_written=False)
-    assert not_applicable.passed is True
+    assert aborted_without_report.passed is False
+    assert aborted_without_report.severity == "blocking"
+
+    # NUR der explizite In-Progress-Marker bleibt "nicht anwendbar" — und traegt seit #1347
+    # passed=None (Tri-State), nie mehr passed=True.
+    not_applicable = invariants.check_report_artifact_written(
+        run_status="in_progress", report_written=False)
+    assert not_applicable.passed is None
+    assert not_applicable.inconclusive is True

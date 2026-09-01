@@ -104,8 +104,12 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # Bar-Zähler-Exit (siehe _check_exits_and_update) ist der Mechanismus; dieser Default UND alle
     # Optimizer-Suchraum-Obergrenzen (spaces.py) sind auf <= MAX_BARS_IN_TRADE_HARD_CAP geklemmt.
     # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 (Kalender-Bars) → 6
-    # (RTH-Bars), Faktor 0.24, siehe _contracts.MAX_BARS_IN_TRADE_HARD_CAP-Docstring.
-    max_bars_in_trade: int = 6
+    # (RTH-Bars), Faktor 0.24, siehe _contracts.MAX_BARS_IN_TRADE_HARD_CAP-Docstring. Issue #1343
+    # (GH #1237, Katalog #1330-1351, P0) — kein eigenstaendiges Literal mehr (Grep-Test), sondern
+    # derselbe Import wie ``MAX_BARS_IN_TRADE_HARD_CAP``/``DEFAULT_MAX_BARS_IN_TRADE`` unten (7 auf
+    # der EQUITY-RTH-Achse). Referenziert ``MAX_BARS_IN_TRADE_HARD_CAP`` direkt statt
+    # ``DEFAULT_MAX_BARS_IN_TRADE``, da Letzteres erst NACH dieser Klasse definiert wird.
+    max_bars_in_trade: int = MAX_BARS_IN_TRADE_HARD_CAP
     profit_target_pct: float | None = None
     cooldown_bars: int = 12
     trend_filter_period: int = 0
@@ -162,8 +166,11 @@ DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
 # Issue #858 — Single Source of Truth über einen Import statt einer eigenen dritten Kopie des
 # Literals, konsistent mit ``spaces._MAX_BARS_IN_TRADE_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP``
 # (Pitfall #271). Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — 24 → 6, siehe
-# HourlyStrategyConfig.max_bars_in_trade-Kommentar.
-DEFAULT_MAX_BARS_IN_TRADE = 6
+# HourlyStrategyConfig.max_bars_in_trade-Kommentar. Issue #1343 (GH #1237, Katalog #1330-1351, P0)
+# — der Default ist keine eigene vierte Kopie des Literals mehr, sondern folgt derselben
+# achsen-abgeleiteten Quelle wie die harte Obergrenze (MAX_BARS_IN_TRADE_HARD_CAP, aktuell 7 auf
+# der EQUITY-RTH-Achse), statt eines unabhängig gepflegten Literals 6 (Grep-Test in #1237).
+DEFAULT_MAX_BARS_IN_TRADE = MAX_BARS_IN_TRADE_HARD_CAP
 
 # Issue #712 (Req-02+Req-03) — Cancel/Replace nur bei |ΔTarget| > 1 Tick (Order-Sturm-Schutz,
 # konsistent mit etoro_rate_limiter.py).

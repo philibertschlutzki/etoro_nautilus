@@ -5,6 +5,7 @@ import statistics
 from typing import TYPE_CHECKING
 
 from automation.optimizer._contracts import TIME_BOX_BARS as _TIME_BOX_BARS
+from automation.optimizer.invariants import invariant_scope
 
 if TYPE_CHECKING:
     from automation.optimizer.parsing import TournamentMetrics
@@ -283,6 +284,7 @@ def calculate_continuous_time_decay_penalty(
     return float(math.exp(-k * (float(holding_time_hours) - float(t_soft_hours))))
 
 
+@invariant_scope("run")
 def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
     """Issue #633 — warnt (WARNING-Log, KEIN Abbruch — Zero-Hardcoding-Diagnose statt Hard-Fail, weil
     die wahre Erreichbarkeit strategie-/symbolabhängig ist), wenn eine ``eligible_requires_any``-
@@ -325,6 +327,7 @@ def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
 _ANY_ARM_LIVE_THRESHOLD_KEYS = {"min_win_rate": "oos_min_win_rate"}
 
 
+@invariant_scope("trial")
 def check_any_arm_reachability_live(tournament_cfg: dict | None,
                                     observed_values: dict[str, list] | None, *,
                                     n_evaluated: int | None = None) -> list[str]:
@@ -415,6 +418,7 @@ def _normalize_clause(name: str | None) -> str | None:
 _ALL_CLAUSE_LIVE_THRESHOLD_KEYS = {"min_alpha_tstat": "oos_min_alpha_tstat"}
 
 
+@invariant_scope("trial")
 def check_mandatory_gate_reachability_live(tournament_cfg: dict | None,
                                            observed_values: dict[str, list] | None, *,
                                            n_evaluated: int | None = None) -> list[str]:

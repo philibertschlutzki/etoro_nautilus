@@ -52,9 +52,14 @@ def test_slippage_p50_asset_class_map_is_part_of_the_resolution_trigger():
 
 
 def test_applied_cost_components_are_stamped_in_extract_metrics():
+    # Issue #1349 (GH #1243, P2) — financing_bps_per_day wurde durch financing_bps_per_day_long/
+    # _short ersetzt (Richtungsaufloesung); die gestempelte Study-weite Groesse ist seit diesem Fix
+    # _financing_bps_per_day_representative (long/short je nachdem, ob die Study Short-Round-Trips
+    # enthielt, siehe dortiger Kommentar).
     source = inspect.getsource(backtest_runner.extract_metrics)
     assert '_level_metrics["applied_slippage_bps"] = slippage_bps' in source
-    assert '_level_metrics["applied_financing_bps_per_day"] = financing_bps_per_day' in source
+    assert ('_level_metrics["applied_financing_bps_per_day"] = '
+           '_financing_bps_per_day_representative') in source
 
 
 # --- invariants.check_applied_cost_components_resolved ------------------------------------------

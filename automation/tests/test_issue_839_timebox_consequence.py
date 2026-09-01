@@ -150,9 +150,10 @@ def test_resolve_effective_bar_cap_falls_back_to_strategy_defaults():
 
 def test_resolve_effective_bar_cap_falls_back_to_global():
     """Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 3 — der globale Deckel wurde von
-    24 (Kalender-Bars) auf 6 (RTH-Bars) umkalibriert (Faktor 0.24)."""
+    24 (Kalender-Bars) auf 6 (RTH-Bars) umkalibriert (Faktor 0.24). Issue #1343 (GH #1237) — 6 → 7,
+    mechanisch aus der Session-Ueberlappung gezaehlt statt geschaetzt."""
     cap, source = inv.resolve_effective_bar_cap(None, strategy="S", strategy_defaults={})
-    assert (cap, source) == (6.0, "global")
+    assert (cap, source) == (7.0, "global")
 
 
 # ── invariants.check_holding_time_cap (#861 — unified contract; #971 — trade-, not trial-level) ──

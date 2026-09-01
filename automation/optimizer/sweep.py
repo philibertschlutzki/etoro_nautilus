@@ -462,6 +462,23 @@ def assert_invariant_registry_complete() -> "_inv.InvariantResult":
     return result
 
 
+def _flatten_cost_rate_values(cost_map: dict | None) -> list[float]:
+    """Issue #1349 (GH #1243, P2) — jeder Asset-Klassen-Eintrag in ``overnight_financing_bps_per_
+    day_by_asset_class`` ist seit #1349 entweder ein reiner Skalar (Alt-Form, ``resolve_financing_
+    bps_per_day`` interpretiert ihn als 'nur Long') oder ein ``{'long': ..., 'short': ...}``-Dict
+    (Neu-Form). ``slippage_bps_by_asset_class`` bleibt unveraendert Skalar-only. Entfaltet BEIDE
+    Formen zu einer flachen Liste numerischer Raten — Single Source fuer jeden Konsumenten (hier
+    ``warn_if_cost_model_zero_realism``, ausserdem ``report._cost_model_has_zero_realism``), der
+    prueft, ob ALLE konfigurierten Raten (ueber jede Asset-Klasse UND Richtung) 0.0 sind."""
+    values: list[float] = []
+    for v in (cost_map or {}).values():
+        if isinstance(v, dict):
+            values.extend(x for x in v.values() if isinstance(x, (int, float)))
+        elif isinstance(v, (int, float)):
+            values.append(v)
+    return values
+
+
 def warn_if_cost_model_zero_realism() -> bool:
     """Issue #1010/#1162 (Katalog #1170, P0) — Startup-Warnung: sind ``backtest.json``'s
     ``overnight_financing_bps_per_day_by_asset_class`` UND ``slippage_bps_by_asset_class`` fuer
@@ -484,8 +501,7 @@ def warn_if_cost_model_zero_realism() -> bool:
         cfg = {}
     financing = cfg.get("overnight_financing_bps_per_day_by_asset_class") or {}
     slippage = cfg.get("slippage_bps_by_asset_class") or {}
-    _all_values = [v for v in financing.values() if isinstance(v, (int, float))] + \
-                  [v for v in slippage.values() if isinstance(v, (int, float))]
+    _all_values = _flatten_cost_rate_values(financing) + _flatten_cost_rate_values(slippage)
     if not _all_values or any(v != 0.0 for v in _all_values):
         return False
     emit_execution_event(
@@ -620,17 +636,90 @@ def _resolve_session_window_utc(asset_class_key: str | None,
 
 
 def _is_ts_ns_within_session_utc(ts_ns: int, open_utc: str, close_utc: str) -> bool:
-    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — reine Funktion, dieselbe Semantik wie
-    ``backtest_runner.is_within_session_hours`` (dupliziert, siehe ``_resolve_session_window_utc``-
-    Docstring)."""
-    import datetime as _dt
-    dt = _dt.datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=_dt.timezone.utc)
-    if dt.weekday() >= 5:
-        return False
-    open_h, open_m = (int(x) for x in open_utc.split(":"))
-    close_h, close_m = (int(x) for x in close_utc.split(":"))
-    time_of_day = dt.hour * 60 + dt.minute
-    return (open_h * 60 + open_m) <= time_of_day < (close_h * 60 + close_m)
+    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — dieselbe Semantik wie
+    ``backtest_runner.is_within_session_hours``. Issue #1332 (GH #1226): delegiert an die
+    kanonische Implementierung in ``automation.session_windows`` statt sie zu reimplementieren
+    (Pitfall #435 — zwei Zähler über dieselbe Grösse müssen dieselbe Funktion aufrufen). Der
+    leichtgewichtige Import bleibt lokal in der Funktion, damit das Modul ``session_windows``
+    (frei von ``nautilus_trader``/``pandas``) nicht am Top-Level jedes ``sweep.py``-Imports hängt."""
+    from automation.session_windows import is_within_session_hours as _is_within_session_hours
+    return _is_within_session_hours(ts_ns, open_utc, close_utc, weekdays_only=True)
+
+
+def _candle_interval_overlaps_session_utc(
+    candle_start_ns: int, bar_interval_ns: int, open_utc: str, close_utc: str,
+) -> bool:
+    """Issue #1332 (GH #1226) Fix Punkt 2 — testet, ob die Kerze ``[candle_start_ns,
+    candle_start_ns + bar_interval_ns)`` das Session-Fenster SCHNEIDET, statt nur ihren
+    Startpunkt gegen das Fenster zu testen (der Punkt-Test verwirft sonst z. B. die 13:00-Kerze
+    bei Sessionbeginn 13:30, obwohl deren zweite Haelfte in der Session liegt — Symptom: 6 statt
+    7 RTH-Bins je Handelstag fuer EQUITY)."""
+    from automation.session_windows import interval_overlaps_session_hours
+    return interval_overlaps_session_hours(
+        candle_start_ns, candle_start_ns + bar_interval_ns, open_utc, close_utc, weekdays_only=True)
+
+
+def _expected_session_bins_per_day(
+    open_utc: str, close_utc: str, bar_interval_ns: int = 3_600_000_000_000,
+) -> int:
+    """Issue #1336 (GH #1230) Fix Punkt 1 — Anzahl der Bar-Intervalle je Handelstag, deren
+    Intervall das Session-Fenster ``[open_utc, close_utc)`` SCHNEIDET (dieselbe
+    Ueberlappungs-Konvention wie ``_candle_interval_overlaps_session_utc``/#1332, NICHT eine
+    naive ``(close-open)/60``-Rundung) — fuer EQUITY bei ``13:30-20:00`` und 1h-Bars ergibt das 7
+    (13:00-, 14:00-, …, 19:00-Kerze), nicht 6."""
+    from automation.session_windows import interval_overlaps_session_hours
+    n_bins_per_day = 86_400_000_000_000 // bar_interval_ns
+    count = 0
+    for i in range(int(n_bins_per_day)):
+        bin_start_ns = i * bar_interval_ns
+        if interval_overlaps_session_hours(
+            bin_start_ns, bin_start_ns + bar_interval_ns, open_utc, close_utc, weekdays_only=False,
+        ):
+            count += 1
+    return count
+
+
+def _bar_coverage_expected_bins(
+    window_start, window_end, open_utc: str, close_utc: str,
+    bar_interval_ns: int = 3_600_000_000_000,
+) -> int:
+    """Issue #1336 (GH #1230) Fix Punkt 1 — erwartete Zahl RTH-Bins im Fenster
+    ``[window_start, window_end]`` (pandas-Timestamps, inklusive, Wochentag-gefiltert Mo-Fr)
+    STATT der rohen 24/7-Kalenderstundendifferenz. Ersetzt den Nenner, gegen den
+    ``bar_coverage_ratio`` gebildet wird — der alte Nenner zaehlte Naechte und Wochenenden mit,
+    wodurch die konfigurierte Schwelle (0.6) strukturell unerreichbar war (Obergrenze
+    6·5/(24·7) ≈ 0.179 fuer EQUITY)."""
+    import pandas as pd
+    bins_per_day = _expected_session_bins_per_day(open_utc, close_utc, bar_interval_ns)
+    if bins_per_day == 0:
+        return 0
+    cur = window_start.normalize()
+    end_day = window_end.normalize()
+    n_trading_days = 0
+    while cur <= end_day:
+        if cur.weekday() < 5:
+            n_trading_days += 1
+        cur += pd.Timedelta(days=1)
+    return bins_per_day * n_trading_days
+
+
+def compute_holdout_bar_count(
+    holdout_days: float, session_hours_by_asset_class: dict | None, asset_class_key: str | None,
+    *, bar_interval_ns: int = 3_600_000_000_000,
+) -> int:
+    """Issue #1340 (GH #1234) — ``T_holdout`` (Anzahl Bars im Holdout-Fenster) AUS DER
+    TATSAECHLICHEN Bar-Achse, statt der impliziten 24-Bars/Kalendertag-Annahme aus der
+    Vor-#1275-RTH-Umstellung. Für ein Symbol MIT Session-Fenster (EQUITY/COMMODITY): erwartete
+    Bins je Handelstag (``_expected_session_bins_per_day``, dieselbe Ueberlappungs-Konvention wie
+    #1332/#1336) × Handelstag-Anteil (5/7) × ``holdout_days``. Für CRYPTO/FOREX (kein
+    Session-Fenster) bleibt die 24-Bars/Kalendertag-Achse (durchgehender Handel)."""
+    window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
+    if window is None:
+        bars_per_day = int(round(86_400_000_000_000 / bar_interval_ns))
+        return int(round(holdout_days * bars_per_day))
+    open_utc, close_utc = window
+    bins_per_trading_day = _expected_session_bins_per_day(open_utc, close_utc, bar_interval_ns)
+    return int(round(holdout_days * (5.0 / 7.0) * bins_per_trading_day))
 
 
 def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, *,
@@ -733,7 +822,8 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
                                     max_ticks: int = 200_000,
                                     unavailable_reasons: list[str] | None = None,
                                     session_hours_by_asset_class: dict | None = None,
-                                    asset_class_key: str | None = None) -> dict | None:
+                                    asset_class_key: str | None = None,
+                                    required_span_days: float | None = None) -> dict | None:
     """Issue #807 — liest eine BESCHRAENKTE Stichprobe roher Quote-Ticks (``bid_price``/
     ``ask_price``/``ts_event``, direkt via pyarrow — analog ``count_available_bars`` oben, OHNE die
     volle NautilusTrader-``ParquetDataCatalog``-Materialisierung) und aggregiert sie zu
@@ -770,7 +860,16 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
     ``backtest.json``) ⇒ ``df`` UNVERAENDERT (fail-open, bit-identisches Alt-Verhalten, dieselbe
     Konvention wie ``_resolve_session_window_utc``/``_filter_ticks_to_session_hours``). Die
     konfigurierten Schwellenwerte selbst (``bar_coverage_ratio`` u. a.) werden hier NICHT
-    neu kalibriert — nur die Achse der Messung wird korrigiert (siehe §S3 im Issue-Katalog)."""
+    neu kalibriert — nur die Achse der Messung wird korrigiert (siehe §S3 im Issue-Katalog).
+
+    Issue #1337 (GH #1231) — ``required_span_days`` (optional; ``None`` ⇒ bit-identisches
+    Alt-Verhalten, keine Repräsentativitäts-Prüfung): die Stichprobe ist der TAIL des Katalogs
+    (``max_ticks``/RTH-Filter), nicht notwendigerweise das volle geforderte Fenster. Deckt
+    ``sample_span_days`` (Kalendertage zwischen ``window_start``/``window_end``) das geforderte
+    Fenster NICHT ab, trägt die Rückgabe ``sample_covers_required_span=False`` — der Aufrufer
+    (``check_bar_quality``) macht daraus ein ``INCONCLUSIVE``-Urteil (``passed=None``, Tri-State
+    nach #1307), NICHT ein FAIL: die Aussage gilt dann nachweislich nicht für den Zeitraum, über
+    den entschieden wird."""
     if catalog_path is None:
         base = config_dir()
         raw = "data/nautilus"
@@ -796,6 +895,7 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         import pyarrow as pa
         import pyarrow.parquet as pq
         import pandas as pd
+        from automation import api_backfiller as _api_backfiller
         schema_names = pq.read_schema(str(pq_files[0])).names
         col_map = resolve_quote_tick_columns(schema_names)
         if col_map is None:
@@ -832,22 +932,25 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         ) / 2.0
         df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
         df = df.set_index("ts").sort_index()
-        # Issue #1329 (Katalog #1323-1329, P1) — RTH-Session-Filter VOR dem Resampling, dieselbe
-        # Achse wie ``probe_symbol_tick_population``/``check_tick_population.n_ticks_after_
-        # session_filter`` (Issue #1298/#1275). Ticks ausserhalb des Session-Fensters duerfen
-        # weder in die besetzten Stunden-Bins (Zaehler von ``bar_coverage_ratio``) noch in die
-        # Kalenderspanne der Stichprobe (Nenner) einfliessen — beide werden unten AUS ``bars``/
-        # ``idx`` (bereits gefiltert) abgeleitet. ``window is None`` (kein Fenster konfiguriert
-        # ODER ``asset_class_key`` fehlt, z. B. CRYPTO/FOREX) ⇒ ``df`` unveraendert (fail-open,
-        # dieselbe Konvention wie ``_resolve_session_window_utc``).
+        # Issue #1329 (Katalog #1323-1329, P1) / #1332 (GH #1226) Fix Punkt 2 — die Tick-
+        # POPULATION (``n_sample_ticks``, dieselbe Punkt-Test-Achse wie ``probe_symbol_tick_
+        # population``/``check_tick_population.n_ticks_after_session_filter``) wird GETRENNT von
+        # der Kerzen-ZUGEHOERIGKEIT ermittelt: ein Punkt-Filter VOR dem Resampling wuerde einer
+        # teilweise ueberlappenden Kerze (z. B. ``[13:00,14:00)`` bei Sessionbeginn ``13:30``) alle
+        # Ticks vor 13:30 entziehen — bei einer noch nicht auf O/L/H/C expandierten (Alt-)Achse
+        # sogar die GESAMTE Kerze, obwohl ihre zweite Haelfte in der Session liegt (Root-Cause des
+        # 6-statt-7-Bins-Symptoms). Die Kerzenzugehoerigkeit wird stattdessen NACH dem Resampling
+        # ueber das KERZEN-INTERVALL selbst entschieden (``_candle_interval_overlaps_session_utc``
+        # unten). ``window is None`` (kein Fenster konfiguriert ODER ``asset_class_key`` fehlt, z. B.
+        # CRYPTO/FOREX) ⇒ bit-identisches Alt-Verhalten (fail-open).
         window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
         if window is not None:
-            open_utc, close_utc = window
-            df = df[df["ts_event"].apply(
-                lambda ts: _is_ts_ns_within_session_utc(int(ts), open_utc, close_utc))]
-            if df.empty:
-                _unavailable("EMPTY_AFTER_SESSION_FILTER")
-                return None
+            _open_utc_pop, _close_utc_pop = window
+            n_sample_ticks_point_filtered = int(sum(
+                1 for ts in df["ts_event"]
+                if _is_ts_ns_within_session_utc(int(ts), _open_utc_pop, _close_utc_pop)))
+        else:
+            n_sample_ticks_point_filtered = int(len(df))
         # Issue #1272 (GH #1145, Katalog #1272-1297) — ``count`` je Stundenfenster ZUSAETZLICH zu
         # max/min/last: die Tick-DICHTE je Bar (nicht nur ihr Aggregat) ist die Vorbedingung, die
         # jede Stop-/Trigger-Ausloese-Pruefung stillschweigend voraussetzt (siehe
@@ -859,6 +962,25 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         if bars.empty:
             _unavailable("EMPTY_AFTER_RESAMPLE")
             return None
+        # Issue #1332 (GH #1226) Fix Punkt 2 — zusaetzlich zum Tick-Punkt-Filter oben (der die
+        # 6-vs-7-Bins-Deformation seit #1330s realistischer O/L/H/C-Tick-Verteilung bereits
+        # weitgehend selbst vermeidet) wird JEDE resamplete Bar EXPLIZIT als Intervall
+        # ``[bucket_start, bucket_start + 1h)`` gegen das Session-Fenster getestet
+        # (``interval_overlaps_session_hours``), statt sich auf die Tick-Verteilung innerhalb der
+        # Bar zu verlassen — robust auch fuer ein schmales Session-Fenster, das keinen der
+        # deterministischen Sub-Intervall-Offsets aus #1330 trifft.
+        if window is not None:
+            open_utc, close_utc = window
+            _bar_interval_ns = 3_600_000_000_000  # 1h-Resample-Bucket == nominale Bar-Achse
+            bucket_mask = [
+                _candle_interval_overlaps_session_utc(
+                    int(ts.value), _bar_interval_ns, open_utc, close_utc)
+                for ts in bars.index
+            ]
+            bars = bars[bucket_mask]
+            if bars.empty:
+                _unavailable("EMPTY_AFTER_SESSION_FILTER")
+                return None
         # Issue #900 Fix 1 — median_delta_t_s (Sekunden zwischen aufeinanderfolgenden BESETZTEN
         # Bars, nicht der Kalenderraster-Default) und bar_coverage_ratio (besetzte Stunden /
         # Kalenderstunden der Stichprobe) — beide Rohmaterial fuer die #900-Preflight-Kennzahlen
@@ -869,8 +991,19 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
             median_delta_t_s = float(deltas_s.median()) if not deltas_s.empty else 3600.0
         else:
             median_delta_t_s = 3600.0
-        calendar_hours = max(1.0, (idx[-1] - idx[0]).total_seconds() / 3600.0)
-        bar_coverage_ratio = len(idx) / calendar_hours
+        # Issue #1336 (GH #1230) — der Nenner ist die erwartete Zahl RTH-Bins im Fenster (Session-
+        # Bins, wenn eine Session konfiguriert ist), NICHT mehr die rohe 24/7-Kalenderstundendifferenz.
+        # Fehlt ein Session-Fenster (CRYPTO/FOREX), bleibt der Kalendernenner — dort ist er richtig.
+        bar_coverage_expected_bins: float
+        if window is not None:
+            open_utc, close_utc = window
+            bar_coverage_expected_bins = float(
+                _bar_coverage_expected_bins(idx[0], idx[-1], open_utc, close_utc))
+            bar_coverage_ratio = (
+                len(idx) / bar_coverage_expected_bins if bar_coverage_expected_bins > 0 else None)
+        else:
+            bar_coverage_expected_bins = max(1.0, (idx[-1] - idx[0]).total_seconds() / 3600.0)
+            bar_coverage_ratio = len(idx) / bar_coverage_expected_bins
         # Issue #1272 — Tick-Dichte-Kennzahlen ueber die BESETZTEN Bars (dieselbe Populations-
         # Konvention wie ``bar_range_population_n`` in backtest_runner.py: eine leere Bar traegt
         # keine Tick-Dichte-Beobachtung, sie wird nicht mitgezaehlt, siehe Pitfall #452).
@@ -878,20 +1011,34 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         ticks_per_bar_median = float(statistics.median(tick_counts))
         ticks_per_bar_p05 = _percentile(tick_counts, 0.05)
         frac_bars_single_tick = sum(1 for c in tick_counts if c <= 1) / len(tick_counts)
+        # Issue #1337 (GH #1231) — deckt die Stichprobe (TAIL des Katalogs) das GEFORDERTE Fenster
+        # ab? ``required_span_days=None`` (kein Aufrufer liefert die Geometrie) ⇒ nicht pruefbar,
+        # bit-identisches Alt-Verhalten (``sample_covers_required_span=True``).
+        sample_span_days = (idx[-1] - idx[0]).total_seconds() / 86400.0
+        sample_covers_required_span = (
+            True if required_span_days is None else sample_span_days >= required_span_days)
         return {
             "highs": bars["max"].tolist(),
             "lows": bars["min"].tolist(),
             "closes": bars["last"].tolist(),
             "median_delta_t_s": median_delta_t_s,
             "bar_coverage_ratio": bar_coverage_ratio,
+            "bar_coverage_expected_bins": bar_coverage_expected_bins,
             "ticks_per_bar_median": ticks_per_bar_median,
             "ticks_per_bar_p05": ticks_per_bar_p05,
             "frac_bars_single_tick": frac_bars_single_tick,
             # Issue #900 Fix 4 — Stichprobenumfang und Fenster im Event, sonst ist die Aussage
-            # nicht reproduzierbar.
-            "n_sample_ticks": int(len(df)),
+            # nicht reproduzierbar. Issue #1332 (GH #1226) Fix Punkt 2 — Punkt-gefilterte
+            # Tick-POPULATION (siehe oben), NICHT die Kerzen-ueberlappungs-gefilterte Bar-Menge.
+            "n_sample_ticks": n_sample_ticks_point_filtered,
             "window_start": idx[0].isoformat(),
             "window_end": idx[-1].isoformat(),
+            "sample_span_days": sample_span_days,
+            "sample_covers_required_span": sample_covers_required_span,
+            # Issue #1350 (GH #1244, P1) Fix-Punkt 5 — der intrabar_path des zuerst aufgeloesten
+            # Katalog-Fragments (pq_files[0], dieselbe Datei, deren Schema oben fuer die
+            # Spaltenaufloesung gelesen wurde) begleitet jede Stop-Kennzahl bis in den Report.
+            "intrabar_path": _api_backfiller.read_intrabar_path(pq_files[0]),
         }
     except Exception as e:
         # Issue #1272 (GH #1145) — fail-open bleibt (ein Lesefehler darf den Sweep nie
@@ -1267,6 +1414,229 @@ def per_symbol_span_stats(latest_ts: dict[str, int | None], earliest_ts: dict[st
         "median_span_days": statistics.median(spans),
         "n_symbols_below_required": n_below,
     }
+
+
+# Issue #1334 (GH #1228) — dieselbe Auflösung-zu-Nanosekunden-Tabelle wie
+# ``automation.api_backfiller.INTERVAL_TO_NS``, hier DUPLIZIERT statt importiert: ein Import aus
+# ``api_backfiller.py`` zöge dessen ``aiohttp``/``dotenv``-Abhängigkeiten in JEDEN ``sweep.py``-
+# Import mit (dieselbe Begründung wie ``_resolve_session_window_utc`` oben).
+_RESOLUTION_INTERVAL_TO_NS: dict[str, int] = {
+    "OneHour": 3_600_000_000_000,
+    "OneDay": 86_400_000_000_000,
+}
+
+
+def check_catalog_resolution_homogeneity(
+    symbol: str, catalog_path: Path | None = None, *,
+    required_span_days: float | None = None,
+    target_interval: str = "OneHour",
+) -> dict:
+    """Issue #1334 (GH #1228) — blockierende Preflight-Invariante VOR Gate 1: eine Spanne aus
+    ``latest - earliest`` (``per_symbol_span_stats`` oben) ist kein Nachweis über die BELEGUNG
+    dazwischen — derselbe Fehlerklasse wie Pitfall #291 (Aggregat über heterogene Entitäten), hier
+    eine Ebene tiefer: Aggregat über eine heterogene ACHSE. Ein Katalog kann 1086 Tage rohe Spanne
+    melden, obwohl nur die letzten 70 Tage tatsächlich auf der deklarierten Bar-Achse liegen (der
+    Rest ist eine andere Auflösung, z. B. das ``OneDay``-Segment der Vor-#1331-Kaskade).
+
+    Teilt die Ticks des Symbols in Monatsbuckets über die volle Spanne und bestimmt je Bucket die
+    DOMINANTE ``bar_interval_ns`` (die seit Issue #1331/GH #1225 explizit je Zeile geschrieben
+    wird — direkter, robusterer Nachweis als eine Δt-Inferenz über Tick-Abstände, die seit Issue
+    #1330/GH #1224 durch die O/L/H/C-Tick-Expansion innerhalb einer Kerze ohnehin nicht mehr
+    ``bar_interval_ns`` selbst widerspiegelt). Die ``effective_span_days`` sind die Kalendertage
+    des LÄNGSTEN ZUSAMMENHÄNGENDEN Fensters von Monaten, deren dominante Auflösung
+    ``target_interval`` entspricht — ``raw_span_days`` bleibt als reine Telemetrie erhalten.
+
+    Fehlt die ``bar_interval_ns``-Spalte (Alt-Katalog vor #1331) ⇒ ``CATALOG_INTERVAL_UNKNOWN``,
+    blockierend (Fix Punkt 6) — NICHT stillschweigend als Stundenachse interpretiert.
+
+    Rückgabe: ``passed`` ist ``None`` (INCONCLUSIVE, Tri-State #1307), wenn ``required_span_days``
+    fehlt oder die Datei fehlt/leer ist; sonst ``bool``. Immer emittierbar (auch bei PASS) —
+    Akzeptanzkriterium 4 (Issue #1167: der Check erscheint im Invarianten-Strom JEDES Laufs)."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+
+    _base_result = {
+        "raw_span_days": None, "effective_span_days": None, "resolution_segments": [],
+        "target_interval": target_interval,
+        "target_interval_ns": _RESOLUTION_INTERVAL_TO_NS.get(target_interval),
+        "required_span_days": required_span_days,
+    }
+    pq_files = resolve_quote_tick_files(catalog_path, symbol, interval=target_interval)
+    if not pq_files:
+        return {**_base_result, "passed": None, "reason": "FILE_NOT_FOUND", "severity": "blocking"}
+    try:
+        import pyarrow.parquet as pq
+        schema_names = pq.read_schema(str(pq_files[0])).names
+        if "bar_interval_ns" not in schema_names or "ts_event" not in schema_names:
+            return {**_base_result, "passed": False, "reason": "CATALOG_INTERVAL_UNKNOWN",
+                    "severity": "blocking"}
+
+        ts_values: list[int] = []
+        interval_values: list[int] = []
+        for pq_file in pq_files:
+            pf = pq.ParquetFile(str(pq_file))
+            for rg in range(pf.metadata.num_row_groups):
+                t = pf.read_row_group(rg, columns=["ts_event", "bar_interval_ns"])
+                ts_values.extend(t.column("ts_event").to_pylist())
+                interval_values.extend(t.column("bar_interval_ns").to_pylist())
+        if not ts_values:
+            return {**_base_result, "passed": None, "reason": "EMPTY_CATALOG", "severity": "blocking"}
+
+        pairs = sorted(zip(ts_values, interval_values), key=lambda p: p[0])
+        raw_span_days = (pairs[-1][0] - pairs[0][0]) / 1e9 / 86400.0
+
+        import collections
+        month_counts: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+        for ts, itv in pairs:
+            month_key = dt.datetime.fromtimestamp(ts / 1e9, tz=dt.timezone.utc).strftime("%Y-%m")
+            month_counts[month_key][itv] += 1
+
+        months_sorted = sorted(month_counts.keys())
+        target_interval_ns = _RESOLUTION_INTERVAL_TO_NS.get(target_interval)
+        resolution_segments = [
+            {"month": m, "dominant_bar_interval_ns": month_counts[m].most_common(1)[0][0],
+             "n_ticks": sum(month_counts[m].values())}
+            for m in months_sorted
+        ]
+        compatible = [seg["dominant_bar_interval_ns"] == target_interval_ns for seg in resolution_segments]
+
+        best_len = 0
+        best_start = best_end = -1
+        cur_start = None
+        for i, ok in enumerate(compatible):
+            if ok:
+                if cur_start is None:
+                    cur_start = i
+                if i - cur_start + 1 > best_len:
+                    best_len = i - cur_start + 1
+                    best_start, best_end = cur_start, i
+            else:
+                cur_start = None
+
+        if best_len == 0:
+            effective_span_days = 0.0
+        else:
+            first_month = months_sorted[best_start]
+            last_month = months_sorted[best_end]
+            first_dt = dt.datetime.strptime(first_month, "%Y-%m").replace(tzinfo=dt.timezone.utc)
+            ly, lm = int(last_month[:4]), int(last_month[5:7])
+            last_dt = (dt.datetime(ly + 1, 1, 1, tzinfo=dt.timezone.utc) if lm == 12
+                      else dt.datetime(ly, lm + 1, 1, tzinfo=dt.timezone.utc))
+            effective_span_days = (last_dt - first_dt).total_seconds() / 86400.0
+
+        result = {
+            **_base_result,
+            "raw_span_days": raw_span_days,
+            "effective_span_days": effective_span_days,
+            "resolution_segments": resolution_segments,
+            "severity": "blocking",
+        }
+        if required_span_days is None:
+            result["passed"] = None
+            result["reason"] = "INCONCLUSIVE: kein required_span_days uebergeben."
+        else:
+            result["passed"] = effective_span_days >= required_span_days
+            result["reason"] = (
+                "OK" if result["passed"] else
+                f"effective_span_days={effective_span_days:.1f} < "
+                f"required_span_days={required_span_days}")
+        return result
+    except Exception as e:
+        return {**_base_result, "passed": None, "reason": f"EXCEPTION:{type(e).__name__}",
+                "severity": "blocking"}
+
+
+def check_no_future_price_in_tick(
+    symbol: str, catalog_path: Path | None = None, *,
+    target_interval: str = "OneHour", max_ticks: int = 200_000,
+) -> dict:
+    """Issue #1332 (GH #1226) Fix Punkt 3 — neue Invariante: für JEDEN Tick gilt ``ts_event``
+    innerhalb ``[candle_start, candle_end)`` seiner Herkunftskerze (``candle_start = (ts_event //
+    bar_interval_ns) * bar_interval_ns``, ``candle_end = candle_start + bar_interval_ns`` —
+    dieselbe Achsen-Konvention wie ``_candle_interval_overlaps_session_utc``). Verletzungsanteil
+    muss 0 sein: ein Tick, dessen Zeitstempel VOR dem Beginn oder NACH dem Ende seiner eigenen
+    Kerze liegt, transportiert einen Preis, der zu diesem Zeitpunkt nicht bekannt sein konnte
+    (Look-Ahead) — genau der Defekt, den Issue #1330/#1332 am Schreiber behoben haben.
+
+    Fuer jeden gueltigen positiven ``bar_interval_ns``-Wert ist ``floor(ts_event / bar_interval_ns)
+    * bar_interval_ns`` per Konstruktion IMMER ein zulaessiger ``candle_start`` fuer ``ts_event``
+    selbst — diese Invariante ist deshalb eine Regressions-WACHE (sie bleibt gruen, solange die
+    ``bar_interval_ns``-Spalte selbst nicht korrumpiert wird), keine Rekonstruktion einer
+    unabhaengigen Kerzenzugehoerigkeit (die dafuer noetige Information — welcher Tick zu welcher
+    urspruenglichen Kerze gehoert — steht im Katalog-Schema nicht separat, nur implizit ueber
+    ``bar_interval_ns`` + ``ts_event`` selbst).
+
+    Fehlt die ``bar_interval_ns``-Spalte (Alt-Katalog) ⇒ ``passed=None`` (INCONCLUSIVE — die
+    Kerzenzugehörigkeit ist ohne die Spalte nicht rekonstruierbar, kein FAIL für Alt-Kataloge, die
+    #1334/GH #1228 bereits separat als ``CATALOG_INTERVAL_UNKNOWN`` markiert)."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+
+    pq_files = resolve_quote_tick_files(catalog_path, symbol, interval=target_interval)
+    if not pq_files:
+        return {"passed": None, "reason": "FILE_NOT_FOUND", "severity": "blocking",
+                "n_ticks": 0, "n_violations": 0, "frac_violations": None}
+    try:
+        import pyarrow.parquet as pq
+        schema_names = pq.read_schema(str(pq_files[0])).names
+        if "bar_interval_ns" not in schema_names or "ts_event" not in schema_names:
+            return {"passed": None, "reason": "CATALOG_INTERVAL_UNKNOWN", "severity": "blocking",
+                    "n_ticks": 0, "n_violations": 0, "frac_violations": None}
+
+        ts_values: list[int] = []
+        interval_values: list[int] = []
+        n_read = 0
+        for pq_file in reversed(pq_files):
+            pf = pq.ParquetFile(str(pq_file))
+            for rg in range(pf.metadata.num_row_groups - 1, -1, -1):
+                t = pf.read_row_group(rg, columns=["ts_event", "bar_interval_ns"])
+                ts_values.extend(t.column("ts_event").to_pylist())
+                interval_values.extend(t.column("bar_interval_ns").to_pylist())
+                n_read += t.num_rows
+                if n_read >= max_ticks:
+                    break
+            if n_read >= max_ticks:
+                break
+        if not ts_values:
+            return {"passed": None, "reason": "EMPTY_CATALOG", "severity": "blocking",
+                    "n_ticks": 0, "n_violations": 0, "frac_violations": None}
+
+        n = len(ts_values)
+        n_violations = 0
+        for ts, itv in zip(ts_values, interval_values):
+            if not itv:
+                continue
+            candle_start = (ts // itv) * itv
+            if not (candle_start <= ts < candle_start + itv):
+                n_violations += 1
+        frac_violations = n_violations / n
+        return {
+            "passed": n_violations == 0,
+            "reason": "OK" if n_violations == 0 else f"n_violations={n_violations}/{n}",
+            "severity": "blocking",
+            "n_ticks": n, "n_violations": n_violations, "frac_violations": frac_violations,
+        }
+    except Exception as e:
+        return {"passed": None, "reason": f"EXCEPTION:{type(e).__name__}", "severity": "blocking",
+                "n_ticks": 0, "n_violations": 0, "frac_violations": None}
 
 
 def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None, catalog_newest_ns: int | None = None) -> int | None:
@@ -2273,6 +2643,70 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict, *,
                     strategy, symbol, exc_info=True)
 
 
+def _measurement_run_report_path(work_dir: Path, run_id: str) -> Path:
+    return Path(work_dir) / "reports" / f"measurement_run_{run_id}.json"
+
+
+def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None = None) -> dict:
+    """Issue #1342 (GH #1236, P1) Fix-Punkt 2/3 — der reine MESSLAUF, den der #1236-Sperrvermerk
+    verlangt, bevor irgendeine der vier ATR-abgeleiteten Kalibrierungen (``atr_floor_bps_by_
+    asset_class``, ``k_min_bar_range_multiple``, die ``atr_trailing_multiplier``-Bänder in
+    ``spaces.py``, die ``3 · c_rt``-Stopuntergrenze) neu gesetzt werden darf. Protokolliert je
+    Symbol ``intrabar_range_median_bps``/``atr_median_bps`` (beide bereits aus der bestehenden
+    Bar-Qualitäts-Stichprobe verfügbar, ``_load_symbol_bar_quality_sample``/``sweep_diagnostics.
+    check_bar_quality``) — OHNE jede Selektion/Suche/Promotion (kein ``optimize_symbol``-Aufruf,
+    keine Study, kein Champion-Store-Zugriff), als eigenständiger, reproduzierbar aufrufbarer Modus
+    (``--measurement-run``), NICHT als Nebenprodukt eines Sweeps (Akzeptanzkriterium 3 aus #1236).
+
+    Scope-Cut (dokumentiert, analog #1096 Fix Punkt 2/3 an anderer Stelle in dieser Codebasis):
+    ``stop_distance_bps_measured`` — die vierte in #1236 genannte Messgrösse — braucht eine ECHTE
+    Backtest-Ausführung (realisierte Stop-Fills gegen eine gesampelte Parameterkonfiguration), nicht
+    nur eine Tick-/Bar-Stichprobe; dieser rein datengetriebene Preflight-Pass liefert sie deshalb
+    bewusst NICHT — das Feld erscheint im Report als ``null`` mit einer erklärenden ``note``, statt
+    stillschweigend zu fehlen. Eine spätere Erweiterung (ein einzelner, fixparametrisierter
+    Backtest je Symbol ohne Optuna-Suche) ist der nächste Schritt, sobald ein echter Katalog-
+    Rebuild vorliegt.
+
+    ``symbols=None`` ⇒ das volle Symbol-Universum (``load_symbol_universe``). Rückgabe: das
+    geschriebene Report-Dict (auch der Aufrufer/Tests bekommen es, ohne die Datei erneut lesen zu
+    müssen)."""
+    _run_id = run_id or f"measurement_run_{default_run_id()}"
+    _symbols = symbols if symbols is not None else load_symbol_universe()
+    measurements: dict[str, dict] = {}
+    for _sym in _symbols:
+        _sample = _load_symbol_bar_quality_sample(_sym)
+        if _sample is None:
+            measurements[_sym] = {
+                "intrabar_range_median_bps": None, "atr_median_bps": None,
+                "stop_distance_bps_measured": None,
+                "note": "keine Bar-Qualitaets-Stichprobe verfuegbar (siehe "
+                       "BAR_QUALITY_SAMPLE_UNAVAILABLE im Log).",
+            }
+            continue
+        _quality = check_bar_quality(
+            _sample["highs"], _sample["lows"], _sample["closes"],
+            median_delta_t_s=_sample.get("median_delta_t_s"),
+        )
+        measurements[_sym] = {
+            "intrabar_range_median_bps": _quality.get("intrabar_range_median_bps"),
+            "atr_median_bps": _quality.get("atr_median_bps"),
+            # Issue #1342 (GH #1236) — Scope-Cut, siehe Docstring: braucht eine echte
+            # Backtest-Ausfuehrung, die dieser rein datengetriebene Pass nicht durchfuehrt.
+            "stop_distance_bps_measured": None,
+            "note": "stop_distance_bps_measured braucht eine echte Backtest-Ausfuehrung "
+                   "(#1236 Scope-Cut, siehe run_measurement_pass-Docstring).",
+            "window_start": _sample.get("window_start"), "window_end": _sample.get("window_end"),
+            "sample_span_days": _sample.get("sample_span_days"),
+            "intrabar_path": _sample.get("intrabar_path"),
+        }
+    report = {
+        "run_id": _run_id, "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "symbols_measured": len(measurements), "measurements": measurements,
+    }
+    write_json_atomic(_measurement_run_report_path(WORK, _run_id), report)
+    return report
+
+
 def run_corroboration_pass(*, strategies: list[str] | None = None,
                            symbols: list[str] | None = None,
                            run_backtest=None, opt_data: dict | None = None,
@@ -2827,12 +3261,132 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _span_stats["n_symbols_below_required"], len(syms),
     )
 
+    # Issue #1344 (GH #1238) Fix Punkt 3 — sammelt JEDES abgewiesene Symbol dieses Laufs (Grund +
+    # Detail), unabhängig davon, in welchem der Preflight-Blöcke unten (Auflösungs-Homogenität/
+    # Tick-Population/Bar-Qualität) es abgewiesen wurde. Erscheint als ``symbols_rejected`` im
+    # ``sweep_completed``-Ereignis.
+    _symbols_rejected: list[dict] = []
+
+    # Issue #1340 (GH #1234) — Promotionskonfidenz-Erreichbarkeits-Preflight: der GRÖSSTE
+    # Ertragshebel des #1246-Katalogs. Läuft VOR Phase 1, EINMAL je Lauf (RUN-WEIT, kein
+    # Symbol-Scope: die Frage ist "kann DIESE Konfiguration [holdout_days ×
+    # promotion_confidence] überhaupt jemals promovieren", nicht "hat DIESES Symbol genug
+    # Evidenz"). Unscoped + severity='blocking' ⇒ ``_downgrade_run_status_for_blocking_
+    # invariants`` (#1344-Fix, siehe dortigen Docstring) stuft den GESAMTEN Lauf auf
+    # 'completed_invalid' herab, wenn die Schwelle strukturell unerreichbar ist — unabhängig
+    # davon, wie viele Symbole individuell Studies produziert haben.
+    try:
+        _tournament_cfg = {}
+        _tournament_path = config_dir() / "tournament.json"
+        if _tournament_path.exists():
+            _tournament_cfg = json.loads(_tournament_path.read_text("utf-8")) or {}
+        _promotion_confidence = _tournament_cfg.get("deflation_confidence")
+        _bt_cfg_for_holdout = {}
+        _bt_path_for_holdout = config_dir() / "backtest.json"
+        if _bt_path_for_holdout.exists():
+            _bt_cfg_for_holdout = json.loads(_bt_path_for_holdout.read_text("utf-8")) or {}
+        _session_hours_for_holdout = _bt_cfg_for_holdout.get("session_hours_by_asset_class")
+        _holdout_days = _wf.get("holdout_days")
+        _t_holdout = None
+        if _holdout_days is not None and syms:
+            _first_asset_class = _resolve_asset_class_key_for_symbol_lightweight(syms[0])
+            _t_holdout = compute_holdout_bar_count(
+                _holdout_days, _session_hours_for_holdout, _first_asset_class)
+        _reachability = invariants.check_promotion_confidence_reachability(
+            _t_holdout, _promotion_confidence)
+        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+            "name": "check_promotion_confidence_reachability",
+            "check": "check_promotion_confidence_reachability",
+            "passed": _reachability.passed, "source": "sweep", "scope": None,
+            "expected": _reachability.expected, "actual": _reachability.actual,
+            "detail": _reachability.detail, "severity": _reachability.severity,
+        }, level=logging.INFO if _reachability.passed is not False else logging.ERROR)
+        if _reachability.passed is False:
+            logging.getLogger("optimizer").error(
+                "[#1340] Promotionsschwelle strukturell unerreichbar: %s", _reachability.detail)
+    except Exception:
+        logging.getLogger("optimizer").debug(
+            "[#1340] Promotionskonfidenz-Reachability-Preflight fehlgeschlagen (non-fatal).",
+            exc_info=True)
+
+    # Issue #1334 (GH #1228) — Auflösungs-Homogenitäts-Preflight VOR Gate 1: ``per_symbol_span_
+    # stats`` oben misst nur die RANDPUNKTE (``latest - earliest``) — ein Katalog kann eine grosse
+    # rohe Spanne meinen, obwohl nur ein kleiner, jüngerer Teil davon tatsächlich auf der
+    # deklarierten Bar-Achse liegt (z. B. das Ergebnis der Vor-#1331-OneHour/OneDay-Kaskade). JEDES
+    # Symbol erzeugt GENAU EIN ``INVARIANT_STREAM_RESULT`` (Issue #1167: auch bei PASS), ein
+    # Symbol mit ``effective_span_days < required_span_days`` wird — wie REJECT_DATA_DEGENERATE/
+    # REJECT_DATA_UNAVAILABLE — VOR Phase 1 abgewiesen.
+    if syms:
+        _log = logging.getLogger("optimizer")
+        _resolution_rejected_syms: list[str] = []
+        for _sym in syms:
+            try:
+                _res_homogeneity = check_catalog_resolution_homogeneity(
+                    _sym, required_span_days=_req_span)
+            except Exception:
+                _res_homogeneity = None
+            if _res_homogeneity is None:
+                continue
+            emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
+                "name": "check_catalog_resolution_homogeneity",
+                "check": "check_catalog_resolution_homogeneity",
+                "passed": _res_homogeneity["passed"], "source": "sweep", "scope": _sym,
+                "expected": "effective_span_days (laengstes zusammenhaengendes Fenster kompatibler "
+                           "Bar-Aufloesung) >= required_span_days (#1334/GH #1228).",
+                "actual": {
+                    "raw_span_days": _res_homogeneity.get("raw_span_days"),
+                    "effective_span_days": _res_homogeneity.get("effective_span_days"),
+                    "required_span_days": _res_homogeneity.get("required_span_days"),
+                },
+                "detail": _res_homogeneity.get("reason"),
+                "severity": _res_homogeneity.get("severity", "blocking"),
+            }, level=logging.INFO if _res_homogeneity["passed"] is not False else logging.WARNING)
+            if _res_homogeneity["passed"] is not False:
+                continue
+            _resolution_rejected_syms.append(_sym)
+            _symbols_rejected.append({
+                "symbol": _sym, "reason": "REJECT_RESOLUTION_HETEROGENEOUS",
+                "detail": _res_homogeneity.get("reason"),
+            })
+            _log.warning(
+                "[#1334] %s: REJECT_RESOLUTION_HETEROGENEOUS — raw_span_days=%s, "
+                "effective_span_days=%s < required_span_days=%s. Symbol wird VOR Phase 1 "
+                "abgewiesen (%s).",
+                _sym, _res_homogeneity.get("raw_span_days"), _res_homogeneity.get("effective_span_days"),
+                _req_span, _res_homogeneity.get("reason"),
+            )
+        if _resolution_rejected_syms:
+            syms = [s for s in syms if s not in _resolution_rejected_syms]
+
+        # Issue #1332 (GH #1226) Fix Punkt 3 — check_no_future_price_in_tick: reine
+        # Konstruktions-Regressionswache (kein Ablehnungsgrund, siehe Docstring) — ein
+        # blockierender FAIL zeigt einen kaputten Katalog-Schreiber an, kein Symbol-spezifisches
+        # Datenproblem, das durch Ausschluss geloest wuerde.
+        for _sym in syms:
+            try:
+                _no_future_price = check_no_future_price_in_tick(_sym)
+            except Exception:
+                _no_future_price = None
+            if _no_future_price is None:
+                continue
+            emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
+                "name": "check_no_future_price_in_tick", "check": "check_no_future_price_in_tick",
+                "passed": _no_future_price["passed"], "source": "sweep", "scope": _sym,
+                "expected": "ts_event jedes Ticks liegt in [candle_start, candle_end) seiner "
+                           "Herkunftskerze (#1332/GH #1226).",
+                "actual": {"n_ticks": _no_future_price.get("n_ticks"),
+                          "n_violations": _no_future_price.get("n_violations")},
+                "detail": _no_future_price.get("reason"),
+                "severity": _no_future_price.get("severity", "blocking"),
+            }, level=logging.INFO if _no_future_price["passed"] is not False else logging.ERROR)
+
     # Issue #1298 (GH #1175, P0) Fix Punkt 5 — Tick-Populations-Preflight VOR Phase 1 je Symbol,
     # EIN Probe-Paar (dieselbe "Preflight statt Post-Mortem"-Logik wie der #807-Bar-Qualitaets-
     # Preflight direkt unten — derselbe Mechanismus, REJECT_DATA_UNAVAILABLE statt
     # REJECT_DATA_DEGENERATE): ein Symbol mit 0 Ticks nach dem Session-Filter wird EINMAL
     # abgewiesen, bevor auch nur eine einzige Study fuer es gestartet wird, statt N unabhaengige
-    # Strategien je 0-Trade-Studies zu verbrennen (Root-Cause #1303/B-4).
+    # Strategien je 0-Trade-Studies zu verbrennen (Root-Cause #1303/B-4). ``_symbols_rejected``
+    # wurde bereits oben (Auflösungs-Homogenitäts-Preflight) deklariert.
     if (using_real_optimize or tick_population_fn is not None) and syms:
         _probe_tick_population = tick_population_fn or probe_symbol_tick_population
         _use_default_tick_population_fn = _probe_tick_population is probe_symbol_tick_population
@@ -2876,6 +3430,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             if _probe["n_ticks_after_session_filter"] > 0:
                 continue
             _data_unavailable_syms.append(_sym)
+            _symbols_rejected.append({
+                "symbol": _sym, "reason": "REJECT_DATA_UNAVAILABLE",
+                "detail": f"n_ticks_raw={_probe['n_ticks_raw']}, n_ticks_after_session_filter=0",
+            })
             emit_execution_event(_log, "REJECT_DATA_UNAVAILABLE", {"symbol": _sym, **_probe},
                                  level=logging.WARNING)
             _log.warning(
@@ -2957,7 +3515,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                     _sample = _load_sample(
                         _sym, unavailable_reasons=_bar_quality_unavailable_reasons,
                         session_hours_by_asset_class=_bar_quality_session_hours,
-                        asset_class_key=_resolve_asset_class_key_for_symbol_lightweight(_sym))
+                        asset_class_key=_resolve_asset_class_key_for_symbol_lightweight(_sym),
+                        # Issue #1337 (GH #1231) — geforderte Walk-Forward-Spanne, damit die
+                        # Stichproben-Repraesentativitaet gegen dieselbe Geometrie geprueft wird
+                        # wie Gate 1 (``_req_span`` oben, aus ``required_span_days(_wf)``).
+                        required_span_days=_req_span)
                 else:
                     _sample = _load_sample(_sym)  # injizierter Test-Fake, feste Ein-Arg-Signatur.
             except Exception:
@@ -2982,6 +3544,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 ticks_per_bar_p05=_sample.get("ticks_per_bar_p05"),
                 frac_bars_single_tick=_sample.get("frac_bars_single_tick"),
                 max_frac_bars_single_tick=_bar_quality_cfg.get("max_frac_bars_single_tick", 0.5),
+                # Issue #1336 (GH #1230) — Nenner-Telemetrie durchreichen (reine Passthrough,
+                # bereits von ``_load_symbol_bar_quality_sample`` berechnet).
+                bar_coverage_expected_bins=_sample.get("bar_coverage_expected_bins"),
+                # Issue #1337 (GH #1231) — Tri-State-Repraesentativitaet.
+                sample_covers_required_span=_sample.get("sample_covers_required_span", True),
+                sample_span_days=_sample.get("sample_span_days"),
+                # Issue #1339 (GH #1233) — Sperrvermerk-Default 0.0 bis #1342/GH #1236.
+                min_intrabar_range_median_bps=_bar_quality_cfg.get(
+                    "min_intrabar_range_median_bps", 0.0),
             )
             _bar_quality_any_measured = True
             _quality_by_symbol[_sym] = {
@@ -2992,6 +3563,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
                 "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
                 "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
+                # Issue #1350 (GH #1244, P1) Fix-Punkt 4 — beide Bedingungen, die
+                # invariants._bar_axis_supports_stop_verdict seit diesem Fix zusaetzlich prueft,
+                # bevor SUPPRESSED_UPSTREAM_BAR_AXIS aufgehoben wird. Landen ueber
+                # symbol_bar_quality auf jedem Study-Record dieses Symbols (report._study_record).
+                "intrabar_range_median_bps": _quality.get("intrabar_range_median_bps"),
+                "intrabar_path": _sample.get("intrabar_path"),
                 "passed": _quality["passed"],
             }
             # Issue #900 Fix 3 — BAR_QUALITY_PROFILE-Event je Symbol, UNABHAENGIG vom Pruefergebnis
@@ -3001,14 +3578,30 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "symbol": _sym,
                 "frac_zero_true_range": _quality.get("frac_zero_true_range"),
                 "atr_median_bps": _quality.get("atr_median_bps"),
+                # Issue #1339 (GH #1233) — Intrabar-Spanne (TR-unabhaengig), siehe check_bar_quality-
+                # Docstring: 0 auf einer Ein-Tick-Achse, unabhaengig vom Wert von atr_median_bps.
+                "intrabar_range_median_bps": _quality.get("intrabar_range_median_bps"),
                 "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
+                # Issue #1336 (GH #1230) — der Nenner selbst, damit der Quotient aus dem Ereignis
+                # nachrechenbar ist.
+                "bar_coverage_expected_bins": _quality.get("bar_coverage_expected_bins"),
                 "median_delta_t_s": _quality.get("median_delta_t_s"),
                 "ticks_per_bar_median": _quality.get("ticks_per_bar_median"),
                 "ticks_per_bar_p05": _quality.get("ticks_per_bar_p05"),
                 "frac_bars_single_tick": _quality.get("frac_bars_single_tick"),
+                # Issue #1338 (GH #1232) — zwei der vier REJECT_DATA_DEGENERATE-Ablehnungsgruende
+                # standen vor diesem Fix NUR im REJECT-Ereignis (das nur bei Ablehnung emittiert
+                # wird), nicht im unabhaengig vom Pruefergebnis emittierten Profil-Ereignis. Ein
+                # Symbol, das knapp besteht, hinterliess dadurch keine Spur seiner
+                # frac_high_eq_low/n_distinct_closes.
+                "frac_high_eq_low": _quality.get("frac_high_eq_low"),
+                "n_distinct_closes": _quality.get("n_distinct_closes"),
+                "frac_identical_consecutive_closes": _quality.get("frac_identical_consecutive_closes"),
                 "n_sample_ticks": _sample.get("n_sample_ticks"),
                 "window_start": _sample.get("window_start"),
                 "window_end": _sample.get("window_end"),
+                "sample_covers_required_span": _quality.get("sample_covers_required_span"),
+                "sample_span_days": _quality.get("sample_span_days"),
                 "passed": _quality["passed"],
             })
             # Issue #1015/#1167 (Katalog #1170) — ``check_bar_quality``s Ergebnis lief bisher NUR
@@ -3041,9 +3634,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # Docstring), nicht diese Aufrufstelle.
                 "severity": _quality.get("severity", "high"),
             }, level=logging.INFO if _quality["passed"] else logging.WARNING)
-            if _quality["passed"]:
+            # Issue #1337 (GH #1231) — ``passed is None`` (INCONCLUSIVE, Tri-State #1307: die
+            # Stichprobe deckt die geforderte Spanne nicht ab) ist KEIN Ablehnungsgrund — es ist
+            # keine Evidenz FUER Degeneration, nur eine Limitierung der Stichprobe. Nur ``passed
+            # is False`` (ein echtes FAIL gegen die konfigurierten Schwellen) rejected das Symbol.
+            if _quality["passed"] is not False:
                 continue
             _degenerate_syms.append(_sym)
+            _symbols_rejected.append({
+                "symbol": _sym, "reason": "REJECT_DATA_DEGENERATE", "detail": _quality["reason"],
+            })
             emit_execution_event(_log, "REJECT_DATA_DEGENERATE", {"symbol": _sym, **_quality},
                                  level=logging.WARNING)
             _log.warning(
@@ -4421,6 +5021,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         "strategies_requested": len(strategies),
         "strategies_enumerated": len(enumerated),
         "strategies_skipped": strategies_skipped,
+        # Issue #1344 (GH #1238) Fix Punkt 2/3 — jedes VOR Phase 1 abgewiesene Symbol mit Grund,
+        # damit ein Lauf mit k>0 von n überlebenden Symbolen nachvollziehbar bleibt (statt nur
+        # ``symbols_planned``/``symbols_completed`` zu zeigen, ohne WARUM ein Symbol fehlt).
+        "symbols_rejected": _symbols_rejected,
         # Issue #625 — familienweise N_eff je Symbol (Σ eligibler Trials über die Strategien-Studies).
         # Issue #1005/#1157 (Katalog #1170) — umbenannt von ``deflation_n_family``: derselbe
         # Feldname trug im selben Lauf DREI numerisch verschiedene Groessen (dieses Sweep-Ereignis,
@@ -4447,10 +5051,32 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # test_issue_1254_family_n_naming.py).
         "deflation_n_eligible_legacy": family_n,
     })
-    if strategies_skipped:
+    # Issue #1345 (GH #1239) — [#595] ist die Warnung fuer echte Strategie-REGISTRY-Paritaetsluecken
+    # (eine aktive Strategie ohne Suchraum/kontinuierlich-bar-ungueltig). ``NO_ELIGIBLE_SYMBOLS`` ist
+    # dagegen die Folge einer VORGELAGERTEN Symbol-Preflight-Entscheidung (REJECT_DATA_DEGENERATE/
+    # REJECT_DATA_UNAVAILABLE, siehe ``_symbols_rejected`` oben) — eine Symbolabweisung erzeugte vor
+    # diesem Fix bis zu ``len(strategies)`` identisch aussehende [#595]-Zeilen (eine je Strategie) und
+    # erweckte den Eindruck von N unabhaengigen Registry-Defekten, wo EINE Symbolentscheidung die
+    # Ursache war.
+    _registry_skip_reasons = {"SKIPPED_INVALID_ON_CONTINUOUS_BARS", "NO_SEARCH_SPACE"}
+    _registry_skipped = [d for d in strategies_skipped if d["reason"] in _registry_skip_reasons]
+    _no_eligible_symbols_skipped = [d for d in strategies_skipped if d["reason"] == "NO_ELIGIBLE_SYMBOLS"]
+    if _registry_skipped:
         _log.warning("[#595] %d von %d angeforderten Strategien NICHT enumeriert: %s",
-                     len(strategies_skipped), len(strategies),
-                     ", ".join(f"{d['strategy']}({d['reason']})" for d in strategies_skipped))
+                     len(_registry_skipped), len(strategies),
+                     ", ".join(f"{d['strategy']}({d['reason']})" for d in _registry_skipped))
+    if _no_eligible_symbols_skipped:
+        if _symbols_rejected:
+            _cause = "; ".join(
+                f"{r['symbol']} per {r['reason']} abgewiesen (Grund: {r['detail']})"
+                for r in _symbols_rejected)
+        else:
+            _cause = "keine Symbol-Preflight-Ablehnung protokolliert (vermutlich Gate 1/Datenspanne)."
+        _log.warning(
+            "[#1345] Alle %d Strategien ohne Kandidaten, weil %d/%d Symbol(e) VOR Phase 1 "
+            "abgewiesen wurden (%s).",
+            len(_no_eligible_symbols_skipped), len(_symbols_rejected), len(_requested_syms), _cause,
+        )
     mins, secs = divmod(int(wallclock_s), 60)
     print(f"✅ Sweep fertig: {len(pairs)} Paare, {n_strats} Strategien × {n_syms} Symbole, "
           f"n_jobs={n_jobs} ({n_jobs_source}), Gesamtlaufzeit {mins}m{secs:02d}s.")
@@ -4563,6 +5189,15 @@ def main(argv: list[str] | None = None) -> list[Path]:
                              "PERSISTIERTEN Studies der --strategies/--symbols-Auswahl (keine neue "
                              "Optimierung) und schreibt das Ergebnis-Gitter nach "
                              "PERSISTENT_CACHE_ROOT/alpha_tstat_gate_calibration.json (#1282).")
+    # Issue #1342 (GH #1236, P1) Fix-Punkt 3 — eigenstaendiger, reproduzierbarer Messlauf-Modus
+    # (analog --corroboration-pass/--calibrate-alpha-tstat-gate): protokolliert intrabar_range_
+    # median_bps/atr_median_bps je Symbol OHNE Selektion/Suche, siehe run_measurement_pass-
+    # Docstring fuer den dokumentierten stop_distance_bps_measured-Scope-Cut.
+    parser.add_argument("--measurement-run", action="store_true", default=False,
+                        help="Reiner Messlauf (keine Selektion/Suche/Promotion): protokolliert "
+                             "intrabar_range_median_bps/atr_median_bps je Symbol der "
+                             "--symbols-Auswahl nach reports/measurement_run_<run_id>.json (#1236 "
+                             "Sperrvermerk-Voraussetzung fuer eine spaetere ATR-Rekalibrierung).")
     args = parser.parse_args(argv)
     if args.seed_salt:
         os.environ["OPTIMIZER_SEED_SALT"] = args.seed_salt
@@ -4622,6 +5257,15 @@ def main(argv: list[str] | None = None) -> list[Path]:
               f"reconfirmed={summary['reconfirmed']} "
               f"writeback_attempts={summary['writeback_attempts']} "
               f"skipped_no_entry={summary['skipped_no_entry']}")
+        return []
+
+    # Issue #1342 (GH #1236, P1) Fix-Punkt 3 — siehe run_measurement_pass-Docstring.
+    if args.measurement_run:
+        _measurement_run_id = args.run_id or f"measurement_run_{default_run_id()}"
+        setup_bot_logging("optimizer", run_id=_measurement_run_id)
+        report = run_measurement_pass(symbols=symbols, run_id=_measurement_run_id)
+        print(f"📏 Messlauf: {report['symbols_measured']} Symbol(e) — "
+              f"{_measurement_run_report_path(WORK, _measurement_run_id)}")
         return []
 
     # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-
@@ -4959,8 +5603,14 @@ def main(argv: list[str] | None = None) -> list[Path]:
     # unabhaengig davon, WARUM das Schreiben scheiterte (jeder Fall ausser der oben bereits fatalen
     # ReportCohortUnresolvable). Verallgemeinerung des Ausgangsbefunds: 2411s Rechenzeit, 1940
     # Trials, 14 Proposals — und ohne diesen Fix trotzdem ``run_status='complete'``.
+    # Issue #1347 (GH #1241, P3) — ``report_path`` nur uebergeben, wenn der Schreibversuch
+    # tatsaechlich stattfand (``_report_written``); andernfalls ist die Variable ggf. nie zugewiesen
+    # worden (ein frueher Abbruch VOR dem generate_sweep_report/generate_report_for_run-Aufruf oben)
+    # — der Kurzschluss-Ausdruck greift NIE auf ``report_path`` zu, solange ``_report_written``
+    # False ist.
     _report_artifact_check = invariants.check_report_artifact_written(
-        run_status=run_status, report_written=_report_written)
+        run_status=run_status, report_written=_report_written,
+        report_path=report_path if _report_written else None)
     emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
         "name": _report_artifact_check.name, "check": _report_artifact_check.name,
         "passed": _report_artifact_check.passed, "source": "sweep", "scope": "global",
@@ -5237,13 +5887,37 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
     wird nicht mehr erzeugt."""
     try:
         written_report = json.loads(Path(report_path).read_text("utf-8"))
+        # Issue #1344 (GH #1238) Fix Punkt 2 — ``check_tick_population``/``check_bar_quality``
+        # sind PER-SYMBOL-Preflight-Ablehnungen: eine blockierende FAIL fuer EIN Symbol fuehrt in
+        # ``run_per_symbol_sweep`` bereits dazu, dass GENAU dieses Symbol aus ``syms`` entfernt und
+        # NICHT weiter bearbeitet wird (siehe REJECT_DATA_UNAVAILABLE/REJECT_DATA_DEGENERATE oben)
+        # — der Lauf selbst bleibt fuer die UEBRIGEN Symbole gueltig. Vor diesem Fix zaehlte JEDE
+        # solche scope-gebundene Ablehnung trotzdem als run-weiter Blocker und stufte den GESAMTEN
+        # Lauf auf 'completed_invalid' herab, selbst wenn ``k > 0`` der ``n`` Symbole erfolgreich
+        # bearbeitet wurden (Symptom: ein einzelnes abgewiesenes Symbol im Ein-Symbol-Betrieb machte
+        # den kompletten Lauf leer). Eine solche Ablehnung wird deshalb nur dann NICHT von der
+        # Herabstufung ausgenommen, wenn ``symbols_planned`` (== 0) zeigt, dass am Ende KEIN Symbol
+        # ueberlebt hat — dann bleibt 'completed_invalid' korrekt (Akzeptanzkriterium: "Ein Lauf,
+        # in dem alle Symbole abgewiesen werden, liefert weiterhin completed_invalid").
+        _per_symbol_preflight_checks = {"check_tick_population", "check_bar_quality"}
+        _any_symbol_survived = bool(written_report.get("symbols_planned"))
+
+        def _is_scoped_preflight_rejection(c: dict) -> bool:
+            return (
+                _any_symbol_survived
+                and (c.get("name") or c.get("check")) in _per_symbol_preflight_checks
+                and c.get("scope") is not None
+            )
+
         blocking_fails = [
             c for c in (written_report.get("invariant_checks") or [])
             if c.get("severity") == "blocking" and c.get("passed", True) is False
+            and not _is_scoped_preflight_rejection(c)
         ]
         blocking_inconclusive = [
             c for c in (written_report.get("invariant_checks") or [])
             if c.get("severity") == "blocking" and c.get("passed", True) is None
+            and not _is_scoped_preflight_rejection(c)
         ]
         if not blocking_fails and not blocking_inconclusive:
             return "complete"
