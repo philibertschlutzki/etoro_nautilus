@@ -1223,7 +1223,23 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
                       ticks_per_bar_median: float | None = None,
                       ticks_per_bar_p05: float | None = None,
                       frac_bars_single_tick: float | None = None,
-                      max_frac_bars_single_tick: float = 0.5) -> dict:
+                      max_frac_bars_single_tick: float = 0.5,
+                      # Issue #1336 (GH #1230) — reine Passthrough-Telemetrie (der Nenner selbst
+                      # wird vom Aufrufer berechnet, siehe sweep._bar_coverage_expected_bins),
+                      # damit sie im BAR_QUALITY_PROFILE/REJECT_DATA_DEGENERATE-Ereignis neben
+                      # bar_coverage_ratio nachrechenbar bleibt.
+                      bar_coverage_expected_bins: float | None = None,
+                      # Issue #1337 (GH #1231) — Tri-State (#1307): deckt die Stichprobe die
+                      # geforderte Walk-Forward-Spanne NICHT ab, ist das Urteil INCONCLUSIVE
+                      # (``passed=None``), nicht FAIL/PASS.
+                      sample_covers_required_span: bool = True,
+                      sample_span_days: float | None = None,
+                      # Issue #1339 (GH #1233) — min_intrabar_range_median_bps bleibt per
+                      # Sperrvermerk (#1246 Sperrvermerk 2, siehe #1342/GH #1236) auf 0.0
+                      # (No-Op-Schwelle), bis ein Messlauf NACH #1330 eine echte Untergrenze
+                      # liefert — eine Kalibrierung gegen die aktuelle (ggf. noch degenerierte)
+                      # Achse waere eine Kalibrierung gegen ein Artefakt.
+                      min_intrabar_range_median_bps: float = 0.0) -> dict:
     """Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
     degenerierte/konstante Bars VOR Phase 1 eines Symbols, statt erst nach 14 × 16 verbrannten
     Trials ueber 14 unabhaengige ``STRUCTURAL_ALL_UNEVALUABLE``-Diagnosen (siehe
@@ -1242,7 +1258,16 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         greift umso haerter, je mehr Nullranges in der ATR-Historie liegen).
       * ``atr_median_bps`` (Issue #900) — Median der True Range in bps des Preises (Skalen-Check:
         eine ATR, die systematisch bei 2 bps statt 30 bps liegt, passiert die relativen
-        Degenerations-Kennzahlen oben vollstaendig).
+        Degenerations-Kennzahlen oben vollstaendig). Issue #1339 (GH #1233): dies ist eine
+        **CLOSE-ZU-CLOSE**-Groesse, KEINE Intrabar-Spanne — die True-Range-Formel bezieht ihre
+        gesamte Groesse aus ``|high/low - prev_close|``, sobald ``high == low`` gilt (Pitfall
+        #477). Fuer die tatsaechliche Intrabar-Spanne siehe ``intrabar_range_median_bps`` unten.
+      * ``intrabar_range_median_bps`` (Issue #1339/GH #1233) — Median von ``(high-low)/close`` in
+        bps, OHNE Vorgaenger-Close. Auf einer Ein-Tick-Bar-Achse (vor #1330) ist dieser Wert exakt
+        0, selbst wenn ``atr_median_bps`` (Close-zu-Close) hoch ist — genau die Signatur, die
+        ``frac_zero_true_range`` allein nicht anzeigen kann (Pitfall #477). Geprueft gegen
+        ``min_intrabar_range_median_bps`` (Default 0.0 — Sperrvermerk, siehe #1342/GH #1236: KEINE
+        Kalibrierung vor dem Katalog-Rebuild).
       * ``bar_coverage_ratio`` (Issue #923) — tatsaechliche Bars / erwartete Kalender-Bars der
         Stichprobe (aus ``sweep._load_symbol_bar_quality_sample``, hier nur geprueft, nicht neu
         berechnet — diese Funktion macht kein I/O). Ein Symbol mit grosser Datenspanne (besteht
@@ -1280,9 +1305,14 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         return {
             "n_bars": 0, "frac_high_eq_low": None, "frac_identical_consecutive_closes": None,
             "n_distinct_closes": 0, "frac_zero_true_range": None, "atr_median_bps": None,
-            "bar_coverage_ratio": bar_coverage_ratio, "median_delta_t_s": median_delta_t_s,
+            "intrabar_range_median_bps": None,
+            "bar_coverage_ratio": bar_coverage_ratio,
+            "bar_coverage_expected_bins": bar_coverage_expected_bins,
+            "median_delta_t_s": median_delta_t_s,
             "ticks_per_bar_median": ticks_per_bar_median, "ticks_per_bar_p05": ticks_per_bar_p05,
             "frac_bars_single_tick": frac_bars_single_tick,
+            "sample_covers_required_span": sample_covers_required_span,
+            "sample_span_days": sample_span_days,
             "passed": False, "reason": "no_bars", "severity": "high",
         }
     frac_high_eq_low = sum(1 for h, l in zip(highs, lows) if h == l) / n
@@ -1309,6 +1339,40 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
     atr_median_bps = tr_bps[len(tr_bps) // 2] if tr_bps and len(tr_bps) % 2 == 1 else (
         (tr_bps[len(tr_bps) // 2 - 1] + tr_bps[len(tr_bps) // 2]) / 2.0 if tr_bps else None
     )
+    # Issue #1339 (GH #1233) — intrabar_range_median_bps: Median von (high-low)/close in bps,
+    # OHNE den Vorgaenger-Close (anders als atr_median_bps/TR oben, das seine Groesse bei
+    # high==low VOLLSTAENDIG aus dem Vorgaenger-Close bezieht und damit eine Achsen-Degeneration
+    # NICHT anzeigen kann — Pitfall #477). Auf einer Ein-Tick-Achse (vor #1330) ist diese Groesse
+    # exakt 0, unabhaengig vom Wert der Close-zu-Close-ATR.
+    intrabar_bps = sorted(
+        ((h - l) / c * 10_000.0) for h, l, c in zip(highs, lows, closes) if c > 0
+    )
+    intrabar_range_median_bps = (
+        intrabar_bps[len(intrabar_bps) // 2] if intrabar_bps and len(intrabar_bps) % 2 == 1 else
+        ((intrabar_bps[len(intrabar_bps) // 2 - 1] + intrabar_bps[len(intrabar_bps) // 2]) / 2.0
+         if intrabar_bps else None)
+    )
+
+    # Issue #1337 (GH #1231) Fix Punkt 2 — deckt die Stichprobe die geforderte Walk-Forward-Spanne
+    # NICHT ab, ist JEDE Aussage ueber DIESEN Zeitraum INCONCLUSIVE (Tri-State #1307), nicht
+    # FAIL/PASS: sie gilt nachweislich nicht fuer den Zeitraum, ueber den entschieden wird.
+    if not sample_covers_required_span:
+        return {
+            "n_bars": n, "frac_high_eq_low": frac_high_eq_low,
+            "frac_identical_consecutive_closes": frac_identical, "n_distinct_closes": n_distinct,
+            "frac_zero_true_range": frac_zero_true_range, "atr_median_bps": atr_median_bps,
+            "intrabar_range_median_bps": intrabar_range_median_bps,
+            "bar_coverage_ratio": bar_coverage_ratio,
+            "bar_coverage_expected_bins": bar_coverage_expected_bins,
+            "median_delta_t_s": median_delta_t_s,
+            "ticks_per_bar_median": ticks_per_bar_median, "ticks_per_bar_p05": ticks_per_bar_p05,
+            "frac_bars_single_tick": frac_bars_single_tick,
+            "sample_covers_required_span": False, "sample_span_days": sample_span_days,
+            "passed": None, "severity": "blocking",
+            "reason": (
+                f"INCONCLUSIVE: sample_span_days={sample_span_days} deckt die geforderte "
+                f"Walk-Forward-Spanne nicht ab."),
+        }
 
     reasons = []
     # Issue #1272 (GH #1145) — die Tick-Dichte-Kriterien werden ZUERST geprueft: ein
@@ -1341,6 +1405,15 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         reasons.append(f"atr_median_bps={atr_median_bps:.3f} < {min_atr_median_bps}")
     if bar_coverage_ratio is not None and bar_coverage_ratio < min_bar_coverage_ratio:
         reasons.append(f"bar_coverage_ratio={bar_coverage_ratio:.3f} < {min_bar_coverage_ratio}")
+    # Issue #1339 (GH #1233) Fix Punkt 2 — min_intrabar_range_median_bps bleibt per Sperrvermerk
+    # bei 0.0 (No-Op), bis #1342/GH #1236 eine echte Untergrenze aus einem Messlauf NACH #1330
+    # liefert; ein Aufrufer, der die Schwelle explizit > 0 konfiguriert, bekommt die Pruefung
+    # trotzdem wirksam.
+    if (intrabar_range_median_bps is not None
+            and intrabar_range_median_bps < min_intrabar_range_median_bps):
+        reasons.append(
+            f"intrabar_range_median_bps={intrabar_range_median_bps:.3f} < "
+            f"{min_intrabar_range_median_bps}")
 
     return {
         "n_bars": n,
@@ -1349,11 +1422,15 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         "n_distinct_closes": n_distinct,
         "frac_zero_true_range": frac_zero_true_range,
         "atr_median_bps": atr_median_bps,
+        "intrabar_range_median_bps": intrabar_range_median_bps,
         "bar_coverage_ratio": bar_coverage_ratio,
+        "bar_coverage_expected_bins": bar_coverage_expected_bins,
         "median_delta_t_s": median_delta_t_s,
         "ticks_per_bar_median": ticks_per_bar_median,
         "ticks_per_bar_p05": ticks_per_bar_p05,
         "frac_bars_single_tick": frac_bars_single_tick,
+        "sample_covers_required_span": sample_covers_required_span,
+        "sample_span_days": sample_span_days,
         "severity": "blocking" if is_blocking else "high",
         "passed": not reasons,
         "reason": "; ".join(reasons) if reasons else "OK",

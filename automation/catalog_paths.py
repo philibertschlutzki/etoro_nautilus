@@ -30,19 +30,36 @@ _QUOTE_TICK_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def resolve_quote_tick_files(catalog_path: str | Path, symbol: str) -> list[Path]:
+def resolve_quote_tick_files(
+    catalog_path: str | Path, symbol: str, interval: str = "OneHour"
+) -> list[Path]:
     """Löst die Quote-Tick-Parquet-Datei(en) für ``symbol`` im Katalog unter ``catalog_path`` auf.
 
-    Probiert die Glob-Muster in ``_QUOTE_TICK_GLOB_PATTERNS`` der Reihe nach im Instrument-
-    Verzeichnis (``.../data/quote_tick/<symbol>/``); das erste Muster mit mindestens einem Treffer
-    gewinnt (kein Vermischen der Muster). Innerhalb eines Musters werden die Treffer sortiert
-    zurückgegeben (deterministische Row-Group-Reihenfolge für ``part-*.parquet``-Layouts).
+    Seit Issue #1331 (GH #1225) trennt der Backfiller Auflösungen in eigene Unterverzeichnisse
+    (``.../data/quote_tick/<symbol>/<interval>/``), damit ``OneHour``- und ``OneDay``-Kerzen nicht
+    mehr in einem ununterscheidbaren Tick-Strom landen. Diese Funktion sucht zuerst dort; existiert
+    kein solches Unterverzeichnis (Alt-Katalog vor #1331, oder eine Auflösung ohne eigenes
+    Unterverzeichnis), fällt sie auf das klassische flache Layout (``.../<symbol>/``) zurück — der
+    Optimizer konsumiert per Default ausschliesslich ``OneHour`` (#1331 Fix Punkt 4).
+
+    Probiert die Glob-Muster in ``_QUOTE_TICK_GLOB_PATTERNS`` der Reihe nach; das erste Muster mit
+    mindestens einem Treffer gewinnt (kein Vermischen der Muster). Innerhalb eines Musters werden
+    die Treffer sortiert zurückgegeben (deterministische Row-Group-Reihenfolge für
+    ``part-*.parquet``-Layouts).
 
     Leere Liste, wenn das Instrument-Verzeichnis fehlt oder kein Muster einen Treffer liefert —
     kein Fehler, der Aufrufer entscheidet über Fail-open/Fail-loud."""
     inst_dir = Path(catalog_path) / "data" / "quote_tick" / str(symbol)
     if not inst_dir.is_dir():
         return []
+
+    interval_dir = inst_dir / str(interval)
+    if interval_dir.is_dir():
+        for pattern in _QUOTE_TICK_GLOB_PATTERNS:
+            matches = sorted(interval_dir.glob(pattern))
+            if matches:
+                return matches
+
     for pattern in _QUOTE_TICK_GLOB_PATTERNS:
         matches = sorted(inst_dir.glob(pattern))
         if matches:

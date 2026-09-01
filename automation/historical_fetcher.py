@@ -53,6 +53,8 @@ try:
         _fallback_precisions,
         _load_etoro_id_map,
         fetch_precisions_from_api,
+        CatalogSchemaVersionMismatch,
+        INTERVAL_TO_NS,
     )
 except ImportError:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -62,7 +64,14 @@ except ImportError:
         _fallback_precisions,
         _load_etoro_id_map,
         fetch_precisions_from_api,
+        CatalogSchemaVersionMismatch,
+        INTERVAL_TO_NS,
     )
+
+# Issue #1331 (GH #1225) Fix Punkt 4: der Optimizer konsumiert ausschliesslich die
+# Stundenauflösung; das Tages-Segment bleibt für Regime-/Benchmark-Zwecke erhalten,
+# betritt aber nie den Backtest-Pfad — daher zuerst in der Kaskade.
+_FETCH_INTERVALS: tuple[str, ...] = ("OneHour", "OneDay")
 
 
 # ─── Cache Helpers ────────────────────────────────────────────────────────────
@@ -99,11 +108,19 @@ def is_backtest_range_covered(
     symbol: str,
     start_ns: int,
     catalog_path: Path = CATALOG_PATH,
+    interval: str = "OneHour",
 ) -> bool:
-    """Returns True if symbol's data.parquet covers the required backtest range."""
-    parquet_file = catalog_path / "data" / "quote_tick" / symbol / "data.parquet"
-    if not parquet_file.exists():
+    """Returns True if symbol's data.parquet covers the required backtest range.
+
+    Issue #1331 (GH #1225): sucht zuerst im auflösungs-getrennten Layout
+    (``<symbol>/<interval>/data.parquet``), fällt für Alt-Kataloge auf das flache Layout
+    zurück (via ``catalog_paths.resolve_quote_tick_files``, Single Source of Truth)."""
+    from automation.catalog_paths import resolve_quote_tick_files
+
+    files = resolve_quote_tick_files(catalog_path, symbol, interval=interval)
+    if not files:
         return False
+    parquet_file = files[0]
     try:
         import pyarrow.compute as pc
         t = pq.read_table(str(parquet_file), columns=["ts_event"])
@@ -246,8 +263,18 @@ async def _fetch_symbol(
     size_prec: int,
     start_ns: int = 0,
 ) -> bool:
-    """Fetches and saves historical candle data for one symbol. Returns True on success."""
-    dest_file = QUOTE_TICK_PATH / symbol / "data.parquet"
+    """Fetches and saves historical candle data for one symbol. Returns True on success.
+
+    Issue #1331 (GH #1225): die `OneHour`/`OneDay`-Kaskade sammelte beide Auflösungen in
+    EINER Liste, konvertierte sie mit EINEM Aufruf und schrieb sie in EINE Datei — die
+    Auflösung eines Ticks war ab dem Moment des Schreibens nicht mehr rekonstruierbar.
+    `candles_by_interval` hält die Kandidaten je Auflösung getrennt; Konvertierung und
+    Speicherung laufen unten je Intervall separat (Fix Punkt 2), in getrennte Zielpfade
+    (Fix Punkt 3, via `_merge_and_save(..., interval=...)`)."""
+    # Delta-update reference file: die primäre (Stunden-)Auflösung bestimmt den Fortschritt,
+    # damit ein Delta-Update nicht durch das grobere Tages-Segment verkürzt wird.
+    primary_interval = _FETCH_INTERVALS[0]
+    dest_file = QUOTE_TICK_PATH / symbol / primary_interval / "data.parquet"
     if start_ns > 0:
         target_start = datetime.fromtimestamp(start_ns / 1e9, tz=timezone.utc)
     else:
@@ -261,15 +288,17 @@ async def _fetch_symbol(
             oldest_dt = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc)
             current_end_time = oldest_dt - timedelta(seconds=1)
             log.info(f"[{symbol}] Delta-Update: Fetch ab {current_end_time.isoformat()} rückwärts bis {target_start.isoformat()}")
-    all_candles: list[dict] = []
+    candles_by_interval: dict[str, list[dict]] = {itv: [] for itv in _FETCH_INTERVALS}
+    cascade_end_time = current_end_time
 
-    # Cascade: OneHour first, then OneDay to reach deeper history
-    for interval in ["OneHour", "OneDay"]:
+    # Cascade: OneHour first, then OneDay to reach deeper history — jede Auflösung sammelt
+    # in ihren EIGENEN Kandidaten-Puffer (kein all_candles.extend() über die Kaskade hinweg).
+    for interval in _FETCH_INTERVALS:
         last_oldest_ts_ns: int | None = None
 
-        while current_end_time > target_start:
+        while cascade_end_time > target_start:
             chunk = await _fetch_candle_chunk(
-                session, etoro_id, current_end_time, api_key, user_key, interval
+                session, etoro_id, cascade_end_time, api_key, user_key, interval
             )
 
             if not chunk:
@@ -285,49 +314,59 @@ async def _fetch_symbol(
                 log.info(f"[{symbol}] Historische Tiefe für {interval} erreicht.")
                 break
 
-            all_candles.extend(chunk)
+            candles_by_interval[interval].extend(chunk)
             last_oldest_ts_ns = oldest_ns
 
             oldest_dt = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc)
-            current_end_time = oldest_dt - timedelta(seconds=1)
+            cascade_end_time = oldest_dt - timedelta(seconds=1)
 
             log.debug(
                 f"[{symbol}] {interval}: {len(chunk)} Candles, älteste: {oldest_dt.isoformat()}"
             )
             await asyncio.sleep(1.1)
 
-        if current_end_time <= target_start:
+        if cascade_end_time <= target_start:
             log.info(f"[{symbol}] Ziel-Startdatum mit {interval} erreicht.")
             break
 
     # Wenn die Schleifen beendet wurden, wir aber das target_start nicht erreicht haben,
     # ist das Instrument jünger als das angeforderte Backtest-Warmup-Fenster.
-    if current_end_time > target_start:
+    if cascade_end_time > target_start:
         final_oldest_ns = _get_oldest_ts_ns(dest_file)
         if final_oldest_ns is not None:
             _save_inception_bound(symbol, final_oldest_ns)
             log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
 
-    if not all_candles:
+    if not any(candles_by_interval.values()):
         log.warning(f"[{symbol}] Keine Candles gefunden — überspringe.")
         return False
 
-    table = _candles_to_arrow_table(all_candles, symbol, price_prec, size_prec, target_start)
-    if table is None or len(table) == 0:
-        log.warning(f"[{symbol}] Leere Arrow-Table nach Konvertierung.")
-        return False
+    any_saved = False
+    for interval, candles in candles_by_interval.items():
+        if not candles:
+            continue
+        table = _candles_to_arrow_table(
+            candles, symbol, price_prec, size_prec, target_start, interval=interval
+        )
+        if table is None or len(table) == 0:
+            log.warning(f"[{symbol}] {interval}: Leere Arrow-Table nach Konvertierung.")
+            continue
 
-    log.info(f"[{symbol}] {len(table)} Candles → speichere (price_prec={price_prec}).")
-    res = _merge_and_save(log, table, symbol, price_prec, size_prec)
+        log.info(f"[{symbol}] {interval}: {len(table)} Ticks → speichere (price_prec={price_prec}).")
+        try:
+            if _merge_and_save(log, table, symbol, price_prec, size_prec, interval=interval):
+                any_saved = True
+        except CatalogSchemaVersionMismatch as e:
+            log.error(str(e))
 
-    # Nach dem erfolgreichen Speichern nochmal Inception-Bound prüfen
-    if res and current_end_time > target_start:
+    # Nach dem erfolgreichen Speichern nochmal Inception-Bound prüfen (primäre Auflösung)
+    if any_saved and cascade_end_time > target_start:
         final_oldest_ns = _get_oldest_ts_ns(dest_file)
         if final_oldest_ns is not None:
             _save_inception_bound(symbol, final_oldest_ns)
             log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
 
-    return res
+    return any_saved
 
 
 # ─── Main Async Function ──────────────────────────────────────────────────────
@@ -519,6 +558,47 @@ def ensure_walkforward_history(
     return report
 
 
+# ─── Catalog Rebuild (Issue #1333 / GH #1227) ────────────────────────────────
+
+def rebuild_catalog(
+    api_key: str,
+    user_key: str,
+    etoro_id_to_symbol: dict[str, str],
+    target: str,
+    months: int = 12,
+) -> list[str]:
+    """Verwirft den bestehenden Katalog für ``target`` (Symbol oder ``"all"``) vollständig und
+    baut ihn aus der API neu auf (Issue #1333/GH #1227 Fix Punkt 3).
+
+    Löscht ZUERST das komplette Instrument-Verzeichnis (alle Auflösungs-Unterordner UND ein
+    eventuelles Alt-Layout-File), damit ``_merge_and_save`` nicht gegen eine
+    ``catalog_schema_version``-Grenze läuft (``CatalogSchemaVersionMismatch``) — ein Rebuild ist
+    die explizit angeforderte, bewusste Alternative zum stillen Merge über eine Schemagrenze."""
+    import shutil
+
+    if target == "all":
+        symbols = sorted(set(etoro_id_to_symbol.values()))
+    else:
+        symbols = [target]
+
+    wanted = set(symbols)
+    to_fetch = {eid: sym for eid, sym in etoro_id_to_symbol.items() if sym in wanted}
+    if not to_fetch:
+        log.error(f"[historical_fetcher] --rebuild-catalog: Symbol(e) {sorted(wanted)} nicht im Universe.")
+        return []
+
+    for sym in symbols:
+        inst_dir = QUOTE_TICK_PATH / sym
+        if inst_dir.exists():
+            log.warning(f"[{sym}] --rebuild-catalog: verwerfe bestehenden Katalog ({inst_dir}).")
+            shutil.rmtree(inst_dir)
+
+    return asyncio.run(run_historical_fetch(
+        api_key=api_key, user_key=user_key, etoro_id_to_symbol=to_fetch,
+        months=months, force=True,
+    ))
+
+
 # ─── CLI Entry-Point ──────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -532,6 +612,11 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="Auch Symbole mit ausreichend Daten neu fetchen")
     parser.add_argument("--start-ns", type=int, default=0, help="Mindest-Start-Timestamp in ns")
     parser.add_argument("--universe", type=Path, default=UNIVERSE_PATH, help="Pfad zur Universe-JSON")
+    parser.add_argument(
+        "--rebuild-catalog", type=str, default=None, metavar="SYMBOL|all",
+        help="Verwirft den bestehenden Katalog für SYMBOL (oder 'all') und baut ihn vollständig "
+             "aus der API neu auf (Issue #1333/GH #1227) — erzeugt catalog_schema_version=2.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -554,6 +639,14 @@ def main() -> int:
     if not etoro_id_map:
         log.error("[historical_fetcher] Keine Instrumente im Universe — Abbruch.")
         return 1
+
+    if args.rebuild_catalog:
+        rebuilt = rebuild_catalog(
+            api_key=api_key, user_key=user_key, etoro_id_to_symbol=etoro_id_map,
+            target=args.rebuild_catalog, months=args.months,
+        )
+        log.info(f"[historical_fetcher] Rebuild abgeschlossen: {len(rebuilt)} Symbole befüllt: {rebuilt}")
+        return 0 if rebuilt else 1
 
     if args.symbol:
         etoro_id_map = {k: v for k, v in etoro_id_map.items() if v == args.symbol}

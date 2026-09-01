@@ -58,6 +58,44 @@ QUOTE_TICK_PATH  = CATALOG_PATH / "data" / "quote_tick"
 UNIVERSE_PATH    = PROJECT_ROOT / "data" / "universe" / "momentum_ls.json"
 ENV_FILE         = PROJECT_ROOT / ".env"
 
+# ─── Bar-Achse: Auflösung → Nanosekunden, Katalog-Schema-Version (Issue #1330-#1333,
+# GH #1224-#1227) ────────────────────────────────────────────────────────────
+# Issue #1331 (GH #1225): jede Auflösung braucht einen expliziten Nanosekunden-Wert, der
+# als `bar_interval_ns`-Spalte je Zeile mitgeschrieben wird — sonst ist die Auflösung eines
+# Ticks ab dem Moment des Schreibens nicht mehr rekonstruierbar (ausser heuristisch über Δt).
+INTERVAL_TO_NS: dict[str, int] = {
+    "OneHour": 3_600_000_000_000,
+    "OneDay": 86_400_000_000_000,
+}
+DEFAULT_INTERVAL = "OneHour"
+
+# Issue #1333 (GH #1227): Version 1 = Legacy (1 Tick/Kerze, gemischte Auflösung, Preis auf
+# Kerzenbeginn gestempelt). Version 2 = nach #1330/#1331/#1332 (O/L/H/C-Tick-Expansion,
+# Auflösungs-Trennung, korrekte Close-Zeitstempel-Semantik, bar_interval_ns-Spalte).
+CATALOG_SCHEMA_VERSION = 2
+
+# Issue #1330 (GH #1224): der aus O/H/L/C synthetisierte Tick-Pfad ist eine Modellannahme,
+# keine Beobachtung. Jede spätere Aussage über Stop-Mechanik zitiert dieses Feld (#1350/GH #1244).
+INTRABAR_PATH_SYNTHETIC = "synthetic_ohlc_adverse_first"
+INTRABAR_PATH_OBSERVED = "observed"
+
+# Issue #1330 (GH #1224) Fix Punkt 2: deterministische, monoton steigende, kollisionsfreie
+# Sub-Intervall-Offsets als Konstante im Modul, kein Literal in der Schleife. Die
+# Trigger-Reihenfolge ist FEST und UNBEDINGT (Sperrvermerk #7 in Issue #1246): das adverse
+# Extrem (`low`, für eine Long-Betrachtung) kommt vor dem günstigen (`high`) — unabhängig von
+# `close > open`, das würde die Stop-Statistik systematisch beschönigen.
+_INTRABAR_OFFSET_OPEN_FRAC = 0.0
+_INTRABAR_OFFSET_LOW_FRAC = 0.25
+_INTRABAR_OFFSET_HIGH_FRAC = 0.50
+# Der Close-Tick wird an den letzten darstellbaren Zeitpunkt des Intervalls gestempelt
+# (candle_end - 1ns), nicht an eine Δ-Fraktion — Issue #1332/GH #1226: ein Preis gehört an
+# den Zeitpunkt, an dem er bekannt wird, nicht an den Beginn seines Intervalls.
+
+
+class CatalogSchemaVersionMismatch(RuntimeError):
+    """Issue #1333 (GH #1227): _merge_and_save bricht LAUT ab, wenn die Zielversion von der
+    Version der bestehenden Datei abweicht — kein stiller Merge über eine Schemagrenze hinweg."""
+
 # ─── eToro API ────────────────────────────────────────────────────────────────
 _BASE_URL_MARKET = "https://public-api.etoro.com/api/v1/market-data"
 _INSTRUMENTS_URL = f"{_BASE_URL_MARKET}/instruments"
@@ -328,9 +366,25 @@ def _candles_to_arrow_table(
     price_prec: int,
     size_prec: int,
     start_dt: datetime,
+    interval: str = DEFAULT_INTERVAL,
 ) -> pa.Table | None:
-    """Konvertiert Candle-Daten DIREKT in eine PyArrow-Table mit FixedSizeBinary(16)."""
+    """Konvertiert Candle-Daten DIREKT in eine PyArrow-Table mit FixedSizeBinary(16).
+
+    Issue #1330 (GH #1224): schreibt je Kerze eine geordnete O/L/H/C-Tick-Sequenz statt eines
+    Einzeltickers auf dem Close — sonst trägt jede resamplete Bar keine Intrabar-Information
+    (`high == low == close`, `ticks_per_bar_median == 1`), und die Risikoschicht ist unbeurteilbar.
+    Issue #1331 (GH #1225): jede Zeile trägt die deklarierte Auflösung in `bar_interval_ns`.
+    Issue #1332 (GH #1226): der Close-Tick wird an `candle_end - 1ns` gestempelt (dem Zeitpunkt,
+    an dem der Schlusskurs bekannt wird), nicht am Kerzenbeginn — sonst entsteht Look-Ahead.
+    Issue #1335 (GH #1229): Volumen wird, falls vorhanden, real aus der Payload gelesen und
+    gleichmässig auf die Ticks einer Kerze verteilt, statt eines konstanten Platzhalters 1.0.
+    """
     _FSB16 = pa.binary(16)
+    interval_ns = INTERVAL_TO_NS.get(interval)
+    if interval_ns is None:
+        raise ValueError(
+            f"[api_backfiller] Unbekanntes Intervall '{interval}' — INTERVAL_TO_NS erweitern."
+        )
 
     bid_prices: list[bytes] = []
     ask_prices: list[bytes] = []
@@ -338,10 +392,15 @@ def _candles_to_arrow_table(
     ask_sizes:  list[bytes] = []
     ts_events:  list[int]   = []
     ts_inits:   list[int]   = []
+    bar_interval_col: list[int] = []
 
-    # Menge = 1 Lot
-    size_bytes = _encode_qty_fsb16(1.0, size_prec)
+    _ZERO_SIZE = _encode_qty_fsb16(0.0, size_prec)
+    min_ts_ns = int(start_dt.timestamp() * 1e9)
 
+    # ── Pass 1: parsen, plausibilisieren, chronologisch sortieren ─────────────
+    # Die eToro-API liefert Kerzen `desc` (jüngste zuerst); der open-Fallback ("Close der
+    # Vorgängerkerze", Fix Punkt 1) braucht chronologisch aufsteigende Reihenfolge.
+    parsed: list[tuple[int, float | None, float, float, float, float | None]] = []
     for c in candles:
         try:
             c_low = {k.lower(): v for k, v in c.items()}
@@ -351,22 +410,24 @@ def _candles_to_arrow_table(
                 or c_low.get("date")
                 or c_low.get("timestamp")
             )
-            low_val  = c_low.get("low")  or c_low.get("l")
-            high_val = c_low.get("high") or c_low.get("h")
-            close_val = c_low.get("close") or c_low.get("c")
+            open_val   = c_low.get("open")   or c_low.get("o")
+            low_val    = c_low.get("low")    or c_low.get("l")
+            high_val   = c_low.get("high")   or c_low.get("h")
+            close_val  = c_low.get("close")  or c_low.get("c")
+            volume_val = c_low.get("volume") or c_low.get("v")
 
-            if not date_val or low_val is None or high_val is None:
+            if not date_val or low_val is None or high_val is None or close_val is None:
                 continue
 
-            low  = float(low_val)
-            high = float(high_val)
-
-            if low <= 0 or high <= 0:
+            low   = float(low_val)
+            high  = float(high_val)
+            close = float(close_val)
+            if low <= 0 or high <= 0 or close <= 0:
                 continue
+            open_ = float(open_val) if open_val is not None and float(open_val) > 0 else None
+            volume = float(volume_val) if volume_val is not None else None
 
-            price = float(close_val) if close_val is not None else (low + high) / 2.0
-
-            # Timestamp parsen
+            # Timestamp parsen (Kerzen-BEGINN)
             if isinstance(date_val, (int, float)):
                 ts_ns = int(date_val * 1e9) if date_val < 1e13 else int(date_val)
             else:
@@ -376,22 +437,54 @@ def _candles_to_arrow_table(
                     dt = dt.replace(tzinfo=timezone.utc)
                 ts_ns = int(dt.timestamp() * 1e9)
 
-            # Zu alten Eintrag überspringen
-            min_ts_ns = int(start_dt.timestamp() * 1e9)
             if ts_ns < min_ts_ns:
                 continue
 
-            # Zero-Spread (bid=ask=close) für Backtesting
-            bid_prices.append(_encode_fsb16(price, price_prec))
-            ask_prices.append(_encode_fsb16(price, price_prec))
-            bid_sizes.append(size_bytes)
-            ask_sizes.append(size_bytes)
-            ts_events.append(ts_ns)
-            ts_inits.append(ts_ns)
-
+            parsed.append((ts_ns, open_, low, high, close, volume))
         except Exception as e:
             log.debug(f"[api_backfiller] Candle-Parse-Fehler ({symbol}): {e}")
             continue
+
+    if not parsed:
+        return None
+
+    parsed.sort(key=lambda row: row[0])
+
+    volume_seen_any = False
+    volume_missing_any = False
+    prev_close: float | None = None
+
+    for candle_start_ns, open_val, low, high, close, volume in parsed:
+        if open_val is None:
+            open_val = prev_close
+        candle_end_ns = candle_start_ns + interval_ns
+
+        # Geordnete Tick-Sequenz: O (falls verfügbar) → adverses Extrem (low) → günstiges
+        # Extrem (high) → close zuletzt. Reihenfolge ist FEST, nicht richtungsabhängig.
+        roles: list[tuple[float, int]] = []
+        if open_val is not None:
+            roles.append((open_val, candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_OPEN_FRAC)))
+        roles.append((low,  candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_LOW_FRAC)))
+        roles.append((high, candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_HIGH_FRAC)))
+        roles.append((close, candle_end_ns - 1))
+
+        if volume is not None:
+            volume_seen_any = True
+            size_bytes_for_row = _encode_qty_fsb16(volume / len(roles), size_prec)
+        else:
+            volume_missing_any = True
+            size_bytes_for_row = _ZERO_SIZE
+
+        for price, ts_ns in roles:
+            bid_prices.append(_encode_fsb16(price, price_prec))
+            ask_prices.append(_encode_fsb16(price, price_prec))
+            bid_sizes.append(size_bytes_for_row)
+            ask_sizes.append(size_bytes_for_row)
+            ts_events.append(ts_ns)
+            ts_inits.append(ts_ns)
+            bar_interval_col.append(interval_ns)
+
+        prev_close = close
 
     if not ts_events:
         return None
@@ -404,6 +497,7 @@ def _candles_to_arrow_table(
         pa.field("ask_size",  _FSB16),
         pa.field("ts_event",  pa.uint64()),
         pa.field("ts_init",   pa.uint64()),
+        pa.field("bar_interval_ns", pa.uint64()),
     ])
 
     table = pa.table(
@@ -414,24 +508,74 @@ def _candles_to_arrow_table(
             "ask_size":  pa.array(ask_sizes,  type=_FSB16),
             "ts_event":  pa.array(ts_events,  type=pa.uint64()),
             "ts_init":   pa.array(ts_inits,   type=pa.uint64()),
+            "bar_interval_ns": pa.array(bar_interval_col, type=pa.uint64()),
         },
         schema=schema,
     )
+
+    # Issue #1330 Fix Punkt 3 / #1335 Fix Punkt 3: Modellannahme- und Volumen-Herkunft als
+    # vorläufige Schema-Metadaten mitgeben — `_merge_and_save`/`_build_arrow_meta` übernehmen
+    # sie in die endgültigen Katalog-Metadaten (dort werden `replace_schema_metadata`-Aufrufe
+    # sonst diese Felder überschreiben).
+    volume_available = volume_seen_any and not volume_missing_any
+    table = table.replace_schema_metadata({
+        b"intrabar_path": INTRABAR_PATH_SYNTHETIC.encode(),
+        b"volume_available": (b"true" if volume_available else b"false"),
+        b"catalog_interval": interval.encode(),
+    })
     return table
 
 
 # ─── Metadaten-Builder ────────────────────────────────────────────────────────
 
-def _build_arrow_meta(symbol: str, price_prec: int, size_prec: int) -> dict[bytes, bytes]:
-    """Erstellt Nautilus-konforme Arrow-Schema-Metadaten."""
+def _build_arrow_meta(
+    symbol: str,
+    price_prec: int,
+    size_prec: int,
+    *,
+    catalog_schema_version: int = CATALOG_SCHEMA_VERSION,
+    interval: str = DEFAULT_INTERVAL,
+    extra: dict[bytes, bytes] | None = None,
+) -> dict[bytes, bytes]:
+    """Erstellt Nautilus-konforme Arrow-Schema-Metadaten.
+
+    Issue #1333 (GH #1227): trägt `catalog_schema_version`, damit `_merge_and_save` einen
+    Merge über eine Schemagrenze hinweg laut ablehnt statt still zu vermischen.
+    Issue #1331 (GH #1225): trägt die deklarierte Auflösung (`catalog_interval`) als
+    Katalog-Metadatum, ergänzend zur `bar_interval_ns`-Spalte je Zeile.
+    """
     if size_prec is None or size_prec <= 0:
         size_prec = 2
 
-    return {
+    meta: dict[bytes, bytes] = {
         b"price_precision": str(price_prec).encode(),
         b"size_precision":  str(size_prec).encode(),
         b"instrument_id":   symbol.encode(),
+        b"catalog_schema_version": str(catalog_schema_version).encode(),
+        b"catalog_interval": interval.encode(),
     }
+    if extra:
+        meta.update(extra)
+    return meta
+
+
+def _read_catalog_schema_version(parquet_file: Path) -> int | None:
+    """Liest `catalog_schema_version` aus den Arrow-Schema-Metadaten einer Katalogdatei.
+
+    `None`, wenn die Datei fehlt, nicht lesbar ist, oder das Feld fehlt (Alt-Katalog vor
+    Issue #1333/GH #1227 — wird vom Aufrufer als Version 1 / Legacy behandelt)."""
+    try:
+        schema = pq.read_schema(str(parquet_file))
+    except Exception:
+        return None
+    meta = schema.metadata or {}
+    raw = meta.get(b"catalog_schema_version")
+    if raw is None:
+        return None
+    try:
+        return int(raw.decode())
+    except (ValueError, UnicodeDecodeError):
+        return None
 
 
 # ─── Parquet Merge ────────────────────────────────────────────────────────────
@@ -453,16 +597,44 @@ def _merge_and_save(
     symbol: str,
     price_prec: int,
     size_prec: int,
+    interval: str = DEFAULT_INTERVAL,
 ) -> bool:
-    """Merged neue Daten mit bestehendem Parquet-Katalog und speichert atomar."""
-    dest_dir  = QUOTE_TICK_PATH / symbol
+    """Merged neue Daten mit bestehendem Parquet-Katalog und speichert atomar.
+
+    Issue #1331 (GH #1225): Zielpfad ist je Auflösung getrennt
+    (`.../quote_tick/<symbol>/<interval>/data.parquet`).
+    Issue #1333 (GH #1227): bricht LAUT ab (`CatalogSchemaVersionMismatch`), wenn eine
+    bestehende Datei eine andere `catalog_schema_version` trägt als der aktuelle Schreiber —
+    kein stiller Merge über eine Schemagrenze hinweg. Die Dedup-Regel ist **letzte-Zeile-
+    gewinnt** (Schlüssel `(ts_event, bar_interval_ns)`), nicht mehr erste-Zeile-gewinnt: eine
+    Korrektur muss einen Altbestand überschreiben können.
+    """
+    dest_dir  = QUOTE_TICK_PATH / symbol / interval
     dest_file = dest_dir / "data.parquet"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    # Vorab-Metadaten aus dem frisch konvertierten new_table übernehmen (Issue #1330 Fix
+    # Punkt 3 / #1335 Fix Punkt 3): intrabar_path und volume_available überleben den
+    # replace_schema_metadata-Aufruf am Ende nur, wenn sie hier explizit weitergereicht werden.
+    new_meta = new_table.schema.metadata or {}
+    extra_meta = {
+        k: v for k, v in new_meta.items()
+        if k in (b"intrabar_path", b"volume_available")
+    }
+
     tables: list[pa.Table] = []
 
-    # 1. Bestehende Datei einlesen
+    # 1. Bestehende Datei einlesen — Schema-Version-Gate zuerst (Issue #1333)
     if dest_file.exists():
+        existing_version = _read_catalog_schema_version(dest_file)
+        if existing_version != CATALOG_SCHEMA_VERSION:
+            raise CatalogSchemaVersionMismatch(
+                f"[api_backfiller] {symbol}/{interval}: bestehender Katalog hat "
+                f"catalog_schema_version={existing_version!r}, Schreiber erwartet "
+                f"{CATALOG_SCHEMA_VERSION}. Kein stiller Merge über eine Schemagrenze hinweg — "
+                f"Katalog neu aufbauen: "
+                f"`python3 automation/historical_fetcher.py --rebuild-catalog {symbol}`."
+            )
         try:
             existing = pq.read_table(str(dest_file))
             if len(existing) > 0:
@@ -479,19 +651,16 @@ def _merge_and_save(
         log_ctx.error(f"[api_backfiller] concat_tables Fehler ({symbol}): {e}")
         return False
 
-    # 3. Deduplizieren und sortieren nach ts_event
+    # 3. Deduplizieren (letzte Zeile je (ts_event, bar_interval_ns) gewinnt) und sortieren
     rows_before = len(merged)
     ts_list = merged.column("ts_event").to_pylist()
+    interval_list = merged.column("bar_interval_ns").to_pylist()
 
-    seen: set[int] = set()
-    keep_indices: list[int] = []
-    for i, ts in enumerate(ts_list):
-        if ts not in seen:
-            seen.add(ts)
-            keep_indices.append(i)
+    last_index_for_key: dict[tuple[int, int], int] = {}
+    for i, key in enumerate(zip(ts_list, interval_list)):
+        last_index_for_key[key] = i  # spätere Zeile überschreibt frühere (Issue #1333 Fix Punkt 4)
 
-    # Sortieren nach ts_event
-    keep_indices.sort(key=lambda i: ts_list[i])
+    keep_indices = sorted(last_index_for_key.values(), key=lambda i: ts_list[i])
     merged = merged.take(pa.array(keep_indices))
     rows_after = len(merged)
 
@@ -501,7 +670,7 @@ def _merge_and_save(
     )
 
     # 4. Metadaten injizieren
-    meta = _build_arrow_meta(symbol, price_prec, size_prec)
+    meta = _build_arrow_meta(symbol, price_prec, size_prec, interval=interval, extra=extra_meta)
     merged = merged.replace_schema_metadata(meta)
 
     # 5. Atomar speichern
@@ -511,7 +680,7 @@ def _merge_and_save(
         tmp.rename(dest_file)
         log_ctx.info(
             f"[api_backfiller] {symbol}: {rows_after} Zeilen gespeichert "
-            f"(price_prec={price_prec}, size_prec={size_prec}) → {dest_file.name}"
+            f"(price_prec={price_prec}, size_prec={size_prec}) → {dest_file}"
         )
         return True
     except Exception as e:
@@ -557,7 +726,7 @@ async def run_backfill(
             if specific_symbols and symbol not in specific_symbols:
                 continue
 
-            dest_file = QUOTE_TICK_PATH / symbol / "data.parquet"
+            dest_file = QUOTE_TICK_PATH / symbol / DEFAULT_INTERVAL / "data.parquet"
             if dest_file.exists():
                 latest_ts = _get_latest_ts(dest_file)
                 if latest_ts is not None:
@@ -583,7 +752,7 @@ async def run_backfill(
                     continue
 
                 table = _candles_to_arrow_table(
-                    candles, symbol, price_prec, size_prec, start_dt
+                    candles, symbol, price_prec, size_prec, start_dt, interval=DEFAULT_INTERVAL
                 )
                 if table is None or len(table) == 0:
                     log.debug(f"[api_backfiller] {symbol}: Leere Table nach Konvertierung.")

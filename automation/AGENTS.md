@@ -7025,3 +7025,37 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 
 ### 🔴 Pitfall #465 — Eine Partition ist erst disjunkt, wenn jede Klasse dieselbe Grundgesamtheit zählt [Katalog #1272–#1297, GitHub-Issue #1144 (interne Nr. #1291/GH #1164)]
 **Verbatim (Issue #1144 Abschnitt 8):** Eine Partition ist erst dann disjunkt, wenn jede Klasse über dieselbe Grundgesamtheit gezählt wird. Guard-zensierte Trials sind weder „evaluiert" noch „mit gemessenem Ablehnungsgrund" — sie brauchen eine eigene Klasse.
+
+## Neue Pitfalls #471–480 (Issue-Katalog #1330–#1351, GitHub-Issues #1224–#1245, verbatim aus Issue #1246)
+
+> Nummerierung setzt hinter #465 (letzter in `AGENTS.md` gemergter) mit Reserve für #466–#470 aus Katalog #1298–#1322 auf.
+
+### 🔴 Pitfall #471 — Ein Parser, der ein Feld liest und plausibilisiert, aber nicht schreibt, verliert es lautlos [Katalog #1330–#1351, GitHub-Issue #1224]
+**Verbatim (Issue #1246):** `_candles_to_arrow_table` las `high` und `low`, prüfte beide auf Positivität und schrieb keines von beiden. Der Verlust war fünf Kataloge lang als „Bar-Achsen-Degeneration" beschrieben. Ein Feld, das gelesen wird, gehört entweder in die Ausgabe oder in einen Kommentar, der begründet, warum nicht.
+
+### 🔴 Pitfall #472 — Zwei Auflösungen in einem Strom sind keine längere Historie, sondern eine kaputte Achse [Katalog #1330–#1351, GitHub-Issue #1225]
+**Verbatim (Issue #1246):** Die `OneHour → OneDay`-Kaskade verlängerte die Spanne von 70 auf 1 086 Tage und machte die Zeitreihe unbrauchbar. Eine Kaskade über Auflösungen braucht getrennte Zielpfade und einen Auflösungs-Stempel je Zeile.
+
+### 🔴 Pitfall #473 — Eine Spanne aus zwei Randpunkten ist kein Nachweis über die Belegung dazwischen [Katalog #1330–#1351, GitHub-Issue #1228]
+**Verbatim (Issue #1246):** `latest − earliest` meldete 1 086 Tage für einen Katalog, der nur in den letzten 70 dicht war. Ein Spannen-Gate braucht ein Belegungsprofil, keine Differenz.
+
+### 🔴 Pitfall #474 — Wird der Zähler einer Quote gefiltert, muss der Nenner mitgefiltert werden [Katalog #1330–#1351, GitHub-Issue #1230]
+**Verbatim (Issue #1246):** `bar_coverage_ratio` filterte den Zähler auf RTH (#1329) und liess den Nenner als 24/7-Kalenderdifferenz stehen. Ergebnis: eine Schwelle, deren theoretisches Maximum (0.179) unter ihrem konfigurierten Wert (0.6) liegt. Bei jeder Achsenänderung ist zu prüfen, welche Grösse eine **Zeitdifferenz** ist — die berührt kein Filter.
+
+### 🟠 Pitfall #475 — Ein Preis gehört an den Zeitpunkt gestempelt, an dem er bekannt wird, nicht an den Beginn seines Intervalls [Katalog #1330–#1351, GitHub-Issue #1226]
+**Verbatim (Issue #1246):** Der Close einer Kerze auf dem Kerzenbeginn zu stempeln macht die Korrektheit von einem Bin-Konventionsdetail der nachgelagerten Aggregation abhängig. Look-Ahead-Freiheit muss deklariert und geprüft sein, nicht aus einem Implementierungsdetail folgen.
+
+### 🟠 Pitfall #476 — Ein Session-Filter auf einen Zeitpunkt verwirft Intervalle, die die Session schneiden [Katalog #1330–#1351, GitHub-Issue #1226]
+**Verbatim (Issue #1246):** Der halboffene Punkt-Test verwarf die 13:00-Kerze, obwohl deren zweite Hälfte in der Session liegt — daher 6 statt 7 Bins je Handelstag. Ein Intervall wird gegen ein Fenster auf **Überlappung** getestet, nicht auf Enthaltensein seines Startpunkts.
+
+### 🟠 Pitfall #477 — Eine Kennzahl, die ihren Wert aus einem Nachbarpunkt bezieht, kann eine Degeneration des eigenen Punkts nicht anzeigen [Katalog #1330–#1351, GitHub-Issue #1233]
+**Verbatim (Issue #1246):** `frac_zero_true_range = 0.0102` bei `frac_high_eq_low = 1.0`: die TR bezog ihre gesamte Grösse aus dem Vorgänger-Close und meldete Gesundheit, während die Intrabar-Spanne exakt null war. Ein Skalen-Schutz muss auf der Grösse rechnen, die er schützt.
+
+### 🔴 Pitfall #478 — Eine dokumentierte Unerreichbarkeit ist keine Entscheidung, sondern ein offener Defekt [Katalog #1330–#1351, GitHub-Issue #1234]
+**Verbatim (Issue #1246):** `PSR(0) ≈ 0.946 < 0.95` wurde als „explizit und dokumentiert getragen" protokolliert. Ein Gate, das kein Kandidat erreichen kann, macht den Lauf zwecklos, unabhängig davon, wie gut die Unerreichbarkeit beschrieben ist. Erreichbarkeit gehört in einen blockierenden Preflight, nicht in eine INFO-Zeile.
+
+### 🟠 Pitfall #479 — Ein Nullwert im Kostenmodell ist die aggressivste Annahme, nicht die vorsichtigste [Katalog #1330–#1351, GitHub-Issue #1235]
+**Verbatim (Issue #1246):** Slippage und Finanzierung auf 0.0 zu setzen sieht nach „nichts angenommen" aus und ist „nichts bezahlt". Fehlt eine kalibrierte Grösse, gehört eine strukturell begründete Untergrenze dorthin, nicht die Null.
+
+### 🟡 Pitfall #480 — Eine Meta-Invariante über Vollständigkeit braucht einen Erreichbarkeitsbegriff [Katalog #1330–#1351, GitHub-Issue #1240]
+**Verbatim (Issue #1246):** `check_invariant_coverage` meldete auf einem 0-Study-Lauf 29 fehlende Checks und maskierte damit den Fall, für den sie gebaut wurde. „Fehlt" und „konnte in diesem Lauf-Skope nicht erscheinen" sind zwei Aussagen.
