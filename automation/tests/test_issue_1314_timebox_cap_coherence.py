@@ -25,7 +25,9 @@ from automation.optimizer import invariants as inv
 
 def test_time_box_bars_matches_the_rth_axis_factor():
     assert _contracts.TIME_BOX_BARS == _contracts.RTH_AXIS_FACTOR * 24.0
-    assert _contracts.TIME_BOX_BARS == 5.76
+    # Issue #1343 (GH #1237) — 5.76 (geschaetzter Faktor 0.24) → 7.0 (mechanisch aus
+    # BARS_PER_TRADING_DAY=7 · max_handelstage=1.0 abgeleitet).
+    assert _contracts.TIME_BOX_BARS == 7.0
 
 
 def test_hard_cap_is_derived_from_time_box_bars_via_ceil():
@@ -34,9 +36,11 @@ def test_hard_cap_is_derived_from_time_box_bars_via_ceil():
 
 
 def test_hard_cap_stays_bit_identical_to_the_pre_fix_value():
-    """Regressionsschutz: der Cap bleibt 6 (round(24*0.24) und ceil(5.76) stimmten bereits vor
-    diesem Fix zufaellig ueberein) — dieser Fix aendert die HERKUNFT, nicht den WERT."""
-    assert _contracts.MAX_BARS_IN_TRADE_HARD_CAP == 6
+    """Regressionsschutz: der Cap blieb 6 (round(24*0.24) und ceil(5.76) stimmten vor #1343
+    zufaellig ueberein) — dieser Fix (#1314) aenderte die HERKUNFT, nicht den WERT. Issue #1343
+    (GH #1237) aendert seinerseits den WERT selbst (6 → 7, mechanisch aus der Session-Ueberlappung
+    gezaehlt statt aus der VOR #1332 gemessenen session_coverage_fraction geschaetzt)."""
+    assert _contracts.MAX_BARS_IN_TRADE_HARD_CAP == 7
 
 
 def test_hard_cap_is_never_below_the_deadline_by_construction():

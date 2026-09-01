@@ -26,6 +26,7 @@ from typing import Any
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 from automation.optimizer._contracts import BAR_SECONDS_DEFAULT as _BAR_SECONDS_DEFAULT
 from automation.optimizer._contracts import TIME_BOX_BARS as _TIME_BOX_BARS
+from automation.optimizer.deflation import max_attainable_psr
 
 _log = logging.getLogger("optimizer")
 
@@ -268,6 +269,29 @@ def compute_trial_timebox_violations(trial_attrs: list[dict], *,
     }
 
 
+_INVARIANT_SCOPES = ("run", "study", "trial", "promotion")
+
+
+def invariant_scope(scope: str):
+    """Issue #1240 (GH #1240, Katalog #1346, P2) — deklariert die Lauf-Skope-Anforderung einer
+    ``check_*``-Funktion direkt als Funktionsattribut (``func._invariant_scope``), statt in einer
+    zweiten, unabhaengig gepflegten Liste, die von der tatsaechlichen Funktionsmenge auseinanderlaufen
+    kann (derselbe Root-Cause wie die drei parallelen ``_MAX_BARS_IN_TRADE_CAP``-Kopien vor #858).
+    Skope-Rangfolge (jede Stufe setzt die vorherige voraus): 'run' (immer erreichbar) < 'study'
+    (>= 1 Study) < 'trial' (>= 1 Trial) < 'promotion' (>= 1 Promotion). ``check_invariant_coverage``
+    liest dieses Attribut, um auf Laeufen mit 0 Studies nicht erreichbare Checks von echten
+    Verdrahtungsluecken zu unterscheiden."""
+    if scope not in _INVARIANT_SCOPES:
+        raise ValueError(f"invariant_scope({scope!r}): erwartet einen von {_INVARIANT_SCOPES}.")
+
+    def decorator(func):
+        func._invariant_scope = scope
+        return func
+
+    return decorator
+
+
+@invariant_scope("study")
 def check_sr0_coherence(holdout_metrics: dict) -> InvariantResult:
     """Issue #651-Regressionswächter.
 
@@ -300,6 +324,7 @@ def check_sr0_coherence(holdout_metrics: dict) -> InvariantResult:
     )
 
 
+@invariant_scope("study")
 def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: float = 4.0) -> InvariantResult:
     """Issue #845-Regressionswächter.
 
@@ -406,6 +431,7 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
     )
 
 
+@invariant_scope("study")
 def check_guard_reference_coherence(configured_min_periods: float | None,
                                     observed_n_periods_medians: list[float], *,
                                     max_factor: float = 2.0,
@@ -522,6 +548,7 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     )
 
 
+@invariant_scope("study")
 def check_guard_reference_stability(study_records: list[dict]) -> InvariantResult:
     """Issue #968 (Katalog A, P0 HEADLINE, Pitfall #307 in AGENTS.md) — Reproduzierbarkeits-
     Regressionswächter: der Sortino-Numerik-Guard wandert innerhalb EINES Laufs, wenn
@@ -574,6 +601,7 @@ def check_guard_reference_stability(study_records: list[dict]) -> InvariantResul
     )
 
 
+@invariant_scope("study")
 def check_exit_reason_coverage(study_records: list[dict]) -> InvariantResult:
     """Issue #919 Fix 4 — die Summe des je-Study aufsummierten ``exit_reason_histogram`` (aus
     Order-Tags, #899) muss GENAU der Anzahl der Round-Trips entsprechen, die eine
@@ -607,6 +635,7 @@ def check_exit_reason_coverage(study_records: list[dict]) -> InvariantResult:
     )
 
 
+@invariant_scope("run")
 def check_instrument_metadata_coherence(instruments: dict[str, dict], *,
                                         spread_bps_by_asset_class: dict | None = None) -> InvariantResult:
     """Issue #920 (Pitfall #298) — Metadaten sind gegen sich selbst prüfbar, ohne externe Quelle.
@@ -661,6 +690,7 @@ def check_instrument_metadata_coherence(instruments: dict[str, dict], *,
     )
 
 
+@invariant_scope("study")
 def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
     """Issue #929 Fix 3 — eigenständiges Frühwarnsignal: ``constraint_improvement_rate`` (die
     Änderung der mittleren Constraint-Verletzung zwischen erster und zweiter Hälfte der
@@ -776,6 +806,7 @@ def _standard_normal_cdf(z: float) -> float:
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
 
 
+@invariant_scope("trial")
 def check_selection_statistic_economic_bias(
     trial_attrs: list[dict], *, alpha: float = 0.01, min_trades: int = 20,
 ) -> InvariantResult:
@@ -869,6 +900,7 @@ def check_selection_statistic_economic_bias(
     )
 
 
+@invariant_scope("study")
 def check_selection_statistic_availability(study_records: list[dict], *,
                                            min_available_fraction: float = 0.80) -> InvariantResult:
     """Issue #915 (Pitfall #295) — die WIRKUNGS-Invariante, die ``check_guard_reference_coherence``
@@ -922,6 +954,7 @@ def check_selection_statistic_availability(study_records: list[dict], *,
     )
 
 
+@invariant_scope("promotion")
 def check_promotion_multiplicity_route(proposal: dict) -> InvariantResult:
     """Issue #887 (Pitfall #278) — FAIL, wenn ein Proposal mit
     ``promotion_route == 'global_default_on_symbol'`` (#682/#783 — der globale Default wurde
@@ -962,6 +995,7 @@ def check_promotion_multiplicity_route(proposal: dict) -> InvariantResult:
     )
 
 
+@invariant_scope("promotion")
 def check_boundary_veto_has_evidence(proposal: dict) -> InvariantResult:
     """Issue #958/#1124 (Katalog #960) — "Ohne Evidenz kein Veto": jeder
     ``REJECTED_BOUNDARY_SOLUTION``/``HOLD_BOUNDARY_UNRESOLVED``-Ausgang muss mindestens einen
@@ -1022,6 +1056,7 @@ def check_boundary_veto_has_evidence(proposal: dict) -> InvariantResult:
     )
 
 
+@invariant_scope("study")
 def check_boundary_solutions_matches_study_records(
     boundary_solutions: list[dict], study_records: list[dict],
 ) -> InvariantResult:
@@ -1058,6 +1093,7 @@ def check_boundary_solutions_matches_study_records(
     )
 
 
+@invariant_scope("study")
 def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     """Issue #652/#670-Regressionswächter.
 
@@ -1104,6 +1140,7 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     )
 
 
+@invariant_scope("study")
 def check_n_family_partition(n_family: dict[str, int],
                              n_family_stage1: dict[str, dict[str, int]]) -> InvariantResult:
     """Issue #1080 (Katalog #866-2) — ``n_family[symbol]`` (die familienweite Multiple-Testing-
@@ -1156,6 +1193,7 @@ def check_n_family_partition(n_family: dict[str, int],
     )
 
 
+@invariant_scope("study")
 def check_deflation_cluster_coverage(holdout_metrics: dict, *, min_coverage: float = 0.9) -> InvariantResult:
     """Issue #813-Regressionswächter.
 
@@ -1208,6 +1246,7 @@ _ELIGIBLE_ALL_CLAIM_MARKER = "in eligible_requires_all (HART)"
 _ELIGIBLE_ANY_CLAIM_MARKER = "in eligible_requires_any (aktiver OR-Arm)"
 
 
+@invariant_scope("trial")
 def check_family_n_statistic_coverage(trials: list[dict], *,
                                       deflation_n_family_raw: int | None,
                                       deflation_n_family_source: str | None = None,
@@ -1333,6 +1372,7 @@ _RISK_LAYER_PARAMS: tuple[str, ...] = ("atr_trailing_multiplier", "max_bars_in_t
 _RISK_LAYER_ALLOWLIST: dict[str, str] = {}
 
 
+@invariant_scope("run")
 def check_risk_layer_parameter_parity(
     strategy_names: list[str], *, allowlist: dict[str, str] | None = None,
 ) -> InvariantResult:
@@ -1391,6 +1431,7 @@ def check_risk_layer_parameter_parity(
     )
 
 
+@invariant_scope("run")
 def check_config_key_registry(tournament_config: dict) -> InvariantResult:
     """Issue #649/#760/#765-Regressionswächter.
 
@@ -1476,6 +1517,7 @@ def check_config_key_registry(tournament_config: dict) -> InvariantResult:
 _MANDATORY_DECISION_STAGES = ("is_gate", "confirm_or_selection", "holdout")
 
 
+@invariant_scope("promotion")
 def check_rejection_chain_completeness(
     proposal: dict, decision_chain: list[dict] | None = None,
     holdout_metrics: dict | None = None, tournament_config: dict | None = None,
@@ -1567,6 +1609,7 @@ def check_rejection_chain_completeness(
     )
 
 
+@invariant_scope("promotion")
 def check_decision_chain_stage_detail_isolation(
     decision_chain: list[dict] | None,
 ) -> InvariantResult:
@@ -1613,6 +1656,7 @@ def check_decision_chain_stage_detail_isolation(
     )
 
 
+@invariant_scope("promotion")
 def check_promotion_inference_coverage(proposal: dict, record: dict) -> InvariantResult:
     """Issue #791-Regressionswächter.
 
@@ -1650,6 +1694,7 @@ def check_promotion_inference_coverage(proposal: dict, record: dict) -> Invarian
 _CENSORED_STATISTIC_FLAG_SUFFIX = "_censored"
 
 
+@invariant_scope("promotion")
 def check_censored_statistic_in_decision(proposal: dict, holdout_metrics: dict) -> InvariantResult:
     """Issue #1004 (Katalog #858, Fix Punkt 4, Pitfall #342). Ein Cap ist eine Zensur, kein Wert:
     ``backtest_runner._calculate_stats`` stempelt seit #1004 ``profit_factor_censored`` (und
@@ -1691,6 +1736,7 @@ def check_censored_statistic_in_decision(proposal: dict, holdout_metrics: dict) 
     )
 
 
+@invariant_scope("promotion")
 def check_promotion_deployment_coherence(proposal: dict, deployment_decision: dict | None) -> InvariantResult:
     """Issue #1006 (Katalog #858, Fix Punkt 3). Zwei Selektionssysteme mit unterschiedlicher
     Strenge (Wiederkehr des #993-Musters, hier mit vertauschten Vorzeichen: der Sweep ist der
@@ -1733,6 +1779,7 @@ def check_promotion_deployment_coherence(proposal: dict, deployment_decision: di
     )
 
 
+@invariant_scope("trial")
 def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     """Issue #756-Regressionswächter (folgt auf #589/#620).
 
@@ -1766,6 +1813,7 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     )
 
 
+@invariant_scope("study")
 def check_window_unreachable_rate(
     study_records: list[dict], *, max_fraction: float = 0.05,
 ) -> InvariantResult:
@@ -1817,6 +1865,7 @@ def check_window_unreachable_rate(
     )
 
 
+@invariant_scope("trial")
 def check_objective_branch_coverage(
     trials: list[dict], *, min_measured_fraction: float = 0.10,
 ) -> InvariantResult:
@@ -1879,6 +1928,7 @@ def check_objective_branch_coverage(
     )
 
 
+@invariant_scope("study")
 def check_annualization_commensurability(
     study_records: list[dict], *, max_ratio: float = 1.05,
 ) -> InvariantResult:
@@ -2065,6 +2115,7 @@ def _censored_trial_share(
     return affected
 
 
+@invariant_scope("trial")
 def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
     """Issue #804/#886 — sechster Regressionswächter: über die GESAMTE Study hinweg dürfen KEINE
     strukturierten Inferenzpfad-Diagnosen ausserhalb der #886-Ausnahmeliste
@@ -2106,6 +2157,7 @@ def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
     )
 
 
+@invariant_scope("trial")
 def check_adaptive_diagnostic_rate(
     trials: list[dict], *, n_trials_informative: int | None, max_rate: float = 0.3,
 ) -> InvariantResult:
@@ -2167,6 +2219,7 @@ def check_adaptive_diagnostic_rate(
     )
 
 
+@invariant_scope("trial")
 def check_inference_diagnostics_concentration(
     trials: list[dict], *, n_trials_informative: int | None,
     guard_dominance_threshold: float = 0.10,
@@ -2246,6 +2299,7 @@ def check_inference_diagnostics_concentration(
 # Issue #788 — dieselbe Sentinel-Frage wie #759 (dort nur oos_win_rate) gilt fuer JEDE OOS-Metrik,
 # die make_symbol_objective als Trial-User-Attr persistiert: ein nicht evaluierter Trial darf fuer
 # KEINE davon eine Beobachtung tragen. Deklarative Liste statt sechs Einzel-Wächtern.
+@invariant_scope("study")
 def check_denominator_coherence(study_counts: dict) -> InvariantResult:
     """Issue #885 Fix Punkt 3 — FAIL, wenn ``n_trials_informative + n_trials_pruned +
     n_trials_unevaluable + n_trials_failed != n_trials_total`` für eine Study
@@ -2371,6 +2425,7 @@ _SENTINEL_GUARDED_METRIC_KEYS = (
 )
 
 
+@invariant_scope("trial")
 def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
     """Issue #759/#788-Regressionswächter.
 
@@ -2411,6 +2466,7 @@ def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
     )
 
 
+@invariant_scope("study")
 def check_holdout_buyhold_return_coherence(study_records: list[dict]) -> InvariantResult:
     """Issue #1100 (Katalog #933) — symbolweiter Kohärenz-Wächter, siebte Instanz derselben
     #759/#788/#966-Sentinel-Kollaps-Fehlerklasse: ``holdout_buyhold_return`` (der Buy&Hold-
@@ -2828,6 +2884,7 @@ def _gate_marginal_totals(study_records: list[dict]) -> dict[str, dict[str, floa
     return totals
 
 
+@invariant_scope("study")
 def check_gate_marginal_contribution(
     study_records: list[dict], *, min_evaluated: int = 500,
     gate_consolidation_protected: list[str] | None = None,
@@ -2923,6 +2980,7 @@ def check_gate_marginal_contribution(
     )
 
 
+@invariant_scope("study")
 def check_gate_zero_marginal_policy(
     study_records: list[dict], *,
     policy: str = "require_decision",
@@ -3005,6 +3063,7 @@ def check_gate_zero_marginal_policy(
     )
 
 
+@invariant_scope("study")
 def check_gate_collinearity_consolidation(study_records: list[dict], *,
                                           max_affected_fraction: float = 0.20) -> InvariantResult:
     """Issue #776/#792-Regressionswächter.
@@ -3039,6 +3098,7 @@ def check_gate_collinearity_consolidation(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5) -> InvariantResult:
     """Issue #770-Regressionswächter (siebter Invarianten-Check, Anschluss #743/#773).
 
@@ -3114,6 +3174,7 @@ def assert_invariant_scope_uncontaminated(study_records: list[dict]) -> None:
         )
 
 
+@invariant_scope("study")
 def check_loss_metric_commensurability(study_records: list[dict]) -> InvariantResult:
     """Issue #1097 (Katalog #930) — prüft die Teilmengen-Schranke, die für nicht-negative
     Verluste ZWINGEND gilt: TRAILING_STOP-Verluste sind eine TEILMENGE aller Verlust-Trades
@@ -3183,6 +3244,7 @@ def check_loss_metric_commensurability(study_records: list[dict]) -> InvariantRe
     )
 
 
+@invariant_scope("study")
 def check_trailing_stop_loss_share(
     study_records: list[dict], *,
     max_loss_share: float = 0.60, max_median_loss_ratio: float = 1.25,
@@ -3318,6 +3380,7 @@ def check_trailing_stop_loss_share(
     )
 
 
+@invariant_scope("study")
 def check_family_n_stability(
     frozen_by_symbol: dict[str, int], observed_by_symbol: dict[str, int], *,
     frozen_stage1: dict[str, dict[str, int]] | None = None,
@@ -3407,6 +3470,7 @@ def check_family_n_stability(
     )
 
 
+@invariant_scope("study")
 def check_family_n_event_report_agreement(
     n_family_attempted_frozen_by_event: dict[str, int] | None,
     n_family_frozen_by_report: dict[str, int],
@@ -3504,6 +3568,7 @@ def check_family_n_event_report_agreement(
     )
 
 
+@invariant_scope("run")
 def check_event_stream_completeness(
     expected_trial_events: int | None, actual_trial_events: int,
     expected_study_events: int | None, actual_study_events: int,
@@ -3565,6 +3630,7 @@ def check_event_stream_completeness(
     )
 
 
+@invariant_scope("run")
 def check_commit_coherence(
     git_commit_simulation: str | None, git_commit_report: str | None,
 ) -> InvariantResult:
@@ -3611,6 +3677,7 @@ def check_commit_coherence(
     )
 
 
+@invariant_scope("study")
 def check_report_cohort_coherence(
     study_records: list[dict], *, run_id: str | None = None,
 ) -> InvariantResult:
@@ -3679,6 +3746,7 @@ def check_report_cohort_coherence(
     )
 
 
+@invariant_scope("study")
 def check_cohort_clock_drift(
     study_records: list[dict], *, wallclock_s: float | None,
     run_started_at_utc: str | None = None,
@@ -3792,6 +3860,7 @@ def check_cohort_clock_drift(
     )
 
 
+@invariant_scope("study")
 def check_report_cohort_event_stream_coherence(
     study_records: list[dict], *, run_id: str | None,
     study_completed_events: list[dict] | None,
@@ -3869,6 +3938,7 @@ def build_cohort_descriptor(
     }
 
 
+@invariant_scope("run")
 def check_cohort_declaration_consistency(
     current_checks: list[dict], *, prior_probe_checks: list[dict] | None = None,
 ) -> InvariantResult:
@@ -3946,6 +4016,7 @@ def check_cohort_declaration_consistency(
     )
 
 
+@invariant_scope("study")
 def check_expectancy_definition_coherence(
     study_records: list[dict], *, max_relative_gap: float = 0.5, min_trades: int = 10,
 ) -> InvariantResult:
@@ -3994,6 +4065,7 @@ def check_expectancy_definition_coherence(
     )
 
 
+@invariant_scope("study")
 def check_session_calendar_coherence(
     study_records: list[dict], *, asset_class_by_symbol: dict[str, str],
     gated_asset_classes: frozenset[str] = frozenset({"EQUITY", "COMMODITY"}),
@@ -4065,6 +4137,7 @@ def check_session_calendar_coherence(
     )
 
 
+@invariant_scope("study")
 def check_timebox_unit_coherence(
     study_records: list[dict], *, declared_axis: str,
     asset_class_by_symbol: dict[str, str],
@@ -4143,6 +4216,7 @@ def check_timebox_unit_coherence(
     )
 
 
+@invariant_scope("run")
 def check_timebox_cap_coherence(
     max_bars_in_trade_hard_cap: float = _MAX_BARS_IN_TRADE_CAP,
     time_box_bars: float = _TIME_BOX_BARS, *,
@@ -4202,6 +4276,7 @@ def check_timebox_cap_coherence(
     )
 
 
+@invariant_scope("run")
 def check_override_axis_coherence(
     active_bounds_overrides: list[dict], *, run_axis: str | None,
 ) -> InvariantResult:
@@ -4252,6 +4327,7 @@ def check_override_axis_coherence(
     )
 
 
+@invariant_scope("study")
 def check_summary_row_completeness(
     study_records: list[dict], *, min_exposure_for_normalization: float = 0.05,
 ) -> InvariantResult:
@@ -4314,6 +4390,7 @@ def check_summary_row_completeness(
     )
 
 
+@invariant_scope("study")
 def check_applied_cost_components_resolved(study_records: list[dict]) -> InvariantResult:
     """Issue #1075/#1223 (Katalog #1247+, P0) — der symbolspezifische Kosten-Auflösungspfad liess
     Finanzierung/Slippage lautlos auf die DEFAULT-Kostenbasis fallen, wenn ein Symbol NUR einen
@@ -4384,6 +4461,7 @@ def check_applied_cost_components_resolved(study_records: list[dict]) -> Invaria
     )
 
 
+@invariant_scope("study")
 def check_cost_stress_distinctness(
     study_records: list[dict], *, min_affected_fraction: float = 0.9,
     min_delta_coefficient: float = 0.5,
@@ -4575,6 +4653,7 @@ def check_cost_stress_distinctness(
     )
 
 
+@invariant_scope("study")
 def check_cost_stress_monotonicity(
     study_records: list[dict], *, step_tolerance_bps: float = 0.05,
 ) -> InvariantResult:
@@ -4669,6 +4748,7 @@ def check_cost_stress_monotonicity(
     )
 
 
+@invariant_scope("study")
 def check_dust_round_trip_share(study_records: list[dict], *,
                                 max_share: float = 0.01) -> InvariantResult:
     """Issue #1085 (Katalog #866-2, Kohorte D) — Dust-Round-Trips (Notional zwischen ~1e-14 und
@@ -4738,6 +4818,7 @@ def check_dust_round_trip_share(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_expectancy_outlier_dependence(study_records: list[dict]) -> InvariantResult:
     """Issue #1073 (Katalog #866-2, Kohorte D) — FAIL, wenn
     ``sign(holdout_expectancy_winsorized) != sign(holdout_expectancy_notional_weighted)`` (oder die
@@ -4789,6 +4870,7 @@ def check_expectancy_outlier_dependence(study_records: list[dict]) -> InvariantR
     )
 
 
+@invariant_scope("study")
 def check_open_position_at_data_end(
     study_records: list[dict], *, max_fraction: float = 0.02,
 ) -> InvariantResult:
@@ -4838,6 +4920,7 @@ def check_open_position_at_data_end(
     )
 
 
+@invariant_scope("study")
 def check_sizing_identity_coherence(
     study_records: list[dict], *, max_relative_gap: float = 0.35,
     min_trades: int = 10, min_abs_expectancy: float = 1e-4,
@@ -4953,6 +5036,7 @@ def check_sizing_identity_coherence(
     )
 
 
+@invariant_scope("study")
 def check_sizing_cap_enforcement(
     study_records: list[dict], *, max_overshoot_factor: float = 1.05,
 ) -> InvariantResult:
@@ -5075,6 +5159,7 @@ def check_sizing_cap_enforcement(
     )
 
 
+@invariant_scope("study")
 def check_atr_scale_homogeneity(
     study_records: list[dict], *, max_ratio: float = 6.0,
     atr_floor_bps_by_symbol: dict[str, float] | None = None,
@@ -5262,6 +5347,7 @@ def check_atr_scale_homogeneity(
 _ATR_FLOOR_FREEZE_POLICIES = frozenset({"diagnose", "freeze"})
 
 
+@invariant_scope("study")
 def check_atr_floor_dimension_freeze_candidates(
     study_records: list[dict], *,
     freeze_threshold: float = 0.60,
@@ -5354,6 +5440,7 @@ def check_atr_floor_dimension_freeze_candidates(
     )
 
 
+@invariant_scope("study")
 def check_atr_floor_enforcement(
     study_records: list[dict], *,
     atr_floor_bps_by_symbol: dict[str, float] | None = None,
@@ -5475,6 +5562,7 @@ def check_atr_floor_enforcement(
     )
 
 
+@invariant_scope("run")
 def check_sizing_parity_backtest_vs_allocator(
     trade_amount_pct_by_strategy: dict[str, float], *,
     max_symbol_exposure_fraction: float | None, tolerance: float = 0.01,
@@ -5548,6 +5636,7 @@ def check_sizing_parity_backtest_vs_allocator(
     )
 
 
+@invariant_scope("run")
 def check_worker_utilisation_plausible(
     worker_occupancy_wallclock: float | None, *, max_ratio: float = 1.0,
     n_studies: int | None = None,
@@ -5591,6 +5680,7 @@ def check_worker_utilisation_plausible(
     )
 
 
+@invariant_scope("trial")
 def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01) -> InvariantResult:
     """Verallgemeinerung von ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621): statt einer
     einzelnen WARNING-Zeile pro inertem Term liefert diese Pruefung die VOLLSTAENDIGE Liste ueber
@@ -5718,6 +5808,7 @@ def _reward_std_constraint_feasible(trials: list[dict]) -> float | None:
     return statistics.pstdev(vals)
 
 
+@invariant_scope("trial")
 def check_reward_dynamic_range(trials: list[dict], *,
                                min_base_dominance_factor: float = 4.0,
                                min_reward_std_feasible: float = 0.05,
@@ -5820,6 +5911,7 @@ def check_reward_dynamic_range(trials: list[dict], *,
     )
 
 
+@invariant_scope("run")
 def check_champion_writeback_reachability(champions_summary: dict) -> InvariantResult:
     """Issue #818-Regressionswächter (achter Invarianten-Check, siehe #742/#749).
 
@@ -5938,6 +6030,7 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
     )
 
 
+@invariant_scope("run")
 def check_champion_store_visibility(champions_summary: dict) -> InvariantResult:
     """Issue #1044/#1193 — Meta-Invariante für den #1193-Sichtbarkeits-Fix. Root-Cause #1193: drei
     aufeinanderfolgende Läufe meldeten identisch ``{stored: 0, skipped_by_reason: {STORE_EMPTY:
@@ -5968,6 +6061,7 @@ def check_champion_store_visibility(champions_summary: dict) -> InvariantResult:
     )
 
 
+@invariant_scope("run")
 def check_champion_attempt_coherence(
     reported_attempts: int | None, actual_writeback_events: int | None,
 ) -> InvariantResult:
@@ -6014,6 +6108,7 @@ def check_champion_attempt_coherence(
     )
 
 
+@invariant_scope("run")
 def check_champion_corroboration_reachable(
     champions_summary: dict, *, total_runs_started: int | None = None,
     runs_completed_for_pair: int | None = None,
@@ -6079,6 +6174,7 @@ _STRUCTURAL_DIAGNOSIS_STOP_REASONS = frozenset({
 })
 
 
+@invariant_scope("study")
 def check_structural_zero_eligible_has_diagnosis(
     studies_out: list[dict], diagnosed_pairs: list[dict],
 ) -> InvariantResult:
@@ -6134,6 +6230,7 @@ def check_structural_zero_eligible_has_diagnosis(
     )
 
 
+@invariant_scope("study")
 def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int = 50) -> InvariantResult:
     """Issue #829 Fix Punkt 5 (neunter Invarianten-Check, Pitfall #258) — die maschinelle Form der
     Frage "warum ändert sich hier nichts?": FAIL, wenn ``diagnosed_pairs_cache.json`` (aus
@@ -6210,6 +6307,7 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
     )
 
 
+@invariant_scope("study")
 def check_search_space_override_admissible(diagnosed_pairs: list[dict]) -> InvariantResult:
     """Issue #1066 (Pitfall #371) — jeder ``proposed_bounds``-Eintrag im #761-Diagnose-Cache
     (``sweep_diagnostics.load_diagnosed_pairs_cache``, hier als Liste ihrer Einträge übergeben)
@@ -6248,6 +6346,7 @@ def check_search_space_override_admissible(diagnosed_pairs: list[dict]) -> Invar
     )
 
 
+@invariant_scope("study")
 def check_diagnosis_ledger_coherence(diagnosed_pairs: list[dict], *,
                                      total_runs_started: int | None) -> InvariantResult:
     """Issue #1068 — der #761-Diagnose-Cache (``n_runs_confirmed`` je Paar) und das Coverage-Ledger
@@ -6286,6 +6385,7 @@ def check_diagnosis_ledger_coherence(diagnosed_pairs: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_holding_time_cap(study_records: list[dict], *,
                            study_tolerance: float = 0.25,
                            hard_multiple: float = 3.0,
@@ -6468,6 +6568,7 @@ def check_holding_time_cap(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_counter_partition_consistency(study_records: list[dict]) -> InvariantResult:
     """Issue #972 (Katalog B, Pitfall #304 in AGENTS.md) — Regressionswächter gegen den Zero-
     Eligible-Plateau-Zähler-Widerspruch: der Plateau-Zähler (``plateau_counter_breakdown_run``,
@@ -6547,6 +6648,7 @@ def check_counter_partition_consistency(study_records: list[dict]) -> InvariantR
     )
 
 
+@invariant_scope("study")
 def check_effective_stop_distance(study_records: list[dict], *,
                                   min_ratio: float = 0.4,
                                   max_ratio: float = 10.0,
@@ -6821,6 +6923,7 @@ def check_effective_stop_distance(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_tick_population(study_records: list[dict]) -> InvariantResult:
     """Issue #1298 (GH #1175, P0) Fix Punkt 4 — blockierender Wächter: FAILt für eine Study, deren
     ``n_ticks_after_session_filter_median`` (``report._study_record``, Issue #1298 Fix Punkt 3)
@@ -6884,6 +6987,7 @@ def check_tick_population(study_records: list[dict]) -> InvariantResult:
     )
 
 
+@invariant_scope("run")
 def check_diagnosis_writeback_admissible(
     decision_admissible: bool | None, writeback_attempted: bool,
 ) -> InvariantResult:
@@ -6923,6 +7027,7 @@ def check_diagnosis_writeback_admissible(
     )
 
 
+@invariant_scope("study")
 def check_binding_cause_agreement(agreement_records: list[dict]) -> InvariantResult:
     """Issue #1304 (GH #1181, P1) — FAILt, wenn für dasselbe (Strategie, Symbol) der Ereignis-
     ``binding_cause`` (sweep-seitig, ``sweep_diagnostics.diagnose_trade_frequency``, PER-TRIAL-
@@ -6974,6 +7079,7 @@ def check_binding_cause_agreement(agreement_records: list[dict]) -> InvariantRes
     )
 
 
+@invariant_scope("study")
 def check_effective_stop_ratio_coverage(study_records: list[dict], *,
                                         min_coverage_fraction: float = 0.8) -> InvariantResult:
     """Issue #1262 (GH #1132) — ``effective_stop_ratio_cohort_n`` (die "eligible Kohorte", je >= 3
@@ -7036,6 +7142,7 @@ def check_effective_stop_ratio_coverage(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_cost_stress_discriminates(study_records: list[dict], *,
                                     min_stddev: float = 1e-6) -> InvariantResult:
     """Issue #1266 (GH #1136), Pitfall #453 in AGENTS.md — ein Kostenstress, der jede Study eines
@@ -7100,6 +7207,7 @@ def check_cost_stress_discriminates(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_stop_distance_model_fidelity(
     study_records: list[dict], *,
     max_relative_deviation: float = 0.25,
@@ -7178,6 +7286,7 @@ def check_stop_distance_model_fidelity(
     )
 
 
+@invariant_scope("study")
 def check_stop_cost_ratio(study_records: list[dict], *,
                           round_trip_cost_bps_by_symbol: dict[str, float],
                           min_stop_to_cost_ratio: float = 3.0) -> InvariantResult:
@@ -7238,6 +7347,7 @@ def check_stop_cost_ratio(study_records: list[dict], *,
     )
 
 
+@invariant_scope("run")
 def check_store_scan_coherence(
     store_scan: dict, n_studies: int, *, purge_provenance_documented: bool = False,
 ) -> InvariantResult:
@@ -7275,6 +7385,7 @@ def check_store_scan_coherence(
     )
 
 
+@invariant_scope("study")
 def check_cost_basis_resolution(
     study_records: list[dict], *,
     atr_floor_bps_by_symbol: dict[str, float],
@@ -7337,6 +7448,7 @@ def check_cost_basis_resolution(
     )
 
 
+@invariant_scope("study")
 def check_selection_cost_basis_contract(study_records: list[dict]) -> InvariantResult:
     """Issue #1078/#1226 (P1, Semantik-Bump, reward_semantics_version v25) — ``selection_cost_basis``
     (``report._study_record`` ⇐ ``backtest_runner._apply_calibrated_slippage_deduction``) behauptet
@@ -7398,6 +7510,7 @@ def check_selection_cost_basis_contract(study_records: list[dict]) -> InvariantR
     )
 
 
+@invariant_scope("study")
 def check_cost_basis_coherence(study_records: list[dict]) -> InvariantResult:
     """Issue #1257 (GH #1127), Pitfall #454 in AGENTS.md — ``check_selection_cost_basis_contract``
     (oben) prueft nur, DASS ein ``selection_cost_basis``-Feld gesetzt/plausibel ist; dieser Waechter
@@ -7474,6 +7587,7 @@ def check_cost_basis_coherence(study_records: list[dict]) -> InvariantResult:
     )
 
 
+@invariant_scope("study")
 def check_alpha_tstat_estimator_agreement(study_records: list[dict], *,
                                           max_relative_deviation: float = 0.25) -> InvariantResult:
     """Issue #1255 (GH #1125), Pitfall #454-Klasse in AGENTS.md — ``holdout_alpha_tstat``
@@ -7545,6 +7659,7 @@ def check_alpha_tstat_estimator_agreement(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_beta_exposure_plausibility(study_records: list[dict], *,
                                      min_exposure_fraction: float = 0.10,
                                      min_beta_fraction_of_expected: float = 0.25) -> InvariantResult:
@@ -7630,6 +7745,7 @@ def check_beta_exposure_plausibility(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_alpha_regression_identifiability(study_records: list[dict], *,
                                             min_exposure_fraction: float = 0.3,
                                             min_beta_fraction_of_expected: float = 0.25
@@ -7728,6 +7844,7 @@ def check_alpha_regression_identifiability(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_alpha_tstat_gate_calibrated(oos_min_alpha_tstat_mode: str | None,
                                        study_records: list[dict]) -> InvariantResult:
     """Issue #1282 (GH #1155, Katalog #1272-1297, P0) Fix Punkt 3 — meldet FAIL ``high``, wenn
@@ -7775,6 +7892,7 @@ def check_alpha_tstat_gate_calibrated(oos_min_alpha_tstat_mode: str | None,
     )
 
 
+@invariant_scope("study")
 def check_alpha_df_consistency(study_records: list[dict]) -> InvariantResult:
     """Issue #1284 (GH #1157, Katalog #1272-1297, P3) — ``holdout_alpha_tstat_df`` muss zur
     tatsaechlich verwendeten Regressions-Stichprobe passen: ``alpha_tstat_df == n_used - 2``.
@@ -7835,6 +7953,7 @@ def check_alpha_df_consistency(study_records: list[dict]) -> InvariantResult:
     )
 
 
+@invariant_scope("run")
 def check_run_is_not_duplicate(run_fingerprint: str | None, run_id: str | None,
                                prior_entries: list[dict]) -> InvariantResult:
     """Issue #1252 (GH #1122) — erkennt einen bit-identischen Wiederholungslauf: existiert
@@ -7888,6 +8007,7 @@ def check_run_is_not_duplicate(run_fingerprint: str | None, run_id: str | None,
     )
 
 
+@invariant_scope("run")
 def check_run_determinism(run_fingerprint: str | None, result_fingerprint: str | None,
                           run_id: str | None, prior_entries: list[dict], *,
                           current_study_summaries: list[dict] | None = None) -> InvariantResult:
@@ -7969,6 +8089,7 @@ def check_run_determinism(run_fingerprint: str | None, result_fingerprint: str |
     )
 
 
+@invariant_scope("run")
 def check_result_not_degenerate(
     result_degenerate: bool, result_degenerate_reason: str | None,
 ) -> InvariantResult:
@@ -8002,6 +8123,7 @@ def check_result_not_degenerate(
     )
 
 
+@invariant_scope("run")
 def check_fail_fast_probe_timeliness(
     fail_fast_probe_triggered_at_wallclock_fraction: float | None,
 ) -> InvariantResult:
@@ -8096,6 +8218,7 @@ def _resolve_causal_hypothesis_state(
     return "UNRESOLVED"
 
 
+@invariant_scope("study")
 def check_trailing_stop_risk_calibration_acceptance(
     study_records: list[dict], *,
     min_spearman: float = 0.3,
@@ -8371,6 +8494,7 @@ def check_trailing_stop_risk_calibration_acceptance(
     )
 
 
+@invariant_scope("study")
 def check_stop_loss_vs_bar_range(
     study_records: list[dict], *,
     bar_range_ratio_band: tuple[float, float] = (0.7, 1.4),
@@ -8553,6 +8677,7 @@ def check_stop_loss_vs_bar_range(
     )
 
 
+@invariant_scope("study")
 def check_zero_range_bar_share(
     study_records: list[dict], *,
     max_high_share_fraction: float = 0.2,
@@ -8615,6 +8740,7 @@ def check_zero_range_bar_share(
     )
 
 
+@invariant_scope("study")
 def check_stop_trigger_axis_coherence(
     stop_trigger_axis: str | None, study_records: list[dict], *,
     zero_range_bar_fraction_threshold: float = 0.5,
@@ -8696,6 +8822,7 @@ def check_stop_trigger_axis_coherence(
     )
 
 
+@invariant_scope("study")
 def check_cost_drag_decomposition(
     study_records: list[dict], *, tolerance_fraction: float = 0.05,
 ) -> InvariantResult:
@@ -8768,6 +8895,77 @@ def check_cost_drag_decomposition(
     )
 
 
+@invariant_scope("study")
+def check_financing_applies_to_shorts(study_records: list[dict]) -> InvariantResult:
+    """Issue #1349 (GH #1243, P2) Fix-Punkt 2 — Symptom: ``overnight_financing_bps_per_day_by_
+    asset_class`` war durchgaengig 0.0, obwohl auf der RTH-Achse JEDE Position, die die Zeitbox von
+    mehr als einem Handelstag ausschoepft, mindestens eine Nacht haelt. Root-Cause: fuer eine
+    ungehebelte Long-Position ist 0.0 sachlich richtig — der Fehler war, dass der Wert als DEFAULT
+    FUER ALLES galt: eine Strategie mit ``allow_short=True`` (``report._allow_short_by_strategy``)
+    wurde nie gegen die tatsaechlich gehandelte Richtung geprueft.
+
+    FAIL (severity ``high``) fuer jede Study mit ``allow_short=True``, deren mediane Haltedauer
+    (``median_bars_held * bar_seconds``, ``bar_seconds`` aus ``symbol_bar_quality.median_delta_t_s``
+    oder ``_contracts.BAR_SECONDS_DEFAULT`` — dieselbe dokumentierte Naeherung wie
+    ``report._stamp_cost_drag_decomposition``) mindestens einen Kalendertag ueberspannt UND
+    ``applied_financing_bps_per_day == 0.0``: eine Study, die strukturell Short-Positionen ueber
+    Nacht haelt, aber KEINE Finanzierungskosten traegt, ist fast immer ein Konfigurationsfehler
+    (die begruendete Ausnahme — 0.0 fuer 'long' — betrifft NUR Studies ohne Short, die dieser Check
+    nicht erfasst).
+
+    ``study_records`` ohne ``allow_short``/``median_bars_held``/``applied_financing_bps_per_day``
+    (aeltere Report-Artefakte vor #1349/#1256) ⇒ nicht auswertbar (INCONCLUSIVE, kein FAIL)."""
+    candidates = [
+        r for r in study_records
+        if r.get("allow_short") is True and r.get("median_bars_held") is not None
+        and r.get("applied_financing_bps_per_day") is not None
+    ]
+    if not candidates:
+        return InvariantResult(
+            name="check_financing_applies_to_shorts",
+            passed=None,
+            expected="allow_short=True UND >= 1 Tag Haltedauer impliziert "
+                     "applied_financing_bps_per_day > 0.0",
+            actual=None,
+            severity="high",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "NO_ALLOW_SHORT_STUDY_WITH_FINANCING_TELEMETRY"},
+            detail="Keine Study mit allow_short=True und vollstaendiger Finanzierungs-Telemetrie "
+                   "— nicht auswertbar.",
+        )
+    offenders = []
+    for r in candidates:
+        _symbol_bar_quality = r.get("symbol_bar_quality")
+        bar_seconds = (
+            _symbol_bar_quality.get("median_delta_t_s")
+            if isinstance(_symbol_bar_quality, dict) and _symbol_bar_quality.get("median_delta_t_s")
+            else _BAR_SECONDS_DEFAULT
+        )
+        holding_days = float(r["median_bars_held"]) * float(bar_seconds) / 86400.0
+        if holding_days >= 1.0 and float(r["applied_financing_bps_per_day"]) == 0.0:
+            offenders.append(f"{r.get('strategy')}/{r.get('symbol')}")
+    passed = not offenders
+    return InvariantResult(
+        name="check_financing_applies_to_shorts",
+        passed=passed,
+        expected="allow_short=True UND >= 1 Tag Haltedauer impliziert "
+                 "applied_financing_bps_per_day > 0.0",
+        actual={"offenders": offenders} if offenders else None,
+        severity="high",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None,
+                     "n_studies_measured": len(candidates)},
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit allow_short=True und >= 1 Tag medianer "
+                f"Haltedauer, aber applied_financing_bps_per_day=0.0: {', '.join(offenders)} "
+                "(#1349)."),
+        provenance={"offenders": offenders} if offenders else None,
+    )
+
+
+@invariant_scope("study")
 def check_slippage_scope_agreement(study_records: list[dict]) -> InvariantResult:
     """Issue #1276 (GH #1149, Katalog #1272-1297, P0) — ``slippage_p50_calibration_scope``
     (``report._resolve_slippage_p50_calibrated``, die Aufloesungsebene des NEU gestempelten
@@ -8827,6 +9025,7 @@ def check_slippage_scope_agreement(study_records: list[dict]) -> InvariantResult
     )
 
 
+@invariant_scope("study")
 def check_slippage_calibration_not_circular(study_records: list[dict]) -> InvariantResult:
     """Issue #1278 (GH #1151, Katalog #1272-1297, P1) — schliesst den Verdacht aus, dass die
     GEMESSENE ``stop_exit_slippage_bps`` (Rohmaterial fuer die p50/p90-Kalibrierung,
@@ -8883,6 +9082,132 @@ def check_slippage_calibration_not_circular(study_records: list[dict]) -> Invari
     )
 
 
+@invariant_scope("run")
+def check_cost_model_realism_admissible(
+    cost_model_realism_source: str | None, *, acknowledged: bool = False,
+) -> InvariantResult:
+    """Issue #1341 (GH #1235) — ``COST_MODEL_ZERO_REALISM`` (``cost_model_realism_source ==
+    'config_zero'``) war bislang nur eine WARNING ohne Konsequenz: der Lauf blieb entscheidungs-
+    fähig, obwohl der Text selbst sagt "jede Ertragsaussage dieses Laufs ist ohne Overnight-
+    Finanzierung, ohne Slippage, ohne Market Impact". Diese Invariante macht die Konsequenz
+    explizit: ``config_zero`` FAILt blockierend (⇒ ``decision_admissible=False`` über
+    ``report._compute_decision_admissible``) — Studies/Diagnostik laufen unverändert weiter (der
+    Lauf bleibt als Suchraum-Erkundung wertvoll), aber der Deployment-Pfad ist geschlossen.
+
+    ``calibrated_cache``/``mixed`` (die EFFEKTIVE Kostenbasis ist nicht null, siehe
+    ``report._cost_model_realism_from_applied``-Docstring) PASSen unbedingt — nur ``config_zero``
+    ist betroffen; die Unterscheidung selbst ist NICHT Teil dieses Checks (sie bleibt bei
+    ``_cost_model_realism_from_applied``, siehe dortiger Docstring: "die Unterscheidung ... bleibt
+    erhalten").
+
+    ``acknowledged=True`` (``optimizer.json['cost_model_zero_realism_acknowledged']``) erlaubt den
+    Lauf explizit OHNE Promotionsberechtigung — für Achsen-/Diagnostikläufe wie den, der dieses
+    Issue motiviert hat (Kein stiller Durchlauf: der PASS trägt ``promotion_blocked_reason``
+    weiterhin, nur ``passed`` wird True)."""
+    expected = "cost_model_realism_source != 'config_zero' (oder explizit acknowledged)"
+    if cost_model_realism_source is None:
+        return InvariantResult(
+            name="check_cost_model_realism_admissible",
+            passed=None,
+            expected=expected,
+            actual=None,
+            severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "NO_COST_MODEL_SOURCE",
+                         "n_studies_measured": 0},
+            detail="cost_model_realism_source nicht aufloesbar — nicht auswertbar.",
+        )
+    is_zero = cost_model_realism_source == "config_zero"
+    passed = (not is_zero) or acknowledged
+    return InvariantResult(
+        name="check_cost_model_realism_admissible",
+        passed=passed,
+        expected=expected,
+        actual={"cost_model_realism_source": cost_model_realism_source, "acknowledged": acknowledged}
+               if is_zero else None,
+        severity="blocking",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+        detail=(
+            "OK" if not is_zero else
+            ("cost_model_realism_source='config_zero', aber "
+             "cost_model_zero_realism_acknowledged=true — Lauf zugelassen OHNE "
+             "Promotionsberechtigung (#1341/GH #1235)." if acknowledged else
+             "cost_model_realism_source='config_zero': jede Ertragsaussage dieses Laufs ist ohne "
+             "Overnight-Finanzierung, ohne Slippage, ohne Market Impact — Promotionen sind in "
+             "diesem Lauf unzulaessig (promotion_blocked_reason='COST_MODEL_ZERO_REALISM'). Setze "
+             "cost_model_zero_realism_acknowledged=true fuer einen bewussten Diagnostiklauf ohne "
+             "Promotionsanspruch (#1341/GH #1235).")),
+    )
+
+
+@invariant_scope("run")
+def check_promotion_confidence_reachability(
+    t_holdout: int | None, promotion_confidence: float | None, *,
+    reference_sr: float = 0.11386,
+) -> InvariantResult:
+    """Issue #1340 (GH #1234) — der grösste Ertragshebel des #1246-Katalogs: ein achsenbewusster
+    Reachability-Preflight VOR Phase 1. Der ``[#624]``-Preflight protokollierte die
+    Unerreichbarkeit bislang nur als INFO-Zeile ("Promotionsschwelle DSR/PSR wird EXPLIZIT und
+    dokumentiert getragen") — ein dokumentiertes Tragen ist keine Lösung, sondern die Beschreibung
+    eines Deadlocks: kein Kandidat, auch kein perfekter, kann promoviert werden, solange
+    ``max_attainable_psr(t_holdout) < promotion_confidence`` gilt. Ein Lauf, dessen Deployment-Pfad
+    strukturell geschlossen ist, darf nicht als entscheidungsfähig starten.
+
+    ``t_holdout``/``promotion_confidence`` fehlend (``None``) ⇒ INCONCLUSIVE (kein FAIL — die
+    Geometrie/Konfidenz konnte nicht aufgelöst werden, z. B. weil die Bar-Achse selbst noch nicht
+    bekannt ist, siehe ``sweep.compute_holdout_bar_count``)."""
+    expected = f"max_attainable_psr(t_holdout) >= promotion_confidence (reference_sr={reference_sr})"
+    if t_holdout is None or promotion_confidence is None:
+        return InvariantResult(
+            name="check_promotion_confidence_reachability",
+            passed=None,
+            expected=expected,
+            actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence},
+            severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False,
+                         "inconclusive_reason": "T_HOLDOUT_OR_CONFIDENCE_UNRESOLVED",
+                         "n_studies_measured": 0},
+            detail="t_holdout oder promotion_confidence nicht aufloesbar — nicht auswertbar.",
+        )
+    max_attainable = max_attainable_psr(t_holdout, reference_sr=reference_sr)
+    if max_attainable is None:
+        return InvariantResult(
+            name="check_promotion_confidence_reachability",
+            passed=None,
+            expected=expected,
+            actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence},
+            severity="blocking",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "PSR_DEGENERATE",
+                         "n_studies_measured": 0},
+            detail=f"max_attainable_psr({t_holdout}) numerisch nicht auswertbar (T < 2 oder "
+                   f"nicht-positiver Varianz-Term).",
+        )
+    passed = max_attainable >= promotion_confidence
+    return InvariantResult(
+        name="check_promotion_confidence_reachability",
+        passed=passed,
+        expected=expected,
+        actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence,
+               "max_attainable_psr": round(max_attainable, 4), "reference_sr": reference_sr,
+               "required_t": t_holdout},
+        severity="blocking",
+        evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+        detail=("OK" if passed else
+                f"max_attainable_psr({t_holdout})={max_attainable:.4f} < "
+                f"promotion_confidence={promotion_confidence} — die Promotionsschwelle ist mit "
+                f"diesem Holdout-Fenster fuer JEDEN Kandidaten unerreichbar, unabhaengig von "
+                f"dessen Qualitaet (#1340/GH #1234)."),
+    )
+
+
+@invariant_scope("study")
 def check_mandatory_gate_reachability_global(
     mandatory_gate_live_results: list[dict], *, min_affected_fraction: float = 0.8,
 ) -> InvariantResult:
@@ -8936,6 +9261,7 @@ def check_mandatory_gate_reachability_global(
     )
 
 
+@invariant_scope("study")
 def check_selection_cost_basis_admissible(study_records: list[dict]) -> InvariantResult:
     """Issue #1277 (GH #1150, Katalog #1272-1297, P0) — ``selection_cost_basis ==
     'round_trip_plus_calibrated_slippage'`` ist bei degenerierter Bar-Achse (siehe
@@ -9052,6 +9378,7 @@ def suppress_stop_verdict_if_bar_axis_degenerate(
     )
 
 
+@invariant_scope("study")
 def check_exit_telemetry_completeness(
     study_records: list[dict], *,
     telemetry_fields: tuple[str, ...] = (
@@ -9111,6 +9438,7 @@ def check_exit_telemetry_completeness(
     )
 
 
+@invariant_scope("study")
 def check_stop_loss_decomposition_identity(
     study_records: list[dict], *, max_violation_fraction: float = 0.001,
 ) -> InvariantResult:
@@ -9183,6 +9511,7 @@ def check_stop_loss_decomposition_identity(
     )
 
 
+@invariant_scope("study")
 def check_stop_loss_share_decomposition(
     study_records: list[dict], *, max_sum_deviation: float = 0.02,
 ) -> InvariantResult:
@@ -9250,6 +9579,7 @@ def check_stop_loss_share_decomposition(
     )
 
 
+@invariant_scope("study")
 def check_symbol_bar_quality_cache_availability(
     study_records: list[dict], *, cache_path: str | None = None, cache_found: bool = False,
 ) -> InvariantResult:
@@ -9292,6 +9622,7 @@ def check_symbol_bar_quality_cache_availability(
     )
 
 
+@invariant_scope("study")
 def check_n_periods_homogeneity(study_records: list[dict], *,
                                 max_ratio: float = 6.0,
                                 promotion_family_scope: str | None = None) -> InvariantResult:
@@ -9387,6 +9718,7 @@ def check_n_periods_homogeneity(study_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_cost_model_resolution(cost_model_events: list[dict], *,
                                 max_default_fallback_fraction: float = 0.0) -> InvariantResult:
     """Issue #898 Fix 4 — je Symbol wird ``(asset_class_key, spread_bps, source)`` als
@@ -9428,6 +9760,7 @@ def check_cost_model_resolution(cost_model_events: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_cost_model_floor(cost_model_events: list[dict], *,
                            tolerance_bps: float = 1e-6) -> InvariantResult:
     """Issue #956 (Katalog D, Pitfall #301) — kein Symbol darf mit einem Spread simuliert werden,
@@ -9472,6 +9805,7 @@ def check_cost_model_floor(cost_model_events: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_family_scope_coherence(study_family_records: list[dict], *,
                                  promotion_family_scope: str | None = None) -> InvariantResult:
     """Issue #904 Fix 4 — bei ``promotion_family_scope == 'per_strategy'`` müssen zwei Studies
@@ -9528,6 +9862,7 @@ def check_family_scope_coherence(study_family_records: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_gate_collinearity_decision_required(gate_correlations: dict[tuple[str, str], float | None], *,
                                               threshold: float = 0.90,
                                               accepted_pairs: list[dict] | None = None,
@@ -9602,6 +9937,7 @@ def check_gate_collinearity_decision_required(gate_correlations: dict[tuple[str,
     )
 
 
+@invariant_scope("run")
 def check_invariant_registry_wired(
     defined_check_names: list[str], wired_check_names: list[str], *,
     deliberately_unwired: tuple[str, ...] = (),
@@ -9640,9 +9976,34 @@ def check_invariant_registry_wired(
     )
 
 
+_SCOPE_TIER_ORDER: tuple[str, ...] = ("run", "study", "trial", "promotion")
+
+
+def _reachable_invariant_scopes(
+    *, n_studies: int = 0, n_trials: int = 0, n_promotions: int = 0,
+) -> set[str]:
+    """Issue #1240 (GH #1240, Katalog #1346, P2) — die Skope-Rangfolge selbst: ``promotion``
+    impliziert ``trial`` impliziert ``study`` impliziert ``run`` (jede Stufe setzt die vorherige
+    Grundgesamtheit voraus — eine Promotion existiert nie ohne mindestens einen Trial, ein Trial
+    nie ohne mindestens eine Study). Der HOECHSTE erreichte Zaehlstand bestimmt, welche Stufen
+    ALLE erreichbar sind."""
+    if n_promotions and n_promotions > 0:
+        max_tier = "promotion"
+    elif n_trials and n_trials > 0:
+        max_tier = "trial"
+    elif n_studies and n_studies > 0:
+        max_tier = "study"
+    else:
+        max_tier = "run"
+    return set(_SCOPE_TIER_ORDER[:_SCOPE_TIER_ORDER.index(max_tier) + 1])
+
+
+@invariant_scope("run")
 def check_invariant_coverage(
     defined_check_names: list[str], stream_check_names: list[str], *,
     allowlisted_check_names: list[str] = (),
+    check_scopes: dict[str, str] | None = None,
+    n_studies: int = 0, n_trials: int = 0, n_promotions: int = 0,
 ) -> InvariantResult:
     """Issue #1015/#1167 (Katalog #1170, Pitfall #413 in AGENTS.md) — eine ANDERE Frage als
     ``check_invariant_registry_wired`` (#984/#1138, oben): dieser fragt "hat die Funktion eine
@@ -9656,33 +10017,60 @@ def check_invariant_coverage(
     (``allowlisted_check_names``, mit Begründung, z. B. weil sein Ereignis strukturell in einem
     disjunkten Prozess-Sidecar landet, siehe ``report._DELIBERATELY_UNWIRED_INVARIANT_CHECKS``)?
 
-    Akzeptanzkriterium #1167: ``n_defined - n_in_stream - n_allowlisted == 0`` — hier über die
-    Menge ``defined - stream - allowlisted`` ausgewertet (robust gegen Namen, die in BEIDEN
-    Mengen zugleich stehen, was die reine Subtraktion sonst verdecken würde).
+    Issue #1240 (GH #1240, Katalog #1346, P2) — Root-Cause: diese Funktion war rein mengenbasiert
+    und kannte KEINEN Erreichbarkeitsbegriff — auf einem Abbruchlauf mit 0 Studies FAILte sie mit
+    einer langen Liste aus Checks, die eine Study-/Trial-/Promotion-Grundgesamtheit voraussetzen
+    und daher STRUKTURELL nicht erscheinen konnten, und maskierte damit genau den Fall, für den sie
+    gebaut wurde (ein Check, der aus Versehen nicht mehr verdrahtet ist). Jede ``check_*``-Funktion
+    traegt seit diesem Fix eine deklarierte Skope-Anforderung (``@invariant_scope(...)``, direkt am
+    Funktionsobjekt, siehe dortigen Docstring) — ``check_scopes`` ist die vom Aufrufer daraus
+    gebaute ``{name: scope}``-Abbildung. Ein definierter Check, dessen Skope-Anforderung auf DIESEM
+    Lauf (``n_studies``/``n_trials``/``n_promotions``) NICHT erfuellt ist, zaehlt als
+    ``not_reachable_in_run_scope`` — sichtbar (``actual['n_not_reachable']``/``['not_reachable']``),
+    aber KEIN FAIL. Ein fehlender Name OHNE Skope-Deklaration wird konservativ als ``'run'``
+    (immer erreichbar) behandelt — das macht eine fehlende Deklaration niemals HARMLOSER als eine
+    vorhandene, nur strenger (sie kann nie unter dem Vorwand "nicht erreichbar" verschwinden).
+
+    Akzeptanzkriterium #1167 (unveraendert fuer ERREICHBARE Checks): ``n_defined_reachable -
+    n_in_stream - n_allowlisted == 0`` — hier über die Menge ``reachable_defined - stream -
+    allowlisted`` ausgewertet (robust gegen Namen, die in BEIDEN Mengen zugleich stehen, was die
+    reine Subtraktion sonst verdecken würde).
 
     Reine Funktion (wie ``check_invariant_registry_wired``): welche ``check_*``-Funktionen
-    DEFINIERT sind und welche Namen im Report-Strom AUFTAUCHTEN, ermittelt der Aufrufer."""
+    DEFINIERT sind, welche Skope sie tragen und welche Namen im Report-Strom AUFTAUCHTEN, ermittelt
+    der Aufrufer."""
     defined = set(defined_check_names or [])
     stream = set(stream_check_names or [])
     allowlisted = set(allowlisted_check_names or [])
-    missing = sorted(defined - stream - allowlisted)
+    scopes = check_scopes or {}
+    reachable_tiers = _reachable_invariant_scopes(
+        n_studies=n_studies, n_trials=n_trials, n_promotions=n_promotions)
+    not_reachable = sorted(
+        name for name in defined if scopes.get(name, "run") not in reachable_tiers)
+    reachable_defined = defined - set(not_reachable)
+    missing = sorted(reachable_defined - stream - allowlisted)
     passed = not missing
     return InvariantResult(
         name="check_invariant_coverage",
         passed=passed,
-        expected="jede definierte check_*-Funktion erscheint entweder im invariant_checks-Strom "
-                 "dieses Reports oder in _DELIBERATELY_UNWIRED_INVARIANT_CHECKS mit Begründung "
-                 "(n_defined - n_in_stream - n_allowlisted == 0).",
-        actual={"n_defined": len(defined), "n_in_stream": len(stream & defined),
-               "n_allowlisted": len(allowlisted & defined), "missing": missing} if not passed else None,
+        expected="jede definierte, in diesem Lauf ERREICHBARE check_*-Funktion erscheint entweder "
+                 "im invariant_checks-Strom dieses Reports oder in "
+                 "_DELIBERATELY_UNWIRED_INVARIANT_CHECKS mit Begründung "
+                 "(n_defined_reachable - n_in_stream - n_allowlisted == 0).",
+        actual={"n_defined": len(defined), "n_in_stream": len(stream & reachable_defined),
+               "n_allowlisted": len(allowlisted & reachable_defined),
+               "n_not_reachable": len(not_reachable), "not_reachable": not_reachable,
+               "missing": missing},
         severity="high",
         detail=("OK" if passed else
-                f"{len(missing)} definierte check_*-Funktion(en) erscheinen weder im Invarianten-"
-                f"Strom dieses Reports noch auf der Allowlist: {', '.join(missing)} — ihr Ergebnis "
-                "(PASS oder FAIL) ist aus dem Artefakt nicht ablesbar (#1167)."),
+                f"{len(missing)} definierte, in diesem Lauf erreichbare check_*-Funktion(en) "
+                f"erscheinen weder im Invarianten-Strom dieses Reports noch auf der Allowlist: "
+                f"{', '.join(missing)} — ihr Ergebnis (PASS oder FAIL) ist aus dem Artefakt nicht "
+                f"ablesbar (#1167)."),
     )
 
 
+@invariant_scope("run")
 def check_inconclusive_not_reported_as_pass(invariant_checks: list[dict]) -> InvariantResult:
     """Issue #1309 (GH #1186, P1, Pitfall #413 in AGENTS.md) — generischer Regressionswaechter
     GEGEN die Fehlerklasse selbst, nicht nur gegen ihre fuenf bekannten Instanzen (``check_stop_
@@ -9731,6 +10119,7 @@ def check_inconclusive_not_reported_as_pass(invariant_checks: list[dict]) -> Inv
     )
 
 
+@invariant_scope("run")
 def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
                                      fail_fast_invariants: list[str] | None = None) -> InvariantResult:
     """Issue #907 Fix 3 — symmetrisch zum Gate-Kollinearitäts-Fix: eine in
@@ -9793,6 +10182,7 @@ def _first_non_none_by_name(invariant_checks: list[dict], *, value_field: str,
     return by_name
 
 
+@invariant_scope("run")
 def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
                                             fail_fast_invariants: list[str] | None = None,
                                             ) -> InvariantResult:
@@ -9847,6 +10237,7 @@ def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
     )
 
 
+@invariant_scope("run")
 def check_fail_fast_inconclusive_budget(
     invariant_checks: list[dict], *, fail_fast_invariants: list[str] | None = None,
 ) -> InvariantResult:
@@ -9900,6 +10291,7 @@ def check_fail_fast_inconclusive_budget(
     )
 
 
+@invariant_scope("run")
 def check_fail_fast_schema_consistency(config_docs: dict[str, object], *,
                                        fail_fast_invariants: list[str] | None = None,
                                        ) -> InvariantResult:
@@ -9954,6 +10346,7 @@ def check_fail_fast_schema_consistency(config_docs: dict[str, object], *,
     )
 
 
+@invariant_scope("run")
 def check_config_matches_calibration(config_docs: dict[str, dict]) -> InvariantResult:
     """Issue #1294 (GH #1167, Katalog #1272-1297, P1) — Config-Werte widersprechen ihrer eigenen
     dokumentierten Kalibrierung.
@@ -10032,6 +10425,7 @@ def check_config_matches_calibration(config_docs: dict[str, dict]) -> InvariantR
     )
 
 
+@invariant_scope("run")
 def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
                                       fail_fast_invariants: list[str] | None = None,
                                       # Issue #1327 — ``check_bar_quality`` ist strukturell
@@ -10110,6 +10504,7 @@ def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
     )
 
 
+@invariant_scope("run")
 def check_required_config_keys(configs: dict[str, dict], required_keys_spec: dict) -> InvariantResult:
     """Issue #844 (Pitfall #267, 5. Wiederkehr nach #488/#753/#769/#805) — FAIL, wenn ein in
     ``required_keys_spec`` (``automation/config/_required_keys.json``) als ``required`` markierter
@@ -10153,6 +10548,7 @@ def check_required_config_keys(configs: dict[str, dict], required_keys_spec: dic
     )
 
 
+@invariant_scope("study")
 def check_selection_rule_homogeneity(selection_rule_families: dict[str, dict[str, int]]) -> InvariantResult:
     """Issue #848 (5. Katalog: #660 → #668 → #678 → #812 → #848) — FAIL (statt der bisherigen
     ``[#812]``-WARNUNG in ``sweep.py``), wenn mehr als EIN ``selection_rule_fingerprint`` je
@@ -10182,6 +10578,7 @@ def check_selection_rule_homogeneity(selection_rule_families: dict[str, dict[str
     )
 
 
+@invariant_scope("run")
 def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: int = 3) -> InvariantResult:
     """Issue #841/#892 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als
     ``max_age_runs`` abgeschlossenen Sweep-Läufen nicht ERNEUT abgedeckt wurde (``stale``), ODER
@@ -10233,6 +10630,7 @@ def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: 
     )
 
 
+@invariant_scope("run")
 def check_coverage_ledger_continuity(total_runs_started: int, has_prior_reports: bool, *,
                                      coverage_bootstrap_phase: bool = False) -> InvariantResult:
     """Issue #892 Fix Punkt 2 — FAIL (blocking), wenn ``total_runs_started == 1`` UND bereits
@@ -10336,6 +10734,7 @@ def _version_satisfies(installed: str, spec: str) -> bool:
     return True
 
 
+@invariant_scope("run")
 def check_library_version_drift(installed_versions: dict[str, str | None],
                                  pinned_ranges: dict[str, str]) -> InvariantResult:
     """Issue #852 (P2) — FAIL, wenn eine installierte Bibliotheksversion
@@ -10375,6 +10774,7 @@ def check_library_version_drift(installed_versions: dict[str, str | None],
     )
 
 
+@invariant_scope("study")
 def check_champion_seed_coverage(seed_source_counts: dict[str, int], *,
                                  threshold: float = 0.9) -> InvariantResult:
     """Issue #853 Fix Punkt 4 — WARNUNG (severity='low'), wenn ``seed_source == 'strategy_defaults'``
@@ -10418,6 +10818,7 @@ def check_champion_seed_coverage(seed_source_counts: dict[str, int], *,
     )
 
 
+@invariant_scope("run")
 def check_semantics_version_coherence(admissible_despite_simulation_stale: int) -> InvariantResult:
     """Issue #854 Fix Punkt 6 — FAIL, wenn ein Champion-Store-Eintrag mit einer VERALTETEN
     ``simulation_semantics_version`` (siehe ``optimizer.json``-Schema für die vollständige
@@ -10452,6 +10853,7 @@ def check_semantics_version_coherence(admissible_despite_simulation_stale: int) 
     )
 
 
+@invariant_scope("run")
 def check_deployment_gate_completeness(whitelisted_winners: dict[str, dict]) -> InvariantResult:
     """Issue #993 Fix Punkt 4 (P0-blocking) — BLOCKIERENDER Regressionswächter der Deployment-Grenze
     selbst: jeder Eintrag in ``data/state/whitelist_tournament.json``'s ``per_symbol_winners`` muss
@@ -10490,6 +10892,7 @@ def check_deployment_gate_completeness(whitelisted_winners: dict[str, dict]) -> 
     )
 
 
+@invariant_scope("run")
 def check_live_exposure_budget(exposure_snapshots: list[dict], *,
                                max_total_exposure_fraction: float = 0.60,
                                tolerance: float = 1e-9) -> InvariantResult:
@@ -10528,6 +10931,7 @@ def check_live_exposure_budget(exposure_snapshots: list[dict], *,
     )
 
 
+@invariant_scope("study")
 def check_ineligible_cohort_partition_identity(study_counts: dict) -> InvariantResult:
     """Issue #1025/#1174 (Katalog #866-2, Pitfall #424 in AGENTS.md) — die evaluierten Trials einer
     Study (``n_evaluable``) zerlegen sich disjunkt und vollstaendig in drei Klassen: eligible
@@ -10599,6 +11003,7 @@ def check_ineligible_cohort_partition_identity(study_counts: dict) -> InvariantR
     )
 
 
+@invariant_scope("study")
 def check_stop_distance_microstructure_floor(study_records: list[dict]) -> InvariantResult:
     """Issue #1028/#1177 (Katalog #866-2, Pitfall #427 in AGENTS.md) — der ATR-Floor war bislang
     REIN kostengekoppelt (``backtest_runner.cost_coupled_atr_floor_bps``, #1096): er garantiert nur
@@ -10640,6 +11045,7 @@ def check_stop_distance_microstructure_floor(study_records: list[dict]) -> Invar
     )
 
 
+@invariant_scope("study")
 def check_stop_exit_slippage_materiality(
     study_records: list[dict], *, max_fraction: float = 0.25,
 ) -> InvariantResult:
@@ -10697,6 +11103,7 @@ def check_stop_exit_slippage_materiality(
     )
 
 
+@invariant_scope("study")
 def check_search_overhead_share(
     study_records: list[dict], *, store_scan_seconds: float | None = None,
     max_overhead_fraction: float = 0.5,
@@ -10779,6 +11186,7 @@ def check_search_overhead_share(
     )
 
 
+@invariant_scope("study")
 def check_tpe_fit_cost_share(
     study_records: list[dict], *, max_fraction: float = 0.05,
 ) -> InvariantResult:
@@ -10855,6 +11263,7 @@ def check_tpe_fit_cost_share(
     )
 
 
+@invariant_scope("study")
 def check_warm_start_efficacy(study_records: list[dict]) -> InvariantResult:
     """Issue #1090/#1238 (P1, Katalog #1247+) — Warm-Start-Wirksamkeit messen statt annehmen.
 
@@ -10923,7 +11332,20 @@ def check_warm_start_efficacy(study_records: list[dict]) -> InvariantResult:
     )
 
 
-def check_report_artifact_written(*, run_status: str | None, report_written: bool) -> InvariantResult:
+# Issue #1347 (GH #1241, P3) — jeder TERMINALE run_status (jeder Wert ausser dem einen
+# In-Progress-Marker unten) behauptet, dass der Lauf zu Ende ist und ``report_written`` eine
+# verlaessliche Aussage traegt — nicht nur ``'complete'``. ``sweep.py`` setzt u. a. 'complete',
+# 'completed_invalid', 'completed_with_quarantine', 'completed_with_failures', 'resumed_complete',
+# 'aborted_invariant', 'aborted_wallclock', 'aborted_disk', 'aborted_signal', 'aborted_error',
+# 'aborted_no_report' — ALLE davon sind Endzustaende (#833s "Abort-Resilient Report" schreibt seit
+# jenem Fix bewusst AUCH auf dem Abbruchpfad, siehe generate_report_for_run-Aufrufstelle).
+_NON_TERMINAL_RUN_STATUSES = frozenset({"in_progress"})
+
+
+@invariant_scope("run")
+def check_report_artifact_written(
+    *, run_status: str | None, report_written: bool, report_path: str | None = None,
+) -> InvariantResult:
     """Issue #1021/#1196 Fix 4.3 — ein Lauf, der ``run_status='complete'`` meldet, aber keinen
     ``run_<run_id>.json`` geschrieben hat, ist die Verallgemeinerung des Ausgangsbefunds: der
     zweite Sweep eines Tages rechnete 2411s durch, meldete ``SWEEP_COMPLETED``/``run_status=
@@ -10931,34 +11353,83 @@ def check_report_artifact_written(*, run_status: str | None, report_written: boo
     Report-Aufrufstellen in ``sweep.py`` die dabei geworfene ``ReportCohortUnresolvable`` als
     "non-fatal" abfingen. Root-Cause behoben (#1021 Fix 4.1: der Wächter unterscheidet jetzt
     sequenzielle Store-Wiederverwendung von echter Nebenläufigkeit) UND dieser Check als zweite,
-    unabhängige Verteidigungslinie: ``severity='blocking'`` — ``complete`` ohne geschriebenen
+    unabhängige Verteidigungslinie: ``severity='blocking'`` — ein terminaler Lauf ohne geschriebenen
     Report ist niemals ein zulässiger Endzustand, unabhängig von der Ursache eines künftigen
     Schreibfehlers.
 
-    ``run_status`` ungleich ``'complete'`` ⇒ nicht anwendbar (ein expliziter Abbruch-/
-    In-Progress-Status behauptet nicht, dass ein Report existiert)."""
-    if run_status != "complete":
+    Issue #1347 (GH #1241, P3) — Root-Cause des Symptoms (``run_status='completed_invalid'``,
+    ``report_written=true`` gemeldet, dieser Check trotzdem ``passed=true``/``actual=null``
+    zurueckgegeben, statt die Datei zu pruefen): die Vorbedingung war an ``run_status=='complete'``
+    gebunden statt an "der Lauf hat einen terminalen Status erreicht" — ausgerechnet der Fehllauf,
+    dessen Forensik das Artefakt am wichtigsten ist, blieb ungeprueft. Zwei Fixe:
+    1. Die Invariante gilt fuer JEDEN terminalen ``run_status`` (siehe ``_NON_TERMINAL_RUN_
+       STATUSES`` — nur der explizite ``'in_progress'``-Marker ist NICHT anwendbar; dieser Fall
+       traegt ``passed=None``/``inconclusive=True``, NIEMALS ``passed=True`` — #1307-Tri-State,
+       "nicht anwendbar" ist kein PASS).
+    2. Wird ``report_path`` übergeben, prüft dieser Check die Datei TATSAECHLICH (Existenz +
+       lesbar/nicht leer), statt der ``report_written``-Behauptung des Aufrufers blind zu
+       vertrauen — genau die Luecke, die das Symptom zeigte (``report_written=true`` bei einer
+       Datei, die es so nie gab, waere vorher unbemerkt geblieben). Fehlt ``report_path``
+       (Rueckwaertskompatibilitaet fuer Aufrufer/Tests ohne Pfad-Kontext), faellt der Check auf die
+       reine ``report_written``-Behauptung zurueck."""
+    if run_status in _NON_TERMINAL_RUN_STATUSES or run_status is None:
         return InvariantResult(
             name="check_report_artifact_written",
-            passed=True,
-            expected="run_status='complete' impliziert einen geschriebenen run_<run_id>.json",
+            passed=None,
+            expected="ein TERMINALER run_status impliziert einen geschriebenen run_<run_id>.json",
             actual=None,
             severity="blocking",
-            detail=f"run_status={run_status!r} != 'complete' — nicht anwendbar.",
+            inconclusive=True,
+            evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "RUN_NOT_TERMINAL"},
+            detail=f"run_status={run_status!r} ist kein terminaler Status — nicht anwendbar.",
         )
-    passed = bool(report_written)
+    if not report_written:
+        return InvariantResult(
+            name="check_report_artifact_written",
+            passed=False,
+            expected="ein TERMINALER run_status impliziert einen geschriebenen run_<run_id>.json",
+            actual={"run_status": run_status, "report_written": report_written},
+            severity="blocking",
+            detail=f"run_status={run_status!r} (terminal), aber KEIN run_<run_id>.json geschrieben "
+                   "— ein terminaler Lauf ohne Report ist nie zulaessig (#1021/#1196/#1347).",
+        )
+    if report_path is not None:
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                _content = f.read(1)
+        except OSError as exc:
+            return InvariantResult(
+                name="check_report_artifact_written",
+                passed=False,
+                expected="ein TERMINALER run_status impliziert eine lesbare run_<run_id>.json",
+                actual={"run_status": run_status, "report_written": report_written,
+                       "path": report_path},
+                severity="blocking",
+                detail=f"report_written=True behauptet, aber '{report_path}' ist nicht lesbar "
+                       f"({exc.__class__.__name__}: {exc}) — die Datei existiert so nicht (#1347).",
+            )
+        if not _content:
+            return InvariantResult(
+                name="check_report_artifact_written",
+                passed=False,
+                expected="ein TERMINALER run_status impliziert eine lesbare run_<run_id>.json",
+                actual={"run_status": run_status, "report_written": report_written,
+                       "path": report_path},
+                severity="blocking",
+                detail=f"report_written=True behauptet, aber '{report_path}' ist leer (#1347).",
+            )
     return InvariantResult(
         name="check_report_artifact_written",
-        passed=passed,
-        expected="run_status='complete' impliziert einen geschriebenen run_<run_id>.json",
-        actual={"run_status": run_status, "report_written": report_written},
+        passed=True,
+        expected="ein TERMINALER run_status impliziert einen geschriebenen run_<run_id>.json",
+        actual={"run_status": run_status, "report_written": report_written, "path": report_path},
         severity="blocking",
-        detail=("OK — Report geschrieben." if passed else
-                "run_status='complete' gemeldet, aber KEIN run_<run_id>.json geschrieben — ein "
-                "Lauf ohne Report ist nicht 'complete' (#1021/#1196)."),
+        detail="OK — Report geschrieben" + (" und lesbar." if report_path is not None else "."),
     )
 
 
+@invariant_scope("run")
 def check_run_status_axes_coherence(report: dict) -> InvariantResult:
     """Issue #1037/#1186 (Katalog #1186) Akzeptanzkriterium 1/2 — Regressionswächter: die VIER
     orthogonalen Achsen (``work_completed``/``decision_admissible``/``work_aborted``/

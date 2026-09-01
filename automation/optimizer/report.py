@@ -1200,6 +1200,37 @@ def _all_defined_check_names() -> list[str]:
     return sorted(names)
 
 
+def _all_defined_check_scopes() -> dict[str, str]:
+    """Issue #1240 (GH #1240, Katalog #1346, P2) — dieselbe Text-Scan-statt-Import-Konvention wie
+    ``_all_defined_check_names()`` (derselbe Dateisatz, derselbe ``backtest_runner.py``-
+    ``nautilus_trader``-Grund), hier fuer die je Funktion deklarierte ``@invariant_scope(...)``-
+    Skope-Anforderung (siehe ``invariants.invariant_scope``-Docstring): das Muster erfasst den
+    Dekorator UNMITTELBAR über der ``def check_*``-Zeile (die einzige unterstützte Platzierung,
+    siehe dortiger Docstring). Ein definierter Check ohne erkennbaren Dekorator fehlt in der
+    Rückgabe — ``check_invariant_coverage`` behandelt das konservativ als ``'run'`` (siehe
+    dortigen Docstring), NIE als automatisch erreichbarkeits-befreit."""
+    import re
+    optimizer_dir = Path(__file__).resolve().parent
+    automation_dir = optimizer_dir.parent
+    candidate_paths = [
+        optimizer_dir / f for f in
+        ("invariants.py", "reward.py", "run_optimization.py", "wallclock_guard.py",
+         "disk_guard.py", "sweep_diagnostics.py")
+    ] + [automation_dir / "backtest_runner.py"]
+    pattern = re.compile(
+        r'(?m)^@(?:[A-Za-z_][A-Za-z0-9_]*\.)?invariant_scope\(\s*[\'"](run|study|trial|promotion)[\'"]\s*\)\s*\n'
+        r'def (check_[A-Za-z0-9_]+)\(')
+    scopes: dict[str, str] = {}
+    for path in candidate_paths:
+        try:
+            source = path.read_text("utf-8")
+        except OSError:
+            continue
+        for scope, name in pattern.findall(source):
+            scopes[name] = scope
+    return scopes
+
+
 def _read_external_invariant_results() -> list[dict]:
     """Issue #1015/#1167 (Katalog #1170) — liest ``INVARIANT_STREAM_RESULT``-Events aus dem "optimizer"-
     Sidecar (derselbe, den ``BAR_QUALITY_PROFILE``/``CHAMPION_WRITEBACK`` bereits nutzen): sechs
@@ -5235,6 +5266,10 @@ def _build_report(
     # Issue #1279 (GH #1152, Katalog #1272-1297) — NACH round_trip_cost_bps (oben gestempelt).
     _stamp_cost_drag_decomposition(studies_out)
     all_checks.append(("global", _inv.check_cost_drag_decomposition(studies_out)))
+    # Issue #1349 (GH #1243, P2) Fix-Punkt 2 — NACH _stamp_cost_drag_decomposition, dieselbe
+    # Study-Kohorte (braucht applied_financing_bps_per_day/median_bars_held/allow_short, alle
+    # bereits gestempelt).
+    all_checks.append(("global", _inv.check_financing_applies_to_shorts(studies_out)))
     # Issue #1055/#1204 (Katalog #1196-1221) Fix Punkt 4 — die kalibrierte p50-Slippage je Study
     # (ueber die Asset-Klasse ihres Symbols aufgeloest), Rohmaterial fuer die verschaerfte
     # invariants.check_cost_stress_distinctness-Mindestdelta-Pruefung unten. Fail-open: kein
@@ -6112,6 +6147,31 @@ def _build_report(
             "detail": inconclusive_not_pass_check.detail, "report_source": report_source,
         }, level=logging.ERROR)
 
+    # Issue #1341 (GH #1235) — aus den gemessenen ``applied_*``-Feldern JEDER Study abgeleitet
+    # (siehe _cost_model_realism_from_applied-Docstring); MUSS HIER, VOR ``_decision_admissible``
+    # (unten) berechnet und in ``invariant_checks`` eingehaengt werden, damit ein
+    # ``cost_model_realism_source == 'config_zero'``-Befund tatsaechlich Konsequenz hat (vorher:
+    # reine WARNING ohne Wirkung auf die Entscheidungsfaehigkeit). ``_emit_cost_model_realism_event``
+    # unten (unveraendert an ihrer bisherigen Stelle) konsumiert dieselben, hier bereits berechneten
+    # Werte weiter (keine zweite Herleitung).
+    (_cost_model_zero_realism, _cost_model_realism_source,
+     _cost_model_zero_realism_symbols) = _cost_model_realism_from_applied(studies_out)
+    _cost_model_zero_realism_acknowledged = bool(
+        optimizer_cfg.get("cost_model_zero_realism_acknowledged", False))
+    cost_model_admissible_check = _inv.check_cost_model_realism_admissible(
+        _cost_model_realism_source, acknowledged=_cost_model_zero_realism_acknowledged)
+    _cost_model_admissible_dict = cost_model_admissible_check.to_dict()
+    _cost_model_admissible_dict["scope"] = "global"
+    _cost_model_admissible_dict["source"] = "report"
+    invariant_checks.append(_cost_model_admissible_dict)
+    if cost_model_admissible_check.passed is False:
+        emit_execution_event(_log, "INVARIANT_CHECK_FAILED", {
+            "scope": "global", "check": cost_model_admissible_check.name,
+            "expected": cost_model_admissible_check.expected,
+            "actual": cost_model_admissible_check.actual,
+            "detail": cost_model_admissible_check.detail, "report_source": report_source,
+        }, level=logging.ERROR)
+
     # Issue #1015/#1167 (Katalog #1170) — die neue Meta-Invariante selbst: erschien jede definierte
     # check_*-Funktion im soeben zusammengefuehrten Strom oder auf der Allowlist? Muss NACH JEDEM
     # Merge oben stehen (braucht den finalen ``invariant_checks``-Stand), daher direkt angehaengt
@@ -6119,9 +6179,21 @@ def _build_report(
     _stream_check_names = sorted({
         d.get("check") or d.get("name") for d in invariant_checks if d.get("check") or d.get("name")
     })
+    # Issue #1240 (GH #1240, Katalog #1346, P2) — Erreichbarkeits-Zaehlstaende DIESES Laufs: ein
+    # Check, dessen deklarierte Skope-Anforderung hier nicht erfuellt ist, zaehlt nicht als
+    # fehlend (siehe check_invariant_coverage-Docstring). n_promotions aus
+    # champions_summary['written_back'] (tatsaechliche Champion-Store-Schreibvorgaenge DIESES
+    # Laufs, dieselbe Quelle wie ``_stamp_cost_drag_decomposition``s Nachbarschaft oben) — ``0``,
+    # falls champions_summary fail-open leer blieb (kein Store/Lesefehler).
+    _n_studies_for_coverage = len(studies_out)
+    _n_trials_for_coverage = sum(int(r.get("n_trials") or 0) for r in studies_out)
+    _n_promotions_for_coverage = int((champions_summary or {}).get("written_back") or 0)
     invariant_coverage_check = _inv.check_invariant_coverage(
         _all_defined_check_names(), _stream_check_names,
-        allowlisted_check_names=list(_DELIBERATELY_UNWIRED_INVARIANT_CHECKS))
+        allowlisted_check_names=list(_DELIBERATELY_UNWIRED_INVARIANT_CHECKS),
+        check_scopes=_all_defined_check_scopes(),
+        n_studies=_n_studies_for_coverage, n_trials=_n_trials_for_coverage,
+        n_promotions=_n_promotions_for_coverage)
     _coverage_dict = invariant_coverage_check.to_dict()
     _coverage_dict["scope"] = "global"
     _coverage_dict["source"] = "report"
@@ -6195,9 +6267,9 @@ def _build_report(
 
     # Issue #1077/#1225 (P1) — aus den gemessenen ``applied_*``-Feldern JEDER Study abgeleitet
     # (siehe _cost_model_realism_from_applied-Docstring), NICHT mehr aus backtest.json direkt.
-    (_cost_model_zero_realism, _cost_model_realism_source,
-     _cost_model_zero_realism_symbols) = _cost_model_realism_from_applied(studies_out)
-
+    # Issue #1341 (GH #1235) — bereits weiter oben (VOR _decision_admissible) berechnet und in
+    # invariant_checks eingehaengt (check_cost_model_realism_admissible); hier nur noch das
+    # Telemetrie-Ereignis mit denselben Werten emittieren (keine zweite Herleitung).
     _emit_cost_model_realism_event(_cost_model_realism_source, studies_out)
 
     report = {
@@ -6306,6 +6378,12 @@ def _build_report(
         # ``run_status`` allein (siehe dortige Sektion 1).
         "work_completed": _work_completed,
         "decision_admissible": _decision_admissible,
+        # Issue #1341 (GH #1235) — namentlicher Grund, WARUM decision_admissible=False ist, wenn
+        # (und nur wenn) das Kostenmodell die Ursache ist — ``None`` in jedem anderen Fall
+        # (inklusive PASS und jedem ANDEREN blockierenden Befund).
+        "promotion_blocked_reason": (
+            "COST_MODEL_ZERO_REALISM"
+            if cost_model_admissible_check.passed is False else None),
         "work_aborted": _work_aborted,
         "blocking_invariant_triggered": blocking_invariant_triggered,
         "symbols_completed": symbols_completed,

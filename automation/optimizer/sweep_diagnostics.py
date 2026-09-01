@@ -14,6 +14,8 @@ import json
 import statistics
 from pathlib import Path
 
+from automation.optimizer.invariants import invariant_scope
+
 # Issue #669/#769 — die moeglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible
 # Trial). Issue #769 — 'signal_frequency' wurde in 'signal_absent' (parameterunabhaengig, echte
 # Datengeometrie) und 'signal_sparse' (parameterabhaengig, tunebar) AUFGESPALTEN: die alte Kategorie
@@ -1211,6 +1213,7 @@ def diagnose_symbol_degeneracy(symbol: str, per_strategy_diagnoses: list[dict], 
     }
 
 
+@invariant_scope("run")
 def check_bar_quality(highs: list[float], lows: list[float], closes: list[float], *,
                       max_frac_high_eq_low: float = 0.20,
                       max_frac_identical_consecutive_closes: float = 0.5,

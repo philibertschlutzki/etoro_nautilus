@@ -75,25 +75,50 @@ def test_full_realism_respects_dust_notional_floor():
 
 # ── backtest_runner.resolve_financing_bps_per_day / resolve_slippage_bps (fail-open) ──────────────
 def test_resolve_financing_bps_per_day_fails_open_without_config():
+    # Issue #1349 (GH #1243, P2) — resolve_financing_bps_per_day liefert seit diesem Fix
+    # (financing_bps, is_legacy_scalar_scope).
     from automation.backtest_runner import resolve_financing_bps_per_day
-    assert resolve_financing_bps_per_day("TSLA.ETORO", None) == 0.0
-    assert resolve_financing_bps_per_day("TSLA.ETORO", {}) == 0.0
+    assert resolve_financing_bps_per_day("TSLA.ETORO", None) == (0.0, False)
+    assert resolve_financing_bps_per_day("TSLA.ETORO", {}) == (0.0, False)
 
 
 def test_resolve_financing_bps_per_day_fails_open_on_unknown_asset_class():
     """Anders als resolve_spread_bps/resolve_atr_floor_bps (Konfigurationsfehler, wirft) ist dies
     ein neues, additiv-optionales Kostenmodell — ein unbekannter Key liefert 0.0, kein Raise."""
     from automation.backtest_runner import resolve_financing_bps_per_day
-    result = resolve_financing_bps_per_day(
+    result, _ = resolve_financing_bps_per_day(
         "X.ETORO", {"EQUITY": 5.0}, asset_class_key="UNKNOWN_CLASS")
     assert result == 0.0
 
 
 def test_resolve_financing_bps_per_day_returns_configured_value():
+    """Alte Skalar-Form: gilt fuer 'long' (rueckwaertskompatible Interpretation, #1349)."""
     from automation.backtest_runner import resolve_financing_bps_per_day
-    result = resolve_financing_bps_per_day(
+    result, is_legacy = resolve_financing_bps_per_day(
         "BTC.ETORO", {"CRYPTO": 3.5, "DEFAULT": 1.0}, asset_class_key="CRYPTO")
     assert result == 3.5
+    assert is_legacy is False
+
+
+def test_resolve_financing_bps_per_day_new_dict_form_resolves_by_side():
+    from automation.backtest_runner import resolve_financing_bps_per_day
+    cfg = {"EQUITY": {"long": 0.0, "short": 0.79}}
+    long_result, _ = resolve_financing_bps_per_day(
+        "AAPL.ETORO", cfg, asset_class_key="EQUITY", position_side="long")
+    short_result, _ = resolve_financing_bps_per_day(
+        "AAPL.ETORO", cfg, asset_class_key="EQUITY", position_side="short")
+    assert long_result == 0.0
+    assert short_result == 0.79
+
+
+def test_resolve_financing_bps_per_day_legacy_scalar_short_side_is_zero_and_flagged():
+    """Alte Skalar-Form kennt keine Short-Rate — 'short' liefert 0.0, aber flaggt
+    is_legacy_scalar_scope=True, damit der Aufrufer eine WARNING emittieren kann (#1349)."""
+    from automation.backtest_runner import resolve_financing_bps_per_day
+    result, is_legacy = resolve_financing_bps_per_day(
+        "BTC.ETORO", {"CRYPTO": 3.5}, asset_class_key="CRYPTO", position_side="short")
+    assert result == 0.0
+    assert is_legacy is True
 
 
 def test_resolve_slippage_bps_fails_open_without_config():

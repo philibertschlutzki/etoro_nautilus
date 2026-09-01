@@ -118,6 +118,8 @@ def test_optimizer_json_default_value_matches_contracts_time_box_bars():
     assert OPT_CFG["time_box_bars"] == _contracts.TIME_BOX_BARS
 
 
-def test_contracts_time_box_bars_is_5_76():
-    # Verankert den konkreten, im Issue genannten Zahlenwert (RTH_AXIS_FACTOR=0.24 * 24.0).
-    assert _contracts.TIME_BOX_BARS == pytest.approx(5.76)
+def test_contracts_time_box_bars_is_7_0():
+    # Issue #1343 (GH #1237) — 5.76 (geschaetzter RTH_AXIS_FACTOR=0.24 * 24.0) → 7.0
+    # (BARS_PER_TRADING_DAY=7 * max_handelstage=1.0, mechanisch aus der Session-Ueberlappung
+    # gezaehlt statt geschaetzt).
+    assert _contracts.TIME_BOX_BARS == pytest.approx(7.0)

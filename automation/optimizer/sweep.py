@@ -687,6 +687,25 @@ def _bar_coverage_expected_bins(
     return bins_per_day * n_trading_days
 
 
+def compute_holdout_bar_count(
+    holdout_days: float, session_hours_by_asset_class: dict | None, asset_class_key: str | None,
+    *, bar_interval_ns: int = 3_600_000_000_000,
+) -> int:
+    """Issue #1340 (GH #1234) — ``T_holdout`` (Anzahl Bars im Holdout-Fenster) AUS DER
+    TATSAECHLICHEN Bar-Achse, statt der impliziten 24-Bars/Kalendertag-Annahme aus der
+    Vor-#1275-RTH-Umstellung. Für ein Symbol MIT Session-Fenster (EQUITY/COMMODITY): erwartete
+    Bins je Handelstag (``_expected_session_bins_per_day``, dieselbe Ueberlappungs-Konvention wie
+    #1332/#1336) × Handelstag-Anteil (5/7) × ``holdout_days``. Für CRYPTO/FOREX (kein
+    Session-Fenster) bleibt die 24-Bars/Kalendertag-Achse (durchgehender Handel)."""
+    window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
+    if window is None:
+        bars_per_day = int(round(86_400_000_000_000 / bar_interval_ns))
+        return int(round(holdout_days * bars_per_day))
+    open_utc, close_utc = window
+    bins_per_trading_day = _expected_session_bins_per_day(open_utc, close_utc, bar_interval_ns)
+    return int(round(holdout_days * (5.0 / 7.0) * bins_per_trading_day))
+
+
 def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, *,
                                  session_hours_by_asset_class: dict | None = None,
                                  asset_class_key: str | None = None,
@@ -3163,6 +3182,48 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ``sweep_completed``-Ereignis.
     _symbols_rejected: list[dict] = []
 
+    # Issue #1340 (GH #1234) — Promotionskonfidenz-Erreichbarkeits-Preflight: der GRÖSSTE
+    # Ertragshebel des #1246-Katalogs. Läuft VOR Phase 1, EINMAL je Lauf (RUN-WEIT, kein
+    # Symbol-Scope: die Frage ist "kann DIESE Konfiguration [holdout_days ×
+    # promotion_confidence] überhaupt jemals promovieren", nicht "hat DIESES Symbol genug
+    # Evidenz"). Unscoped + severity='blocking' ⇒ ``_downgrade_run_status_for_blocking_
+    # invariants`` (#1344-Fix, siehe dortigen Docstring) stuft den GESAMTEN Lauf auf
+    # 'completed_invalid' herab, wenn die Schwelle strukturell unerreichbar ist — unabhängig
+    # davon, wie viele Symbole individuell Studies produziert haben.
+    try:
+        _tournament_cfg = {}
+        _tournament_path = config_dir() / "tournament.json"
+        if _tournament_path.exists():
+            _tournament_cfg = json.loads(_tournament_path.read_text("utf-8")) or {}
+        _promotion_confidence = _tournament_cfg.get("deflation_confidence")
+        _bt_cfg_for_holdout = {}
+        _bt_path_for_holdout = config_dir() / "backtest.json"
+        if _bt_path_for_holdout.exists():
+            _bt_cfg_for_holdout = json.loads(_bt_path_for_holdout.read_text("utf-8")) or {}
+        _session_hours_for_holdout = _bt_cfg_for_holdout.get("session_hours_by_asset_class")
+        _holdout_days = _wf.get("holdout_days")
+        _t_holdout = None
+        if _holdout_days is not None and syms:
+            _first_asset_class = _resolve_asset_class_key_for_symbol_lightweight(syms[0])
+            _t_holdout = compute_holdout_bar_count(
+                _holdout_days, _session_hours_for_holdout, _first_asset_class)
+        _reachability = invariants.check_promotion_confidence_reachability(
+            _t_holdout, _promotion_confidence)
+        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+            "name": "check_promotion_confidence_reachability",
+            "check": "check_promotion_confidence_reachability",
+            "passed": _reachability.passed, "source": "sweep", "scope": None,
+            "expected": _reachability.expected, "actual": _reachability.actual,
+            "detail": _reachability.detail, "severity": _reachability.severity,
+        }, level=logging.INFO if _reachability.passed is not False else logging.ERROR)
+        if _reachability.passed is False:
+            logging.getLogger("optimizer").error(
+                "[#1340] Promotionsschwelle strukturell unerreichbar: %s", _reachability.detail)
+    except Exception:
+        logging.getLogger("optimizer").debug(
+            "[#1340] Promotionskonfidenz-Reachability-Preflight fehlgeschlagen (non-fatal).",
+            exc_info=True)
+
     # Issue #1334 (GH #1228) — Auflösungs-Homogenitäts-Preflight VOR Gate 1: ``per_symbol_span_
     # stats`` oben misst nur die RANDPUNKTE (``latest - earliest``) — ein Katalog kann eine grosse
     # rohe Spanne meinen, obwohl nur ein kleiner, jüngerer Teil davon tatsächlich auf der
@@ -5433,8 +5494,14 @@ def main(argv: list[str] | None = None) -> list[Path]:
     # unabhaengig davon, WARUM das Schreiben scheiterte (jeder Fall ausser der oben bereits fatalen
     # ReportCohortUnresolvable). Verallgemeinerung des Ausgangsbefunds: 2411s Rechenzeit, 1940
     # Trials, 14 Proposals — und ohne diesen Fix trotzdem ``run_status='complete'``.
+    # Issue #1347 (GH #1241, P3) — ``report_path`` nur uebergeben, wenn der Schreibversuch
+    # tatsaechlich stattfand (``_report_written``); andernfalls ist die Variable ggf. nie zugewiesen
+    # worden (ein frueher Abbruch VOR dem generate_sweep_report/generate_report_for_run-Aufruf oben)
+    # — der Kurzschluss-Ausdruck greift NIE auf ``report_path`` zu, solange ``_report_written``
+    # False ist.
     _report_artifact_check = invariants.check_report_artifact_written(
-        run_status=run_status, report_written=_report_written)
+        run_status=run_status, report_written=_report_written,
+        report_path=report_path if _report_written else None)
     emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
         "name": _report_artifact_check.name, "check": _report_artifact_check.name,
         "passed": _report_artifact_check.passed, "source": "sweep", "scope": "global",

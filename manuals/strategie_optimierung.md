@@ -1,0 +1,49 @@
+# Strategie-Optimierung — Betriebshandbuch
+
+Dieses Dokument hält die Kalibrierungs- und Governance-Entscheidungen fest, die `automation/optimizer/*` referenziert, aber nicht selbst im Code trägt (Konfigurationswerte sind selbsterklärend über ihre `_schema`-Beschreibung; Entscheidungen mit einer *Begründung*, die mehrere Issues überspannt, gehören hierher).
+
+## §Holdout-Signifikanz
+
+**Ausgangslage (Issue #624, Katalog #609–#624).** Auf der 24/7-Bar-Achse (vor #1275) entsprachen 45 Holdout-Tage ≈ 1080 Bars — komfortabel über jeder sinnvollen PSR-Konfidenzschwelle. Der RTH-Achsenwechsel (#1275, GH #1148) reduzierte die Bar-Dichte um den Faktor ≈ 5 (24 Kalenderstunden-Bars/Tag → 6–7 RTH-Session-Bars/Handelstag). Derselbe Holdout von 45 Tagen ergab dadurch nur noch **T ≈ 202** Bars.
+
+**Der Deadlock (Issue #1340, GH #1234, Katalog #1330–#1351).** Für einen realistisch starken Grenzkandidaten (per-Periode-Sortino ≈ 0.1136 — derselbe Referenzwert wie `deflation.probabilistic_sharpe_ratio`s Docstring, empirisch aus einer VwapExhaustion-Study mit ŜR_annual=4.6109 bei A=1638 Perioden/Jahr):
+
+```
+PSR(0; T=202) = Φ(0.1136 · √201) ≈ 0.9464   <  0.95   (deflation_confidence)
+PSR(0; T=211) = Φ(0.1136 · √210) ≈ 0.9502   >= 0.95   (kleinstes tragfähiges T)
+PSR(0; T=210)                    <  0.95
+```
+
+Ein *dokumentiertes Tragen* dieser Lücke (der Zustand bis #1340) ist **keine Lösung**: Bei T=202 kann **kein** Kandidat — auch kein perfekter — die konfigurierte Promotionskonfidenz je erreichen. Der Optimizer lief, verbrannte Rechenzeit, konnte aber per Konstruktion nichts ausliefern.
+
+**Entscheidung (Issue #1340).** `walk_forward.holdout_days` wurde von 45 auf **60** angehoben (`automation/config/backtest.json`). Das ergibt auf der RTH-Achse (EQUITY, 13:30–20:00 UTC, 7 Bins/Handelstag seit #1332/GH #1226) T ≈ 300 Bars und `max_attainable_psr(300) ≈ 0.975` — mit Sicherheitsmarge über der T≥211-Mindestanforderung, damit einzelne Feiertage/Datenlücken die Erreichbarkeit nicht wieder unterschreiten. `required_span_days` steigt dadurch von 426 auf 441 Tage (`is_window_days=180 + embargo=21 + 4·oos=180 + holdout=60`).
+
+**Bewusst nicht gewählt: Die Konfidenzschwelle senken.** `deflation_confidence=0.95` kontrolliert die nominelle **Typ-I-Fehlerrate** (False-Positive-Promotion-Rate) der Holdout-Entscheidung — sie ist eine statistische Aussage über das gesamte Selektionsverfahren, nicht über eine einzelne Study, und wurde nicht neu kalibriert, um die T-Lücke zu kaschieren (Sperrvermerk #9 in Issue #1246: "Keine Neukalibrierung der Promotionskonfidenz nach unten, um #1340 zu umgehen"). Die einzigen zulässigen Auflösungspfade waren eine längere Holdout-Periode (gewählt) oder eine deklariert T-adaptive Formulierung der Konfidenz selbst (nicht gewählt — die längere Periode ist die einfachere, transparentere Lösung und erfordert keine neue Kalibrierinfrastruktur).
+
+**Voraussetzung für die Wirksamkeit dieser Entscheidung:** Die Katalog-Historie je Symbol muss die neue `required_span_days=441` tatsächlich abdecken — reicht die per API/Backfill verfügbare Historie eines Symbols nicht, greift `check_catalog_resolution_homogeneity` (#1334/GH #1228) VOR Gate 1 und weist das Symbol ab, statt eine zu kurze Stichprobe stillschweigend zu akzeptieren. Ist die eToro-API-Tiefe für ein Symbol strukturell knapp, ist ein gezielter historischer Backfill (`python3 automation/historical_fetcher.py --rebuild-catalog SYMBOL`, Issue #1333/GH #1227) der richtige nächste Schritt, nicht eine erneute Geometrie-Verkürzung.
+
+`invariants.check_promotion_confidence_reachability`/`sweep.compute_holdout_bar_count` prüfen diese Erreichbarkeit ab sofort VOR Phase 1 jedes Laufs (blockierend, `severity='blocking'`) — ein Lauf, dessen Deployment-Pfad strukturell geschlossen ist, startet nicht mehr als "entscheidungsfähig".
+
+## §ATR-/Intrabar-Kalibrierung (gesperrt bis zum Messlauf)
+
+**Sperrvermerk (Issue #1246, Issue #1342/GH #1236).** `atr_floor_bps_by_asset_class`, `k_min_bar_range_multiple`, die `atr_trailing_multiplier`-Bänder in `spaces.py` und `min_intrabar_range_median_bps` (`optimizer.json['bar_quality']`) bleiben **unverändert**, bis ein Messlauf NACH dem Katalog-Rebuild (Issue #1330–#1333/GH #1224–#1227, echte O/L/H/C-Ticks statt eines Einzeltickers je Kerze) reale Intrabar-Spannen liefert. Vor diesem Rebuild war `intrabar_range_median_bps` strukturell 0 (jede Bar hatte `high == low`) — jede Kalibrierung gegen diese Achse wäre eine Kalibrierung gegen ein Artefakt, kein Marktverhalten.
+
+**Ablauf, sobald ein echter Katalog vorliegt:**
+1. Vollständiger Katalog-Rebuild (`--rebuild-catalog all`) — erzeugt `catalog_schema_version=2`.
+2. Ein reiner **Messlauf** (kein Sweep, keine Selektion/Promotion): protokolliert `intrabar_range_median_bps`, `atr_median_bps` (Close-zu-Close — siehe Pitfall #477 in `automation/AGENTS.md`) und `stop_distance_bps_measured` je Symbol.
+3. Aus diesem Messlauf werden die vier oben genannten Grössen neu gesetzt; die Herleitung (Symbol, Fenster, gemessener Wert, abgeleiteter Wert) wird HIER in diesem Abschnitt nachgetragen.
+4. `params_schema_version` wird gebumpt, sobald die `spaces.py`-Bänder sich ändern (Issue #1351/GH #1245).
+
+Bis Schritt 3 nachgetragen ist, gilt jeder existierende Wert dieser vier Grössen als **unkalibrierter Platzhalter** (dieselbe Konvention wie `slippage_bps_by_asset_class`/`overnight_financing_bps_per_day_by_asset_class` vor #1348/#1349, siehe unten).
+
+## §Kostenmodell — Slippage-Untergrenze und Finanzierung
+
+**Slippage (Issue #1348/GH #1242).** `slippage_bps_by_asset_class` war bis #1348 durchgängig 0.0 — eine Nullsetzung ist keine konservative Annahme, sondern die **aggressivste** (maximale Ertragsüberschätzung, Pitfall #479 in AGENTS.md). Seit #1348 trägt jede Asset-Klasse eine **strukturelle Untergrenze**, aus dem bereits konfigurierten `spread_bps_by_asset_class` abgeleitet: `slippage_floor_bps = 0.5 · spread_bps` (eine Marktorder überquert im Mittel den halben Spread zusätzlich zum modellierten Spread selbst; `backtest_runner.slippage_floor_bps_from_spread`). Konkrete Werte: EQUITY 3.0→1.5 bps, CRYPTO 15.0→7.5 bps, FOREX 1.5→0.75 bps, COMMODITY 5.0→2.5 bps, DEFAULT 4.0→2.0 bps. Diese Untergrenze ist eine strukturelle Ableitung (geometrische Konsequenz der Order-Ausführung), keine Messung — sie ist bewusst NICHT durch den #1236/GH#1236-Sperrvermerk erfasst (der betrifft ausschliesslich ATR-/Intrabar-abgeleitete Kalibrierungen) — und ersetzt NICHT die kalibrierte Slippage, die gemäss Issue #1277 weiterhin ausschliesslich in der Simulation, nicht im Selektionspfad wirkt; der Floor wird zusätzlich am Aufrufort erzwungen (`max(konfigurierter_wert, Floor)`), unabhängig vom in `backtest.json` gespeicherten Zahlenwert.
+
+**Overnight-Finanzierung (Issue #1349/GH #1243).** `overnight_financing_bps_per_day_by_asset_class` ist seit #1349 je Asset-Klasse ein `{"long": …, "short": …}`-Dict (Skalar bleibt rückwärtskompatibel lesbar, gilt dann als "nur Long", mit einer WARNING sobald eine `allow_short=true`-Strategie darauf trifft, siehe `backtest_runner.resolve_financing_bps_per_day`). `long` bleibt für **ungehebelte Long-Positionen** 0.0 (sachlich korrekt — eToro erhebt auf nicht gehebelte Kauf-Positionen keine Finanzierungsgebühr). `short` trägt 0.79 bps/Tag je Asset-Klasse, hergeleitet aus eToros öffentlich dokumentierter Formel für Aktien-Short-CFDs (`(eToro-Jahressatz + LIBOR/Benchmark-Zins) / 365 · Notional`, eToro-Jahressatz für Aktien-Short = 2.9 % + LIBOR; 2.9 %/365 ≈ 0.0794521 bps/Tag ≈ 0.79 bps/Tag, gerundet — NUR der eToro-Markup-Anteil, der variable Benchmark-Zins-Anteil ist NICHT recherchiert/enthalten). Für CRYPTO/FOREX/COMMODITY ist dieser Wert eine konservative Übernahme des EQUITY-Satzes (asset-klassen-spezifische eToro-Sätze in dieser Sitzung nicht recherchiert) — vor produktivem Einsatz mit realen, aktuellen Broker-Raten je Asset-Klasse zu verifizieren. Die neue Invariante `invariants.check_financing_applies_to_shorts` (severity `high`) FAILt, wenn eine Study mit `allow_short=true` und ≥ 1 Tag medianer Haltedauer trotzdem `applied_financing_bps_per_day == 0.0` trägt. Round-Trip-seitig entscheidet die tatsächlich gehandelte Richtung (`is_short_close` in `backtest_runner._finalize_round_trip`), welche der beiden Raten in `rt_financing_bps` einfliesst — nicht mehr eine einzige, asset-class-weite Rate unabhängig von der Positionsrichtung.
+
+Quellen (Web-Recherche, September 2026): [How are the overnight fees on CFD stocks calculated? | eToro Help](https://help.etoro.com/s/article/how-are-the-overnight-fees-on-stocks-calculated?language=en_GB), [Overnight fees on eToro](https://www.etoro.com/trading/fees/cfd-overnight-fees/).
+
+## §Zeitbox — Bar-Achsen-Ableitung
+
+**Issue #1343/GH #1237.** `MAX_BARS_IN_TRADE_HARD_CAP`/`TIME_BOX_BARS` sind seit #1343 aus der Bar-Achse **abgeleitet** (`_contracts.BARS_PER_TRADING_DAY · max_handelstage`, Default `max_handelstage=1.0`, mechanisch über `session_windows.interval_overlaps_session_hours` gezählt) statt als Literale gepflegt — ein Wechsel des Bar-Intervalls oder des Session-Fensters ändert Cap/Deadline automatisch mit, ohne die Konstante von Hand nachzuführen (dieselbe Fehlerklasse wie die 24-Bar/6-Bar-Verwechslung, die #1275 auf der alten Achse bereits einmal korrigierte). Auf der EQUITY-RTH-Achse (13:30–20:00 UTC, 1h-Bars) ergibt das `BARS_PER_TRADING_DAY=7` (vormals empirisch auf 6 geschätzt, VOR #1332/GH #1226s Session-Überlappungs-Fix) ⇒ `TIME_BOX_BARS=7.0` (vormals 5.76), `MAX_BARS_IN_TRADE_HARD_CAP=7` (vormals 6). `MIN_BARS_IN_TRADE_FLOOR` bleibt bewusst **unverändert ein eigenständiges Literal (=2)** — Issue #1317/GH #1194 etablierte ausdrücklich, dass dieser Floor eine achsen-unabhängige Rausch-Schwelle ist (mindestens ein vollständiger Bar-Übergang zwischen Ein- und Ausstieg), keine Achsen-Grösse; #1343 ändert daran nichts.

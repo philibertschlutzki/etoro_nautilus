@@ -97,6 +97,8 @@ import shutil
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from automation.optimizer.invariants import invariant_scope
+
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.identifiers import Venue, InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -1272,7 +1274,8 @@ def resolve_atr_floor_bps(inst_id_str: str,
 
 def resolve_financing_bps_per_day(inst_id_str: str,
                                   financing_bps_per_day_by_asset_class: dict | None,
-                                  asset_class_key: str = "DEFAULT") -> float:
+                                  asset_class_key: str = "DEFAULT", *,
+                                  position_side: str = "long") -> tuple[float, bool]:
     """Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 1 — asset-class-
     aufgelöste Finanzierungskosten je gehaltenem Kalendertag (bps des Round-Trip-Notionals),
     Auflösung analog ``resolve_atr_floor_bps``.
@@ -1281,12 +1284,36 @@ def resolve_financing_bps_per_day(inst_id_str: str,
     Kostenfelder — ein fehlender Asset-Class-Eintrag ist dort ein Konfigurationsfehler und wirft)
     ist dies ein NEUES, additiv-optionales Kostenmodell: fehlende Config ODER ein unbekannter
     ``asset_class_key`` liefert 0.0 (fail-open — kein Konfigurationsfehler), damit jeder
-    Aufrufer/Test, der diese Map nicht setzt, unverändert bit-identisch bleibt."""
+    Aufrufer/Test, der diese Map nicht setzt, unverändert bit-identisch bleibt.
+
+    Issue #1349 (GH #1243, P2) Fix-Punkt 1 — ``position_side`` (``'long'``/``'short'``) waehlt
+    zwischen zwei getrennten Saetzen: eine ungehebelte Long-Position auf Kassa-Aktien traegt
+    sachlich KEINE Finanzierungskosten (0.0 bleibt fuer 'long' korrekt), eToro berechnet
+    Overnight-Gebuehren aber auf gehebelte UND auf Short-Positionen (Root-Cause #1349: die 0.0 war
+    nicht als Wert falsch, sondern als DEFAULT FUER ALLES — nie gegen die tatsaechlich gehandelte
+    Richtung geprueft). Der Eintrag je Asset-Klasse traegt seit diesem Fix entweder
+    - die NEUE Form: ``{'long': float, 'short': float}`` — direkt nach ``position_side`` aufgeloest
+      (fehlender Seiten-Key ⇒ 0.0, fail-open wie zuvor), oder
+    - die ALTE, rueckwaertskompatible Form: ein reiner ``float`` — wird als ``'nur Long'``
+      interpretiert (gilt NUR fuer ``position_side='long'``; fuer ``'short'`` liefert die alte Form
+      0.0, da sie keine Short-Rate kennt).
+
+    Rueckgabe ``(financing_bps_per_day, is_legacy_scalar_scope)`` — das zweite Element ist ``True``
+    genau dann, wenn die ALTE Skalar-Form gelesen wurde UND ``position_side='short'`` angefragt
+    war (der Aufrufer nutzt dies, um eine WARNING zu emittieren, sobald eine Strategie mit
+    ``allow_short=True`` gegen eine noch nicht auf die neue Form migrierte Config laeuft — siehe
+    ``run_single_backtest_worker``)."""
     if not financing_bps_per_day_by_asset_class:
-        return 0.0
-    if asset_class_key not in financing_bps_per_day_by_asset_class:
-        return 0.0
-    return float(financing_bps_per_day_by_asset_class[asset_class_key])
+        return 0.0, False
+    entry = financing_bps_per_day_by_asset_class.get(asset_class_key)
+    if entry is None:
+        return 0.0, False
+    if not isinstance(entry, dict):
+        # Alte Form: reiner Skalar, interpretiert als 'nur Long'.
+        if position_side == "long":
+            return float(entry), False
+        return 0.0, True
+    return float(entry.get(position_side) or 0.0), False
 
 
 def resolve_slippage_bps(inst_id_str: str,
@@ -1332,6 +1359,24 @@ def resolve_slippage_bps(inst_id_str: str,
             and int(rec.get("n_observations") or 0) >= min_observations):
         return float(rec["value"])
     return float(entry.get("value") or 0.0)
+
+
+def slippage_floor_bps_from_spread(spread_bps: float, *, floor_fraction: float = 0.5) -> float:
+    """Issue #1348 (GH #1242, P1) — strukturelle Untergrenze für Slippage, aus dem SYNTHETISIERTEN
+    Spread (``resolve_spread_bps``) abgeleitet, unabhängig von jeder Kalibrierung: ein Marktauftrag
+    überquert im Mittel den halben Spread zusätzlich zum modellierten Spread selbst. Für EQUITY
+    (Spread 3.0 bps) ergibt das 1.5 bps.
+
+    ANDERS als die #1236/GH#1236 gesperrten ATR-abgeleiteten Konstanten (deren Neukalibrierung
+    einen echten Messlauf gegen die neue Bar-Achse voraussetzt, siehe dortigen Sperrvermerk) ist
+    dies KEINE Messung und braucht keinen Messlauf — der halbe Spread ist eine geometrische
+    Konsequenz der Order-Ausführung, keine empirisch geschätzte Grösse. Analog zu ``cost_coupled_
+    atr_floor_bps`` (#1096) wird dieser Floor am Aufrufort als ``max(konfigurierter_wert,
+    slippage_floor_bps_from_spread(...))`` durchgesetzt — die Untergrenze gilt STRUKTURELL, auch
+    falls ``backtest.json['slippage_bps_by_asset_class']`` versehentlich wieder auf 0.0 gesetzt
+    würde (Root-Cause #1348: die Nullsetzung entstand als eine für den SELEKTIONSPFAD korrekte
+    #1277-Reaktion, wanderte aber unbeabsichtigt auch in die SIMULATION mit)."""
+    return floor_fraction * max(0.0, float(spread_bps))
 
 
 def resolve_slippage_calibration_scope(inst_id_str: str,
@@ -5514,7 +5559,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class") -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day_long: float = 0.0, financing_bps_per_day_short: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class") -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -5592,6 +5637,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #1032 (Katalog #866) — Spitzenbestand des gleichzeitig offenen Kapitals je Round-
         # Trip (siehe _round_trip_notional_peak-Docstring), parallel zu rt_notionals_with_ts.
         rt_notional_peaks: list[float] = []
+        # Issue #1349 (GH #1243, P2) Fix-Punkt 1 — wird True, sobald IRGENDEIN Round-Trip dieses
+        # Backtests tatsaechlich short geschlossen wurde (nicht nur strategie-konfigurierbar via
+        # ``allow_short``); steuert, welche der beiden aufgeloesten Finanzierungsraten die
+        # STUDY-weite Stempelung (``applied_financing_bps_per_day``/``_full_realism_expectancy``,
+        # beide ohne Round-Trip-Granularitaet) repraesentiert — siehe dortige Aufrufstelle.
+        _any_short_round_trip = False
 
         def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None,
                                  *, is_data_end_fallback: bool = False,
@@ -5679,8 +5730,17 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # stress-Stufe (siehe extract_metrics-Aufrufer weiter unten) — NICHT von rt_pnl
             # abgezogen (die primaere Simulation/total_return/sortino bleibt unveraendert, siehe
             # AGENTS.md-Eintrag zu diesem Fix fuer die Begruendung).
+            # Issue #1349 (GH #1243, P2) Fix-Punkt 1 — die je Round-Trip GEHANDELTE Richtung
+            # (``is_short_close``) entscheidet, welche der beiden aufgeloesten Raten gilt; vorher
+            # floss hier IMMER dieselbe (asset-class-weite) Rate ein, unabhaengig davon, ob die
+            # Position long oder short war.
             _rt_days_held = math.ceil(rt_holding_ns / 86_400_000_000_000) if rt_holding_ns > 0 else 0
-            rt_financing_bps = _rt_days_held * financing_bps_per_day
+            _rt_financing_bps_per_day = (
+                financing_bps_per_day_short if is_short_close else financing_bps_per_day_long)
+            rt_financing_bps = _rt_days_held * _rt_financing_bps_per_day
+            if is_short_close and _rt_days_held > 0:
+                nonlocal _any_short_round_trip
+                _any_short_round_trip = True
             rt_pnls_with_ts.append((rt_pnl, rt_exit_ts, rt_holding_ns, total_qty))
             rt_notionals_with_ts.append((rt_notional, rt_exit_ts))
             rt_notional_peaks.append(rt_notional_peak)
@@ -6444,11 +6504,21 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 _oos_pnl_notional_holding.append((_pnl, _nz, _ht))
             elif _is_in_sample:
                 _is_pnl_notional_holding.append((_pnl, _nz, _ht))
+        # Issue #1349 (GH #1243, P2) Fix-Punkt 1 — ``_full_realism_expectancy``/``applied_financing_
+        # bps_per_day`` kennen (anders als ``rt_financing_bps`` oben) keine Round-Trip-Granularitaet
+        # — dieselbe dokumentierte Vereinfachung wie zuvor (EINE Rate fuer die gesamte Study). Die
+        # Rate ist seit diesem Fix aber nicht mehr blind IMMER die Long-Rate: sobald dieser Backtest
+        # tatsaechlich mindestens einen Short-Round-Trip mit Uebernachtung enthielt
+        # (``_any_short_round_trip``), gilt die SHORT-Rate als die repraesentativere (konservativere)
+        # Naeherung fuer die gesamte Study — eine Study, die NIE short ging, bleibt bei der Long-Rate
+        # (0.0 fuer ungehebelte Kassa-Positionen, siehe backtest.json-Kommentar).
+        _financing_bps_per_day_representative = (
+            financing_bps_per_day_short if _any_short_round_trip else financing_bps_per_day_long)
         for _level_metrics, _level_pnl_notional_holding in (
                 (is_metrics, _is_pnl_notional_holding), (oos_metrics, _oos_pnl_notional_holding)):
             _stress_full_realism = _full_realism_expectancy(
                 _level_pnl_notional_holding,
-                financing_bps_per_day=financing_bps_per_day, slippage_bps=slippage_bps)
+                financing_bps_per_day=_financing_bps_per_day_representative, slippage_bps=slippage_bps)
             _level_metrics["expectancy_round_trip_cost_stress_full_realism"] = _stress_full_realism
             # Issue #1075/#1223 (Katalog #1247+, P0) Fix Punkt 2 — die tatsaechlich ANGEWANDTEN
             # Kostenkomponenten (nicht die konfigurierten), je Level gestempelt. Beide Werte kommen
@@ -6456,7 +6526,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # den korrigierten Symbol-Override-Pfad aufgeloest, siehe dortiger Fix) — dieselben
             # Werte, die soeben in _full_realism_expectancy eingeflossen sind (eine Quelle, kein
             # zweiter Auflösungspfad).
-            _level_metrics["applied_financing_bps_per_day"] = financing_bps_per_day
+            _level_metrics["applied_financing_bps_per_day"] = _financing_bps_per_day_representative
             _level_metrics["applied_slippage_bps"] = slippage_bps
             # Issue #1266 (GH #1136) — WELCHE Ebene die p50-Kostenstress-Basis (siehe oben,
             # _round_trip_cost_bps_for_stress) tatsaechlich aufgeloest hat; macht sichtbar, ob eine
@@ -7400,6 +7470,7 @@ def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float 
         res["error"] = error
     return res
 
+@invariant_scope("run")
 def check_data_span(ticks: list, required_days: int, span_tolerance_days: float) -> tuple[bool, float, float]:
     """
     Überprüft die Datenspanne der Ticks.
@@ -7558,18 +7629,47 @@ def run_single_backtest_worker(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
             # Issue #987/#1141 (Katalog #986) — dieselbe Asset-Class-Auflösung wie oben, fail-open
             # (siehe resolve_financing_bps_per_day/resolve_slippage_bps-Docstrings).
-            financing_bps_per_day_resolved = resolve_financing_bps_per_day(
-                inst_id_str, overnight_financing_bps_per_day_by_asset_class, asset_class_key)
+            # Issue #1349 (GH #1243, P2) Fix-Punkt 1 — beide Richtungen einmal aufgeloest; welche
+            # davon je Round-Trip GILT, entscheidet ``_finalize_round_trip`` anhand von
+            # ``is_short_close`` (dort ist die tatsaechlich gehandelte Richtung bekannt, hier beim
+            # Worker-Setup noch nicht). ``_allow_short_strategy`` steuert nur die WARNING unten.
+            financing_bps_per_day_long, _financing_legacy_long = resolve_financing_bps_per_day(
+                inst_id_str, overnight_financing_bps_per_day_by_asset_class, asset_class_key,
+                position_side="long")
+            financing_bps_per_day_short, _financing_legacy_short = resolve_financing_bps_per_day(
+                inst_id_str, overnight_financing_bps_per_day_by_asset_class, asset_class_key,
+                position_side="short")
+            _allow_short_strategy = bool((strat.get("params") or {}).get("allow_short"))
+            if _financing_legacy_short and _allow_short_strategy:
+                wlog(
+                    "[#1349] WARNING: Strategie erlaubt Short-Positionen (allow_short=true), aber "
+                    "overnight_financing_bps_per_day_by_asset_class traegt fuer "
+                    f"asset_class_key='{asset_class_key}' noch die alte Skalar-Form (interpretiert "
+                    "als 'nur Long') — Short-Finanzierung bleibt 0.0, bis die Config auf die neue "
+                    "{'long':..., 'short':...}-Form migriert ist."
+                )
             # Issue #1266 (GH #1136) — ``strategy`` erlaubt resolve_slippage_bps die feinste
             # verfuegbare kalibrierte Ebene (Strategie+Symbol > Symbol > Asset-Klasse) zu waehlen,
             # siehe dortiger Docstring; scope wird separat fuer die Report-Telemetrie aufgeloest.
-            slippage_bps_resolved = resolve_slippage_bps(
-                inst_id_str, slippage_bps_by_asset_class, asset_class_key,
-                strategy=strategy_class_name)
+            # Issue #1348 (GH #1242, P1) — die konfigurierte/kalibrierte Slippage wird zusaetzlich
+            # auf die strukturelle Spread-Untergrenze angehoben (siehe slippage_floor_bps_from_
+            # spread-Docstring): Selektionspfad bleibt gemaess #1277 unberuehrt (dieser Floor wirkt
+            # NUR hier, in der Simulation/im 'full_realism'-Kostenstress-Pfad unten), aber die
+            # Nullsetzung darf die Simulation nicht mehr ungeschuetzt erreichen.
+            _slippage_floor_bps = slippage_floor_bps_from_spread(spread_bps)
+            slippage_bps_resolved = max(
+                resolve_slippage_bps(
+                    inst_id_str, slippage_bps_by_asset_class, asset_class_key,
+                    strategy=strategy_class_name),
+                _slippage_floor_bps,
+            )
             # Issue #1055/#1204 — siehe Signatur-Kommentar (p50, getrennt von der p90 oben).
-            slippage_bps_p50_resolved = resolve_slippage_bps(
-                inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key,
-                strategy=strategy_class_name)
+            slippage_bps_p50_resolved = max(
+                resolve_slippage_bps(
+                    inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key,
+                    strategy=strategy_class_name),
+                _slippage_floor_bps,
+            )
             slippage_calibration_scope_resolved = resolve_slippage_calibration_scope(
                 inst_id_str, slippage_bps_p50_by_asset_class, asset_class_key,
                 strategy=strategy_class_name)
@@ -7830,7 +7930,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day_long=financing_bps_per_day_long, financing_bps_per_day_short=financing_bps_per_day_short, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {

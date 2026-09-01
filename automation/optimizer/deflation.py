@@ -155,6 +155,31 @@ def probabilistic_sharpe_ratio(sr, n_periods, *, skew: float = 0.0, kurtosis: fl
     return float(_ND.cdf(z))
 
 
+def max_attainable_psr(
+    n_periods, *, reference_sr: float = 0.11386, skew: float = 0.0, kurtosis: float = 3.0,
+    sr_star: float = 0.0,
+) -> float | None:
+    """Issue #1340 (GH #1234) — die höchste ``PSR(SR*)``, die ein Holdout-Fenster von
+    ``n_periods`` Bars für einen REALISTISCH GUTEN Kandidaten überhaupt tragen kann, unabhängig
+    von der konkreten Study. ``reference_sr`` ist dieselbe Kalibrier-Referenz wie in
+    ``probabilistic_sharpe_ratio``s Docstring (#614/#618: ``ŜR_annual=4.6109, A=1638 ⇒
+    ŜR_period=0.11386`` — ein STARKER, aber real beobachteter Kandidat, keine erfundene Zahl):
+    ``max_attainable_psr(202) ≈ 0.9463``, ``max_attainable_psr(211) ≈ 0.95``,
+    ``max_attainable_psr(258) ≈ 0.9656``.
+
+    Ein Preflight, der diesen Wert gegen die konfigurierte ``promotion_confidence``
+    (``tournament.json['deflation_confidence']``) prüft, beantwortet eine ANDERE Frage als der
+    Trial-lokale DSR/PSR-Test: nicht "hat DIESE Study genug Evidenz", sondern "kann IRGENDEINE
+    Study mit diesem Holdout-Fenster überhaupt genug Evidenz erreichen" — ist die Antwort Nein,
+    ist die Promotionsschwelle strukturell unerreichbar, unabhängig von jeder Strategiequalität
+    (Issue #1246, grösster Ertragshebel des gesamten Katalogs).
+
+    ``None``, wenn ``probabilistic_sharpe_ratio`` selbst ``None`` liefert (``n_periods < 2`` oder
+    ein nicht-positiver Varianz-Term — dieselbe Degenerationsbedingung)."""
+    return probabilistic_sharpe_ratio(
+        reference_sr, n_periods, skew=skew, kurtosis=kurtosis, sr_star=sr_star)
+
+
 def psr_from_z(z: float | None) -> float | None:
     """Φ(z) — die CDF fuer einen bereits (z. B. per Bootstrap) berechneten z-Score. Reine
     Convenience, damit Aufrufer wie ``bootstrap_psr_z`` nicht ``statistics.NormalDist`` duplizieren

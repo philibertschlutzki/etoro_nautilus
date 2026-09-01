@@ -54,9 +54,13 @@ def _reset_disk_guard():
 # ── invariants.check_invariant_coverage — reine Funktion ─────────────────────────────────────────
 
 def test_passes_when_every_defined_name_is_in_stream():
+    # Issue #1240 (GH #1240, Katalog #1346, P2) — ``actual`` traegt seit diesem Fix IMMER die
+    # Erreichbarkeits-Zaehlstaende (u. a. n_not_reachable), auch bei PASS — siehe dortigen Test
+    # fuer den 0-Studies-Fall.
     result = inv.check_invariant_coverage(["check_a", "check_b"], ["check_a", "check_b"])
     assert result.passed is True
-    assert result.actual is None
+    assert result.actual["missing"] == []
+    assert result.actual["n_not_reachable"] == 0
 
 
 def test_passes_when_missing_names_are_allowlisted():
