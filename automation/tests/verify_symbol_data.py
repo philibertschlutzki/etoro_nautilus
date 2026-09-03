@@ -21,6 +21,14 @@ soll es NICHT denselben Code (und damit potenziell denselben Bug) wie die geprü
 teilen. Nur pandas/pyarrow als Abhängigkeiten, dieselben, die das Repository selbst bereits
 voraussetzt.
 
+ACHTUNG (Issue #1248, Katalog #1353, Pitfall #482): genau WEIL dieses Skript bewusst keine
+automation.*-Module importiert, zieht es Layout-Änderungen der Katalog-Schreibstelle
+(api_backfiller.py/historical_fetcher.py) NICHT automatisch nach — es gibt keinen Import-Fehler,
+der die Divergenz anzeigt, nur ein plötzliches 100-%-Fehlschlagen ohne erkennbare Ursache (genau
+das ist hier passiert: Issue #1331 fuehrte Interval-Unterverzeichnisse ein, dieses Skript suchte
+weiter nur flach). Wer künftig das Katalog-Verzeichnislayout ändert, MUSS
+``resolve_quote_tick_files`` unten explizit mitziehen — als eigenständige Kopie, nicht als Import.
+
 Nutzung:
     python verify_symbol_data.py --repo-root ~/etoro_nautilus --symbols TSLA.ETORO NVDA.ETORO
     python verify_symbol_data.py --repo-root ~/etoro_nautilus --all
@@ -55,10 +63,24 @@ _COLUMN_ALIASES = {
 _FSB16_SCALE = 10 ** 16
 
 
-def resolve_quote_tick_files(catalog_path: Path, symbol: str) -> list[Path]:
+def resolve_quote_tick_files(catalog_path: Path, symbol: str, interval: str = "OneHour") -> list[Path]:
+    """Seit Issue #1331 (GH #1225, Commit ``81183ec5``) schreibt der Katalog-Writer jede
+    Auflösung in ein eigenes Interval-Unterverzeichnis (``.../<symbol>/<interval>/``) statt flach
+    direkt unter ``.../<symbol>/``. Gleiche Präferenzreihenfolge wie
+    ``automation.catalog_paths.resolve_quote_tick_files`` (dort NICHT importiert, siehe
+    Moduldocstring): zuerst das Interval-Unterverzeichnis, dann Fallback auf das klassische
+    flache Alt-Layout (Katalog vor #1331, oder eine Auflösung ohne eigenes Unterverzeichnis)."""
     inst_dir = catalog_path / "data" / "quote_tick" / symbol
     if not inst_dir.is_dir():
         return []
+
+    interval_dir = inst_dir / interval
+    if interval_dir.is_dir():
+        for pattern in _QUOTE_TICK_GLOB_PATTERNS:
+            matches = sorted(interval_dir.glob(pattern))
+            if matches:
+                return matches
+
     for pattern in _QUOTE_TICK_GLOB_PATTERNS:
         matches = sorted(inst_dir.glob(pattern))
         if matches:
@@ -128,13 +150,15 @@ def is_within_session_hours(ts: pd.Timestamp, open_utc: str, close_utc: str, *, 
 # Rohdaten laden
 # --------------------------------------------------------------------------------------------
 
-def read_raw_ticks(catalog_path: Path, symbol: str, max_ticks: int | None) -> pd.DataFrame | None:
+def read_raw_ticks(catalog_path: Path, symbol: str, max_ticks: int | None,
+                    interval: str = "OneHour") -> pd.DataFrame | None:
     """Liest bid/ask/ts_event fuer ``symbol``, dekodiert FSB16 zu einem Mid-Preis. ``None`` bei
     fehlender Datei/Spalte/leerem Ergebnis. ``max_ticks`` (optional) begrenzt auf die JUENGSTEN
     N Zeilen (rueckwaerts ueber Row-Groups, wie sweep._load_symbol_bar_quality_sample)."""
-    pq_files = resolve_quote_tick_files(catalog_path, symbol)
+    pq_files = resolve_quote_tick_files(catalog_path, symbol, interval)
     if not pq_files:
-        print(f"  [FEHLER] kein Parquet unter {catalog_path / 'data' / 'quote_tick' / symbol}", file=sys.stderr)
+        inst_dir = catalog_path / "data" / "quote_tick" / symbol
+        print(f"  [FEHLER] kein Parquet unter {inst_dir / interval} oder {inst_dir}", file=sys.stderr)
         return None
 
     schema_names = pq.read_schema(str(pq_files[0])).names
@@ -293,9 +317,9 @@ def session_calendar_hours(df_full: pd.DataFrame, open_utc: str, close_utc: str)
 # --------------------------------------------------------------------------------------------
 
 def verify_symbol(symbol: str, catalog_path: Path, instrument_map: dict, session_cfg: dict,
-                   max_ticks: int | None, do_rth: bool) -> dict:
+                   max_ticks: int | None, do_rth: bool, interval: str = "OneHour") -> dict:
     print(f"\n{'=' * 70}\n{symbol}\n{'=' * 70}")
-    df = read_raw_ticks(catalog_path, symbol, max_ticks)
+    df = read_raw_ticks(catalog_path, symbol, max_ticks, interval)
     if df is None:
         return {"symbol": symbol, "status": "READ_FAILED"}
 
@@ -381,6 +405,12 @@ def main() -> int:
     ap.add_argument("--all", action="store_true", help="Alle im Katalog gefundenen Symbole pruefen.")
     ap.add_argument("--max-ticks", type=int, default=None,
                      help="Nur die juengsten N Ticks je Symbol lesen (Default: alle).")
+    ap.add_argument("--interval", type=str, default="OneHour",
+                     help="Interval-Unterverzeichnis unter .../<symbol>/, das zuerst durchsucht "
+                          "wird (Issue #1248/#1331); Default 'OneHour', konsistent mit "
+                          "automation.catalog_paths und api_backfiller.DEFAULT_INTERVAL. Faellt "
+                          "auf das flache Alt-Layout zurueck, wenn kein solches Unterverzeichnis "
+                          "existiert.")
     ap.add_argument("--no-rth", action="store_true",
                      help="RTH-Session-Achse ueberspringen (nur Rohdaten + 24/7-Bars).")
     ap.add_argument("--csv", type=Path, default=None, help="Zusammenfassungstabelle zusaetzlich als CSV schreiben.")
@@ -420,7 +450,8 @@ def main() -> int:
     for symbol in symbols:
         try:
             results.append(verify_symbol(symbol, catalog_path, instrument_map, session_cfg,
-                                          args.max_ticks, do_rth=not args.no_rth))
+                                          args.max_ticks, do_rth=not args.no_rth,
+                                          interval=args.interval))
         except Exception as e:  # ein Symbol darf den Gesamtlauf nie abbrechen
             print(f"  [FEHLER] {symbol}: {type(e).__name__}: {e}", file=sys.stderr)
             results.append({"symbol": symbol, "status": "EXCEPTION", "error": str(e)})

@@ -685,8 +685,8 @@ def check_instrument_metadata_coherence(instruments: dict[str, dict], *,
         severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} Instrument(e) mit inkohärenten Metadaten: {offenders} — "
-                "Issue #920: ein pauschaler Backfill auf 'equity' entwertet fail-loud-Wächter, "
-                "die nur auf FEHLENDE (nicht auf FALSCHE) Metadaten prüfen."),
+                "Issue-Katalog #920: ein pauschaler Backfill auf 'equity' entwertet "
+                "fail-loud-Wächter, die nur auf FEHLENDE (nicht auf FALSCHE) Metadaten prüfen."),
     )
 
 

@@ -354,7 +354,7 @@ def assert_instrument_metadata_coherence() -> "_inv.InvariantResult | None":
         instruments, spread_bps_by_asset_class=spread_by_asset_class)
     if not result.passed:
         import sys as _sys
-        print(f"❌ [#920] INSTRUMENT_METADATA_INCOHERENT: {result.detail}", file=_sys.stderr)
+        print(f"❌ [Issue-Katalog #920] INSTRUMENT_METADATA_INCOHERENT: {result.detail}", file=_sys.stderr)
         _sys.exit(2)
     return result
 

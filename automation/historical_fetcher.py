@@ -4,8 +4,9 @@ automation/historical_fetcher.py
 =================================
 Standalone historical candle fetcher for eToro Nautilus.
 Fetches up to 12 months (default) of hourly + daily candles per instrument.
-Writes raw PyArrow FSB(16) to data/nautilus/data/quote_tick/SYMBOL/data.parquet
-— same format as api_backfiller.py.
+Writes raw PyArrow FSB(16) to data/nautilus/data/quote_tick/SYMBOL/INTERVAL/data.parquet
+(interval subdirectory per resolution since Issue #1331/GH #1225, e.g. .../SYMBOL/OneHour/
+data.parquet) — same format as api_backfiller.py.
 
 Usage (standalone):
   python3 automation/historical_fetcher.py [--months 12] [--symbol TSLA.ETORO]
