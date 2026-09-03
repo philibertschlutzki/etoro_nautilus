@@ -36,6 +36,43 @@ ETORO_METADATA_URL = "https://api.etorostatic.com/sapi/instrumentsmetadata/V1.1/
 CACHE_FILE = Path("data/universe/etoro_metadata_cache.json")
 CACHE_TTL_HOURS = 24
 
+# Issue #1249 (Katalog #1352, P0) — Normalisierung von eToros ``AssetClass``-Vokabular auf die
+# kanonischen Buckets aus ``backtest.json['spread_bps_by_asset_class']``
+# (``equity``/``crypto``/``commodity``/``forex``). Vorher wurde der eToro-Rohwert (bzw. der
+# Fallback-String ``"Unknown"``) ungeprüft in ``instrument_map.json`` persistiert — ein Wert, für
+# den weder die Kostenkonfiguration noch `invariants.check_instrument_metadata_coherence()` einen
+# Eintrag kennt, was jeden nachfolgenden Sweep-Start mit `INSTRUMENT_METADATA_INCOHERENT`
+# blockierte. Ein eToro-Wert, der hier fehlt, bleibt bewusst unklassifiziert (siehe
+# `_normalize_asset_class`) statt geraten zu werden.
+_ETORO_ASSET_CLASS_MAP: dict[str, str] = {
+    "stocks": "equity",
+    "equities": "equity",
+    "equity": "equity",
+    "etf": "equity",
+    "etfs": "equity",
+    "crypto": "crypto",
+    "cryptocurrency": "crypto",
+    "cryptocurrencies": "crypto",
+    "currencies": "forex",
+    "currency": "forex",
+    "forex": "forex",
+    "fx": "forex",
+    "commodities": "commodity",
+    "commodity": "commodity",
+}
+
+
+def _normalize_asset_class(raw_asset_class: str | None) -> str | None:
+    """Bildet eToros ``AssetClass``-Rohwert auf einen kanonischen Bucket ab.
+
+    Gibt ``None`` zurück, wenn der Wert fehlt oder nicht in ``_ETORO_ASSET_CLASS_MAP`` bekannt
+    ist — von `invariants.check_instrument_metadata_coherence()` bereits korrekt als FEHLEND
+    (nicht FALSCH) behandelt, siehe dortige Regel 3 (``if spread_bps_by_asset_class is not None
+    and asset_class:``)."""
+    if not raw_asset_class:
+        return None
+    return _ETORO_ASSET_CLASS_MAP.get(raw_asset_class.strip().lower())
+
 def get_etoro_metadata():
     """Fetch eToro metadata with caching and retries."""
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -207,8 +244,9 @@ async def run_fetch(
                     item = meta_lookup[uid]
                     symbol_full = item.get("SymbolFull")
                     symbol = f"{symbol_full}.ETORO" if symbol_full else None
-                    asset_class = item.get("AssetClass", "Unknown")
-                    precisions = _fallback_precisions(symbol if symbol else asset_class)
+                    raw_asset_class = item.get("AssetClass")
+                    asset_class = _normalize_asset_class(raw_asset_class)
+                    precisions = _fallback_precisions(symbol if symbol else (raw_asset_class or ""))
 
                     existing_map[uid] = {
                         "symbol": symbol,
@@ -217,7 +255,17 @@ async def run_fetch(
                         "size_precision": precisions[1]
                     }
                     newly_mapped += 1
-                    logger.info(f"Resolved {uid} -> {symbol} ({asset_class})")
+                    if asset_class is None:
+                        # Issue #1249 (Katalog #1352) — unklassifizierbarer Wert wird als
+                        # asset_class=null persistiert statt als Literal "Unknown", und laut
+                        # Fix-Vorgabe fail-loud statt still auf INFO protokolliert.
+                        logger.error(
+                            f"Resolved {uid} -> {symbol}: AssetClass '{raw_asset_class}' konnte "
+                            "keinem kanonischen Bucket (equity/crypto/commodity/forex) zugeordnet "
+                            "werden - schreibe asset_class=null."
+                        )
+                    else:
+                        logger.info(f"Resolved {uid} -> {symbol} ({asset_class})")
 
                     # Update universe entry on-the-fly
                     for u in universe:
@@ -231,6 +279,28 @@ async def run_fetch(
                     json.dump(instrument_map_data, f, indent=2, ensure_ascii=False)
                 logger.info(f"Saved {newly_mapped} new mappings to {instrument_map_path}")
                 known_count += newly_mapped
+
+                # Issue #1249 (Katalog #1352) — Kohärenz sofort nach dem Schreiben prüfen, statt
+                # erst Stunden/Tage später beim naechsten manuellen Sweep-Start
+                # (assert_instrument_metadata_coherence() in sweep.py). Der Defekt wird hier am
+                # Ort und zur Zeit seiner Entstehung (Daily-Orchestrator-Lauf) sichtbar.
+                try:
+                    from automation.optimizer import invariants as _inv
+                    backtest_path = instrument_map_path.parent / "backtest.json"
+                    spread_by_asset_class = None
+                    if backtest_path.exists():
+                        spread_by_asset_class = (
+                            json.loads(backtest_path.read_text(encoding="utf-8")) or {}
+                        ).get("spread_bps_by_asset_class")
+                    coherence_result = _inv.check_instrument_metadata_coherence(
+                        existing_map, spread_bps_by_asset_class=spread_by_asset_class)
+                    if not coherence_result.passed:
+                        logger.error(
+                            "[Issue-Katalog #920] INSTRUMENT_METADATA_INCOHERENT nach run_fetch(): "
+                            f"{coherence_result.detail}"
+                        )
+                except (OSError, ValueError) as e:
+                    logger.warning(f"Could not run post-write instrument metadata coherence check: {e}")
         else:
             logger.error("Could not fetch eToro metadata to resolve unknown instruments.")
             for uid, info in unknown_instruments.items():
