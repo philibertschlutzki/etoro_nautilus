@@ -562,7 +562,7 @@ def ensure_walkforward_history(
 # ─── Catalog Rebuild (Issue #1333 / GH #1227, Issue #1364 / GH #1260) ────────
 
 _DAY_NS = 86_400_000_000_000
-REALTICK_INTERVAL = "RealTick"
+from automation.catalog_paths import REALTICK_INTERVAL  # noqa: E402  (Issue #1354/#1366)
 
 
 class HistoryLossRefused(RuntimeError):

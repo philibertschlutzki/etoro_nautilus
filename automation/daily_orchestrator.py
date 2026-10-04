@@ -583,14 +583,42 @@ def _merge_symbol(
       4. Metadaten sicherstellen
       5. Atomar als data.parquet speichern
     """
-    dest_dir  = QUOTE_TICK_PATH / symbol
+    # Issue #1354 (GH #1251) Fix Punkt 3 / Issue #1366 (GH #1263) — die Echt-Ticks des 24/7-Collectors
+    # gehören NICHT mehr ins flache ``<symbol>/data.parquet``: das war exakt die eine Datei, die die
+    # NautilusTrader-Engine sah (der Elternordner identifiziert das Instrument) — die Echt-Ticks
+    # verfälschten den Backtest oder waren (neben den OneHour-Kerzen) unsichtbar; ausserdem lasen
+    # alle Optimizer-Preflights einen anderen Datenstrom (Pitfall #483). Ziel ist jetzt
+    # ``<symbol>/RealTick/data.parquet`` (``bar_interval_ns = 0``, ``catalog_interval = "RealTick"``).
+    from automation.catalog_paths import REALTICK_INTERVAL
+    from automation.api_backfiller import _with_bar_interval_column
+    inst_dir  = QUOTE_TICK_PATH / symbol
+    dest_dir  = inst_dir / REALTICK_INTERVAL
     dest_file = dest_dir / "data.parquet"
+    legacy_flat = inst_dir / "data.parquet"
     dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Migration: ein vorhandenes flaches data.parquet wird beim ersten Lauf nach RealTick/ VERSCHOBEN
+    # (os.replace, nie gelöscht). Existiert dort bereits eine Datei, fliessen die Zeilen des flachen
+    # Files in den Merge ein und es wird danach unter einem Nicht-*.parquet-Namen aufbewahrt.
+    legacy_tables: list[pa.Table] = []
+    legacy_to_preserve: Path | None = None
+    if legacy_flat.exists():
+        if not dest_file.exists():
+            os.replace(legacy_flat, dest_file)
+            log.info(f"[Phase 2b] {symbol}: flaches data.parquet nach {REALTICK_INTERVAL}/ verschoben (#1354).")
+        else:
+            try:
+                legacy = pq.read_table(str(legacy_flat))
+                if len(legacy) > 0:
+                    legacy_tables.append(legacy)
+            except Exception as e:
+                log.warning(f"[Phase 2b] {symbol}: flaches data.parquet nicht lesbar: {e}")
+            legacy_to_preserve = legacy_flat
 
     all_tables: list[pa.Table] = []
     best_meta: dict = zip_meta or {}
 
-    # 1. Bestehende data.parquet einlesen
+    # 1. Bestehende RealTick/data.parquet einlesen
     if dest_file.exists():
         try:
             existing = pq.read_table(str(dest_file))
@@ -602,7 +630,9 @@ def _merge_symbol(
         except Exception as e:
             log.warning(f"[Phase 2b] {symbol}: Bestehende Datei nicht lesbar: {e}")
 
+    all_tables.extend(legacy_tables)
     all_tables.extend(new_tables)
+    all_tables = [_with_bar_interval_column(t, 0) for t in all_tables]
     total_new = sum(len(t) for t in new_tables)
 
     if not all_tables:
@@ -638,8 +668,10 @@ def _merge_symbol(
         f"(-{rows_before - rows_after} Duplikate)"
     )
 
-    # 4. Metadaten sicherstellen
+    # 4. Metadaten sicherstellen (+ Auflösungs-Deklaration der Echt-Ticks, Issue #1354/#1366)
     final_meta = _ensure_metadata(best_meta, symbol)
+    final_meta[b"catalog_interval"] = REALTICK_INTERVAL.encode()
+    final_meta.pop(b"catalog_schema_version", None)   # RealTick ist nicht Kerzen-versioniert
     merged = merged.replace_schema_metadata(final_meta)
 
     # 5. Atomar speichern
@@ -652,6 +684,14 @@ def _merge_symbol(
         log.error(f"[Phase 2b] Schreib-Fehler {symbol}: {e}")
         tmp.unlink(missing_ok=True)
         return False
+
+    # Die Zeilen eines (zusätzlich zu RealTick/data.parquet) vorgefundenen flachen data.parquet sind
+    # nun im Merge enthalten — die Datei wird AUFBEWAHRT (nie gelöscht), unter einem Namen, den kein
+    # ``*.parquet``-Glob trifft.
+    if legacy_to_preserve is not None and legacy_to_preserve.exists():
+        kept = dest_dir / f"legacy_flat_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.parquet.migrated"
+        os.replace(legacy_to_preserve, kept)
+        log.info(f"[Phase 2b] {symbol}: flaches data.parquet aufbewahrt als {kept.name}.")
 
     # Alte Timestamp-Dateien löschen (Single-File-Katalog)
     deleted = 0

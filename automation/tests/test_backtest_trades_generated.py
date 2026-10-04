@@ -24,7 +24,11 @@ def run_isolated_worker(*args, **kwargs):
 
 def test_backtest_trades_generated(tmp_path):
     catalog_path = tmp_path / "nautilus"
-    tick_dir = catalog_path / "data" / "quote_tick" / "AAPL.ETORO"
+    # Issue #1354 (GH #1251) Fix Punkt 5 — PRODUKTIONSLAYOUT (seit #1331: ``<symbol>/<interval>/
+    # data.parquet``, ``catalog_schema_version``/``catalog_interval``-Metadaten, ``bar_interval_ns``-
+    # Spalte) statt des alten flachen ``<symbol>/data.parquet``: dieser Test war als einziger End-to-End-
+    # Test GRÜN, obwohl die Engine aus dem Produktionslayout 0 Ticks lud (Pitfall #483).
+    tick_dir = catalog_path / "data" / "quote_tick" / "AAPL.ETORO" / "OneHour"
     tick_dir.mkdir(parents=True, exist_ok=True)
     parquet_file = tick_dir / "data.parquet"
 
@@ -65,12 +69,15 @@ def test_backtest_trades_generated(tmp_path):
         pa.field("ask_size",  _FSB16),
         pa.field("ts_event",  pa.uint64()),
         pa.field("ts_init",   pa.uint64()),
+        pa.field("bar_interval_ns", pa.uint64()),
     ])
 
     meta = {
         b"price_precision": str(price_prec).encode(),
         b"size_precision":  str(size_prec).encode(),
         b"instrument_id":   b"AAPL.ETORO",
+        b"catalog_schema_version": b"2",
+        b"catalog_interval": b"OneHour",
     }
 
     table = pa.table(
@@ -81,6 +88,7 @@ def test_backtest_trades_generated(tmp_path):
             "ask_size":  pa.array(ask_sizes,  type=_FSB16),
             "ts_event":  pa.array(ts_events,  type=pa.uint64()),
             "ts_init":   pa.array(ts_inits,   type=pa.uint64()),
+            "bar_interval_ns": pa.array([3_600_000_000_000] * len(ts_events), type=pa.uint64()),
         },
         schema=schema,
     )

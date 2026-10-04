@@ -783,6 +783,89 @@ def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, 
         return None
 
 
+def check_engine_reader_parity(
+    symbol: str, catalog_path: Path | None = None, *, holdout_days: float | None = None,
+    start_ns: int | None = None, end_ns: int | None = None, interval: str = "OneHour",
+) -> dict | None:
+    """Issue #1354 (GH #1251, P0) Fix Punkt 4 — blockierender Preflight je Symbol VOR Phase 1: ZWEI
+    Leser für dieselbe Grösse (Pitfall #483) müssen übereinstimmen. Alle Preflights lesen über
+    ``catalog_paths.resolve_quote_tick_files`` (PyArrow), die Engine über NautilusTraders
+    ``ParquetDataCatalog`` auf der ENGINE-SICHT (``catalog_paths.engine_catalog_view``). Seit dem
+    #1331-Layout lud die Engine 0 Stunden-Ticks, während jeder Preflight „Daten vorhanden" meldete —
+    kein Check verglich die beiden Leser je.
+
+    Zählt die Ticks im Fenster ``[start_ns, end_ns]`` (inklusive, wie ``ParquetDataCatalog.
+    quote_ticks``); ohne explizite Grenzen: das Holdout-Fenster ``[latest − holdout_days, latest]``
+    (``holdout_days=None`` ⇒ die gesamte Datei). ``passed`` ⇔ ``n_engine == n_preflight``; sonst
+    ``reason == 'REJECT_ENGINE_READER_MISMATCH'`` (das Symbol wird abgewiesen).
+
+    ``None`` (nicht auswertbar, fail-open wie die übrigen Preflights): keine Quelldatei, kein
+    ``ts_event``, NautilusTrader nicht importierbar oder ein Lesefehler — ein eigener Lesefehler
+    blockiert den Sweep nie."""
+    from automation.catalog_paths import EngineCatalogViewError, engine_catalog_view
+
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+    files = resolve_quote_tick_files(catalog_path, symbol, interval=interval)
+    if not files:
+        return None
+    try:
+        import pyarrow.compute as pc
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(str(files[0]), columns=["ts_event"])
+        if len(table) == 0:
+            return None
+        latest = int(pc.max(table.column("ts_event")).as_py())
+        if end_ns is None:
+            end_ns = latest
+        if start_ns is None and holdout_days is not None:
+            start_ns = int(end_ns - float(holdout_days) * 86_400 * 1_000_000_000)
+        ts = table.column("ts_event")
+        mask = None
+        if start_ns is not None:
+            mask = pc.greater_equal(ts, pa_scalar_uint64(start_ns))
+        upper = pc.less_equal(ts, pa_scalar_uint64(end_ns))
+        mask = upper if mask is None else pc.and_(mask, upper)
+        n_preflight = int(pc.sum(pc.cast(mask, "int64")).as_py() or 0)
+
+        from nautilus_trader.persistence.catalog import ParquetDataCatalog
+        with engine_catalog_view(catalog_path, symbol, interval) as view:
+            engine_ticks = ParquetDataCatalog(str(view.root)).quote_ticks(
+                instrument_ids=[symbol], start=start_ns, end=end_ns)
+            n_engine = len(engine_ticks) if engine_ticks else 0
+            link_kind = view.link_kind
+    except (EngineCatalogViewError, ImportError):
+        return None
+    except Exception:
+        return None
+    passed = n_engine == n_preflight
+    return {
+        "passed": passed, "n_engine": n_engine, "n_preflight": n_preflight,
+        "window": {"start_ns": start_ns, "end_ns": end_ns}, "interval": interval,
+        "view_link_kind": link_kind, "severity": "blocking",
+        "reason": None if passed else (
+            f"REJECT_ENGINE_READER_MISMATCH: die Engine (ParquetDataCatalog auf der Sicht) lädt "
+            f"n_engine={n_engine} Ticks im Fenster, der Preflight-Leser (resolve_quote_tick_files) "
+            f"n_preflight={n_preflight} — beide Leser müssen dieselbe Grösse messen (Issue #1354)."),
+    }
+
+
+def pa_scalar_uint64(value: int):
+    """``pyarrow``-uint64-Skalar für Fenstergrenzen gegen die ``ts_event``-Spalte (uint64)."""
+    import pyarrow as pa
+    return pa.scalar(int(value), type=pa.uint64())
+
+
 # Issue #807 — Sentinel-"Strategie" fuer symbolweite (statt paar-weise) diagnosed_pairs_cache-
 # Eintraege: EIN Eintrag pro degenerierten Symbol statt 14 unabhaengiger Strategie-Eintraege.
 _SYMBOL_DEGENERACY_SENTINEL_STRATEGY = "__SYMBOL_DATA_DEGENERATE__"
@@ -2983,6 +3066,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                          optimize_symbol=None, confirm=None,
                          run_id: str | None = None, bar_quality_fn=None,
                          tick_population_fn=None,
+                         engine_reader_parity_fn=None,
                          max_wallclock_h_override: float | None = None) -> list[Path]:
     """Dispatcht für jedes enumerierte Paar optimize_symbol → confirm_per_symbol_promotion →
     export_symbol_proposal und gibt die Proposal-Pfade zurück. Betritt NIE Phase 5.
@@ -3357,6 +3441,44 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             )
         if _resolution_rejected_syms:
             syms = [s for s in syms if s not in _resolution_rejected_syms]
+
+        # Issue #1354 (GH #1251) Fix Punkt 4 — Leser-Parität Preflight ↔ Engine je Symbol, BLOCKIEREND
+        # und im Invarianten-Strom auch bei PASS (#1167): Tick-Zahl über ParquetDataCatalog(Sicht) im
+        # Holdout-Fenster == Tick-Zahl über resolve_quote_tick_files im selben Fenster, sonst
+        # REJECT_ENGINE_READER_MISMATCH.
+        _engine_parity_rejected: list[str] = []
+        try:
+            _parity_holdout_days = (_wf or {}).get("holdout_days")
+        except Exception:
+            _parity_holdout_days = None
+        for _sym in syms:
+            try:
+                _parity = (engine_reader_parity_fn or check_engine_reader_parity)(
+                    _sym, holdout_days=_parity_holdout_days)
+            except Exception:
+                _parity = None
+            if _parity is None:
+                continue
+            emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
+                "name": "check_engine_reader_parity", "check": "check_engine_reader_parity",
+                "passed": _parity["passed"], "source": "sweep", "scope": _sym,
+                "expected": "n_engine (ParquetDataCatalog auf der Engine-Sicht) == n_preflight "
+                           "(resolve_quote_tick_files) im Holdout-Fenster (#1354/GH #1251).",
+                "actual": {"n_engine": _parity.get("n_engine"), "n_preflight": _parity.get("n_preflight"),
+                           "window": _parity.get("window"), "view_link_kind": _parity.get("view_link_kind")},
+                "detail": _parity.get("reason") or "Engine- und Preflight-Leser stimmen überein.",
+                "severity": _parity.get("severity", "blocking"),
+            }, level=logging.INFO if _parity["passed"] is not False else logging.ERROR)
+            if _parity["passed"] is not False:
+                continue
+            _engine_parity_rejected.append(_sym)
+            _symbols_rejected.append({
+                "symbol": _sym, "reason": "REJECT_ENGINE_READER_MISMATCH",
+                "detail": _parity.get("reason"),
+            })
+            _log.error("[#1354] %s: REJECT_ENGINE_READER_MISMATCH — %s", _sym, _parity.get("reason"))
+        if _engine_parity_rejected:
+            syms = [s for s in syms if s not in _engine_parity_rejected]
 
         # Issue #1332 (GH #1226) Fix Punkt 3 — check_no_future_price_in_tick: reine
         # Konstruktions-Regressionswache (kein Ablehnungsgrund, siehe Docstring) — ein

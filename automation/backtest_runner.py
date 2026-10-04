@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 from automation.utils import _fallback_precisions
 from automation.disaster_stop import DISASTER_STOP_MODE_SIMULATED, resolve_disaster_stop_params
 from automation.catalog_paths import (
+    engine_catalog_view,
     resolve_quote_tick_files, resolve_quote_tick_columns, decode_fsb16_price,
 )
 import importlib
@@ -172,7 +173,12 @@ def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> boo
     if not inst_dir.exists():
         return False
 
-    parquet_files = sorted(inst_dir.rglob("*.parquet"))
+    # Issue #1354 (GH #1251) — NUR die Dateien, die die Engine liest (``resolve_quote_tick_files``,
+    # Auflösung ``OneHour``), nicht ``rglob("*.parquet")`` über ALLE Unterordner: ein Katalog mit
+    # ``OneHour/``/``OneDay/``/``RealTick/`` trägt je Auflösung bewusst abweichende Metadaten
+    # (``catalog_interval``, ``bar_interval_ns``-Semantik); das Angleichen auf die zuletzt
+    # sortierte Datei überschrieb die deklarierte Auflösung der anderen Segmente (Pitfall #483).
+    parquet_files = list(resolve_quote_tick_files(catalog_path, instrument_id_str, interval="OneHour"))
     if len(parquet_files) <= 1:
         return False
 
@@ -7409,49 +7415,23 @@ def print_tournament_table(
 # Worker-Prozess
 # ---------------------------------------------------------------------------
 
-def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str) -> str | None:
-    """
-    Reads a Parquet file for an instrument, normalizes size_precision > 0 else 8,
-    and returns a path to a temporary catalog directory if modifications were needed.
-    """
-    original_path = Path(original_catalog_path) / "data" / "quote_tick" / instrument_id
-    if not original_path.exists():
-        return None
-
-    parquet_files = list(original_path.glob("*.parquet"))
-    if not parquet_files:
-        return None
-
-    first_file = parquet_files[0]
-    table = pq.read_table(str(first_file))
-    meta = table.schema.metadata or {}
-
-    # Extract existing precision from bytes
+def _normalize_view_size_precision(view, instrument_id: str) -> bool:
+    """Issue #1354 (GH #1251) Fix Punkt 2 — normalisiert ``size_precision`` (> 0, sonst Fallback) der
+    ENGINE-SICHT in place. Schreibt AUSSCHLIESSLICH in die Sicht (``EngineCatalogView.
+    replace_data_file`` löst vorher den Hardlink, sonst würde das Original mitverändert), nie in den
+    Originalkatalog. ``True``, wenn die Datei neu geschrieben wurde."""
+    data_file = view.data_file
+    table = pq.read_table(str(data_file))
+    meta = dict(table.schema.metadata or {})
     val = meta.get(b"size_precision", b"0")
     sp_parquet = int(val.decode("utf-8") if isinstance(val, bytes) else val)
-
-    # Apply the exact same normalization logic
     normalized_sp = _normalize_size_precision(sp_parquet, instrument_id)
-
-    # If it matches, no I/O needed; return None
     if normalized_sp == sp_parquet:
-        return None
-
-    # Inject the normalized precision back into the schema
+        return False
     meta[b"size_precision"] = str(normalized_sp).encode("utf-8")
-
-    # Write to a temporary catalog directory
-    temp_catalog = tempfile.mkdtemp(prefix="nautilus_temp_catalog_")
-    target_path = Path(temp_catalog) / "data" / "quote_tick" / instrument_id
-    target_path.mkdir(parents=True, exist_ok=True)
-
-    for p_file in parquet_files:
-        t = pq.read_table(str(p_file))
-        t = t.replace_schema_metadata(meta)
-        pq.write_table(t, str(target_path / p_file.name))
-
-    return temp_catalog
-
+    patched = table.replace_schema_metadata(meta)
+    view.replace_data_file(lambda target: pq.write_table(patched, str(target), compression="snappy"))
+    return True
 
 
 def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float = 100000.0,
@@ -7573,7 +7553,7 @@ def run_single_backtest_worker(
 
     wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
-    temp_catalog_dir = None
+    engine_view = None
     # Issue #1298 (GH #1175, P0) Fix Punkt 2 — VOR beiden try-Bloecken deklariert: jeder
     # Fehlerpfad (auch einer VOR dem load_ticks_from_catalog-Aufruf) muss dieses Dict referenzieren
     # koennen, ohne einen NameError zu riskieren. Bleibt {} (kein Zaehler gestempelt), solange der
@@ -7582,8 +7562,15 @@ def run_single_backtest_worker(
     try:
         # --- Ticks laden (mit Schema Injection falls nötig) ---
         try:
-            temp_catalog_dir = _get_normalized_catalog_path(catalog_path, inst_id_str)
-            effective_catalog_path = temp_catalog_dir if temp_catalog_dir else catalog_path
+            # Issue #1354 (GH #1251, P0) — die Engine liest AUSSCHLIESSLICH die Sicht (``data/
+            # quote_tick/<symbol>/data.parquet`` als Link auf die OneHour-Datei): NautilusTraders
+            # Katalog identifiziert Instrumente über den Elternordner und lädt aus dem
+            # ``<symbol>/OneHour/data.parquet``-Layout 0 Ticks. Kein ``ParquetDataCatalog`` mehr auf
+            # dem Original-``catalog_path`` für Quote-Ticks; Precision-Normalisierung schreibt in die
+            # Sicht, nie ins Original.
+            engine_view = engine_catalog_view(catalog_path, inst_id_str)
+            _normalize_view_size_precision(engine_view, inst_id_str)
+            effective_catalog_path = str(engine_view.root)
 
             catalog = ParquetDataCatalog(effective_catalog_path)
 
@@ -8124,9 +8111,8 @@ def run_single_backtest_worker(
             result["fill_matches"] = fill_matches
         return result
     finally:
-        if temp_catalog_dir and os.path.exists(temp_catalog_dir):
-            import shutil
-            shutil.rmtree(temp_catalog_dir)
+        if engine_view is not None:
+            engine_view.close()
         import gc
         gc.collect()
 
