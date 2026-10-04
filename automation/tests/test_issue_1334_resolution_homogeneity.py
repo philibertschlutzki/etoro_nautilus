@@ -61,10 +61,12 @@ def test_mixed_resolution_catalog_yields_single_hourly_segment_of_70_days(tmp_pa
 
     raw_span = (now - daily_start).days
     assert result["raw_span_days"] == pytest.approx(raw_span, abs=1)
-    # effective_span_days misst NUR das zusammenhaengende Stunden-Segment (Monatsgranularitaet:
-    # die 70 Tage spannen die vollen Kalendermonate Juni-August ⇒ 92 Tage), nicht die volle rohe
+    # effective_span_days misst NUR das zusammenhaengende Stunden-Segment — seit Issue #1365 (GH #1261)
+    # auf Tick-Ebene exakt seine Laenge (vorher Monatsgranularitaet: die 70 Tage spannten die vollen
+    # Kalendermonate Juni-August ⇒ 92 Tage, die Toleranz 60..100 deckte das zu), nicht die volle rohe
     # Spanne (~970 Tage inkl. des OneDay-Segments).
-    assert 60 <= result["effective_span_days"] <= 100
+    assert result["effective_span_days"] == pytest.approx(70.0, abs=0.01)
+    assert result["effective_span_days"] <= result["raw_span_days"]
     assert result["passed"] is False
     assert result["raw_span_days"] > result["effective_span_days"] * 5
 

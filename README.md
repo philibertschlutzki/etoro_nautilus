@@ -115,9 +115,16 @@ python3 automation/daily_orchestrator.py --skip-api-fetch
 # Dry-Run: Phasen 1–4, KEIN Bot-Start (sicher zum Testen)
 python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
 
-# Mit API-Backfill der letzten 7 Tage (z. B. wenn data/import/ leer ist)
+# Zusätzlich mit Tiefen-Abruf (Phase 2d, z. B. Erstbefüllung)
 python3 automation/daily_orchestrator.py
+
+# Ganz ohne Netzabruf in Phase 2
+python3 automation/daily_orchestrator.py --offline
 ```
+
+**Vorwärts-Füllung, Tiefe und Aktualität (Issue #1363):** `--skip-api-fetch` überspringt nur noch den *Tiefen*-Abruf (Phase 2d); der *Vorwärts*-Schritt (Phase 2c: neue `OneHour`-Kerzen vom jüngsten lokalen Tick bis jetzt, Anzahl aus der Lücke, paginiert) läuft immer — sonst wuchs der Katalog im dokumentierten Tagesbetrieb nicht. Nur `--offline` verzichtet auf jeden Netzabruf. Die erreichbare API-Tiefe wird je Intervall in `data/state/inception_bounds.json` registriert (`{symbol: {"OneHour": ns, "OneDay": ns, "observed_utc": …}}`); bringt ein Rückwärts-Abruf weniger als einen Tag Zugewinn, meldet der Pre-Sweep-Backfill `BACKFILL_NO_GAIN` und ruft dieses Symbol für `backfill_retry_days` (optimizer.json, Default 7) nicht erneut ab. Vor Phase 1 lehnt der blockierende Preflight `check_catalog_freshness` Symbole ab, deren jüngster `OneHour`-Tick älter als `max_catalog_staleness_h` (Default 96 h) ist (`REJECT_DATA_STALE`). Scheitern alle Symbole nur an der Historien-Spanne, endet der Lauf mit `run_status = "waiting_for_data"` und `eta_utc` (heute + fehlende Tage; der Katalog wächst um einen Tag je Tag).
+
+**Effektive Spanne (Issue #1365):** `effective_span_days` ist die Länge des längsten *zusammenhängenden* `OneHour`-Segments auf Tick-Ebene — eine Lücke über `max_contiguity_gap_days` (optimizer.json, Default 4,0 Tage), in der mindestens ein Handelstag fehlt, oder ein Tick anderer Auflösung beendet das Segment. Sie ist nie größer als die rohe Spanne; der Preflight-Invariantenstrom trägt `resolution_segments` (`start_utc`/`end_utc`/`days`) und `largest_gap_days`.
 
 Vollständiger Ablauf Schritt für Schritt: [`manuals/momentum_ls.md`](manuals/momentum_ls.md) und [`manuals/end_to_end_workflow.md`](manuals/end_to_end_workflow.md).
 
@@ -356,7 +363,7 @@ Der Prozess, der die besten Strategie-Parameter sucht (Kapitel 9), bewertet Kand
 | `data/nautilus/data/cfd/{symbol}/*.parquet` | Cfd-Instrument-Definitionen (size_precision!) |
 | `data/state/execution_mapping.json` | eToro-Order-IDs ↔ Nautilus-Mapping |
 | `data/state/size_increment_cache.json` | Precision-Cache |
-| `data/state/inception_bounds.json` | Cache für historische Tiefe junger Instrumente |
+| `data/state/inception_bounds.json` | Erreichbare API-Tiefe je Symbol und Intervall (`OneHour`/`OneDay`, `observed_utc`; Issue #1363) |
 | `data/state/live_equity_hwm.json` | Persistenter Equity-Hochwasserstand + Tagesbasis des Live-Circuit-Breakers (Issue #1362) — überlebt Bot-Neustarts; Zurücksetzen nur per `momentum_ls_run.py --reset-hwm` |
 | `data/state/live_bot.lock` | Exklusive `flock`-Sperre des laufenden Live-Bots (Inhalt: `pid`, `started_utc`, `environment`, `whitelist_sha256`; Issue #1358) — ersetzt die nie gelesene PID-Datei |
 | `data/universe/momentum_ls.json` | Universe-Snapshot (`fetched_at` + `universe[]`) |

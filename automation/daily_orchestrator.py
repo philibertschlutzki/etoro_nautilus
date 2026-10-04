@@ -318,91 +318,10 @@ def _load_universe_file(log: logging.Logger) -> dict:
 # PHASE 2: Datenbeschaffung
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def phase2_data_acquisition(
-    log: logging.Logger,
-    universe_result: dict,
-    api_key: str,
-    user_key: str,
-    skip_api_fetch: bool = False,
-) -> dict:
-    """
-    Phase 2: Datenbeschaffung (Multi-ZIP-Import, Merge, API-Backfill).
-
-    v2.0-Änderungen gegenüber v1.x:
-      - Multi-ZIP: Verarbeitet ALLE *.zip in data/import/ (nicht nur eine).
-      - Einfacher Merge: pa.concat_tables + ts_event-Dedup (kein _cast_to_schema).
-      - Kein migrate_catalog_to_fixed_binary: Quellen liefern bereits FSB(16).
-      - API-Backfill via automation.api_backfiller (Modul-Import, Standalone).
-    """
-    log.info("═" * 60)
-    log.info("PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)")
-    log.info("═" * 60)
-
-    result = {
-        "imported_instruments": [],
-        "merged_count":         0,
-        "api_filled":           [],
-        "zips_deleted":         0,
-    }
-
-    # 2a. Alle ZIPs einlesen
-    zip_files = _find_all_zip_files(log)
-    if zip_files:
-        log.info(f"[Phase 2a] {len(zip_files)} ZIP-Datei(en) gefunden: {[z.name for z in zip_files]}")
-        merge_result = _import_and_merge_all_zips(log, zip_files)
-        result["imported_instruments"] = merge_result["instruments"]
-        result["merged_count"]         = merge_result["merged"]
-
-        # 2b. ZIPs nach erfolgreichem Merge löschen
-        if merge_result["success"]:
-            deleted = 0
-            for zf in zip_files:
-                try:
-                    os.remove(str(zf))
-                    deleted += 1
-                    log.info(f"[Phase 2b] ZIP gelöscht: {zf.name}")
-                except OSError as e:
-                    log.error(f"[Phase 2b] Konnte ZIP nicht löschen {zf.name}: {e}")
-            result["zips_deleted"] = deleted
-            emit_json_event(log, "ZIPS_DELETED", {"count": deleted, "paths": [str(z) for z in zip_files]})
-        else:
-            log.warning("[Phase 2b] ZIPs NICHT gelöscht — Import hat Fehler gemeldet.")
-    else:
-        log.info("[Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.")
-
-    # 2c. API-Backfill via api_backfiller.py
-    if not skip_api_fetch:
-        etoro_id_map = _load_etoro_id_map(UNIVERSE_PATH)
-        if etoro_id_map:
-            specific = {
-                item["symbol"]
-                for item in universe_result.get("universe", [])
-                if item.get("symbol")
-            } or None
-
-            log.info(
-                f"[Phase 2c] API-Backfill für {len(specific) if specific else len(etoro_id_map)} Symbole …"
-            )
-            try:
-                api_filled = asyncio.run(
-                    run_backfill(
-                        api_key=api_key,
-                        user_key=user_key,
-                        etoro_id_to_symbol=etoro_id_map,
-                        days=7,
-                        specific_symbols=specific,
-                    )
-                )
-                result["api_filled"] = api_filled
-                log.info(f"[Phase 2c] API-Backfill: {len(api_filled)} Symbole befüllt.")
-            except Exception as e:
-                log.error(f"[Phase 2c] API-Backfill Fehler: {e}\n{traceback.format_exc()}")
-        else:
-            log.warning("[Phase 2c] Keine Instrumente im Universe — API-Backfill übersprungen.")
-    else:
-        log.info("[Phase 2c] API-Backfill übersprungen (--skip-api-fetch).")
-
-    # 2d. Historical Fetcher für Symbole ohne ausreichende Daten
+def _phase2d_depth_fetch(log: logging.Logger, universe_result: dict, api_key: str, user_key: str,
+                         result: dict) -> None:
+    """Phase 2d — Tiefen-Abruf (``historical_fetcher.run_historical_fetch``) für Symbole ohne ausreichende
+    Historie; schreibt ``result['hist_filled']``. Fehler werden geloggt, nie geworfen."""
     try:
         from automation.historical_fetcher import run_historical_fetch, is_backtest_range_covered
         from automation.api_backfiller import _load_etoro_id_map as _load_id_map_2d
@@ -459,6 +378,106 @@ def phase2_data_acquisition(
     except Exception as e:
         log.error(f"[Phase 2d] Historical Fetcher Modul-Fehler: {e}\n{traceback.format_exc()}")
         result["hist_filled"] = []
+
+
+def phase2_data_acquisition(
+    log: logging.Logger,
+    universe_result: dict,
+    api_key: str,
+    user_key: str,
+    skip_api_fetch: bool = False,
+    offline: bool = False,
+) -> dict:
+    """
+    Phase 2: Datenbeschaffung (Multi-ZIP-Import, Merge, API-Backfill).
+
+    Issue #1363 (GH #1259): der Vorwärts-Schritt (2c, neue Kerzen seit dem jüngsten lokalen Tick) läuft
+    UNABHÄNGIG von ``--skip-api-fetch`` — das Flag überspringt nur den Tiefen-Abruf (2d). Vorher übersprang
+    der dokumentierte Tagesbetrieb (``--skip-api-fetch``) genau 2c: der ``OneHour``-Katalog erhielt keine
+    neuen Kerzen, die Spanne wuchs nicht, der jüngste Stundenwert alterte. ``--offline`` verzichtet auf
+    JEDEN Netzabruf.
+
+    v2.0-Änderungen gegenüber v1.x:
+      - Multi-ZIP: Verarbeitet ALLE *.zip in data/import/ (nicht nur eine).
+      - Einfacher Merge: pa.concat_tables + ts_event-Dedup (kein _cast_to_schema).
+      - Kein migrate_catalog_to_fixed_binary: Quellen liefern bereits FSB(16).
+      - API-Backfill via automation.api_backfiller (Modul-Import, Standalone).
+    """
+    log.info("═" * 60)
+    log.info("PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)")
+    log.info("═" * 60)
+
+    result = {
+        "imported_instruments": [],
+        "merged_count":         0,
+        "api_filled":           [],
+        "zips_deleted":         0,
+    }
+
+    # 2a. Alle ZIPs einlesen
+    zip_files = _find_all_zip_files(log)
+    if zip_files:
+        log.info(f"[Phase 2a] {len(zip_files)} ZIP-Datei(en) gefunden: {[z.name for z in zip_files]}")
+        merge_result = _import_and_merge_all_zips(log, zip_files)
+        result["imported_instruments"] = merge_result["instruments"]
+        result["merged_count"]         = merge_result["merged"]
+
+        # 2b. ZIPs nach erfolgreichem Merge löschen
+        if merge_result["success"]:
+            deleted = 0
+            for zf in zip_files:
+                try:
+                    os.remove(str(zf))
+                    deleted += 1
+                    log.info(f"[Phase 2b] ZIP gelöscht: {zf.name}")
+                except OSError as e:
+                    log.error(f"[Phase 2b] Konnte ZIP nicht löschen {zf.name}: {e}")
+            result["zips_deleted"] = deleted
+            emit_json_event(log, "ZIPS_DELETED", {"count": deleted, "paths": [str(z) for z in zip_files]})
+        else:
+            log.warning("[Phase 2b] ZIPs NICHT gelöscht — Import hat Fehler gemeldet.")
+    else:
+        log.info("[Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.")
+
+    # 2c. API-Backfill (Vorwärts-Schritt) via api_backfiller.py — Issue #1363: nur --offline überspringt ihn.
+    if not offline:
+        etoro_id_map = _load_etoro_id_map(UNIVERSE_PATH)
+        if etoro_id_map:
+            specific = {
+                item["symbol"]
+                for item in universe_result.get("universe", [])
+                if item.get("symbol")
+            } or None
+
+            log.info(
+                f"[Phase 2c] API-Backfill für {len(specific) if specific else len(etoro_id_map)} Symbole …"
+            )
+            try:
+                api_filled = asyncio.run(
+                    run_backfill(
+                        api_key=api_key,
+                        user_key=user_key,
+                        etoro_id_to_symbol=etoro_id_map,
+                        days=7,
+                        specific_symbols=specific,
+                    )
+                )
+                result["api_filled"] = api_filled
+                log.info(f"[Phase 2c] API-Backfill: {len(api_filled)} Symbole befüllt.")
+            except Exception as e:
+                log.error(f"[Phase 2c] API-Backfill Fehler: {e}\n{traceback.format_exc()}")
+        else:
+            log.warning("[Phase 2c] Keine Instrumente im Universe — API-Backfill übersprungen.")
+    else:
+        log.info("[Phase 2c] API-Backfill übersprungen (--offline).")
+
+    # 2d. Historical Fetcher (Tiefen-Abruf) für Symbole ohne ausreichende Daten — Issue #1363: übersprungen
+    # mit --skip-api-fetch ODER --offline (der Vorwärts-Schritt 2c ist davon unabhängig).
+    if skip_api_fetch or offline:
+        log.info(f"[Phase 2d] Tiefen-Abruf übersprungen ({'--offline' if offline else '--skip-api-fetch'}).")
+        result["hist_filled"] = []
+    else:
+        _phase2d_depth_fetch(log, universe_result, api_key, user_key, result)
 
     emit_json_event(log, "PHASE2_COMPLETE", {
         "merged_instruments": result["merged_count"],
@@ -1298,7 +1317,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="eToro Nautilus — Täglicher End-to-End-Orchestrator v2.0"
     )
     parser.add_argument("--no-deploy",      action="store_true", help="Führt Phase 1–4 vollständig aus (echter Backtest), unterbindet ausschließlich Phase 5 (Live-Deploy).")
-    parser.add_argument("--skip-api-fetch", action="store_true", help="API-Backfill überspringen.")
+    parser.add_argument("--skip-api-fetch", action="store_true",
+        help="Tiefen-Abruf (Phase 2d) überspringen; der Vorwärts-Schritt (Phase 2c, neue Kerzen) läuft "
+             "weiter (Issue #1363).")
+    parser.add_argument("--offline", action="store_true",
+        help="Kein Netzabruf in Phase 2 (weder Vorwärts-Schritt 2c noch Tiefen-Abruf 2d; Issue #1363).")
     parser.add_argument("--skip-backtest",  action="store_true", help="Phase 3+4 Matrix-Backtesting überspringen.")
     parser.add_argument("--reset-catalog", action="store_true",
         help="Archiviert data/nautilus/data/quote_tick/ nach data/nautilus/archive/<UTC-ts>/ vor Phase 2 "
@@ -1345,6 +1368,7 @@ def main() -> int:
     emit_json_event(log, "ORCHESTRATOR_START", {
         "no_deploy":      args.no_deploy,
         "skip_api_fetch": args.skip_api_fetch,
+        "offline":        args.offline,
         "version":        "2.0",
         "python":         sys.version,
     })
@@ -1360,6 +1384,7 @@ def main() -> int:
         data_result       = phase2_data_acquisition(
             log, universe_result, api_key, user_key,
             skip_api_fetch=args.skip_api_fetch,
+            offline=args.offline,
         )
         if args.skip_backtest:
             log.info("[Phase 3+4] --skip-backtest: Matrix-Backtesting übersprungen — lade bestehendes Tournament.")

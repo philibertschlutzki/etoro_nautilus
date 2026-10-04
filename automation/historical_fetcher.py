@@ -77,21 +77,39 @@ _FETCH_INTERVALS: tuple[str, ...] = ("OneHour", "OneDay")
 
 # ─── Cache Helpers ────────────────────────────────────────────────────────────
 
-def _load_inception_bounds() -> dict[str, int]:
-    """Liest die JSON-Datei mit Inception-Bounds."""
+BACKFILL_RETRY_DAYS_DEFAULT = 7
+
+
+def _load_inception_bounds() -> dict[str, dict]:
+    """Issue #1363 (GH #1259) — Inception-Bounds JE INTERVALL: ``{symbol: {"OneHour": ns, "OneDay": ns,
+    "observed_utc": iso}}``. Das Altformat ``{symbol: ns}`` (ein Wert, registriert aus der OneHour-Datei,
+    wenn die GESAMTE Kaskade das Ziel verfehlte) wird beim Lesen migriert (``OneHour``, ``observed_utc``
+    unbekannt ⇒ ``None``)."""
     if not INCEPTION_CACHE_PATH.exists():
         return {}
     try:
         with open(INCEPTION_CACHE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f) or {}
     except Exception as e:
         log.warning(f"Fehler beim Laden von {INCEPTION_CACHE_PATH}: {e}")
         return {}
+    out: dict[str, dict] = {}
+    for symbol, value in raw.items():
+        if isinstance(value, dict):
+            out[symbol] = dict(value)
+        elif isinstance(value, (int, float)):
+            out[symbol] = {"OneHour": int(value), "observed_utc": None}
+    return out
 
-def _save_inception_bound(symbol: str, ts_ns: int) -> None:
-    """Speichert den Inception-Zeitstempel atomar ab."""
+
+def _save_inception_bound(symbol: str, ts_ns: int, interval: str = "OneHour",
+                          *, now: datetime | None = None) -> None:
+    """Speichert die erreichte Tiefe ``ts_ns`` für ``symbol``/``interval`` atomar (Issue #1363: je Intervall,
+    mit ``observed_utc`` — Grundlage der ``backfill_retry_days``-Sperre)."""
     bounds = _load_inception_bounds()
-    bounds[symbol] = ts_ns
+    entry = bounds.setdefault(symbol, {})
+    entry[interval] = int(ts_ns)
+    entry["observed_utc"] = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     INCEPTION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = INCEPTION_CACHE_PATH.with_suffix(".tmp.json")
     try:
@@ -102,6 +120,27 @@ def _save_inception_bound(symbol: str, ts_ns: int) -> None:
         log.warning(f"Fehler beim Speichern von {INCEPTION_CACHE_PATH} für {symbol}: {e}")
         if tmp_path.exists():
             tmp_path.unlink()
+
+
+def inception_bound(symbol: str, interval: str = "OneHour") -> int | None:
+    """Registrierte API-Tiefe (ältester erreichbarer Zeitstempel, ns) für ``symbol``/``interval``."""
+    value = (_load_inception_bounds().get(symbol) or {}).get(interval)
+    return int(value) if value is not None else None
+
+
+def inception_bound_is_fresh(symbol: str, interval: str = "OneHour", *,
+                             retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
+                             now: datetime | None = None) -> bool:
+    """Issue #1363 — ``True``, solange die für ``interval`` registrierte Tiefe jünger als ``retry_days``
+    beobachtet wurde: ein erneuter Rückwärts-Abruf ist dann zwecklos (die API liefert nicht tiefer)."""
+    entry = _load_inception_bounds().get(symbol) or {}
+    if entry.get(interval) is None or not entry.get("observed_utc"):
+        return False
+    try:
+        observed = datetime.fromisoformat(str(entry["observed_utc"]).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (now or datetime.now(timezone.utc)) - observed < timedelta(days=retry_days)
 
 # ─── Sufficiency Check ────────────────────────────────────────────────────────
 
@@ -129,12 +168,11 @@ def is_backtest_range_covered(
             return False
         oldest_ts = int(pc.min(t.column("ts_event")).as_py())
 
-        # NEU: Inception-Bounds prüfen
-        bounds = _load_inception_bounds()
-        if symbol in bounds:
-            if oldest_ts <= bounds[symbol]:
-                log.info(f"[{symbol}] Inception-Bound-Check erfolgreich: Volle historische Tiefe ({datetime.fromtimestamp(oldest_ts/1e9, tz=timezone.utc).date()}) liegt vor.")
-                return True
+        # Inception-Bound (Issue #1363: je Intervall) — die lokale Historie reicht bis zur API-Tiefe.
+        bound = inception_bound(symbol, interval)
+        if bound is not None and oldest_ts <= bound:
+            log.info(f"[{symbol}] Inception-Bound-Check erfolgreich: Volle historische Tiefe ({datetime.fromtimestamp(oldest_ts/1e9, tz=timezone.utc).date()}) liegt vor.")
+            return True
 
         return oldest_ts <= start_ns
     except Exception:
@@ -251,6 +289,46 @@ async def _fetch_candle_chunk(
     return []
 
 
+# ─── Vorwärts-Schritt (Issue #1363) ──────────────────────────────────────────
+
+def forward_fill_count(gap_hours: float) -> int:
+    """``count = min(1000, ceil(gap_h) + 24)`` — die Lücke seit dem jüngsten lokalen Tick plus ein Tag
+    Überlappung (Issue #1363; vorher fix 168 Kerzen: eine längere Lücke blieb als Loch)."""
+    import math
+    return int(min(1000, math.ceil(max(0.0, gap_hours)) + 24))
+
+
+async def fetch_forward_candles(
+    session, etoro_id: str, symbol: str, latest_local_ns: int, *, api_key: str, user_key: str,
+    interval: str = "OneHour", now: datetime | None = None, fetch_chunk=None, max_pages: int = 50,
+) -> list[dict]:
+    """Issue #1363 (GH #1259) Fix Punkt 1 — Vorwärts-Schritt: von ``now`` rückwärts bis zur Überlappung mit
+    ``latest_local_ns`` (paginiert, ``count`` aus der Lücke). Vorher kamen neue Kerzen ausschliesslich über
+    Phase 2c (fix 168 Kerzen), die ``--skip-api-fetch`` übersprang — im dokumentierten Betrieb wuchs der
+    ``OneHour``-Katalog nicht mehr."""
+    fetch = fetch_chunk or _fetch_candle_chunk
+    now = now or datetime.now(timezone.utc)
+    gap_h = (now.timestamp() - latest_local_ns / 1e9) / 3600.0
+    if gap_h < 1.0:
+        return []
+    out: list[dict] = []
+    end_time, last_oldest = now, None
+    count = forward_fill_count(gap_h)
+    for _ in range(max_pages):
+        chunk = await fetch(session, etoro_id, end_time, api_key, user_key, interval, count=count)
+        if not chunk:
+            break
+        out.extend(chunk)
+        oldest = _oldest_ts_ns_from_chunk(chunk)
+        if oldest is None or oldest <= latest_local_ns or oldest == last_oldest:
+            break
+        last_oldest = oldest
+        end_time = datetime.fromtimestamp(oldest / 1e9, tz=timezone.utc) - timedelta(seconds=1)
+        count = forward_fill_count((end_time.timestamp() - latest_local_ns / 1e9) / 3600.0)
+    log.info(f"[{symbol}] Vorwärts-Schritt {interval}: {len(out)} Kerzen (Lücke {gap_h:.1f} h).")
+    return out
+
+
 # ─── Per-Symbol Fetch ─────────────────────────────────────────────────────────
 
 async def _fetch_symbol(
@@ -263,8 +341,16 @@ async def _fetch_symbol(
     price_prec: int,
     size_prec: int,
     start_ns: int = 0,
+    backfill_retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
 ) -> bool:
     """Fetches and saves historical candle data for one symbol. Returns True on success.
+
+    Issue #1363 (GH #1259): ZUERST der Vorwärts-Schritt (``fetch_forward_candles``, von ``now`` bis zum
+    jüngsten lokalen Tick), DANN der Rückwärts-Schritt. Die erreichte API-Tiefe wird JE INTERVALL
+    registriert, sobald dessen Kaskade endet (vorher nur, wenn die GESAMTE Kaskade das Ziel verfehlte —
+    da ``OneDay`` das Ziel erreichte, wurde die ``OneHour``-Tiefe nie registriert und jeder Lauf rief
+    erneut ab). Ein Intervall mit frisch registrierter Tiefe (< ``backfill_retry_days``) wird rückwärts
+    nicht erneut abgerufen.
 
     Issue #1331 (GH #1225): die `OneHour`/`OneDay`-Kaskade sammelte beide Auflösungen in
     EINER Liste, konvertierte sie mit EINEM Aufruf und schrieb sie in EINE Datei — die
@@ -281,6 +367,16 @@ async def _fetch_symbol(
     else:
         target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
 
+    candles_by_interval: dict[str, list[dict]] = {itv: [] for itv in _FETCH_INTERVALS}
+
+    # Issue #1363 Fix Punkt 1 — Vorwärts-Schritt VOR dem Rückwärts-Schritt (primäre Auflösung).
+    if dest_file.exists():
+        latest_local_ns = _get_latest_ts_ns(dest_file)
+        if latest_local_ns is not None:
+            candles_by_interval[primary_interval].extend(await fetch_forward_candles(
+                session, etoro_id, symbol, latest_local_ns, api_key=api_key, user_key=user_key,
+                interval=primary_interval))
+
     # Delta-update: iterate backwards from the oldest locally stored timestamp
     current_end_time = datetime.now(timezone.utc)
     if dest_file.exists():
@@ -289,13 +385,24 @@ async def _fetch_symbol(
             oldest_dt = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc)
             current_end_time = oldest_dt - timedelta(seconds=1)
             log.info(f"[{symbol}] Delta-Update: Fetch ab {current_end_time.isoformat()} rückwärts bis {target_start.isoformat()}")
-    candles_by_interval: dict[str, list[dict]] = {itv: [] for itv in _FETCH_INTERVALS}
     cascade_end_time = current_end_time
 
     # Cascade: OneHour first, then OneDay to reach deeper history — jede Auflösung sammelt
     # in ihren EIGENEN Kandidaten-Puffer (kein all_candles.extend() über die Kaskade hinweg).
     for interval in _FETCH_INTERVALS:
         last_oldest_ts_ns: int | None = None
+        if cascade_end_time > target_start and inception_bound_is_fresh(
+                symbol, interval, retry_days=backfill_retry_days):
+            # Issue #1363 — die API-Tiefe dieses Intervalls ist bekannt und jünger als
+            # backfill_retry_days beobachtet: kein erneuter (wirkungsloser) Rückwärts-Abruf; die Kaskade
+            # setzt an der registrierten Tiefe mit der nächsten Auflösung fort.
+            known = inception_bound(symbol, interval)
+            log.info(f"[{symbol}] {interval}: API-Tiefe bekannt "
+                     f"({datetime.fromtimestamp(known / 1e9, tz=timezone.utc).date()}) — kein erneuter "
+                     f"Rückwärts-Abruf (< {backfill_retry_days} Tage).")
+            cascade_end_time = min(cascade_end_time,
+                                   datetime.fromtimestamp(known / 1e9, tz=timezone.utc) - timedelta(seconds=1))
+            continue
 
         while cascade_end_time > target_start:
             chunk = await _fetch_candle_chunk(
@@ -330,13 +437,14 @@ async def _fetch_symbol(
             log.info(f"[{symbol}] Ziel-Startdatum mit {interval} erreicht.")
             break
 
-    # Wenn die Schleifen beendet wurden, wir aber das target_start nicht erreicht haben,
-    # ist das Instrument jünger als das angeforderte Backtest-Warmup-Fenster.
-    if cascade_end_time > target_start:
-        final_oldest_ns = _get_oldest_ts_ns(dest_file)
-        if final_oldest_ns is not None:
-            _save_inception_bound(symbol, final_oldest_ns)
-            log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
+        # Issue #1363 Fix Punkt 2 — die Kaskade DIESES Intervalls endete vor dem Ziel: seine API-Tiefe
+        # registrieren (unabhängig davon, ob die nächste Auflösung das Ziel noch erreicht).
+        _local_oldest = _get_oldest_ts_ns(QUOTE_TICK_PATH / symbol / interval / "data.parquet")
+        _depth = min((x for x in (_local_oldest, last_oldest_ts_ns) if x is not None), default=None)
+        if _depth is not None:
+            _save_inception_bound(symbol, _depth, interval)
+            log.info(f"[{symbol}] {interval}: API-Tiefe registriert "
+                     f"({datetime.fromtimestamp(_depth / 1e9, tz=timezone.utc).isoformat()}).")
 
     if not any(candles_by_interval.values()):
         log.warning(f"[{symbol}] Keine Candles gefunden — überspringe.")
@@ -360,13 +468,6 @@ async def _fetch_symbol(
         except CatalogSchemaVersionMismatch as e:
             log.error(str(e))
 
-    # Nach dem erfolgreichen Speichern nochmal Inception-Bound prüfen (primäre Auflösung)
-    if any_saved and cascade_end_time > target_start:
-        final_oldest_ns = _get_oldest_ts_ns(dest_file)
-        if final_oldest_ns is not None:
-            _save_inception_bound(symbol, final_oldest_ns)
-            log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
-
     return any_saved
 
 
@@ -379,6 +480,7 @@ async def run_historical_fetch(
     months: int = 12,
     start_ns: int = 0,
     force: bool = False,
+    backfill_retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
 ) -> list[str]:
     """
     Fetches historical data for symbols that are insufficient.
@@ -441,7 +543,7 @@ async def run_historical_fetch(
                 ok = await _fetch_symbol(
                     session, etoro_id, symbol, months,
                     api_key, user_key, price_prec, size_prec,
-                    start_ns=real_start_ns,
+                    start_ns=real_start_ns, backfill_retry_days=backfill_retry_days,
                 )
                 if ok:
                     fetched.append(symbol)
@@ -499,6 +601,19 @@ def _default_backfill_fetch(
     ))
 
 
+def measure_span_days(symbol: str, catalog_path: Path = CATALOG_PATH, interval: str = "OneHour") -> float:
+    """Rohe Spanne (Tage, ``newest − oldest``) der ``interval``-Datei; 0.0 ohne Datei/Ticks."""
+    from automation.catalog_paths import resolve_quote_tick_files
+
+    files = resolve_quote_tick_files(catalog_path, symbol, interval=interval)
+    if not files:
+        return 0.0
+    oldest, newest = _get_oldest_ts_ns(files[0]), _get_latest_ts_ns(files[0])
+    if oldest is None or newest is None:
+        return 0.0
+    return max(0.0, (newest - oldest) / 86_400_000_000_000)
+
+
 def ensure_walkforward_history(
     symbols: list[str],
     walk_forward_dict: dict,
@@ -510,21 +625,28 @@ def ensure_walkforward_history(
     universe_path: Path = UNIVERSE_PATH,
     api_key: str | None = None,
     user_key: str | None = None,
+    span_fn=None,
+    backfill_retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
+    now: datetime | None = None,
 ) -> dict:
     """Issue #531 — Pre-Sweep-Hook: erzwingt die volle Walk-Forward-Historie VOR dem Sweep.
 
     Liegt die REAL vorhandene Bar-Spanne eines Symbols (``span_days_by_symbol[sym]``, vom Aufrufer
-    aus den Parquet-Statistiken injiziert) unter ``required_span_days + gate1_buffer_days`` (z. B.
-    405 + 30 = 435 Tage), wird ein **synchroner** Backfill-Request an den ``historical_fetcher``
-    abgesetzt, um das fehlende Delta (z. B. TSLA.ETORO-1h) nachzuladen, bevor der Sweep iteriert.
+    aus den Parquet-Statistiken injiziert) unter ``required_span_days + gate1_buffer_days``, wird ein
+    **synchroner** Backfill-Request an den ``historical_fetcher`` abgesetzt, bevor der Sweep iteriert.
 
-    Rein orchestrierend und vollständig injizierbar (HI-7): ``span_days_by_symbol`` und ``fetch_fn``
-    kommen von außen, es findet KEIN eigenständiges Parquet-I/O statt. Gibt einen Report zurück
-    (``required_days``/``threshold_days``/``deficient``/``backfilled``); wirft NIE — schlägt der
-    Backfill fehl (keine Keys, Netzfehler), entscheidet das nachgelagerte Gate-1 fail-loud."""
+    Issue #1363 (GH #1259) — mit NACHBEDINGUNG: die Spanne wird vorher/nachher gemessen (``span_fn``,
+    Default ``measure_span_days``); der Report trägt ``span_before_days``/``span_after_days``/
+    ``gain_days`` je Symbol. ``gain_days < 1`` ⇒ WARNING ``BACKFILL_NO_GAIN`` und die erreichte Tiefe wird
+    registriert (vorher meldete der Hook "3/3 nachgeladen" bei 0 Tagen Zugewinn — und wiederholte den
+    wirkungslosen Abruf in jedem Lauf). Symbole, deren ``OneHour``-Tiefe jünger als
+    ``backfill_retry_days`` registriert ist, werden NICHT erneut abgerufen (``skipped_known_depth``).
+
+    Wirft NIE — schlägt der Backfill fehl (keine Keys, Netzfehler), entscheidet das nachgelagerte Gate."""
     from automation.optimizer.gate import required_span_days
 
     log = logger or logging.getLogger("historical_fetcher")
+    measure = span_fn or measure_span_days
     required = required_span_days(walk_forward_dict)
     threshold = required + int(gate1_buffer_days)
     deficient = sorted(
@@ -536,26 +658,90 @@ def ensure_walkforward_history(
         "threshold_days": threshold,
         "deficient": deficient,
         "backfilled": [],
+        "skipped_known_depth": [],
+        "span_before_days": {},
+        "span_after_days": {},
+        "gain_days": {},
+        "no_gain": [],
     }
     if not deficient:
+        return report
+
+    to_fetch = []
+    for sym in deficient:
+        if inception_bound_is_fresh(sym, "OneHour", retry_days=backfill_retry_days, now=now):
+            report["skipped_known_depth"].append(sym)
+        else:
+            to_fetch.append(sym)
+    if report["skipped_known_depth"]:
+        log.info("[#1363] %d Symbol(e) mit bekannter API-Tiefe (< %d Tage registriert) — kein erneuter "
+                 "Rückwärts-Abruf: %s", len(report["skipped_known_depth"]), backfill_retry_days,
+                 report["skipped_known_depth"])
+    if not to_fetch:
         return report
 
     log.warning(
         "[#531] %d Symbol(e) unter der Walk-Forward-Schwelle (%d Tage = %d + Puffer %d) — "
         "synchroner Pre-Sweep-Backfill: %s",
-        len(deficient), threshold, required, int(gate1_buffer_days), deficient,
+        len(to_fetch), threshold, required, int(gate1_buffer_days), to_fetch,
     )
+    for sym in to_fetch:
+        # Vorher/nachher mit DERSELBEN Messung (``span_fn``) — ``span_days_by_symbol`` (vom Aufrufer, ggf.
+        # aus Bar-Zählern abgeleitet) entscheidet nur über die Unterdeckung.
+        try:
+            before = float(measure(sym))
+        except Exception:
+            before = float(span_days_by_symbol.get(sym, 0.0))
+        report["span_before_days"][sym] = round(before, 4)
     fetch = fetch_fn or _default_backfill_fetch
     try:
         fetched = fetch(
-            deficient, required_days=required, buffer_days=int(gate1_buffer_days),
+            to_fetch, required_days=required, buffer_days=int(gate1_buffer_days),
             universe_path=universe_path, api_key=api_key, user_key=user_key, logger=log,
         )
         report["backfilled"] = list(fetched or [])
-        log.info("[#531] Pre-Sweep-Backfill abgeschlossen: %d/%d Symbol(e) nachgeladen.",
-                 len(report["backfilled"]), len(deficient))
     except Exception as e:  # pragma: no cover - defensiv: Backfill darf den Sweep nie crashen
         log.warning("[#531] Pre-Sweep-Backfill fehlgeschlagen (%s) — Gate-1 entscheidet fail-loud.", e)
+
+    for sym in to_fetch:
+        try:
+            after = float(measure(sym))
+        except Exception:
+            after = report["span_before_days"][sym]
+        report["span_after_days"][sym] = round(after, 4)
+        gain = after - report["span_before_days"][sym]
+        report["gain_days"][sym] = round(gain, 4)
+        if gain < 1.0:
+            report["no_gain"].append(sym)
+    if report["no_gain"]:
+        log.warning("[#1363] BACKFILL_NO_GAIN: %d Symbol(e) ohne Spannen-Zugewinn (< 1 Tag): %s — die "
+                    "API liefert nicht tiefer; Tiefe registriert, kein erneuter Abruf für %d Tage.",
+                    len(report["no_gain"]), {s: report["gain_days"][s] for s in report["no_gain"]},
+                    backfill_retry_days)
+        try:
+            from automation.log_manager import emit_execution_event
+            emit_execution_event(log, "BACKFILL_NO_GAIN", {
+                "symbols": report["no_gain"],
+                "span_before_days": {s: report["span_before_days"][s] for s in report["no_gain"]},
+                "span_after_days": {s: report["span_after_days"][s] for s in report["no_gain"]},
+                "required_days": required, "backfill_retry_days": backfill_retry_days,
+            }, level=logging.WARNING)
+        except Exception:
+            pass
+        for sym in report["no_gain"]:
+            files_oldest = None
+            try:
+                from automation.catalog_paths import resolve_quote_tick_files
+                files = resolve_quote_tick_files(CATALOG_PATH, sym, interval="OneHour")
+                files_oldest = _get_oldest_ts_ns(files[0]) if files else None
+            except Exception:
+                files_oldest = None
+            # Ohne lokale Daten ist keine Tiefe bekannt (nichts geliefert ≠ API-Tiefe erreicht) — dann keine
+            # Retry-Sperre, der nächste Lauf versucht es erneut.
+            if files_oldest is not None:
+                _save_inception_bound(sym, files_oldest, "OneHour", now=now)
+    log.info("[#531] Pre-Sweep-Backfill abgeschlossen: %d/%d Symbol(e) geschrieben, Zugewinn je Symbol "
+             "(Tage): %s.", len(report["backfilled"]), len(to_fetch), report["gain_days"])
     return report
 
 

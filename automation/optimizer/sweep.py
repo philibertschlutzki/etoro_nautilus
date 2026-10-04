@@ -774,6 +774,57 @@ def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, 
         return None
 
 
+MAX_CATALOG_STALENESS_H_DEFAULT = 96.0
+
+
+def check_catalog_freshness(newest_ns: int | None, *, max_staleness_h: float = MAX_CATALOG_STALENESS_H_DEFAULT,
+                            now: dt.datetime | None = None) -> dict:
+    """Issue #1363 (GH #1259) Fix Punkt 4 — BLOCKIERENDER Preflight je Symbol: das Alter des jüngsten
+    ``OneHour``-Ticks darf ``max_staleness_h`` (Default 96 h: Wochenende + Feiertag) nicht übersteigen, sonst
+    ``REJECT_DATA_STALE``. Vorher wurde ein veralteter Katalog still validiert: das Walk-Forward-Ende ist
+    ``min(now, catalog_end)`` — Selektion und Holdout rutschten mit dem Katalogende in die Vergangenheit.
+    ``newest_ns=None`` (kein lesbarer Tick) ⇒ nicht auswertbar (``passed=None``)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if newest_ns is None:
+        return {"passed": None, "age_h": None, "max_staleness_h": max_staleness_h, "severity": "blocking",
+                "reason": "NEWEST_TICK_UNKNOWN"}
+    age_h = (now.timestamp() - newest_ns / 1e9) / 3600.0
+    passed = age_h <= max_staleness_h
+    return {"passed": passed, "age_h": round(age_h, 2), "max_staleness_h": max_staleness_h,
+            "severity": "blocking",
+            "newest_utc": dt.datetime.fromtimestamp(newest_ns / 1e9, tz=dt.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"),
+            "reason": None if passed else
+            f"REJECT_DATA_STALE: jüngster OneHour-Tick {age_h:.1f} h alt > {max_staleness_h:.0f} h"}
+
+
+def check_data_depth_eta(effective_span_days: float | None, required_span_days: float, *,
+                         freshness_passed: bool | None, now: dt.datetime | None = None) -> dict:
+    """Issue #1363 (GH #1259) Fix Punkt 5 — fehlt Historie (``effective_span_days < required_span_days``), ist
+    der Lauf nicht "ungültig", sondern WARTET auf Daten: der Katalog wächst bei frischem Vorwärts-Schritt um
+    einen Tag je Tag, also ``eta_utc = heute + ceil(required − effective)`` Tage. Ohne Freshness-PASS ist die
+    Akkumulation nicht gesichert ⇒ ``eta_utc = None`` mit Grund."""
+    import math
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if effective_span_days is None:
+        return {"waiting": False, "eta_utc": None, "missing_days": None, "reason": "EFFECTIVE_SPAN_UNKNOWN"}
+    missing = float(required_span_days) - float(effective_span_days)
+    if missing <= 0:
+        return {"waiting": False, "eta_utc": None, "missing_days": 0.0, "reason": None}
+    if freshness_passed is not True:
+        return {"waiting": True, "eta_utc": None, "missing_days": round(missing, 2),
+                "reason": "CATALOG_NOT_FRESH" if freshness_passed is False else "FRESHNESS_UNKNOWN"}
+    eta = (now.replace(hour=0, minute=0, second=0, microsecond=0)
+           + dt.timedelta(days=math.ceil(missing))).strftime("%Y-%m-%d")
+    return {"waiting": True, "eta_utc": eta, "missing_days": round(missing, 2),
+            "reason": "accumulating_one_day_per_day"}
+
+
+# Issue #1363 — die Daten-Tiefen-Prognose des LETZTEN run_per_symbol_sweep-Aufrufs (main() stuft damit
+# einen sonst 'completed_invalid' Lauf auf 'waiting_for_data' um).
+_LAST_DATA_DEPTH_ETA: dict | None = None
+
+
 def check_engine_reader_parity(
     symbol: str, catalog_path: Path | None = None, *, holdout_days: float | None = None,
     start_ns: int | None = None, end_ns: int | None = None, interval: str = "OneHour",
@@ -1495,10 +1546,57 @@ _RESOLUTION_INTERVAL_TO_NS: dict[str, int] = {
 }
 
 
+MAX_CONTIGUITY_GAP_DAYS_DEFAULT = 4.0
+
+
+def _contiguous_resolution_segments(
+    pairs, target_interval_ns: int | None, *, max_gap_days: float, session_window=None,
+) -> tuple[list[tuple[int, int]], float]:
+    """Issue #1365 (GH #1261) — ``[(first_ts, last_ts)]`` je zusammenhängendem Segment der Ziel-Auflösung
+    über die nach ``ts_event`` sortierten ``(ts, bar_interval_ns)``-Paare, plus die grösste Lücke (Tage)
+    zwischen zwei aufeinanderfolgenden Ziel-Ticks. Eine Lücke bricht das Segment, wenn sie
+    ``max_gap_days`` übersteigt UND (mit ``session_window``) mindestens ein Handelstag dazwischen liegt."""
+    from datetime import date as _date
+
+    def _gap_breaks(a: int, b: int) -> bool:
+        gap_days = (b - a) / 1e9 / 86400.0
+        if gap_days <= max_gap_days:
+            return False
+        if session_window is None:
+            return True
+        from automation.session_windows import is_trading_day, local_day
+        d_a, d_b = local_day(a, session_window), local_day(b, session_window)
+        return any(is_trading_day(_date.fromordinal(o), session_window)
+                   for o in range(d_a.toordinal() + 1, d_b.toordinal()))
+
+    segments: list[tuple[int, int]] = []
+    largest_gap = 0.0
+    seg_start = seg_end = None
+    for ts, itv in pairs:
+        if itv != target_interval_ns:
+            if seg_start is not None:
+                segments.append((seg_start, seg_end))
+            seg_start = seg_end = None
+            continue
+        if seg_start is None:
+            seg_start = seg_end = ts
+            continue
+        largest_gap = max(largest_gap, (ts - seg_end) / 1e9 / 86400.0)
+        if _gap_breaks(seg_end, ts):
+            segments.append((seg_start, seg_end))
+            seg_start = ts
+        seg_end = ts
+    if seg_start is not None:
+        segments.append((seg_start, seg_end))
+    return segments, round(largest_gap, 4)
+
+
 def check_catalog_resolution_homogeneity(
     symbol: str, catalog_path: Path | None = None, *,
     required_span_days: float | None = None,
     target_interval: str = "OneHour",
+    max_contiguity_gap_days: float = MAX_CONTIGUITY_GAP_DAYS_DEFAULT,
+    session_window=None,
 ) -> dict:
     """Issue #1334 (GH #1228) — blockierende Preflight-Invariante VOR Gate 1: eine Spanne aus
     ``latest - earliest`` (``per_symbol_span_stats`` oben) ist kein Nachweis über die BELEGUNG
@@ -1507,13 +1605,15 @@ def check_catalog_resolution_homogeneity(
     melden, obwohl nur die letzten 70 Tage tatsächlich auf der deklarierten Bar-Achse liegen (der
     Rest ist eine andere Auflösung, z. B. das ``OneDay``-Segment der Vor-#1331-Kaskade).
 
-    Teilt die Ticks des Symbols in Monatsbuckets über die volle Spanne und bestimmt je Bucket die
-    DOMINANTE ``bar_interval_ns`` (die seit Issue #1331/GH #1225 explizit je Zeile geschrieben
-    wird — direkter, robusterer Nachweis als eine Δt-Inferenz über Tick-Abstände, die seit Issue
-    #1330/GH #1224 durch die O/L/H/C-Tick-Expansion innerhalb einer Kerze ohnehin nicht mehr
-    ``bar_interval_ns`` selbst widerspiegelt). Die ``effective_span_days`` sind die Kalendertage
-    des LÄNGSTEN ZUSAMMENHÄNGENDEN Fensters von Monaten, deren dominante Auflösung
-    ``target_interval`` entspricht — ``raw_span_days`` bleibt als reine Telemetrie erhalten.
+    Issue #1365 (GH #1261) — Segmentierung auf TICK-Ebene (vorher Monats-Buckets: ``effective_span_days``
+    zählte vom Ersten des ersten bis zum Ersten nach dem letzten Monat — bis ≈ 61 Tage MEHR als die rohe
+    Spanne, 397 statt 441 Tage passierten, Lücken innerhalb eines Monats waren unsichtbar). Aufeinander-
+    folgende Ticks der Auflösung ``target_interval`` (``bar_interval_ns``, seit #1331 je Zeile) bilden ein
+    Segment, solange ihr Abstand ``<= max_contiguity_gap_days`` ist (Default 4,0 Kalendertage) ODER —
+    mit ``session_window`` (#1356) — dazwischen kein Handelstag liegt (Wochenende + Feiertag). Ein Tick
+    anderer Auflösung beendet das Segment. ``effective_span_days = last_ts − first_ts`` des längsten
+    Segments (Laufzeit-Assertion ``<= raw_span_days``); ``resolution_segments`` = ``[{start_utc, end_utc,
+    days}]``, ``largest_gap_days`` = grösste Lücke innerhalb der Ziel-Auflösung.
 
     Fehlt die ``bar_interval_ns``-Spalte (Alt-Katalog vor #1331) ⇒ ``CATALOG_INTERVAL_UNKNOWN``,
     blockierend (Fix Punkt 6) — NICHT stillschweigend als Stundenachse interpretiert.
@@ -1563,50 +1663,26 @@ def check_catalog_resolution_homogeneity(
         pairs = sorted(zip(ts_values, interval_values), key=lambda p: p[0])
         raw_span_days = (pairs[-1][0] - pairs[0][0]) / 1e9 / 86400.0
 
-        import collections
-        month_counts: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
-        for ts, itv in pairs:
-            month_key = dt.datetime.fromtimestamp(ts / 1e9, tz=dt.timezone.utc).strftime("%Y-%m")
-            month_counts[month_key][itv] += 1
-
-        months_sorted = sorted(month_counts.keys())
         target_interval_ns = _RESOLUTION_INTERVAL_TO_NS.get(target_interval)
+        segments, largest_gap_days = _contiguous_resolution_segments(
+            pairs, target_interval_ns, max_gap_days=max_contiguity_gap_days, session_window=session_window)
         resolution_segments = [
-            {"month": m, "dominant_bar_interval_ns": month_counts[m].most_common(1)[0][0],
-             "n_ticks": sum(month_counts[m].values())}
-            for m in months_sorted
+            {"start_utc": dt.datetime.fromtimestamp(a / 1e9, tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "end_utc": dt.datetime.fromtimestamp(b / 1e9, tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "days": round((b - a) / 1e9 / 86400.0, 4)}
+            for a, b in segments
         ]
-        compatible = [seg["dominant_bar_interval_ns"] == target_interval_ns for seg in resolution_segments]
-
-        best_len = 0
-        best_start = best_end = -1
-        cur_start = None
-        for i, ok in enumerate(compatible):
-            if ok:
-                if cur_start is None:
-                    cur_start = i
-                if i - cur_start + 1 > best_len:
-                    best_len = i - cur_start + 1
-                    best_start, best_end = cur_start, i
-            else:
-                cur_start = None
-
-        if best_len == 0:
-            effective_span_days = 0.0
-        else:
-            first_month = months_sorted[best_start]
-            last_month = months_sorted[best_end]
-            first_dt = dt.datetime.strptime(first_month, "%Y-%m").replace(tzinfo=dt.timezone.utc)
-            ly, lm = int(last_month[:4]), int(last_month[5:7])
-            last_dt = (dt.datetime(ly + 1, 1, 1, tzinfo=dt.timezone.utc) if lm == 12
-                      else dt.datetime(ly, lm + 1, 1, tzinfo=dt.timezone.utc))
-            effective_span_days = (last_dt - first_dt).total_seconds() / 86400.0
+        effective_span_days = max(((b - a) / 1e9 / 86400.0 for a, b in segments), default=0.0)
+        # Issue #1365 — ein "längstes zusammenhängendes Fenster" kann die rohe Spanne nie übersteigen.
+        assert effective_span_days <= raw_span_days + 1e-9, (effective_span_days, raw_span_days)
 
         result = {
             **_base_result,
             "raw_span_days": raw_span_days,
             "effective_span_days": effective_span_days,
             "resolution_segments": resolution_segments,
+            "largest_gap_days": largest_gap_days,
+            "max_contiguity_gap_days": max_contiguity_gap_days,
             "severity": "blocking",
         }
         if required_span_days is None:
@@ -3295,6 +3371,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 span_days_by_symbol={s: available_bars.get(s, 0) / 24.0 for s in syms},
                 gate1_buffer_days=config.get("gate1_buffer_days", 0),
                 logger=logging.getLogger("optimizer"),
+                # Issue #1363 — Retry-Sperre für Symbole mit bekannter API-Tiefe.
+                backfill_retry_days=int(_load_optimizer_config().get("backfill_retry_days", 7)),
             )
             if _bf_report.get("backfilled"):
                 available_bars = count_available_bars(syms)  # nach Backfill neu vermessen
@@ -3410,6 +3488,36 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         logging.getLogger("optimizer").debug(
             "[#1357] Selektions-/Holdout-Disjunktheits-Preflight fehlgeschlagen (non-fatal).", exc_info=True)
 
+    # Issue #1363 (GH #1259) Fix Punkt 4 — Aktualitäts-Preflight VOR dem Auflösungs-Preflight, BLOCKIEREND
+    # je Symbol (auch bei PASS im Invarianten-Strom, #1167): ein jüngster OneHour-Tick älter als
+    # max_catalog_staleness_h ⇒ REJECT_DATA_STALE (vorher still validiert).
+    global _LAST_DATA_DEPTH_ETA
+    _LAST_DATA_DEPTH_ETA = None
+    _freshness_by_symbol: dict[str, dict] = {}
+    _depth_requested_syms = list(syms)
+    if syms:
+        _log_fresh = logging.getLogger("optimizer")
+        _opt_cfg_fresh = _load_optimizer_config()
+        _max_staleness_h = float(_opt_cfg_fresh.get("max_catalog_staleness_h", MAX_CATALOG_STALENESS_H_DEFAULT))
+        _stale_syms: list[str] = []
+        for _sym in syms:
+            _fresh = check_catalog_freshness((latest_ts or {}).get(_sym), max_staleness_h=_max_staleness_h)
+            _freshness_by_symbol[_sym] = _fresh
+            emit_execution_event(_log_fresh, "INVARIANT_STREAM_RESULT", {
+                "name": "check_catalog_freshness", "check": "check_catalog_freshness",
+                "passed": _fresh["passed"], "source": "sweep", "scope": _sym,
+                "expected": f"Alter des jüngsten OneHour-Ticks <= {_max_staleness_h:.0f} h (#1363/GH #1259).",
+                "actual": {"age_h": _fresh["age_h"], "newest_utc": _fresh.get("newest_utc")},
+                "detail": _fresh["reason"] or "Katalog aktuell.", "severity": "blocking",
+            }, level=logging.INFO if _fresh["passed"] is not False else logging.ERROR)
+            if _fresh["passed"] is False:
+                _stale_syms.append(_sym)
+                _symbols_rejected.append({"symbol": _sym, "reason": "REJECT_DATA_STALE",
+                                          "detail": _fresh["reason"]})
+                _log_fresh.error("[#1363] %s: %s", _sym, _fresh["reason"])
+        if _stale_syms:
+            syms = [s for s in syms if s not in _stale_syms]
+
     # Issue #1334 (GH #1228) — Auflösungs-Homogenitäts-Preflight VOR Gate 1: ``per_symbol_span_
     # stats`` oben misst nur die RANDPUNKTE (``latest - earliest``) — ein Katalog kann eine grosse
     # rohe Spanne meinen, obwohl nur ein kleiner, jüngerer Teil davon tatsächlich auf der
@@ -3420,14 +3528,31 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if syms:
         _log = logging.getLogger("optimizer")
         _resolution_rejected_syms: list[str] = []
+        _res_homogeneity_by_symbol: dict[str, dict] = {}
+        # Issue #1365 (GH #1261) — Lücken über Wochenende/Feiertag (Session-Kalender #1356) brechen ein
+        # Segment nicht; dieselbe Fensterauflösung wie Tick-Filter und Coverage-Nenner.
+        try:
+            _session_cfg_contig = (json.loads((config_dir() / "backtest.json").read_text("utf-8")) or {}).get(
+                "session_hours_by_asset_class")
+        except (OSError, ValueError):
+            _session_cfg_contig = None
+        _max_gap_days = float(_load_optimizer_config().get(
+            "max_contiguity_gap_days", MAX_CONTIGUITY_GAP_DAYS_DEFAULT))
         for _sym in syms:
             try:
+                _window_contig = _resolve_session_window(
+                    _resolve_asset_class_key_for_symbol_lightweight(_sym), _session_cfg_contig)
+            except Exception:
+                _window_contig = None
+            try:
                 _res_homogeneity = check_catalog_resolution_homogeneity(
-                    _sym, required_span_days=_req_span)
+                    _sym, required_span_days=_req_span, max_contiguity_gap_days=_max_gap_days,
+                    session_window=_window_contig)
             except Exception:
                 _res_homogeneity = None
             if _res_homogeneity is None:
                 continue
+            _res_homogeneity_by_symbol[_sym] = _res_homogeneity
             emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
                 "name": "check_catalog_resolution_homogeneity",
                 "check": "check_catalog_resolution_homogeneity",
@@ -3438,6 +3563,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                     "raw_span_days": _res_homogeneity.get("raw_span_days"),
                     "effective_span_days": _res_homogeneity.get("effective_span_days"),
                     "required_span_days": _res_homogeneity.get("required_span_days"),
+                    # Issue #1365 — Segmente + grösste Lücke statt Monats-Buckets.
+                    "largest_gap_days": _res_homogeneity.get("largest_gap_days"),
+                    "resolution_segments": (_res_homogeneity.get("resolution_segments") or [])[-5:],
                 },
                 "detail": _res_homogeneity.get("reason"),
                 "severity": _res_homogeneity.get("severity", "blocking"),
@@ -3458,6 +3586,36 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             )
         if _resolution_rejected_syms:
             syms = [s for s in syms if s not in _resolution_rejected_syms]
+
+        # Issue #1363 (GH #1259) Fix Punkt 5 — Daten-Tiefen-Prognose: scheitern ALLE verbliebenen Symbole an
+        # der Spanne (effective_span_days < required_span_days), wartet der Lauf auf Daten
+        # (run_status 'waiting_for_data' statt 'completed_invalid', main()) mit eta_utc = frühestes Symbol.
+        _depth_by_symbol: dict[str, dict] = {}
+        for _sym in _resolution_rejected_syms:
+            _eff = (_res_homogeneity_by_symbol.get(_sym) or {}).get("effective_span_days")
+            _depth_by_symbol[_sym] = check_data_depth_eta(
+                _eff, _req_span, freshness_passed=(_freshness_by_symbol.get(_sym) or {}).get("passed"))
+        _etas = sorted(v["eta_utc"] for v in _depth_by_symbol.values() if v.get("eta_utc"))
+        _LAST_DATA_DEPTH_ETA = {
+            "run_id": run_id,
+            "waiting": bool(_depth_by_symbol) and not syms,
+            "eta_utc": _etas[0] if _etas else None,
+            "required_span_days": _req_span,
+            "per_symbol": _depth_by_symbol,
+            "reason": None if _etas else ("no_depth_rejection" if not _depth_by_symbol
+                                          else "no_fresh_symbol_for_eta"),
+        }
+        emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
+            "name": "check_data_depth_eta", "check": "check_data_depth_eta",
+            "passed": not _LAST_DATA_DEPTH_ETA["waiting"], "source": "sweep", "scope": None,
+            "expected": "mindestens ein Symbol mit effective_span_days >= required_span_days (#1363/GH #1259).",
+            "actual": {"eta_utc": _LAST_DATA_DEPTH_ETA["eta_utc"],
+                       "per_symbol": {k: v.get("eta_utc") for k, v in _depth_by_symbol.items()}},
+            "detail": ("Lauf wartet auf Daten (waiting_for_data), eta_utc="
+                       f"{_LAST_DATA_DEPTH_ETA['eta_utc']}" if _LAST_DATA_DEPTH_ETA["waiting"]
+                       else "Mindestens ein Symbol hat ausreichende Historie."),
+            "severity": "info",
+        }, level=logging.WARNING if _LAST_DATA_DEPTH_ETA["waiting"] else logging.INFO)
 
         # Issue #1354 (GH #1251) Fix Punkt 4 — Leser-Parität Preflight ↔ Engine je Symbol, BLOCKIEREND
         # und im Invarianten-Strom auch bei PASS (#1167): Tick-Zahl über ParquetDataCatalog(Sicht) im
@@ -5712,6 +5870,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # einer Vorab-Berechnung; dieselbe write_json_atomic-Garantie wie der Erstschrieb.
         if run_status == "complete":
             run_status = _downgrade_run_status_for_blocking_invariants(report_path)
+        # Issue #1363 (GH #1259) Fix Punkt 5 — fehlt ausschliesslich Historie, ist der Lauf nicht
+        # "ungültig", sondern wartet auf Daten (terminaler Status mit eta_utc).
+        if run_status == "completed_invalid":
+            run_status = _apply_waiting_for_data_status(report_path, run_status)
         # Issue #1066/#1216 — siehe _stamp_report_artifact_metadata-Docstring: das Ergebnis von
         # invariants.check_report_artifact_written (unten emittiert) kann strukturell nie im
         # eigenen invariant_checks-Strom stehen; run.json traegt es stattdessen direkt.
@@ -5996,6 +6158,32 @@ def _sweep_completion_event(run_status: str) -> tuple[str, int]:
     return "SWEEP_FINISHED", logging.INFO
 
 
+def _apply_waiting_for_data_status(report_path, run_status: str) -> str:
+    """Issue #1363 (GH #1259) — stuft einen ``completed_invalid``-Lauf auf ``waiting_for_data`` um, wenn die
+    Daten-Tiefen-Prognose dieses Laufs (``_LAST_DATA_DEPTH_ETA``) zeigt, dass ALLE Symbole nur an der
+    Historien-Spanne scheiterten; schreibt ``run_status``, ``eta_utc`` und ``data_depth_eta`` atomar in den
+    Report. Fail-open (unverändert) bei jedem Lese-/Schreibfehler."""
+    eta = _LAST_DATA_DEPTH_ETA
+    if not eta or not eta.get("waiting"):
+        return run_status
+    try:
+        written_report = json.loads(Path(report_path).read_text("utf-8"))
+        if eta.get("run_id") not in (None, written_report.get("run_id")):
+            return run_status
+        written_report["run_status"] = "waiting_for_data"
+        written_report["eta_utc"] = eta.get("eta_utc")
+        written_report["data_depth_eta"] = eta
+        write_json_atomic(report_path, written_report)
+        logging.getLogger("optimizer").warning(
+            "[#1363] run_status 'waiting_for_data' (eta_utc=%s): alle Symbole scheitern nur an der "
+            "Historien-Spanne (required_span_days=%s).", eta.get("eta_utc"), eta.get("required_span_days"))
+        return "waiting_for_data"
+    except Exception:
+        logging.getLogger("optimizer").warning("[#1363] waiting_for_data-Umstufung fehlgeschlagen "
+                                               "(non-fatal).", exc_info=True)
+        return run_status
+
+
 def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
     """Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — liest das gerade geschriebene
     #742-Report-Artefakt zurück und korrigiert dessen ``run_status`` von ``'complete'`` auf
@@ -6038,7 +6226,9 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
         # Herabstufung ausgenommen, wenn ``symbols_planned`` (== 0) zeigt, dass am Ende KEIN Symbol
         # ueberlebt hat — dann bleibt 'completed_invalid' korrekt (Akzeptanzkriterium: "Ein Lauf,
         # in dem alle Symbole abgewiesen werden, liefert weiterhin completed_invalid").
-        _per_symbol_preflight_checks = {"check_tick_population", "check_bar_quality"}
+        _per_symbol_preflight_checks = {"check_tick_population", "check_bar_quality",
+                                        # Issue #1363 — Symbol-Ablehnung REJECT_DATA_STALE.
+                                        "check_catalog_freshness"}
         _any_symbol_survived = bool(written_report.get("symbols_planned"))
 
         def _is_scoped_preflight_rejection(c: dict) -> bool:

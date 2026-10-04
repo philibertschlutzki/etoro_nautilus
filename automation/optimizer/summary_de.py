@@ -48,6 +48,9 @@ _RUN_STATUS_LABELS_DE = {
     # gerechnet, der Lauf ist aber wegen mindestens einer blockierenden Invariante nicht
     # entscheidungsfähig (siehe sweep.py, Downgrade-Regel bei symbols_completed >= symbols_planned).
     "completed_invalid": "vollständig gerechnet, aber wegen blockierender Invarianten nicht entscheidungsfähig",
+    # Issue #1363 (GH #1259) — alle Symbole scheitern NUR an der Historien-Spanne: kein ungültiger Lauf,
+    # sondern einer, der auf Daten wartet (``eta_utc`` im Report).
+    "waiting_for_data": "wartet auf Daten (Historie kürzer als die Walk-Forward-Geometrie)",
 }
 
 def _run_status_label_de(report: dict) -> str:
@@ -171,7 +174,15 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
     # Issue #1037/#1186 — umbenannt von ``fail_fast_triggered`` (der alte Name behauptete
     # faelschlich einen Abbruch, siehe ``report._build_report``-Docstring).
     _blocking_invariant_triggered = report.get("blocking_invariant_triggered")
-    if _work_completed is False:
+    if run_status == "waiting_for_data":
+        # Issue #1363 (GH #1259) — terminaler Wartestatus mit Prognose statt "ungültig".
+        _eta = report.get("eta_utc")
+        status_note = (
+            " **Hinweis:** Der Lauf wartet auf Daten — die Historie ist kürzer als die Walk-Forward-Geometrie"
+            + (f"; bei täglichem Vorwärts-Abruf ausreichend ab **{_eta}** (eta_utc)." if _eta else
+               f"; keine Prognose möglich ({(report.get('data_depth_eta') or {}).get('reason')}).")
+        )
+    elif _work_completed is False:
         status_note = (
             f" **Hinweis:** dieser Lauf ist NICHT vollständig ({_RUN_STATUS_LABELS_DE.get(run_status, run_status)}"
             f"; {report.get('symbols_completed', '?')}/{report.get('symbols_planned', '?')} Symbole"

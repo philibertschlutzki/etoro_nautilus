@@ -951,6 +951,7 @@ async def run_backfill(
                 continue
 
             dest_file = QUOTE_TICK_PATH / symbol / DEFAULT_INTERVAL / "data.parquet"
+            latest_ts = None
             if dest_file.exists():
                 latest_ts = _get_latest_ts(dest_file)
                 if latest_ts is not None:
@@ -969,14 +970,26 @@ async def run_backfill(
                 )
 
             try:
-                candles = await _fetch_candles(session, etoro_id, end_dt, api_key, user_key)
+                # Issue #1363 (GH #1259) Fix Punkt 1 — mit lokalem Bestand: Vorwärts-Schritt bis zur
+                # Überlappung mit dem jüngsten lokalen Tick (count aus der Lücke, paginiert) statt fix
+                # 168 Kerzen — eine längere Lücke blieb sonst als Loch im Katalog.
+                filter_start_dt = start_dt
+                if latest_ts is not None:
+                    from automation.historical_fetcher import fetch_forward_candles
+                    candles = await fetch_forward_candles(
+                        session, etoro_id, symbol, latest_ts, api_key=api_key, user_key=user_key,
+                        interval=DEFAULT_INTERVAL, now=end_dt)
+                    filter_start_dt = min(
+                        start_dt, datetime.fromtimestamp(latest_ts / 1e9, tz=timezone.utc) - timedelta(days=1))
+                else:
+                    candles = await _fetch_candles(session, etoro_id, end_dt, api_key, user_key)
                 if not candles:
                     log.debug(f"[api_backfiller] {symbol}: Keine Candles — überspringe.")
                     await asyncio.sleep(0.5)
                     continue
 
                 table = _candles_to_arrow_table(
-                    candles, symbol, price_prec, size_prec, start_dt, interval=DEFAULT_INTERVAL
+                    candles, symbol, price_prec, size_prec, filter_start_dt, interval=DEFAULT_INTERVAL
                 )
                 if table is None or len(table) == 0:
                     log.debug(f"[api_backfiller] {symbol}: Leere Table nach Konvertierung.")
