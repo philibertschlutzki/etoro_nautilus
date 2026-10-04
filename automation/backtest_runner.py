@@ -39,6 +39,19 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from automation.utils import _fallback_precisions
 from automation.disaster_stop import DISASTER_STOP_MODE_SIMULATED, resolve_disaster_stop_params
+# Issue #1332 (GH #1226) / #1356 (GH #1252) — Handelszeit-Fenster: kanonische Implementierung in
+# ``automation.session_windows`` (Börsen-Lokalzeit, frei von nautilus_trader/pandas). Re-Export von
+# ``is_within_session_hours``/``interval_overlaps_session_hours`` hält Bestandstests funktionsfähig.
+from automation.session_windows import (
+    SessionMask,
+    SessionWindow,
+    interval_overlaps_session,
+    interval_overlaps_session_hours,
+    is_within_session_hours,
+    resolve_session_window,
+    session_window_to_param,
+    snap_window_to_grid,
+)
 from automation.catalog_paths import (
     EngineCatalogViewError,
     engine_catalog_view,
@@ -1546,63 +1559,21 @@ def cost_coupled_atr_floor_bps(base_floor_bps: float, *, atr_trailing_multiplier
 # unterschreitet 3x Round-Trip-Kosten) unabhängig von Fix Punkt 2/3.
 
 
-def resolve_opening_range_session_open_hour(inst_id_str: str,
-                                            session_open_hour_by_asset_class: dict | None,
-                                            asset_class_key: str = "DEFAULT") -> int:
-    """Issue #922 — asset-class-aufgelöste UTC-Stunde des Handelstag-Beginns für
-    ``OpeningRangeBreakoutStrategy.opening_range_session_open_hour`` (nur wirksam unter
-    ``opening_range_session_anchor='session_open_hour'``), Single Source of Truth analog
-    ``resolve_spread_bps``/``resolve_atr_floor_bps``.
-
-    Fehlt ``session_open_hour_by_asset_class`` ⇒ 13 (der Dataclass-Default, ≈ NYSE-Open,
-    rückwärtskompatibel). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch in der Map
-    vorhanden ist, ist — wie bei ``resolve_spread_bps``/``resolve_atr_floor_bps`` — ein
-    KONFIGURATIONSFEHLER und wirft, statt still zurückzufallen."""
-    if not session_open_hour_by_asset_class:
-        return 13
-    if asset_class_key not in session_open_hour_by_asset_class:
-        raise ValueError(
-            f"resolve_opening_range_session_open_hour: asset_class_key='{asset_class_key}' "
-            f"({inst_id_str}) ist nicht in opening_range_session_open_hour_by_asset_class "
-            f"({sorted(session_open_hour_by_asset_class)}) — Issue #922, analog #898."
-        )
-    return int(session_open_hour_by_asset_class[asset_class_key])
-
-
 def resolve_session_hours_by_asset_class(
     asset_class_key: str, session_hours_by_asset_class: dict | None,
-) -> tuple[str, str] | None:
-    """Issue #1260 (GH #1130) Fix Punkt 1 — löst je Asset-Class das UTC-Handelszeit-Fenster auf
-    (``backtest.json['session_hours_by_asset_class']``, Single Source of Truth analog
-    ``resolve_opening_range_session_open_hour``). Rückgabe ``(open_utc, close_utc)`` (Strings
-    ``'HH:MM'``) oder ``None`` — ``None`` bedeutet "kein Fenster", entweder weil der Key fehlt
+) -> SessionWindow | None:
+    """Issue #1260 (GH #1130) Fix Punkt 1 / Issue #1356 (GH #1252) — löst je Asset-Class das Handelszeit-
+    Fenster auf (``backtest.json['session_hours_by_asset_class']``). Rückgabe ``SessionWindow`` in BÖRSEN-
+    LOKALZEIT (``{"tz": "America/New_York", "open": "09:30", "close": "16:00"}``; die alte UTC-Form
+    ``{open_utc, close_utc}`` wird mit WARNING ``SESSION_WINDOW_UTC_LEGACY`` als ``tz='UTC'`` gelesen, nie
+    still umgedeutet) oder ``None`` — ``None`` bedeutet "kein Fenster", entweder weil der Key fehlt
     (rückwärtskompatibel: kein Fenster konfiguriert ⇒ keine Maske) oder weil der Asset-Class-Eintrag
-    explizit ``null`` ist (ein echter 24/7-Markt wie FOREX/CRYPTO — die Abwesenheit einer Maske ist
-    hier eine bewusste Aussage, kein fehlender Wert).
+    explizit ``null`` ist (ein echter 24/7-Markt wie FOREX/CRYPTO — die Abwesenheit einer Maske ist hier
+    eine bewusste Aussage, kein fehlender Wert).
 
-    BEWUSSTER SCOPE (siehe ``backtest.json``-Schema-Dokumentation für ``session_hours_by_asset_
-    class``): diese Funktion ist eine reine, unit-testbare Konfigurationsauflösung — sie wird
-    aktuell an KEINER Call-Site aufgerufen, die den Tick-Lade-/Bar-Aufbau-Pfad tatsächlich
-    beeinflusst (``load_ticks_from_catalog``/``engine.add_data(ticks)`` bleiben unverändert). Die
-    Verdrahtung braucht einen echten Marktdaten-Katalog zur End-to-End-Verifikation, die in dieser
-    Sandbox nicht möglich ist."""
-    if not session_hours_by_asset_class:
-        return None
-    entry = session_hours_by_asset_class.get(asset_class_key)
-    if entry is None:
-        return None
-    return entry["open_utc"], entry["close_utc"]
-
-
-# Issue #1332 (GH #1226) — kanonische Implementierung nach ``automation.session_windows``
-# verschoben (Single Source of Truth, importierbar auch von ``optimizer/sweep.py`` ohne dessen
-# schwere ``nautilus_trader``-Importkette). Re-Export hier hält jede bestehende Call-Site
-# (``is_within_session_hours(...)`` innerhalb dieses Moduls) UND jeden Test, der
-# ``backtest_runner.is_within_session_hours`` referenziert, unverändert funktionsfähig.
-from automation.session_windows import (  # noqa: E402
-    interval_overlaps_session_hours,
-    is_within_session_hours,
-)
+    Single Source: ``session_windows.resolve_session_window`` — dieselbe Funktion nutzen die Sweep-Preflights
+    (``optimizer.sweep``) und der Live-Bot (Issue #1361), nie eine zweite Auflösung (Pitfall #435)."""
+    return resolve_session_window(asset_class_key, session_hours_by_asset_class)
 
 
 def _median_tick_delta_t_s(ticks: list) -> float | None:
@@ -1622,26 +1593,12 @@ def _median_tick_delta_t_s(ticks: list) -> float | None:
 def _snap_session_window_to_tick_grid(
     open_utc: str, close_utc: str, median_delta_t_s: float | None,
 ) -> tuple[str, str]:
-    """Issue #1300 (GH #1177, P0) Fix Punkt 1 — snapt ``open_utc`` ABWAERTS und ``close_utc``
-    AUFWAERTS auf das naechste Vielfache des beobachteten Tick-Rasters (``median_delta_t_s``, auf
-    volle Minuten gerundet, Untergrenze 1). Root-Cause: eine Fenstergrenze darf nie feiner
-    aufgeloest sein als das Raster der Daten, auf die sie angewandt wird (Pitfall #463 in
-    AGENTS.md) — ``13:30`` gegen ein Stundenraster verwirft sonst systematisch die erste
-    Session-Bar (13:00-Tick faellt unter ``open_minutes=810``), ohne dass irgendetwas fehlschlaegt.
-
-    ``median_delta_t_s`` fehlend/<=0 (kein Raster ermittelbar) ⇒ ``open_utc``/``close_utc``
-    UNVERAENDERT (fail-open, bit-identisches Alt-Verhalten)."""
-    if not median_delta_t_s or median_delta_t_s <= 0:
-        return open_utc, close_utc
-    grid_minutes = max(1, round(median_delta_t_s / 60.0))
-    open_h, open_m = (int(x) for x in open_utc.split(":"))
-    close_h, close_m = (int(x) for x in close_utc.split(":"))
-    open_total = open_h * 60 + open_m
-    close_total = close_h * 60 + close_m
-    snapped_open_total = (open_total // grid_minutes) * grid_minutes
-    snapped_close_total = min(24 * 60, -(-close_total // grid_minutes) * grid_minutes)
-    return (f"{snapped_open_total // 60:02d}:{snapped_open_total % 60:02d}",
-            f"{snapped_close_total // 60:02d}:{snapped_close_total % 60:02d}")
+    """Issue #1300 (GH #1177, P0) Fix Punkt 1 — Alt-API (``HH:MM``-UTC-Strings) über
+    ``session_windows.snap_window_to_grid`` (die kanonische Implementierung, seit #1356 in BÖRSEN-
+    LOKALZEIT; hier ein ``tz='UTC'``-Fenster ⇒ bit-identisches Alt-Verhalten). ``open`` snapt ABWAERTS,
+    ``close`` AUFWAERTS auf das Tick-Raster (Pitfall #463); kein Raster ⇒ unveraendert."""
+    snapped = snap_window_to_grid(SessionWindow("UTC", open_utc, close_utc), median_delta_t_s)
+    return snapped.open, snapped.close
 
 
 def _filter_ticks_to_session_hours(
@@ -1663,6 +1620,11 @@ def _filter_ticks_to_session_hours(
     Docstring), und ein harter Wächter wirft ``SessionFilterEmptyError`` STATT eines stillen ``[]``,
     wenn der Filter die GESAMTE (nicht-leere) Eingabemenge verwirft.
 
+    Issue #1356 (GH #1252, P0) — das Fenster ist ein ``SessionWindow`` in BÖRSEN-LOKALZEIT: der Filter
+    behält im Sommer (EDT) die Kerzen 13:00-19:00 UTC, im Winter (EST) 14:00-20:00 UTC (je 7), statt eines
+    fixen UTC-Fensters, das nach dem DST-Ende die 13:00-Pre-Market-Kerze aufnahm und die Schlussstunde
+    verwarf. Feiertage (``config/exchange_holidays.json``) sind Nicht-Handelstage.
+
     ``None`` (kein Fenster konfiguriert ODER ``asset_class_key`` fehlt/``None``, z. B. FOREX/CRYPTO,
     siehe ``resolve_session_hours_by_asset_class``-Docstring) ⇒ ``ticks`` UNVERAENDERT (bit-
     identisches Alt-Verhalten, dieselbe Fail-open-Konvention)."""
@@ -1671,46 +1633,45 @@ def _filter_ticks_to_session_hours(
     window = resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
     if window is None:
         return ticks
-    open_utc, close_utc = window
     n_before = len(ticks)
     median_delta_t_s = _median_tick_delta_t_s(ticks)
-    snapped_open_utc, snapped_close_utc = _snap_session_window_to_tick_grid(
-        open_utc, close_utc, median_delta_t_s)
+    snapped = snap_window_to_grid(window, median_delta_t_s)
     if out is not None:
         # Issue #1298 (GH #1175) — dieselbe Telemetrie-Konvention wie load_ticks_from_catalogs
-        # eigenes out-Dict: session_window_snapped erscheint in derselben Struktur.
-        out["session_window_snapped"] = (snapped_open_utc, snapped_close_utc)
-    filtered = [
-        t for t in ticks
-        if is_within_session_hours(int(t.ts_event), snapped_open_utc, snapped_close_utc)
-    ]
+        # eigenes out-Dict: session_window_snapped erscheint in derselben Struktur. Issue #1356: die
+        # Uhrzeiten sind BÖRSEN-LOKALZEIT — ``session_window_tz`` nennt die Zeitzone.
+        out["session_window_snapped"] = (snapped.open, snapped.close)
+        out["session_window_tz"] = snapped.tz
+    # Issue #1356 (GH #1252) — der Handelstag/Tagesbeginn ist LOKAL (Börsenzeit, Feiertage = Nicht-
+    # Handelstage); ``SessionMask`` cached die Tagesgrenzen, ein Tick kostet zwei Integer-Vergleiche.
+    mask = SessionMask(snapped)
+    filtered = [t for t in ticks if mask(int(t.ts_event))]
     # Issue #1300 (GH #1177, P0) Fix Punkt 2 — harter Wächter: ein leeres Ergebnis aus einer
     # nicht-leeren Eingabe ist von "kein Fenster konfiguriert" nur hier unterscheidbar; der
     # Aufrufer (backtest_runner.load_ticks_from_catalog) darf diesen Unterschied nicht verlieren.
     #
-    # Bewusst NUR, wenn mindestens ein Eingabe-Tick ueberhaupt auf einen HANDELSTAG (Mo-Fr) faellt:
-    # ``is_within_session_hours`` schliesst Wochenend-Ticks UNBEDINGT aus (``weekdays_only=True``),
-    # unabhaengig vom (gesnappten) Tagesfenster — eine Eingabemenge, die AUSSCHLIESSLICH aus
-    # Wochenend-Ticks besteht (z. B. ein schmales Abfragefenster, das zufaellig nur ein Wochenende
-    # ueberdeckt), liefert deshalb IMMER ein leeres Ergebnis, VOELLIG unabhaengig davon, ob das
-    # Tagesfenster/Snapping korrekt ist — das ist kein degeneriertes Fenster, sondern die korrekte,
-    # erwartete Wochenend-Ausschluss-Antwort (Root-Cause einer sonst zu breiten Eskalation: der
-    # urspruengliche Waechter warf hier faelschlich, obwohl kein einziger Handelstag-Tick je eine
-    # Chance auf Aufnahme hatte).
+    # Bewusst NUR, wenn die Zeitspanne der Eingabe ueberhaupt eine Session eines HANDELSTAGS schneidet
+    # (Issue #1356: lokale Handelstage, Feiertage ausgenommen): eine Eingabemenge, die AUSSCHLIESSLICH
+    # ausserhalb jeder Session liegt (z. B. ein schmales Abfragefenster ueber ein Wochenende oder einen
+    # Feiertag), liefert IMMER ein leeres Ergebnis, VOELLIG unabhaengig davon, ob das Tagesfenster/
+    # Snapping korrekt ist — das ist kein degeneriertes Fenster, sondern die korrekte, erwartete
+    # Ausschluss-Antwort (Root-Cause einer sonst zu breiten Eskalation: der urspruengliche Waechter warf
+    # hier faelschlich, obwohl kein einziger Tick je eine Chance auf Aufnahme hatte). Vor #1356 war das
+    # Kriterium "ein Tick an einem UTC-Wochentag" — mit lokalen Handelstagen gehoerten die UTC-Samstag-
+    # Ticks 00:00-04:59 (Freitagabend ET) sonst zu einem Handelstag, ohne je in einer Session zu liegen.
     from datetime import datetime, timezone
-    _any_weekday_tick = any(
-        datetime.fromtimestamp(int(t.ts_event) / 1_000_000_000, tz=timezone.utc).weekday() < 5
-        for t in ticks
-    )
-    if not filtered and n_before > 0 and _any_weekday_tick:
+    _ts_values = [int(t.ts_event) for t in ticks]
+    _input_spans_a_session = bool(_ts_values) and interval_overlaps_session(
+        min(_ts_values), max(_ts_values) + 1, snapped)
+    if not filtered and n_before > 0 and _input_spans_a_session:
         histogram: dict[int, int] = {}
         for t in ticks:
-            hour = datetime.fromtimestamp(int(t.ts_event) / 1_000_000_000, tz=timezone.utc).hour
+            hour = datetime.fromtimestamp(int(t.ts_event) // 1_000_000_000, tz=timezone.utc).hour
             histogram[hour] = histogram.get(hour, 0) + 1
         raise SessionFilterEmptyError(
             f"Session-Filter verwarf alle {n_before} Ticks. "
-            f"session_window=({open_utc}, {close_utc}) "
-            f"session_window_snapped=({snapped_open_utc}, {snapped_close_utc}) "
+            f"session_window=({window.open}, {window.close}) tz={window.tz} "
+            f"session_window_snapped=({snapped.open}, {snapped.close}) "
             f"n_before={n_before} "
             f"time_of_day_histogram_utc_hour={dict(sorted(histogram.items()))}"
         )
@@ -1728,8 +1689,9 @@ def _filter_ticks_to_session_hours(
                         "n_before": n_before, "n_after": len(filtered),
                         "discard_fraction": round(discard_fraction, 4),
                         "expected_discard_fraction_equity": round(1.0 - 7.0 / 24.0 * 5.0 / 7.0, 4),
-                        "session_window": [open_utc, close_utc],
-                        "session_window_snapped": [snapped_open_utc, snapped_close_utc],
+                        "session_window": [window.open, window.close],
+                        "session_window_snapped": [snapped.open, snapped.close],
+                        "session_window_tz": window.tz,
                     }, level=_logging_session_filter.WARNING)
             except Exception:
                 pass
@@ -1760,10 +1722,10 @@ def load_ticks_from_catalog(
         if out is not None:
             out["n_ticks_raw"] = len(ticks) if ticks else 0
             out["asset_class_key"] = asset_class_key
-            out["session_window"] = (
-                resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
-                if asset_class_key else None
-            )
+            _sw = (resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
+                   if asset_class_key else None)
+            out["session_window"] = (_sw.open, _sw.close) if _sw is not None else None
+            out["session_window_tz"] = _sw.tz if _sw is not None else None
         if not ticks:
             if out is not None:
                 out["n_ticks_after_session_filter"] = 0
@@ -3452,9 +3414,9 @@ def _get_annualization_factor_with_source(mtm_series=None, *, symbol: str | None
     return 1.0, "neutral_fallback"
 
 # Issue #1011/#1163 (Katalog #1170, P1) — Referenz-Session-Fenster fuer ``session_coverage_
-# fraction``: ``backtest.json``'s ``opening_range_session_open_hour_by_asset_class`` traegt
-# EQUITY/COMMODITY/DEFAULT durchgehend 13 (UTC, NYSE-Open-Naeherung, #922) — dieser Wert wird HIER
-# als fixer, dokumentierter Kompromiss verwendet, statt die Asset-Klasse (nicht Teil von
+# fraction``: 13 UTC (NYSE-Open-Naeherung der frueheren, mit Issue #1356 entfallenen Tabelle
+# ``opening_range_session_open_hour_by_asset_class``; das 8-Stunden-Fenster 13-21 UTC umfasst die
+# RTH in EDT UND EST) — dieser Wert wird HIER als fixer, dokumentierter Kompromiss verwendet, statt die Asset-Klasse (nicht Teil von
 # ``_calculate_stats``'s Signatur, keine Aenderung an einer derart zentral verwendeten Funktion
 # fuer eine reine Zusatz-Telemetrie) durch die volle Aufrufkette zu fädeln. Ein konventionelles
 # 8-Stunden-Fenster (grosszuegiger als die reale NYSE-Session ≈ 6,5h) haelt die Metrik als GROBE
@@ -7505,7 +7467,6 @@ def run_single_backtest_worker(
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
-    opening_range_session_open_hour_by_asset_class: dict | None = None,
     # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) — asset-class-aufgelöste
     # Finanzierungs-/Slippage-Kostensätze (resolve_financing_bps_per_day/resolve_slippage_bps),
     # dieselbe EINMAL-im-Elternprozess-geladen-Konvention wie atr_floor_bps_by_asset_class oben.
@@ -7593,7 +7554,7 @@ def run_single_backtest_worker(
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
             # Issue #924/#922/#987 (Katalog #986) — die Asset-Class wird auch dann aufgelöst, wenn
-            # NUR atr_floor_bps_by_asset_class/opening_range_session_open_hour_by_asset_class/
+            # NUR atr_floor_bps_by_asset_class/session_hours_by_asset_class/
             # overnight_financing_bps_per_day_by_asset_class/slippage_bps_by_asset_class
             # konfiguriert ist (ein Spread-Symbol-Override allein entbindet diese Auflösungen
             # nicht — dafür gibt es keinen Symbol-Override).
@@ -7613,7 +7574,7 @@ def run_single_backtest_worker(
             # konfiguriert ist (inkl. der zuvor hier fehlenden ``slippage_bps_p50_by_asset_class``,
             # #1055/#1204 — dieselbe Luecke, eine Instanz mehr).
             if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class
-                    or opening_range_session_open_hour_by_asset_class
+                    or session_hours_by_asset_class
                     or overnight_financing_bps_per_day_by_asset_class
                     or slippage_bps_by_asset_class or slippage_bps_p50_by_asset_class):
                 asset_class_key = _resolve_asset_class_for_symbol(
@@ -7690,8 +7651,10 @@ def run_single_backtest_worker(
                 atr_trailing_multiplier=(strat.get("params") or {}).get("atr_trailing_multiplier"),
                 round_trip_cost_bps=float(spread_bps) + float(commission_bps),
                 min_stop_to_cost_ratio=float(min_stop_to_cost_ratio))
-            opening_range_session_open_hour_resolved = resolve_opening_range_session_open_hour(
-                inst_id_str, opening_range_session_open_hour_by_asset_class, asset_class_key)
+            # Issue #1356 (GH #1252) — das Session-Fenster (Börsen-Lokalzeit) dieser Asset-Class: Quelle
+            # des Tick-Filters UND (als Strategie-Config-Feld) des Opening-Range-Ankers.
+            session_window_resolved = resolve_session_hours_by_asset_class(
+                asset_class_key, session_hours_by_asset_class)
 
             if spread_bps > 0.0:
                 src = "Symbol-Override" if has_symbol_override else f"Asset-Class {asset_class_key}"
@@ -7877,11 +7840,10 @@ def run_single_backtest_worker(
             # ein vom Suchraum gesampelter Wert (atr_floor_bps ist kein Optuna-Parameter) —
             # überschreibt daher bewusst jeden gleichnamigen Eintrag aus strat["params"].
             params["atr_floor_bps"] = atr_floor_bps_resolved
-            # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde (oben
-            # resolve_opening_range_session_open_hour). Nur OpeningRangeBreakoutConfig kennt
-            # dieses Feld — der valid_keys-Filter unten verwirft es folgenlos für jede andere
-            # Strategie.
-            params["opening_range_session_open_hour"] = opening_range_session_open_hour_resolved
+            # Issue #1356 (GH #1252) — asset-class-aufgelöstes Session-Fenster (Börsen-Lokalzeit) als
+            # ``HourlyStrategyConfig.session_window``: Single Source mit dem Tick-Filter oben (dieselbe
+            # Auflösung, Pitfall #435); ORB verankert Handelstag/Range-Start daran.
+            params["session_window"] = session_window_to_param(session_window_resolved)
             # Issue #1359 (GH #1255, P0) — Katastrophen-Stop im Backtest als SIMULIERTE Order
             # (``stop_market(reduce_only=True)`` beim Positions-Fill, Storno beim Positions-Close,
             # Exit-Tag ``EXIT_REASON:DISASTER_STOP``); die Parameter kommen aus derselben Quelle wie
@@ -8224,10 +8186,12 @@ def run_backtest() -> None:
                 {}, _calibrated, percentile="p50")
     except Exception:
         pass
-    # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde für OpeningRangeBreakoutStrategy
-    # (resolve_opening_range_session_open_hour).
-    opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
-        "opening_range_session_open_hour_by_asset_class", {})
+    # Issue #1356 (GH #1252) — ``opening_range_session_open_hour_by_asset_class`` (UTC-Stunden-Konstante,
+    # NYSE-Open nur in EDT) ist ersatzlos entfallen; der Handelstag-Anker der OpeningRangeBreakout-
+    # Strategie folgt dem ``session_window`` unten (Börsen-Lokalzeit).
+    if backtest_global_cfg.get("opening_range_session_open_hour_by_asset_class") is not None:
+        print("⚠️  backtest.json: 'opening_range_session_open_hour_by_asset_class' ist entfallen und wird "
+              "ignoriert (Issue #1356) — der Opening-Range-Anker folgt session_hours_by_asset_class.")
     # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die #1260/GH #1130-
     # Verdrahtungsluecke (siehe load_ticks_from_catalog/_filter_ticks_to_session_hours-Docstrings).
     session_hours_by_asset_class = backtest_global_cfg.get("session_hours_by_asset_class", {})
@@ -8576,8 +8540,6 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-                        opening_range_session_open_hour_by_asset_class=(
-                            opening_range_session_open_hour_by_asset_class),
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
@@ -8595,8 +8557,6 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-                        opening_range_session_open_hour_by_asset_class=(
-                            opening_range_session_open_hour_by_asset_class),
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
@@ -8639,8 +8599,6 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-                        opening_range_session_open_hour_by_asset_class=(
-                            opening_range_session_open_hour_by_asset_class),
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
@@ -8734,7 +8692,6 @@ def _run_remaining_sequentially(
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
-    opening_range_session_open_hour_by_asset_class: dict | None = None,
     # Issue #987/#1141 (Katalog #986) — siehe run_single_backtest_worker-Docstring.
     overnight_financing_bps_per_day_by_asset_class: dict | None = None,
     slippage_bps_by_asset_class: dict | None = None,
@@ -8762,8 +8719,6 @@ def _run_remaining_sequentially(
             span_tolerance_days, commission_bps, spread_bps_by_asset_class,
             spread_bps_by_symbol,
             atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-            opening_range_session_open_hour_by_asset_class=(
-                opening_range_session_open_hour_by_asset_class),
             overnight_financing_bps_per_day_by_asset_class=(
                 overnight_financing_bps_per_day_by_asset_class),
             slippage_bps_by_asset_class=slippage_bps_by_asset_class,

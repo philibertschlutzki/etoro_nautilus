@@ -210,6 +210,10 @@ Es läuft ein **einziger, durchgehender Engine-Run** über die volle Spanne. Die
 > ⚠️ **„State Bleed" (bewusst akzeptierter Kompromiss):** An der IS/OOS-Grenze findet **kein** Engine-Reset statt. Offene Positionen, Kontostand und aufgewärmte Indikatoren (EMAs, RSI …) fließen ungefiltert aus IS in OOS. OOS-Ergebnisse sind dadurch methodisch **nicht 100 % „rein"**. Dieser Kompromiss minimiert Laufzeit/Overhead.
 > Ein sauberer Hard-Reset mit Embargo ist als Optimierung dokumentiert — siehe [`manuals/feature_roadmap.md`](manuals/feature_roadmap.md), Abschnitt A.
 
+### Handelszeit-Fenster (Bar-Achse) in Börsen-Lokalzeit
+
+`backtest.json['session_hours_by_asset_class']` deklariert das Fenster je Asset-Klasse in **Börsen-Lokalzeit** (Issue #1356): `{"tz": "America/New_York", "open": "09:30", "close": "16:00"}` für EQUITY/COMMODITY, `null` für durchgehend gehandelte Märkte (FOREX/CRYPTO). Daraus folgt automatisch die Sommer-/Winterzeit: im Sommer (EDT) bleiben die 1h-Kerzen 13:00–19:00 UTC, im Winter (EST) 14:00–20:00 UTC — je **7 Bars pro Handelstag** (`BARS_PER_TRADING_DAY`). NYSE-Feiertage (`automation/config/exchange_holidays.json`, 2025–2027) zählen als Nicht-Handelstage, nicht als Datenlücken; liegt ein Datum außerhalb der Tabelle, warnt `EXCHANGE_HOLIDAYS_OUT_OF_RANGE` (Tabelle fortschreiben). Die alte UTC-Form `{"open_utc", "close_utc"}` wird nur noch mit der Warnung `SESSION_WINDOW_UTC_LEGACY` als UTC gelesen. Die Opening-Range-Strategie verankert ihren Handelstag am selben Fenster (`opening_range_session_anchor="trading_day"`: die erste Range-Kerze ist die, die 09:30 ET überlappt); die frühere UTC-Stunden-Tabelle `opening_range_session_open_hour_by_asset_class` ist entfallen.
+
 ### FIFO-Matching & Metriken
 
 - PnL via FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Die FIFO-Schleife iteriert **immer über das gesamte Datenset (IS + OOS)**; erst *danach* werden die PnL-Tupel am Cutoff separiert (sonst korrumpieren offene Queues — `AGENTS.md`, Pitfall #32).

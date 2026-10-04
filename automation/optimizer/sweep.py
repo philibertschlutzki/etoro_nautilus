@@ -620,105 +620,94 @@ def _resolve_asset_class_key_for_symbol_lightweight(symbol: str) -> str | None:
     return None
 
 
-def _resolve_session_window_utc(asset_class_key: str | None,
-                                session_hours_by_asset_class: dict | None) -> tuple[str, str] | None:
-    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — reine Konfigurationsauflösung, dieselbe Semantik wie
-    ``backtest_runner.resolve_session_hours_by_asset_class``, hier DUPLIZIERT statt importiert:
-    jeder Import aus ``backtest_runner.py`` zieht dessen volle ``nautilus_trader``-Importkette mit
-    (dieselbe Begründung wie ``count_available_bars``/``_load_symbol_bar_quality_sample`` oben,
-    die aus demselben Grund pyarrow statt der vollen ``ParquetDataCatalog`` verwenden)."""
-    if not session_hours_by_asset_class or not asset_class_key:
-        return None
-    entry = session_hours_by_asset_class.get(asset_class_key)
-    if entry is None:
-        return None
-    return entry["open_utc"], entry["close_utc"]
+def _resolve_session_window(asset_class_key: str | None, session_hours_by_asset_class: dict | None):
+    """Issue #1298 (GH #1175) Fix Punkt 5 / Issue #1356 (GH #1252) — reine Konfigurationsauflösung über
+    ``session_windows.resolve_session_window`` (DIESELBE Funktion wie ``backtest_runner.
+    resolve_session_hours_by_asset_class`` — vor #1356 hier dupliziert): ``SessionWindow`` in Börsen-
+    Lokalzeit oder ``None`` (kein Fenster). ``session_windows`` ist frei von ``nautilus_trader``/``pandas``
+    — der Import zieht nicht die schwere Kette von ``backtest_runner.py``."""
+    from automation.session_windows import resolve_session_window
+    return resolve_session_window(asset_class_key, session_hours_by_asset_class)
 
 
-def _is_ts_ns_within_session_utc(ts_ns: int, open_utc: str, close_utc: str) -> bool:
-    """Issue #1298 (GH #1175, P0) Fix Punkt 5 — dieselbe Semantik wie
-    ``backtest_runner.is_within_session_hours``. Issue #1332 (GH #1226): delegiert an die
-    kanonische Implementierung in ``automation.session_windows`` statt sie zu reimplementieren
-    (Pitfall #435 — zwei Zähler über dieselbe Grösse müssen dieselbe Funktion aufrufen). Der
-    leichtgewichtige Import bleibt lokal in der Funktion, damit das Modul ``session_windows``
-    (frei von ``nautilus_trader``/``pandas``) nicht am Top-Level jedes ``sweep.py``-Imports hängt."""
-    from automation.session_windows import is_within_session_hours as _is_within_session_hours
-    return _is_within_session_hours(ts_ns, open_utc, close_utc, weekdays_only=True)
+def _as_session_window(window_or_open, close_utc: str | None = None):
+    """``SessionWindow`` durchreichen; die Alt-Form ``(open_utc, close_utc)`` (``HH:MM``-UTC-Strings, z. B.
+    aus Bestandstests) als ``tz='UTC'``-Fenster lesen."""
+    from automation.session_windows import SessionWindow
+    if isinstance(window_or_open, SessionWindow):
+        return window_or_open
+    return SessionWindow("UTC", str(window_or_open), str(close_utc), legacy_utc=True)
+
+
+def _is_ts_ns_within_session_utc(ts_ns: int, window_or_open, close_utc: str | None = None) -> bool:
+    """Issue #1298 (GH #1175) Fix Punkt 5 — Punkt-Test, dieselbe Semantik wie ``backtest_runner.
+    _filter_ticks_to_session_hours`` (Issue #1332: delegiert an ``session_windows``, Pitfall #435). Seit
+    #1356 mit Börsen-Lokalzeit-Fenster (Handelstag lokal, Feiertage = Nicht-Handelstage)."""
+    from automation.session_windows import is_within_session
+    return is_within_session(int(ts_ns), _as_session_window(window_or_open, close_utc))
 
 
 def _candle_interval_overlaps_session_utc(
-    candle_start_ns: int, bar_interval_ns: int, open_utc: str, close_utc: str,
+    candle_start_ns: int, bar_interval_ns: int, window_or_open, close_utc: str | None = None,
 ) -> bool:
     """Issue #1332 (GH #1226) Fix Punkt 2 — testet, ob die Kerze ``[candle_start_ns,
-    candle_start_ns + bar_interval_ns)`` das Session-Fenster SCHNEIDET, statt nur ihren
-    Startpunkt gegen das Fenster zu testen (der Punkt-Test verwirft sonst z. B. die 13:00-Kerze
-    bei Sessionbeginn 13:30, obwohl deren zweite Haelfte in der Session liegt — Symptom: 6 statt
-    7 RTH-Bins je Handelstag fuer EQUITY)."""
-    from automation.session_windows import interval_overlaps_session_hours
-    return interval_overlaps_session_hours(
-        candle_start_ns, candle_start_ns + bar_interval_ns, open_utc, close_utc, weekdays_only=True)
+    candle_start_ns + bar_interval_ns)`` das Session-Fenster SCHNEIDET, statt nur ihren Startpunkt zu
+    testen (Symptom sonst: 6 statt 7 RTH-Bins je Handelstag). Issue #1356: Handelstag in Börsen-Lokalzeit
+    — in EDT die Kerzen 13:00-19:00 UTC, in EST 14:00-20:00 UTC."""
+    from automation.session_windows import interval_overlaps_session
+    return interval_overlaps_session(
+        int(candle_start_ns), int(candle_start_ns) + int(bar_interval_ns),
+        _as_session_window(window_or_open, close_utc))
 
 
 def _expected_session_bins_per_day(
-    open_utc: str, close_utc: str, bar_interval_ns: int = 3_600_000_000_000,
+    window_or_open, close_utc: str | None = None, bar_interval_ns: int = 3_600_000_000_000,
 ) -> int:
-    """Issue #1336 (GH #1230) Fix Punkt 1 — Anzahl der Bar-Intervalle je Handelstag, deren
-    Intervall das Session-Fenster ``[open_utc, close_utc)`` SCHNEIDET (dieselbe
-    Ueberlappungs-Konvention wie ``_candle_interval_overlaps_session_utc``/#1332, NICHT eine
-    naive ``(close-open)/60``-Rundung) — fuer EQUITY bei ``13:30-20:00`` und 1h-Bars ergibt das 7
-    (13:00-, 14:00-, …, 19:00-Kerze), nicht 6."""
-    from automation.session_windows import interval_overlaps_session_hours
-    n_bins_per_day = 86_400_000_000_000 // bar_interval_ns
-    count = 0
-    for i in range(int(n_bins_per_day)):
-        bin_start_ns = i * bar_interval_ns
-        if interval_overlaps_session_hours(
-            bin_start_ns, bin_start_ns + bar_interval_ns, open_utc, close_utc, weekdays_only=False,
-        ):
-            count += 1
-    return count
+    """Issue #1336 (GH #1230) Fix Punkt 1 — Bar-Intervalle je Handelstag, deren Intervall das Session-
+    Fenster SCHNEIDET (``session_windows.bars_per_trading_day``, dieselbe Überlappungs-Konvention wie
+    #1332, NICHT eine naive ``(close-open)/60``-Rundung): NYSE 09:30-16:00 ET ⇒ 7 in EDT UND EST
+    (Issue #1356 — eine DST-abhängige Zahl wirft statt still zu runden)."""
+    from automation.session_windows import bars_per_trading_day
+    return bars_per_trading_day(_as_session_window(window_or_open, close_utc), int(bar_interval_ns))
 
 
 def _bar_coverage_expected_bins(
-    window_start, window_end, open_utc: str, close_utc: str,
+    window_start, window_end, window_or_open, close_utc: str | None = None,
     bar_interval_ns: int = 3_600_000_000_000,
 ) -> int:
-    """Issue #1336 (GH #1230) Fix Punkt 1 — erwartete Zahl RTH-Bins im Fenster
-    ``[window_start, window_end]`` (pandas-Timestamps, inklusive, Wochentag-gefiltert Mo-Fr)
-    STATT der rohen 24/7-Kalenderstundendifferenz. Ersetzt den Nenner, gegen den
-    ``bar_coverage_ratio`` gebildet wird — der alte Nenner zaehlte Naechte und Wochenenden mit,
-    wodurch die konfigurierte Schwelle (0.6) strukturell unerreichbar war (Obergrenze
-    6·5/(24·7) ≈ 0.179 fuer EQUITY)."""
-    import pandas as pd
-    bins_per_day = _expected_session_bins_per_day(open_utc, close_utc, bar_interval_ns)
-    if bins_per_day == 0:
-        return 0
-    cur = window_start.normalize()
-    end_day = window_end.normalize()
-    n_trading_days = 0
-    while cur <= end_day:
-        if cur.weekday() < 5:
-            n_trading_days += 1
-        cur += pd.Timedelta(days=1)
-    return bins_per_day * n_trading_days
+    """Issue #1336 (GH #1230) Fix Punkt 1 — erwartete Zahl Session-Bins im Fenster ``[window_start,
+    window_end]`` (pandas-Timestamps, inklusive Randtage) STATT der rohen 24/7-Kalenderstundendifferenz
+    (der alte Nenner zählte Nächte und Wochenenden mit — Obergrenze 6·5/(24·7) ≈ 0,179 für EQUITY).
+    Issue #1356 (GH #1252) — Handelstage in Börsen-Lokalzeit, Feiertage (``exchange_holidays.json``) sind
+    Nicht-Handelstage (kein Datenloch), Bins je Tag DST-exakt (``session_windows.expected_bars_between``)."""
+    from automation.session_windows import expected_bars_between
+    return expected_bars_between(
+        int(window_start.value), int(window_end.value),
+        _as_session_window(window_or_open, close_utc), int(bar_interval_ns))
 
 
 def compute_holdout_bar_count(
     holdout_days: float, session_hours_by_asset_class: dict | None, asset_class_key: str | None,
-    *, bar_interval_ns: int = 3_600_000_000_000,
+    *, bar_interval_ns: int = 3_600_000_000_000, end_ns: int | None = None,
 ) -> int:
-    """Issue #1340 (GH #1234) — ``T_holdout`` (Anzahl Bars im Holdout-Fenster) AUS DER
-    TATSAECHLICHEN Bar-Achse, statt der impliziten 24-Bars/Kalendertag-Annahme aus der
-    Vor-#1275-RTH-Umstellung. Für ein Symbol MIT Session-Fenster (EQUITY/COMMODITY): erwartete
-    Bins je Handelstag (``_expected_session_bins_per_day``, dieselbe Ueberlappungs-Konvention wie
-    #1332/#1336) × Handelstag-Anteil (5/7) × ``holdout_days``. Für CRYPTO/FOREX (kein
-    Session-Fenster) bleibt die 24-Bars/Kalendertag-Achse (durchgehender Handel)."""
-    window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
+    """Issue #1340 (GH #1234) — ``T_holdout`` (Anzahl Bars im Holdout-Fenster) AUS DER TATSAECHLICHEN
+    Bar-Achse, statt der impliziten 24-Bars/Kalendertag-Annahme. Für ein Symbol MIT Session-Fenster
+    (EQUITY/COMMODITY): Bins je Handelstag (``_expected_session_bins_per_day``, #1332/#1336) × Handelstage.
+    Für CRYPTO/FOREX (kein Session-Fenster) bleibt die 24-Bars/Kalendertag-Achse (durchgehender Handel).
+
+    Issue #1356 (GH #1252) — mit ``end_ns`` (Ende des Holdout-Fensters bekannt) EXAKT: Handelstage in Börsen-
+    Lokalzeit im Fenster ``[end − holdout_days, end]``, Feiertage ausgenommen, Bins je Tag DST-exakt. Ohne
+    ``end_ns`` (Preflight vor dem Laden der Daten) bleibt der Erwartungswert ``5/7`` Handelstage je
+    Kalendertag (ohne Feiertagsabschlag, ≈ +3,5 % gegenüber 252/365)."""
+    window = _resolve_session_window(asset_class_key, session_hours_by_asset_class)
     if window is None:
         bars_per_day = int(round(86_400_000_000_000 / bar_interval_ns))
         return int(round(holdout_days * bars_per_day))
-    open_utc, close_utc = window
-    bins_per_trading_day = _expected_session_bins_per_day(open_utc, close_utc, bar_interval_ns)
+    if end_ns is not None:
+        from automation.session_windows import expected_bars_between
+        start_ns = int(end_ns) - int(round(float(holdout_days) * 86_400_000_000_000))
+        return expected_bars_between(start_ns, int(end_ns), window, int(bar_interval_ns))
+    bins_per_trading_day = _expected_session_bins_per_day(window, bar_interval_ns=bar_interval_ns)
     return int(round(holdout_days * (5.0 / 7.0) * bins_per_trading_day))
 
 
@@ -771,13 +760,13 @@ def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, 
         if len(ts_values) > max_ticks:
             ts_values = ts_values[-max_ticks:]
         n_ticks_raw = len(ts_values)
-        window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
+        window = _resolve_session_window(asset_class_key, session_hours_by_asset_class)
         if window is None:
             n_ticks_after_session_filter = n_ticks_raw
         else:
-            open_utc, close_utc = window
-            n_ticks_after_session_filter = sum(
-                1 for ts in ts_values if _is_ts_ns_within_session_utc(int(ts), open_utc, close_utc))
+            from automation.session_windows import SessionMask
+            mask = SessionMask(window)
+            n_ticks_after_session_filter = sum(1 for ts in ts_values if mask(int(ts)))
         return {"n_ticks_raw": n_ticks_raw, "n_ticks_after_session_filter": n_ticks_after_session_filter}
     except Exception:
         return None
@@ -933,15 +922,15 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
     Issue #1329 (Katalog #1323-1329, P1) — die rohen Ticks werden VOR dem Resampling auf dieselbe
     RTH-Session-Maske gefiltert wie ``probe_symbol_tick_population``/``backtest_runner.
     _filter_ticks_to_session_hours`` (seit #1275 die fuer die ECHTE Bar-Konstruktion verbindliche
-    Achse) — ueber dasselbe lokale, leichtgewichtige Helferpaar (``_resolve_session_window_utc``/
-    ``_is_ts_ns_within_session_utc``), das ``probe_symbol_tick_population`` bereits verwendet.
+    Achse) — ueber dasselbe lokale, leichtgewichtige Helferpaar (``_resolve_session_window``/
+    ``session_windows.SessionMask``), das ``probe_symbol_tick_population`` bereits verwendet.
     Vormals resamplete diese Funktion UNGEFILTERT auf eine reine Kalenderstunden-Achse (24/7),
     obwohl ``check_tick_population``s ``n_ticks_after_session_filter``-Feld (Issue #1298) fuer
     DIESELBE Tickmenge desselben Laufs bereits RTH-gefiltert war — zwei Meta-Checks prueften
     faktisch zwei verschiedene Populationen. ``session_hours_by_asset_class``/``asset_class_key``
     fehlend/``None`` (z. B. CRYPTO/FOREX ohne Session-Fenster, oder ein Aufrufer ohne
     ``backtest.json``) ⇒ ``df`` UNVERAENDERT (fail-open, bit-identisches Alt-Verhalten, dieselbe
-    Konvention wie ``_resolve_session_window_utc``/``_filter_ticks_to_session_hours``). Die
+    Konvention wie ``_resolve_session_window``/``_filter_ticks_to_session_hours``). Die
     konfigurierten Schwellenwerte selbst (``bar_coverage_ratio`` u. a.) werden hier NICHT
     neu kalibriert — nur die Achse der Messung wird korrigiert (siehe §S3 im Issue-Katalog).
 
@@ -1026,12 +1015,11 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         # ueber das KERZEN-INTERVALL selbst entschieden (``_candle_interval_overlaps_session_utc``
         # unten). ``window is None`` (kein Fenster konfiguriert ODER ``asset_class_key`` fehlt, z. B.
         # CRYPTO/FOREX) ⇒ bit-identisches Alt-Verhalten (fail-open).
-        window = _resolve_session_window_utc(asset_class_key, session_hours_by_asset_class)
+        window = _resolve_session_window(asset_class_key, session_hours_by_asset_class)
         if window is not None:
-            _open_utc_pop, _close_utc_pop = window
-            n_sample_ticks_point_filtered = int(sum(
-                1 for ts in df["ts_event"]
-                if _is_ts_ns_within_session_utc(int(ts), _open_utc_pop, _close_utc_pop)))
+            from automation.session_windows import SessionMask
+            _pop_mask = SessionMask(window)
+            n_sample_ticks_point_filtered = int(sum(1 for ts in df["ts_event"] if _pop_mask(int(ts))))
         else:
             n_sample_ticks_point_filtered = int(len(df))
         # Issue #1272 (GH #1145, Katalog #1272-1297) — ``count`` je Stundenfenster ZUSAETZLICH zu
@@ -1053,11 +1041,9 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         # Bar zu verlassen — robust auch fuer ein schmales Session-Fenster, das keinen der
         # deterministischen Sub-Intervall-Offsets aus #1330 trifft.
         if window is not None:
-            open_utc, close_utc = window
             _bar_interval_ns = 3_600_000_000_000  # 1h-Resample-Bucket == nominale Bar-Achse
             bucket_mask = [
-                _candle_interval_overlaps_session_utc(
-                    int(ts.value), _bar_interval_ns, open_utc, close_utc)
+                _candle_interval_overlaps_session_utc(int(ts.value), _bar_interval_ns, window)
                 for ts in bars.index
             ]
             bars = bars[bucket_mask]
@@ -1079,9 +1065,7 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         # Fehlt ein Session-Fenster (CRYPTO/FOREX), bleibt der Kalendernenner — dort ist er richtig.
         bar_coverage_expected_bins: float
         if window is not None:
-            open_utc, close_utc = window
-            bar_coverage_expected_bins = float(
-                _bar_coverage_expected_bins(idx[0], idx[-1], open_utc, close_utc))
+            bar_coverage_expected_bins = float(_bar_coverage_expected_bins(idx[0], idx[-1], window))
             bar_coverage_ratio = (
                 len(idx) / bar_coverage_expected_bins if bar_coverage_expected_bins > 0 else None)
         else:
@@ -1502,7 +1486,7 @@ def per_symbol_span_stats(latest_ts: dict[str, int | None], earliest_ts: dict[st
 # Issue #1334 (GH #1228) — dieselbe Auflösung-zu-Nanosekunden-Tabelle wie
 # ``automation.api_backfiller.INTERVAL_TO_NS``, hier DUPLIZIERT statt importiert: ein Import aus
 # ``api_backfiller.py`` zöge dessen ``aiohttp``/``dotenv``-Abhängigkeiten in JEDEN ``sweep.py``-
-# Import mit (dieselbe Begründung wie ``_resolve_session_window_utc`` oben).
+# Import mit (dieselbe Begründung wie ``_resolve_session_window`` oben).
 _RESOLUTION_INTERVAL_TO_NS: dict[str, int] = {
     "OneHour": 3_600_000_000_000,
     "OneDay": 86_400_000_000_000,

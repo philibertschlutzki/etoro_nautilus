@@ -60,8 +60,11 @@ def test_backtest_runner_imports_is_within_session_hours_from_session_windows():
 
 
 def test_sweep_delegates_to_session_windows_is_within_session_hours():
+    """Seit Issue #1356 (GH #1252) delegiert der Sweep an die fensterbasierte Kern-API (``is_within_session``/
+    ``SessionMask``, Börsen-Lokalzeit) — weiterhin KEINE eigene Reimplementierung (Pitfall #435)."""
     src = Path("automation/optimizer/sweep.py").read_text("utf-8")
-    assert "from automation.session_windows import is_within_session_hours" in src
+    assert "from automation.session_windows import is_within_session" in src
+    assert "from automation.session_windows import SessionMask" in src
 
 
 def test_interval_overlaps_session_hours_matches_point_test_for_fully_contained_intervals():

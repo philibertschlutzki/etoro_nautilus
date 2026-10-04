@@ -57,6 +57,7 @@ from automation.disaster_stop import (
 from automation.live_risk import compute_sizing_cap_correction
 from automation.log_manager import emit_execution_event
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
+from automation.session_windows import session_window_from_param
 
 log = logging.getLogger(__name__)
 
@@ -184,6 +185,12 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     disaster_stop_min_pct: float = DISASTER_STOP_MIN_PCT_DEFAULT
     disaster_stop_max_pct: float = DISASTER_STOP_MAX_PCT_DEFAULT
     disaster_stop_mode: str = DISASTER_STOP_MODE_BROKER
+    # Issue #1356 (GH #1252, P0) — das Handelszeit-Fenster des Instruments in BÖRSEN-LOKALZEIT als
+    # kanonischer JSON-String (``session_windows.session_window_to_param``; ``None`` = durchgehender
+    # Handel). Single Source: ``backtest.json['session_hours_by_asset_class']`` über
+    # ``session_windows.resolve_session_window`` — Backtest-Runner und Live-Bot lösen es über dieselbe
+    # Funktion auf (Issue #1361 baut darauf den Live-Session-Gate). Nicht im Suchraum.
+    session_window: str | None = None
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
@@ -301,6 +308,19 @@ def _nearest_rank_percentile(sorted_vals: list[float], p: float) -> float:
     return sorted_vals[idx]
 
 
+def _bar_interval_ns_of(bar_type) -> int:
+    """Intervall der Bar-Achse in Nanosekunden aus dem ``bar_type``-String (``…-1-HOUR-MID-INTERNAL`` ⇒
+    3,6e12); nicht ermittelbar (Mock/unbekanntes Format) ⇒ 1 Stunde, die nominale Achse dieses Systems."""
+    default = 3_600_000_000_000
+    try:
+        parts = str(bar_type).split("-")
+        step = int(parts[-4])
+        unit = {"SECOND": 1, "MINUTE": 60, "HOUR": 3_600, "DAY": 86_400}[parts[-3]]
+        return step * unit * 1_000_000_000
+    except (ValueError, KeyError, IndexError):
+        return default
+
+
 class HourlyStrategyBase(Strategy):
     """
     Base strategy providing ATR Trailing Stop and Time-based Exit for hourly candles.
@@ -354,6 +374,9 @@ class HourlyStrategyBase(Strategy):
         self._exit_close_retries: int = 0
         self._exit_close_unrecoverable: bool = False
         self._exit_close_max_retries = max(1, int(getattr(config, "exit_close_max_retries", None) or 3))
+        # Issue #1356 (GH #1252) — Session-Fenster (Börsen-Lokalzeit) und Bar-Intervall der Achse.
+        self._session_window = session_window_from_param(getattr(config, "session_window", None))
+        self._bar_interval_ns: int = _bar_interval_ns_of(getattr(config, "bar_type", None))
         # Issue #1359 (GH #1255, P0) — Katastrophen-Stop (siehe HourlyStrategyConfig.k_disaster).
         self._disaster_stop_mode = getattr(config, "disaster_stop_mode", None) or DISASTER_STOP_MODE_BROKER
         if self._disaster_stop_mode not in DISASTER_STOP_MODES:
