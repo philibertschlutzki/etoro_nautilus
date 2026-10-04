@@ -100,12 +100,17 @@ def test_every_bridged_raw_key_is_stamped_as_trial_user_attr():
 
 
 def test_every_bridged_raw_key_arrives_in_study_record():
+    """Dieselbe Ausnahme wie oben (``run_optimization._INTENTIONALLY_UNSTAMPED_METRIC_FIELDS``): ein
+    begründet NICHT gestempeltes, holdout-only Feld (z. B. ``oos_trade_return_bps_*``, Issue #1362 — es
+    erreicht die Whitelist über confirm.py/deployment_gate, nie ``trial.user_attrs``) kann den Study-Record
+    gar nicht erreichen; dort zu lesen ergäbe nur ein stets leeres Feld."""
     raw_keys = _raw_exit_telemetry_keys() - set(_INTENTIONALLY_UNBRIDGED_RAW_KEYS)
     fields = set(parsing.TournamentMetrics.__dataclass_fields__)
+    allowlisted = set(ro._INTENTIONALLY_UNSTAMPED_METRIC_FIELDS)
     src = _study_record_source()
     missing = [
         f"oos_{k}" for k in sorted(raw_keys)
-        if f"oos_{k}" in fields and f'"oos_{k}"' not in src
+        if f"oos_{k}" in fields and f'"oos_{k}"' not in src and f"oos_{k}" not in allowlisted
     ]
     assert not missing, (
         f"oos_*-Feld(er), die trial.user_attrs erreichen, aber in report._study_record nicht "
