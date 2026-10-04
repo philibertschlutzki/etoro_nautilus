@@ -38,6 +38,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 from automation.utils import _fallback_precisions
+from automation.disaster_stop import DISASTER_STOP_MODE_SIMULATED, resolve_disaster_stop_params
 from automation.catalog_paths import (
     resolve_quote_tick_files, resolve_quote_tick_columns, decode_fsb16_price,
 )
@@ -7871,6 +7872,13 @@ def run_single_backtest_worker(
             # dieses Feld — der valid_keys-Filter unten verwirft es folgenlos für jede andere
             # Strategie.
             params["opening_range_session_open_hour"] = opening_range_session_open_hour_resolved
+            # Issue #1359 (GH #1255, P0) — Katastrophen-Stop im Backtest als SIMULIERTE Order
+            # (``stop_market(reduce_only=True)`` beim Positions-Fill, Storno beim Positions-Close,
+            # Exit-Tag ``EXIT_REASON:DISASTER_STOP``); die Parameter kommen aus derselben Quelle wie
+            # im Live-Bot (``strategy_defaults.json['_disaster_stop']``) — NIE aus dem Suchraum und
+            # daher bewusst überschreibend wie ``atr_floor_bps`` oben.
+            params.update(resolve_disaster_stop_params(config_dir()))
+            params["disaster_stop_mode"] = DISASTER_STOP_MODE_SIMULATED
 
             # Härtung: Defensives Parsing der Parameter
             if hasattr(ConfigCls, "__struct_fields__"):

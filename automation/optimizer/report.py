@@ -5839,6 +5839,10 @@ def _build_report(
     exit_reason_coverage_check = _inv.check_exit_reason_coverage(studies_out)
     all_checks.append(("global", exit_reason_coverage_check))
 
+    # Issue #1359 (GH #1255) Fix Punkt 4 — der Katastrophen-Stop darf im Normalbetrieb nie binden
+    # (Anteil DISASTER_STOP-Exits <= 1 % je Study).
+    all_checks.append(("global", _inv.check_disaster_stop_non_binding(studies_out)))
+
     # Issue #923 Fix 4 — n_periods streut innerhalb desselben Symbols stark je Strategie; ab einem
     # Faktor > deflation_max_n_periods_ratio-Kalibrierpunkt (Default 6.0 hier, 4.0 dort) ist die
     # Kommensurabilität der symbolweiten Ranglisten/Annualisierung betroffen.

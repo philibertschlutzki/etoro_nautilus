@@ -41,6 +41,19 @@ from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.indicators import SimpleMovingAverage
 from automation.momentum_ls_allocator import MomentumLSAllocator
+from automation.disaster_stop import (
+    DISASTER_STOP_EXIT_REASON,
+    DISASTER_STOP_MIN_PCT_DEFAULT,
+    DISASTER_STOP_MAX_PCT_DEFAULT,
+    DISASTER_STOP_MODE_BROKER,
+    DISASTER_STOP_MODE_SIMULATED,
+    DISASTER_STOP_MODES,
+    K_DISASTER_DEFAULT,
+    compute_disaster_stop_pct,
+    disaster_stop_level,
+    format_sl_tag,
+    parse_sl_pct_from_tags,
+)
 from automation.live_risk import compute_sizing_cap_correction
 from automation.log_manager import emit_execution_event
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
@@ -65,6 +78,10 @@ class ExitReason(enum.Enum):
     # dortigen Docstring). Nie von der Strategie selbst gesetzt (kein Order-Tag) — backtest_runner
     # stempelt diesen Wert direkt in die Round-Trip-Exit-Telemetrie.
     DATA_END = "DATA_END"
+    # Issue #1359 (GH #1255, P0) — der WEITE Katastrophen-Stop (Broker-Stop live, simulierte
+    # ``stop_market(reduce_only=True)``-Order im Backtest). Wird nur vom Order-Tag der Stop-Order
+    # selbst getragen (``EXIT_REASON:DISASTER_STOP``), nie über ``_exit_pending_kind``.
+    DISASTER_STOP = DISASTER_STOP_EXIT_REASON
 
 
 class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
@@ -158,6 +175,15 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # invariants.check_sizing_cap_enforcement's max_overshoot_factor (dort UNVERAENDERT als reine
     # Abnahmemessung erhalten) durch einen expliziten, an der DURCHSETZUNG wirksamen Config-Key.
     sizing_cap_tolerance: float = 0.02
+    # Issue #1359 (GH #1255, P0) — Katastrophen-Stop. Defaults kommen aus
+    # ``strategy_defaults.json['_disaster_stop']`` (via ``automation/disaster_stop.py``, EINE Quelle;
+    # nicht im Suchraum). ``disaster_stop_mode``: ``broker_attribute`` (Live: nur der ``SL:``-Tag, der
+    # Broker hält den Stop) | ``simulated_order`` (Backtest: ``stop_market(reduce_only=True)`` beim
+    # Positions-Fill auf demselben Niveau). Der Tag wird in BEIDEN Modi an die Entry-Order gehängt.
+    k_disaster: float = K_DISASTER_DEFAULT
+    disaster_stop_min_pct: float = DISASTER_STOP_MIN_PCT_DEFAULT
+    disaster_stop_max_pct: float = DISASTER_STOP_MAX_PCT_DEFAULT
+    disaster_stop_mode: str = DISASTER_STOP_MODE_BROKER
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
@@ -328,6 +354,18 @@ class HourlyStrategyBase(Strategy):
         self._exit_close_retries: int = 0
         self._exit_close_unrecoverable: bool = False
         self._exit_close_max_retries = max(1, int(getattr(config, "exit_close_max_retries", None) or 3))
+        # Issue #1359 (GH #1255, P0) — Katastrophen-Stop (siehe HourlyStrategyConfig.k_disaster).
+        self._disaster_stop_mode = getattr(config, "disaster_stop_mode", None) or DISASTER_STOP_MODE_BROKER
+        if self._disaster_stop_mode not in DISASTER_STOP_MODES:
+            raise ValueError(
+                f"disaster_stop_mode={self._disaster_stop_mode!r} ungueltig, erwartet einen von "
+                f"{DISASTER_STOP_MODES} (der Katastrophen-Stop ist nicht abschaltbar, Issue #1359).")
+        self._k_disaster = float(getattr(config, "k_disaster", K_DISASTER_DEFAULT))
+        self._disaster_stop_min_pct = float(
+            getattr(config, "disaster_stop_min_pct", DISASTER_STOP_MIN_PCT_DEFAULT))
+        self._disaster_stop_max_pct = float(
+            getattr(config, "disaster_stop_max_pct", DISASTER_STOP_MAX_PCT_DEFAULT))
+        self._disaster_stop_order_id = None
         # Issue #1297 (GH #1170, Katalog #1272-1297, P1) — Post-Fill-Sizing-Deckel-Zustand.
         # ``_sizing_target_fraction`` wird in _compute_quantity NUR fuer die pct-basierten Pfade
         # (C: trade_amount_pct: A: Allocator-max_symbol_exposure_fraction) gesetzt -- bit-identisch
@@ -1020,6 +1058,34 @@ class HourlyStrategyBase(Strategy):
         self._pending_cancels.clear()
         self._execute_market_close()
 
+    def _stop_distance_at_entry_bps(self, bar: Bar) -> float:
+        """Issue #1359 Fix Punkt 1 — die EFFEKTIVE Trailing-Distanz beim Entry in bps des Preises:
+        ``atr_trailing_multiplier · max(ATR, atr_floor)`` (``_effective_atr_value``, #897 Fix 4) /
+        Preis. Ist die ATR noch nicht initialisiert (Warmup), gilt der ATR-Floor — der Trailing-Stop
+        existiert dann noch nicht, der Katastrophen-Stop MUSS trotzdem gesetzt werden."""
+        price = float(bar.close)
+        if price <= 0:
+            return float("nan")
+        atr = float(self._exit_atr.value) if self._exit_atr.initialized else 0.0
+        return self._atr_trailing_multiplier * self._effective_atr_value(atr, price) / price * 10_000.0
+
+    def _entry_order_tags(self, bar: Bar) -> list[str]:
+        """Issue #1359 (GH #1255, P0) Fix Punkt 1 — die EINZIGE Quelle der Entry-Order-Tags: hängt
+        den Katastrophen-Stop ``SL:<pct>`` an, ``pct = clamp(k_disaster · stop_distance_at_entry_bps
+        / 10⁴, disaster_stop_min_pct, disaster_stop_max_pct)`` (``disaster_stop.
+        compute_disaster_stop_pct``). Der eToro-Adapter macht daraus ``StopLossRate`` und
+        ``IsNoStopLoss = False``; im Backtest (``disaster_stop_mode='simulated_order'``) liest
+        ``on_position_opened`` denselben Tag zurück und stellt die simulierte Stop-Order auf
+        demselben Niveau. JEDER Entry-``order_factory.market(``-Aufruf in ``strategies/*.py``
+        übergibt ``tags=self._entry_order_tags(bar)`` (AST-Test)."""
+        pct = compute_disaster_stop_pct(
+            self._stop_distance_at_entry_bps(bar),
+            k_disaster=self._k_disaster,
+            disaster_stop_min_pct=self._disaster_stop_min_pct,
+            disaster_stop_max_pct=self._disaster_stop_max_pct,
+        )
+        return [format_sl_tag(pct)]
+
     def _entry_allowed(self) -> bool:
         """Issue #838 — Trade-Caps gehören ausschliesslich in den Entry-Pfad (hier, konsumiert von
         `_compute_quantity`, gemeinsam mit `max_daily_trades`). Ein Cap darf niemals die Auswertung
@@ -1682,6 +1748,14 @@ class HourlyStrategyBase(Strategy):
                 self.submit_order(order)
                 self._log.info(f"[{self.instrument_id}] Submitted Take Profit Limit Order at {float(price):.4f}")
 
+        # Issue #1359 (GH #1255, P0) Fix Punkt 3 — Backtest-Parität: der Katastrophen-Stop als
+        # SIMULIERTE Order (``stop_market(reduce_only=True)``) auf dem Niveau des ``SL:``-Tags der
+        # Eröffnungs-Order; live (``broker_attribute``) hält der Broker den Stop, hier entsteht keine
+        # separate Order. Storno beim Positions-Close: ``on_position_closed`` → ``cancel_all_orders``.
+        self._disaster_stop_order_id = None
+        if self._disaster_stop_mode == DISASTER_STOP_MODE_SIMULATED and _corrected_qty > 0:
+            self._submit_simulated_disaster_stop(event, _corrected_qty)
+
         # Issue #712 — dynamischer Take-Profit (opt-in, orthogonal zum statischen
         # profit_target_pct-Pfad oben, der unverändert erhalten bleibt). Initiale Order bei
         # bars_in_pos=0 (voller γ·ATR-Abstand, exp(0)=1); je-Bar-Updates via
@@ -1694,6 +1768,40 @@ class HourlyStrategyBase(Strategy):
             instrument = self.cache.instrument(self.instrument_id)
             if target is not None and instrument is not None:
                 self._submit_dyn_tp_order(target, instrument)
+
+    def _submit_simulated_disaster_stop(self, event, quantity: float) -> None:
+        """Issue #1359 Fix Punkt 3 — stellt die simulierte Katastrophen-Stop-Order. Das Niveau
+        stammt aus dem ``SL:``-Tag der ERÖFFNUNGS-Order (derselbe Tag, den der Live-Adapter liest):
+        eine Eröffnung ohne Tag (z. B. von einem Test-Harness) bekommt keinen Stop — das
+        Fehlen des Tags ist der Defekt, den der AST-Test für ``strategies/*.py`` ausschliesst."""
+        instrument = self.cache.instrument(self.instrument_id)
+        if instrument is None:
+            self._log.error(f"[{self.instrument_id}] Katastrophen-Stop: Instrument nicht im Cache.")
+            return
+        opening_order = self.cache.order(event.opening_order_id)
+        pct = parse_sl_pct_from_tags(getattr(opening_order, "tags", None))
+        if pct is None:
+            self._log.error(
+                f"[{self.instrument_id}] Katastrophen-Stop: Eröffnungs-Order ohne SL:-Tag — keine "
+                f"simulierte Stop-Order (Issue #1359).")
+            return
+        is_long = event.side == PositionSide.LONG
+        level = disaster_stop_level(float(event.avg_px_open), is_long=is_long, pct=pct)
+        qty = event.quantity if quantity == float(event.quantity) else instrument.make_qty(quantity)
+        order = self.order_factory.stop_market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.SELL if is_long else OrderSide.BUY,
+            quantity=qty,
+            trigger_price=instrument.make_price(level),
+            time_in_force=TimeInForce.GTC,
+            reduce_only=True,
+            tags=[f"EXIT_REASON:{DISASTER_STOP_EXIT_REASON}", f"DISASTER_STOP_PCT:{pct:.4f}"],
+        )
+        self._disaster_stop_order_id = order.client_order_id
+        self.submit_order(order)
+        self._log.info(
+            f"[{self.instrument_id}] Katastrophen-Stop (simuliert) @ {level:.4f} "
+            f"({pct:.2%} vom Entry {float(event.avg_px_open):.4f}).")
 
     def on_position_closed(self, event) -> None:
         # Issue #837 — dies ist der EINZIGE Ort ausserhalb von on_position_opened, der _in_position
@@ -1711,6 +1819,7 @@ class HourlyStrategyBase(Strategy):
         self._exit_market_close_order_id = None
         self._exit_close_retries = 0
         self._reset_dyn_tp_state()
+        self._disaster_stop_order_id = None
         # Issue #859 Fix Punkt 5 — verbliebene ruhende Orders dieses Instruments räumen: der
         # statische ``profit_target_pct``-Limit-Pfad (``on_position_opened``) und ein per
         # ``on_order_canceled`` nach Exit-Auslösung neu eingestellter Dyn-TP-Auftrag überlebten die

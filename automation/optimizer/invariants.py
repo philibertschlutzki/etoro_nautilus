@@ -635,6 +635,56 @@ def check_exit_reason_coverage(study_records: list[dict]) -> InvariantResult:
     )
 
 
+# Issue #1359 (GH #1255) Fix Punkt 4 — Obergrenze des DISASTER_STOP-Anteils an den Exits einer Study.
+DISASTER_STOP_MAX_EXIT_SHARE = 0.01
+
+
+@invariant_scope("study")
+def check_disaster_stop_non_binding(
+    study_records: list[dict], *, max_share: float = DISASTER_STOP_MAX_EXIT_SHARE,
+) -> InvariantResult:
+    """Issue #1359 (GH #1255, P0) Fix Punkt 4 — der Katastrophen-Stop darf im Normalbetrieb NIE
+    binden: der Anteil der ``DISASTER_STOP``-Exits am ``exit_reason_histogram`` jeder Study muss
+    ``<= max_share`` (Default 1 %) sein. Häufigere Treffer heissen, ``k_disaster`` (bzw. die
+    Klemmen ``disaster_stop_min_pct``/``disaster_stop_max_pct``) verändert die Strategie statt sie
+    nur gegen Ausfälle zu schützen — der Stop wäre dann Teil der Handelslogik und gehörte in den
+    Suchraum, nicht in die Sicherheitsparameter.
+
+    Studies ohne Exit-Histogramm tragen nichts bei. Liefert keine Study ein Histogramm, ist der
+    Check nicht auswertbar (``inconclusive``, ``passed=True`` — kein Abbruch ohne Evidenz, Pitfall #404)."""
+    offenders: dict[str, dict] = {}
+    n_measured = 0
+    for r in study_records:
+        histogram = r.get("exit_reason_histogram") or {}
+        total = sum(histogram.values())
+        if not histogram or total <= 0:
+            continue
+        n_measured += 1
+        n_disaster = int(histogram.get("DISASTER_STOP", 0))
+        share = n_disaster / total
+        if share > max_share + 1e-12:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "disaster_stop_exits": n_disaster, "exits": total, "share": round(share, 6)}
+    passed = not offenders
+    inconclusive = n_measured == 0
+    return InvariantResult(
+        name="check_disaster_stop_non_binding",
+        passed=passed,
+        expected=f"Anteil DISASTER_STOP-Exits <= {max_share:.2%} je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        inconclusive=inconclusive,
+        evaluability={"evaluable": not inconclusive,
+                      "inconclusive_reason": "no_study_with_exit_histogram" if inconclusive else None,
+                      "n_studies_measured": n_measured},
+        detail=("Kein Exit-Histogramm vorhanden — nicht auswertbar." if inconclusive else
+                "OK" if passed else
+                f"{len(offenders)} Study/Studies mit DISASTER_STOP-Anteil > {max_share:.2%}: "
+                f"{offenders} — der Katastrophen-Stop bindet im Normalbetrieb, k_disaster verändert "
+                "die Strategie (Issue #1359)."),
+    )
+
+
 @invariant_scope("run")
 def check_instrument_metadata_coherence(instruments: dict[str, dict], *,
                                         spread_bps_by_asset_class: dict | None = None) -> InvariantResult:

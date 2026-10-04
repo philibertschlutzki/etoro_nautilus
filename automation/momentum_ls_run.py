@@ -27,6 +27,7 @@ from automation.live_bot_lock import (
     EXIT_ALREADY_RUNNING, LOCK_PATH, LiveBotAlreadyRunning, LiveBotLock, compute_whitelist_sha256,
 )
 from automation.log_manager import emit_execution_event
+from automation.disaster_stop import DISASTER_STOP_MODE_BROKER, resolve_disaster_stop_params
 
 ETORO_EXECUTION = {
     "environment": os.getenv("ETORO_ENV", "demo"),
@@ -159,11 +160,15 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     StrategyClass = getattr(module, class_name)
     ConfigClass = getattr(module, config_name)
 
+    # Issue #1359 (GH #1255, P0) — Live: der Broker hält den Katastrophen-Stop (nur der ``SL:``-Tag
+    # der Entry-Order, keine separate Order); Parameter aus derselben Quelle wie der Backtest.
     cfg_kwargs = dict(
         strategy_id=f"MLS_{strat_class_name}_{bot_spec['symbol']}_{idx}",
         instrument_id=bot_spec["symbol"],
         bar_type=bot_spec["bar_type"],
-        **bot_spec["params"],
+        **{**resolve_disaster_stop_params(Path(__file__).resolve().parent / "config"),
+           **bot_spec["params"]},
+        disaster_stop_mode=DISASTER_STOP_MODE_BROKER,
     )
     if "max_open_positions" in bot_spec:
         cfg_kwargs["max_open_positions"] = bot_spec["max_open_positions"]
