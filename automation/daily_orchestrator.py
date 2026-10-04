@@ -857,7 +857,8 @@ def phase3_4_backtest_and_tournament(
     return {"tournament_path": str(TOURNAMENT_PATH)}
 
 
-def _build_backtest_config(start: datetime, end: datetime, start_capital: float | None = None) -> dict:
+def _build_backtest_config(start: datetime, end: datetime, start_capital: float | None = None,
+                           walk_forward_override: dict | None = None) -> dict:
     from datetime import timedelta
 
     """Baut die dynamische Backtest-Config aus automation/config/*.json.
@@ -879,7 +880,14 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
         start_capital = 10000.0
 
     wf_cfg = bt_cfg.get("walk_forward")
-    if wf_cfg:
+    if walk_forward_override:
+        # Issue #1368 (GH #1265) — Inkubations-Selektion: kürzere Geometrie (tournament.json["incubation"]
+        # ["walk_forward"], IS + Embargo + Folds × OOS ≤ heutige Stundentiefe), sonst dieselbe Config.
+        wf_cfg = {**(wf_cfg or {}), **walk_forward_override}
+        total_days = (wf_cfg.get("is_window_days", 120) + wf_cfg.get("embargo_period_days", 0)
+                      + wf_cfg.get("splits", 1) * wf_cfg.get("oos_window_days", 30))
+        start = end - timedelta(days=total_days)
+    elif wf_cfg:
         total_days = wf_cfg.get("is_window_days", 120) + wf_cfg.get("splits", 1) * wf_cfg.get("oos_window_days", 30)
         start = end - timedelta(days=total_days)
 
@@ -912,7 +920,7 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
             "start_time":    start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_time":      end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "start_capital": start_capital,
-            "walk_forward":  bt_cfg.get("walk_forward"),
+            "walk_forward":  wf_cfg if walk_forward_override else bt_cfg.get("walk_forward"),
             "_note": (
                 f"Dynamisch generiert — Fenster: {start.date()} bis {end.date()} "
                 "(Midnight UTC). Config-Root: automation/config/. "
@@ -1132,6 +1140,14 @@ def phase5_live_deployment(
         # denen der Bot seine Parameter baut (resolve_live_params, einzige Quelle für Bot und Gate).
         live_param_sources = _load_live_param_sources()
 
+        # Issue #1368 (GH #1265) — mit aktivierter Inkubation ist die Deployment-Grenze notwendig, aber
+        # nicht hinreichend: Kapital nur für Paare in LIVE_SMALL/LIVE_FULL (Forward-Evidenz erreicht), mit
+        # unveränderten Parametern (Fingerabdruck der Stufe == Live-Fingerabdruck), LIVE_SMALL skaliert.
+        from automation import incubation as _inc
+        _inc_cfg = _inc.incubation_config(tournament_cfg)
+        _stages = _inc.DeploymentStages(_incubation_paths()["stages"]) if _inc_cfg.get("enabled") else None
+        _fractions = _inc.stage_capital_fractions(_stages, tournament_cfg) if _stages is not None else {}
+
         whitelisted_winners: dict = {}
         rejected_by_clause: dict[str, int] = {}
         for symbol, winner in winners.items():
@@ -1147,6 +1163,19 @@ def phase5_live_deployment(
                 # beides je Paar vor add_strategy (LIVE_PARAMS_MISMATCH ⇒ Paar übersprungen).
                 entry["live_params_sha256"] = live_params_sha256(
                     resolve_live_params(strategy, symbol, *live_param_sources))
+                if _stages is not None:
+                    _stage = _stages.stage(strategy, symbol)
+                    _stage_reason = (
+                        "stage_not_live" if _stage not in _inc.LIVE_STAGES else
+                        "stage_params_changed"
+                        if _stages.entry(strategy, symbol).get("params_sha256") != entry["live_params_sha256"]
+                        else None)
+                    if _stage_reason is not None:
+                        rejected_by_clause[_stage_reason] = rejected_by_clause.get(_stage_reason, 0) + 1
+                        log.info(f"[Phase 5] STAGE-REJECT: {symbol} ({strategy}) — Stufe {_stage}: {_stage_reason}.")
+                        continue
+                    entry["stage"] = _stage
+                    entry["capital_fraction"] = _fractions.get(symbol, 1.0)
                 _record = promotion_records.get((strategy, symbol)) or {}
                 entry["proposed_instrument_override"] = _record.get("proposed_instrument_override")
                 # Issue #1362 (GH #1258) Fix Punkt 3 — Holdout-Round-Trip-Statistik des promovierten
@@ -1308,6 +1337,145 @@ def phase5_live_deployment(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 5b: Demo-Inkubation (Issue #1368 / GH #1265)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _load_tournament_cfg() -> dict:
+    try:
+        with open(TOURNAMENT_CFG, "r", encoding="utf-8") as cf:
+            return json.load(cf) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _incubation_paths() -> dict[str, Path]:
+    """Alle Zustandspfade relativ zu ``PROJECT_ROOT`` (in Tests umbiegbar)."""
+    state = PROJECT_ROOT / "data" / "state"
+    return {"stages": state / "deployment_stages.json", "dir": state / "incubation",
+            "live_dir": state / "incubation" / "live", "whitelist": state / "incubation_whitelist.json",
+            "lock": state / "incubation_bot.lock", "tournament": state / "incubation_tournament.json",
+            "trips": state / "incubation" / "distribution_trips.json"}
+
+
+def _run_incubation_selection(log: logging.Logger, inc_cfg: dict, output_path: Path) -> Path | None:
+    """Turnierlauf mit der Inkubations-Geometrie (dieselben Eligibility-Gates wie Phase 4, ohne Holdout-/
+    DSR-Promotion). Rückgabe: der Ergebnis-Pfad oder ``None``."""
+    today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    if today_midnight.weekday() == 6:
+        today_midnight -= timedelta(days=1)
+    cfg = _build_backtest_config(today_midnight - timedelta(days=30), today_midnight,
+                                 walk_forward_override=dict(inc_cfg["walk_forward"]))
+    cfg_path = logs_dir() / "backtest_incubation_config.json"
+    logs_dir().mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, str(_THIS_DIR / "backtest_runner.py"), "--momentum",
+           "--catalog-path", str(CATALOG_PATH), "--config", str(cfg_path), "--output", str(output_path)]
+    bt_log_path = logs_dir() / f"backtest_incubation_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
+    log.info(f"[Phase 5b] Inkubations-Selektion: {' '.join(cmd)}")
+    with open(bt_log_path, "w", encoding="utf-8") as bt_log_f:
+        proc = subprocess.run(cmd, stdout=bt_log_f, stderr=subprocess.STDOUT, cwd=str(PROJECT_ROOT),
+                              timeout=3600, check=False)
+    log.info(f"[Phase 5b] Inkubations-Selektion beendet (Exit-Code: {proc.returncode}).")
+    return output_path if output_path.exists() else None
+
+
+def phase5b_incubation(
+    log: logging.Logger,
+    *,
+    no_deploy: bool = False,
+    skip_selection: bool = False,
+    now: datetime | None = None,
+    selection_fn=None,
+    popen=subprocess.Popen,
+) -> dict:
+    """Phase 5b: Zustandsmaschine ``CANDIDATE → INCUBATING (Demo) → LIVE_SMALL → LIVE_FULL`` (``RETIRED``).
+
+    Nur mit ``tournament.json["incubation"]["enabled"] == true`` (Default aus). Ablauf: (1) Inkubations-
+    Selektion (eigener Turnierlauf, kürzere Geometrie), (2) ``incubation.run_incubation_cycle`` — Promotion
+    ``INCUBATING → LIVE_SMALL`` und ``LIVE_SMALL → LIVE_FULL`` NUR mit ``evaluate_deployment_eligibility(...).
+    admitted is True`` (alle Klauseln), (3) Demo-Bot (``momentum_ls_run --incubation``) mit eigener Sperre und
+    ``ETORO_ENV=demo`` — INCUBATING startet nie im ``real``-Environment. Wirft nie (Phase 5 läuft danach)."""
+    from automation import incubation as inc
+
+    log.info("═" * 60)
+    log.info("PHASE 5b: Demo-Inkubation (Forward-Evidenz, Issue #1368)")
+    log.info("═" * 60)
+    tournament_cfg = _load_tournament_cfg()
+    inc_cfg = inc.incubation_config(tournament_cfg)
+    if not inc_cfg.get("enabled"):
+        log.info("[Phase 5b] Inkubation deaktiviert (tournament.json incubation.enabled = false).")
+        emit_json_event(log, "INCUBATION_SKIPPED", {"reason": "disabled"})
+        return {"status": "disabled"}
+    paths = _incubation_paths()
+    try:
+        if skip_selection:
+            selection_path = paths["tournament"] if paths["tournament"].exists() else None
+        else:
+            selection_path = (selection_fn or _run_incubation_selection)(log, inc_cfg, paths["tournament"])
+        winners: dict = {}
+        if selection_path is not None:
+            with open(selection_path, "r", encoding="utf-8") as f:
+                winners = (json.load(f) or {}).get("per_symbol_winners", {}) or {}
+
+        from automation.optimizer.deployment_gate import (
+            evaluate_deployment_eligibility, load_promotion_records,
+        )
+        live_param_sources = _load_live_param_sources()
+
+        def _gate(strategy: str, symbol: str) -> dict:
+            records = load_promotion_records([(strategy, symbol)], work_dir=PROJECT_ROOT / "data" / "optimizer")
+            return evaluate_deployment_eligibility(
+                (strategy, symbol), records, tournament_cfg, live_param_sources=live_param_sources).to_dict()
+
+        stages = inc.DeploymentStages(paths["stages"])
+        cycle = inc.run_incubation_cycle(
+            stages, winners=winners, tournament_cfg=tournament_cfg,
+            resolve_params=lambda strategy, symbol: resolve_live_params(strategy, symbol, *live_param_sources),
+            deployment_decision_fn=_gate, now=now, ledger_dir=paths["dir"], live_ledger_dir=paths["live_dir"],
+            distribution_trips=inc.read_distribution_trips(paths["trips"]))
+        emit_json_event(log, "INCUBATION_CYCLE", {
+            **cycle.to_dict(), "threshold": inc.bonferroni_threshold_for(inc_cfg),
+            "stages": {k: v.get("stage") for k, v in stages.data.items()}})
+        payload = inc.write_incubation_whitelist(stages, directory=paths["dir"], path=paths["whitelist"], now=now)
+    except Exception as exc:  # defensiv: die Inkubation darf Phase 5 nie verhindern
+        log.error(f"[Phase 5b] Inkubations-Zyklus fehlgeschlagen: {exc}\n{traceback.format_exc()}")
+        emit_json_event(log, "INCUBATION_ERROR", {"error": str(exc)})
+        return {"status": "error", "error": str(exc)}
+
+    pairs = payload.get("per_symbol_winners", {})
+    if no_deploy:
+        log.info("[Phase 5b] --no-deploy: Demo-Bot wird nicht angefasst.")
+        return {"status": "no_deploy", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+    desired_sha = compute_whitelist_sha256(pairs) if pairs else None
+    reconcile = reconcile_live_bot(paths["lock"], desired_sha, stop_timeout_s=_live_bot_stop_timeout_s(),
+                                   reason="incubation_whitelist_changed" if pairs else "no_incubating_pairs")
+    for event_type, payload_ev in reconcile.events:
+        emit_json_event(log, event_type, {**payload_ev, "instance": "incubation"})
+    if not reconcile.start_new:
+        return {"status": reconcile.action, "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+    cmd = [sys.executable, str(PROJECT_ROOT / "automation" / "momentum_ls_run.py"), "--incubation",
+           "--universe", str(UNIVERSE_PATH), "--tournament", str(paths["whitelist"])]
+    # INCUBATING läuft ausschliesslich im Demo-Konto: das Environment wird hier gesetzt UND vom Bot geprüft.
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "ETORO_ENV": "demo"}
+    inc.assert_stage_environment(inc.INCUBATING, env["ETORO_ENV"])
+    bot_log = logs_dir() / f"incubation_bot_{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
+    try:
+        logs_dir().mkdir(parents=True, exist_ok=True)
+        with open(bot_log, "a", encoding="utf-8") as handle:
+            proc = popen(cmd, stdout=handle, stderr=subprocess.STDOUT, cwd=str(PROJECT_ROOT),
+                         start_new_session=True, env=env)
+    except Exception as exc:
+        log.error(f"[Phase 5b] Demo-Bot-Start fehlgeschlagen: {exc}")
+        return {"status": "start_failed", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+    emit_json_event(log, "INCUBATION_BOT_STARTED", {
+        "pid": getattr(proc, "pid", None), "environment": "demo", "pairs": sorted(pairs),
+        "whitelist_sha256": desired_sha, "lock_file": str(paths["lock"])})
+    return {"status": "started", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # HAUPT-EINSTIEGSPUNKT
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1391,6 +1559,9 @@ def main() -> int:
             tournament_result = {"tournament_path": str(TOURNAMENT_PATH), "exit_code": 0}
         else:
             tournament_result = phase3_4_backtest_and_tournament(log)
+        # Issue #1368 — Phase 5b VOR Phase 5: eine heutige Promotion (LIVE_SMALL) ist im selben Lauf
+        # whitelist-wirksam. Default aus (tournament.json incubation.enabled = false).
+        phase5b_incubation(log, no_deploy=args.no_deploy, skip_selection=args.skip_backtest)
         exit_code         = phase5_live_deployment(
             log, universe_result, tournament_result, no_deploy=args.no_deploy
         )

@@ -337,6 +337,14 @@ def _session_gated(on_bar):
             self._note_out_of_session_bar(bar)
             return None
         self._note_in_session_bar(bar)
+        # Issue #1368 (GH #1265) — Evidenz-Ledger der Inkubation: derselbe Session-Gate definiert die Achse
+        # der Netto-Renditen je Session-Bar. Ein Beobachter-Fehler darf den Handel nie stören.
+        observer = getattr(self, "_session_bar_observer", None)
+        if observer is not None:
+            try:
+                observer(self, bar)
+            except Exception:
+                pass
         return on_bar(self, bar)
     gated._session_gated = True
     return gated
