@@ -38,6 +38,9 @@ def _promoted_proposal(**holdout_symbol_overrides) -> dict:
         "R_global": 0.2,
         "promotion_margin": 0.0,
         "data_snapshot_sha256": _SNAPSHOT,
+        # Issue #1360 (GH #1256) — zwoelfte Klausel 'live_params_match_promotion': ein leeres
+        # promoviertes Override besteht trivial, ein fehlendes Feld waere fail-closed.
+        "proposed_instrument_override": {},
         "holdout": {"symbol": holdout_symbol},
     }
 

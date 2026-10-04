@@ -95,6 +95,9 @@ TOURNAMENT_CFG        = config_dir() / "tournament.json"
 BACKTEST_CFG          = config_dir() / "backtest.json"
 INSTRUMENT_MAP_PATH   = config_dir() / "instrument_map.json"
 
+# ─── Live-Parameter (Issue #1360 / GH #1256) ──────────────────────────────────
+from automation.live_params import live_params_sha256, load_live_param_sources, resolve_live_params
+
 # ─── Live-Bot-Sperre (Issue #1358 / GH #1254) ─────────────────────────────────
 from automation.live_bot_lock import (
     DEFAULT_STOP_TIMEOUT_S as _LIVE_BOT_STOP_TIMEOUT_DEFAULT_S,
@@ -893,6 +896,16 @@ def _tail_log(log: logging.Logger, log_path: Path, tail: int = 50) -> None:
 # PHASE 5: Live Deployment
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _load_live_param_sources() -> tuple[dict, list]:
+    """``(strategy_defaults, strategies_raw)`` für ``resolve_live_params`` (Issue #1360): zuerst das
+    aktive ``config_dir()``, sonst das Repo-Config-Verzeichnis neben diesem Modul (robust gegen ein
+    in Tests umgebogenes ``PROJECT_ROOT``)."""
+    try:
+        return load_live_param_sources(config_dir())
+    except OSError:
+        return load_live_param_sources(Path(__file__).resolve().parent / "config")
+
+
 def _live_bot_stop_timeout_s() -> float:
     """``backtest.json["live_risk"]["live_bot_stop_timeout_s"]`` (Default 120)."""
     try:
@@ -1056,14 +1069,27 @@ def phase5_live_deployment(
         pairs = [(winner.get("strategy"), symbol) for symbol, winner in winners.items()]
         promotion_records = load_promotion_records(pairs, work_dir=PROJECT_ROOT / "data" / "optimizer")
 
+        # Issue #1360 (GH #1256) — die Live-Parameter-Quellen EINMAL laden: dieselben Dateien, aus
+        # denen der Bot seine Parameter baut (resolve_live_params, einzige Quelle für Bot und Gate).
+        live_param_sources = _load_live_param_sources()
+
         whitelisted_winners: dict = {}
         rejected_by_clause: dict[str, int] = {}
         for symbol, winner in winners.items():
             strategy = winner.get("strategy")
-            decision = evaluate_deployment_eligibility((strategy, symbol), promotion_records, tournament_cfg)
+            decision = evaluate_deployment_eligibility(
+                (strategy, symbol), promotion_records, tournament_cfg,
+                live_param_sources=live_param_sources)
             if decision.admitted:
                 entry = dict(winner)
                 entry["deployment_gate"] = decision.to_dict()
+                # Issue #1360 Fix Punkt 4 — der Whitelist-Eintrag trägt den Fingerabdruck der
+                # tatsächlich aufgelösten Live-Parameter UND das promovierte Override; der Bot prüft
+                # beides je Paar vor add_strategy (LIVE_PARAMS_MISMATCH ⇒ Paar übersprungen).
+                entry["live_params_sha256"] = live_params_sha256(
+                    resolve_live_params(strategy, symbol, *live_param_sources))
+                entry["proposed_instrument_override"] = (
+                    (promotion_records.get((strategy, symbol)) or {}).get("proposed_instrument_override"))
                 whitelisted_winners[symbol] = entry
             else:
                 rejected_by_clause[decision.blocking_clause] = rejected_by_clause.get(decision.blocking_clause, 0) + 1

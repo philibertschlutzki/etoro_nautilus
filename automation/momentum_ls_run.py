@@ -27,6 +27,7 @@ from automation.live_bot_lock import (
     EXIT_ALREADY_RUNNING, LOCK_PATH, LiveBotAlreadyRunning, LiveBotLock, compute_whitelist_sha256,
 )
 from automation.log_manager import emit_execution_event
+from automation.live_params import live_params_sha256, mismatching_live_params, resolve_live_params
 from automation.disaster_stop import DISASTER_STOP_MODE_BROKER, resolve_disaster_stop_params
 
 ETORO_EXECUTION = {
@@ -97,8 +98,14 @@ def _build_bots_config(
         if etoro_id:
             etoro_id = str(etoro_id)
 
-        if winner.get("oos_eligible") is not True or winner.get("oos_evaluated") is not True:
-            logger.info(f"[OOS-DEPLOY-REJECT] Skipping symbol {symbol} because winner strategy {winner.get('strategy')} failed the OOS-Eligibility Gate.")
+        # Issue #1360 (GH #1256, P0) — Zulassung AUSSCHLIESSLICH über die Deployment-Grenze
+        # (``whitelist[symbol]["deployment_gate"]["admitted"]``, deployment_gate.py #993), nicht über
+        # die Phase-4-Felder ``oos_eligible``/``oos_evaluated``: Phase 5 lässt Paare über die Grenze
+        # zu, deren Phase-4-Felder False sind — sie waren zugelassen, wurden aber nie gehandelt; und
+        # umgekehrt entschied ein Einzelfenster-Gate OHNE Multiplizitätskorrektur über Kapitaleinsatz.
+        gate = winner.get("deployment_gate")
+        if not (isinstance(gate, dict) and gate.get("admitted") is True):
+            logger.info(f"[DEPLOY-GATE-REJECT] Skipping symbol {symbol}: winner strategy {winner.get('strategy')} ist nicht über die Deployment-Grenze zugelassen (deployment_gate.admitted != True).")
             continue
 
         strat_class_name = winner["strategy"]
@@ -109,35 +116,45 @@ def _build_bots_config(
         if strat_class_name not in registry:
             continue
 
-        # Merge params
-        strat_defaults = defaults.get(strat_class_name, {})
-        strat_override = {}
-        strat_instr_overrides = {}
-        for s in strategies_raw:
-            if s.get("strategy_class") == strat_class_name:
-                strat_override = s.get("params", {})
-                strat_instr_overrides = s.get("instrument_overrides") or {}
-                break
+        # Issue #1360 Fix Punkt 1 — EINE Quelle der Live-Parameter für Bot UND Gate.
+        merged_params = resolve_live_params(strat_class_name, symbol, defaults, strategies_raw)
+        params_sha256 = live_params_sha256(merged_params)
 
-        merged_params = {**strat_defaults, **strat_override}
+        # Issue #1360 Fix Punkt 3 — dieselbe Prüfung wie die Klausel live_params_match_promotion, je
+        # Paar VOR add_strategy: jeder Key des promovierten Overrides muss live exakt so aufgelöst
+        # werden. Ein Whitelist-Eintrag ohne Override/Fingerabdruck ist nicht prüfbar ⇒ fail-closed.
+        mismatching = mismatching_live_params(merged_params, winner.get("proposed_instrument_override"))
+        whitelist_sha = winner.get("live_params_sha256")
+        if mismatching is None or whitelist_sha is None:
+            reason = "unverifiable_whitelist_entry"
+            mismatching = mismatching or []
+        elif mismatching:
+            reason = "promoted_override_not_in_live_params"
+        elif whitelist_sha != params_sha256:
+            reason = "live_params_sha256_changed_since_whitelist"
+        else:
+            reason = None
+        if reason is not None:
+            emit_execution_event(logger, "LIVE_PARAMS_MISMATCH", {
+                "symbol": symbol, "strategy": strat_class_name, "reason": reason,
+                "mismatching_keys": mismatching,
+                "whitelist_live_params_sha256": whitelist_sha, "live_params_sha256": params_sha256,
+            }, level=logging.ERROR)
+            logger.error(
+                f"[LIVE_PARAMS_MISMATCH] {symbol}/{strat_class_name} übersprungen ({reason}; "
+                f"Keys: {mismatching}) — der Bot handelt nur die validierten Parameter.")
+            continue
 
-        # A4.8: symbol-spezifische instrument_overrides für den Live-Gewinner anwenden.
-        # Precedence defaults < params < instrument_overrides[symbol]. Ohne Override für dieses
-        # Symbol bleibt merged_params bit-identisch zum Ist-Zustand (HI-2). Reine Funktion bleibt rein.
-        sym_override = strat_instr_overrides.get(symbol)
-        if sym_override:
-            merged_params = {**merged_params, **sym_override}
-
-        # Remove trade_amount_usd
-        if "trade_amount_usd" in merged_params:
-            del merged_params["trade_amount_usd"]
+        # A4.8/#1360: merged_params = defaults < params < instrument_overrides[symbol] (reine Funktion
+        # ``resolve_live_params``; ``trade_amount_usd`` ist bereits entfernt).
 
         bot_spec = {
             "strategy_class": strat_class_name,
             "etoro_id": etoro_id,
             "symbol": symbol,
             "bar_type": f"{symbol}-1-HOUR-MID-INTERNAL",
-            "params": merged_params
+            "params": merged_params,
+            "live_params_sha256": params_sha256,
         }
 
         if "max_open_positions" in merged_params:
@@ -338,7 +355,9 @@ def main():
         try:
             strategy = _instantiate_strategy(bot_spec, registry, allocator, idx)
             node.trader.add_strategy(strategy)
-            logger.info(f"Strategie registriert: {strategy.config.strategy_id} (Winner: {strat_class_name})")
+            logger.info(
+                f"Strategie registriert: {strategy.config.strategy_id} (Winner: {strat_class_name}, "
+                f"live_params_sha256={bot_spec.get('live_params_sha256')})")
             successful_strategies += 1
         except Exception as e:
             logger.error(f"FEHLER beim Laden der Strategie {strat_class_name} auf {bot_spec.get('symbol')}: {e}")

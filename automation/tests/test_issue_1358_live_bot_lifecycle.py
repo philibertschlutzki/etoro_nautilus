@@ -197,7 +197,7 @@ def phase5_env(tmp_path, monkeypatch):
 
     state = {"admitted": True}
 
-    def _decide(pair, _records, _cfg):
+    def _decide(pair, _records, _cfg, **_kw):
         return SimpleNamespace(
             admitted=state["admitted"], blocking_clause=None if state["admitted"] else "x",
             clause_results={}, to_dict=lambda: {"admitted": state["admitted"]})
@@ -215,11 +215,19 @@ def phase5_env(tmp_path, monkeypatch):
                            logger=logger)
 
 
+def _expected_whitelist_sha(orch) -> str:
+    """Der Fingerabdruck, den Phase 5 fuer AAA.ETORO/SmaCrossoverStrategy berechnet (Strategie +
+    live_params_sha256 aus den echten Config-Dateien, Issue #1360)."""
+    from automation.live_params import live_params_sha256, resolve_live_params
+    live = resolve_live_params("SmaCrossoverStrategy", "AAA.ETORO", *orch._load_live_param_sources())
+    return compute_whitelist_sha256({"AAA.ETORO": {
+        "strategy": "SmaCrossoverStrategy", "live_params_sha256": live_params_sha256(live)}})
+
+
 def test_phase5_unchanged_whitelist_starts_no_process(phase5_env, caplog):
     env = phase5_env
     holder = LiveBotLock(env.lock_path)
-    holder.acquire(environment="demo", whitelist_sha256=compute_whitelist_sha256(
-        {"AAA.ETORO": {"strategy": "SmaCrossoverStrategy"}}))
+    holder.acquire(environment="demo", whitelist_sha256=_expected_whitelist_sha(env.orch))
     try:
         rc = env.orch.phase5_live_deployment(
             env.logger, {"universe": []}, {"tournament_path": str(env.tfile)})
@@ -295,14 +303,20 @@ def test_second_bot_start_exits_4_without_building_a_trading_node(tmp_path, monk
     node_cls = MagicMock(name="TradingNode")
     monkeypatch.setattr(mls, "TradingNode", node_cls)
 
+    from automation.live_params import (
+        live_params_sha256, load_live_param_sources, resolve_live_params,
+    )
     imap = json.loads((REPO_ROOT / "automation/config/instrument_map.json").read_text())["instruments"]
     symbol = next(v["symbol"] for v in imap.values() if isinstance(v, dict) and "symbol" in v)
     universe = tmp_path / "universe.json"
     universe.write_text(json.dumps({
         "fetched_at": time_now_iso(), "universe": [{"symbol": symbol}]}))
+    live = resolve_live_params(
+        "SmaCrossoverStrategy", symbol, *load_live_param_sources(REPO_ROOT / "automation" / "config"))
     tournament = tmp_path / "tournament.json"
     tournament.write_text(json.dumps({"per_symbol_winners": {symbol: {
-        "strategy": "SmaCrossoverStrategy", "oos_eligible": True, "oos_evaluated": True}}}))
+        "strategy": "SmaCrossoverStrategy", "deployment_gate": {"admitted": True},
+        "proposed_instrument_override": {}, "live_params_sha256": live_params_sha256(live)}}}))
     monkeypatch.setenv("ETORO_API_KEY", "k")
     monkeypatch.setenv("ETORO_USER_KEY", "u")
     monkeypatch.setattr(sys, "argv", ["momentum_ls_run.py", "--universe", str(universe),

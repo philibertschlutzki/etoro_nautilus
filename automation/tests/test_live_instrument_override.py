@@ -26,17 +26,26 @@ def test_matrix_callsite_no_override_is_identical():
 
 
 # --- Live path (momentum_ls_run._build_bots_config) ------------------------
-def _inputs(instrument_overrides=None):
+# Issue #1360 (GH #1256) — die Zulassung laeuft ausschliesslich ueber die Deployment-Grenze
+# (``deployment_gate.admitted``); jeder Whitelist-Eintrag traegt Fingerabdruck + promoviertes Override
+# (so, wie ihn ``daily_orchestrator.phase5_live_deployment`` schreibt).
+def _inputs(instrument_overrides=None, *, admitted=True):
+    from automation.live_params import live_params_sha256, resolve_live_params
     strat_entry = {"strategy_class": "SmaCrossoverStrategy", "params": {"sma_period": 10}}
     if instrument_overrides is not None:
         strat_entry["instrument_overrides"] = instrument_overrides
+    defaults = {"SmaCrossoverStrategy": {"sma_period": 5, "trade_amount_pct": 15.0}}
+    live = resolve_live_params("SmaCrossoverStrategy", "TSLA.ETORO", defaults, [strat_entry])
     return dict(
         universe_data={"universe": [{"symbol": "TSLA.ETORO"}]},
         tournament_data={"per_symbol_winners": {"TSLA.ETORO": {
-            "strategy": "SmaCrossoverStrategy", "oos_eligible": True, "oos_evaluated": True}}},
+            "strategy": "SmaCrossoverStrategy", "oos_eligible": True, "oos_evaluated": True,
+            "deployment_gate": {"admitted": admitted},
+            "proposed_instrument_override": (instrument_overrides or {}).get("TSLA.ETORO", {}),
+            "live_params_sha256": live_params_sha256(live)}}},
         registry={"SmaCrossoverStrategy": ("automation.strategies.sma_crossover",
                                            "SmaCrossoverStrategy", "SmaCrossoverConfig")},
-        defaults={"SmaCrossoverStrategy": {"sma_period": 5, "trade_amount_pct": 15.0}},
+        defaults=defaults,
         strategies_raw=[strat_entry],
         symbol_to_etoro_id={"TSLA.ETORO": "1001"},
     )
@@ -57,9 +66,9 @@ def test_no_override_is_identical_behavior():
     assert bots_b[0]["params"]["sma_period"] == 10   # override for another symbol -> bit-identical
 
 
-def test_oos_loser_still_excluded_with_override():
-    """Pitfall #60: an OOS-ineligible winner stays excluded even if an override exists."""
-    inp = _inputs(instrument_overrides={"TSLA.ETORO": {"sma_period": 33}})
-    inp["tournament_data"]["per_symbol_winners"]["TSLA.ETORO"]["oos_eligible"] = False
+def test_not_admitted_pair_stays_excluded_even_with_override():
+    """Pitfall #60 (seit #1360 ueber die Deployment-Grenze): ein nicht zugelassenes Paar bleibt
+    ausgeschlossen, auch wenn ein Override existiert."""
+    inp = _inputs(instrument_overrides={"TSLA.ETORO": {"sma_period": 33}}, admitted=False)
     syms, bots = _build_bots_config(**inp)
     assert syms == [] and bots == []

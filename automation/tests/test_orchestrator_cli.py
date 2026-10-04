@@ -44,6 +44,9 @@ def test_phase5_no_deploy_early_exit(tmp_path, monkeypatch, caplog):
         "R_global": 0.2,
         "promotion_margin": 0.0,
         "data_snapshot_sha256": catalog_fingerprint(),
+        # Issue #1360 (GH #1256) — zwoelfte Klausel ``live_params_match_promotion``: leeres Override
+        # besteht trivial, ein FEHLENDES Feld waere fail-closed.
+        "proposed_instrument_override": {},
         "holdout": {"symbol": {
             "deflated_dsr": 0.97, "oos_psr": 0.80, "holdout_ci_lower_sortino": 0.05,
             "pbo": 0.30, "pbo_n_configs": 40,
@@ -56,7 +59,7 @@ def test_phase5_no_deploy_early_exit(tmp_path, monkeypatch, caplog):
             "oos_expectancy_cost_stress_2x": 0.001,
             # Issue #1073 (Katalog #866-2) — elfte Klausel 'expectancy_outlier_robust', ebenfalls
             # fail-closed bei fehlendem Feld; positiv UND vorzeichengleich, damit dieses Fixture
-            # weiterhin ALLE elf Klauseln besteht.
+            # weiterhin ALLE zwoelf Klauseln besteht.
             "oos_expectancy": 12.5, "oos_expectancy_winsorized": 10.0,
         }, "global": {}},
     }

@@ -54,6 +54,9 @@ def _passing_record(**overrides) -> dict:
         # Expectancy bleibt positiv UND vorzeichengleich zur rohen Expectancy.
         "holdout_expectancy_notional_weighted": 0.05,
         "holdout_expectancy_winsorized": 0.04,
+        # Issue #1360 (GH #1256) — zwoelfte Klausel ``live_params_match_promotion``: ein leeres
+        # promoviertes Override verlangt nichts und besteht trivial (fehlendes Feld waere fail-closed).
+        "proposed_instrument_override": {},
         "run_id": "run_abc123",
     }
     record.update(overrides)
@@ -282,6 +285,8 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
         "R_global": 0.3,
         "promotion_margin": 0.05,
         "data_snapshot_sha256": _SNAPSHOT,
+        # Issue #1360 (GH #1256) — das promovierte Override (leer ⇒ verlangt nichts).
+        "proposed_instrument_override": {},
         "holdout": {
             "symbol": {
                 "deflated_dsr": 0.96,

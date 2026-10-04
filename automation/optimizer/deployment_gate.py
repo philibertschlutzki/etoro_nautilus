@@ -27,10 +27,13 @@ einzigen IO-tragenden Funktionen und liegen bewusst getrennt von der reinen Eval
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from automation.live_params import (
+    load_live_param_sources, mismatching_live_params, resolve_live_params,
+)
 from automation.optimizer.manifest import WORK, catalog_fingerprint
 
 # Issue #993 — die acht notwendigen (NICHT hinreichenden) Bedingungen fuer Kapitaleinsatz, in
@@ -60,6 +63,9 @@ DEPLOYMENT_CLAUSES: tuple[str, ...] = (
     # Issue #1073 (Katalog #866-2) — elfte Klausel: siehe _clause_expectancy_outlier_robust-
     # Docstring. Ebenfalls ans Ende gestellt (Anzeige-/Auswertungsreihenfolge, keine Prioritaet).
     "expectancy_outlier_robust",
+    # Issue #1360 (GH #1256, P0) — zwölfte Klausel: siehe _clause_live_params_match_promotion-
+    # Docstring. Ebenfalls ans Ende gestellt (Anzeige-/Auswertungsreihenfolge, keine Prioritaet).
+    "live_params_match_promotion",
 )
 
 # Issue #993 Akzeptanzkriterium — dieselbe #663-Default-Schwelle wie confirm._study_pbo
@@ -84,6 +90,10 @@ class DeploymentDecision:
     clause_results: dict[str, bool | None]
     promotion_run_id: str | None
     data_snapshot_sha256: str | None
+    # Issue #1360 — Klausel-Details (z. B. die abweichenden Keys von ``live_params_match_promotion``),
+    # NICHT Teil der Zulassungslogik. Default leer (rueckwaertskompatibel fuer jede direkte
+    # ``DeploymentDecision(...)``-Konstruktion).
+    clause_details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +102,7 @@ class DeploymentDecision:
             "clause_results": dict(self.clause_results),
             "promotion_run_id": self.promotion_run_id,
             "data_snapshot_sha256": self.data_snapshot_sha256,
+            "clause_details": dict(self.clause_details),
         }
 
 
@@ -259,12 +270,47 @@ def _clause_expectancy_outlier_robust(record: Mapping[str, Any] | None) -> bool 
     return (raw > 0.0) == (winsorized > 0.0)
 
 
+def _clause_live_params_match_promotion(
+    record: Mapping[str, Any] | None, *, strategy: str, symbol: str,
+    live_param_sources: tuple[Mapping[str, Any], list] | None,
+) -> tuple[bool | None, dict[str, Any]]:
+    """Issue #1360 (GH #1256, P0) — zwoelfte Klausel: fuer JEDEN Key in ``proposed_instrument_override``
+    (die validierten Parameter, ``confirm.py``) gilt ``resolve_live_params(...)[k] == proposal[k]``
+    (int/bool/str exakt, float ``math.isclose(rel_tol=1e-9)``, siehe ``live_params``). Die
+    abweichenden Keys stehen im Klausel-Detail.
+
+    Fail-closed: fehlt das Proposal-Feld (``proposed_instrument_override`` nicht vorhanden/kein Dict)
+    oder lassen sich die Live-Quellen (``strategy_defaults.json``/``strategies.json``) nicht laden,
+    ist die Klausel ``None`` — "nicht geprueft" ist KEINE bestandene Pruefung. Ein LEERES Override
+    (``{}``) verlangt nichts und besteht trivial."""
+    if not record:
+        return None, {}
+    proposed = record.get("proposed_instrument_override")
+    if not isinstance(proposed, Mapping):
+        return None, {"reason": "proposed_instrument_override_missing"}
+    try:
+        if live_param_sources is None:
+            from automation.optimizer.trial_config import config_dir
+            live_param_sources = load_live_param_sources(config_dir())
+        defaults, strategies_raw = live_param_sources
+    except (OSError, ValueError):
+        return None, {"reason": "live_param_sources_unavailable"}
+    live = resolve_live_params(strategy, symbol, defaults, strategies_raw)
+    mismatching = mismatching_live_params(live, proposed) or []
+    detail = {"mismatching_keys": mismatching}
+    if mismatching:
+        detail["live"] = {k: live.get(k) for k in mismatching}
+        detail["proposed"] = {k: proposed[k] for k in mismatching}
+    return (not mismatching), detail
+
+
 def evaluate_deployment_eligibility(
     pair,
     promotion_records: Mapping[Any, Mapping[str, Any]],
     tournament_cfg: Mapping[str, Any],
     *,
     current_snapshot_sha256: str | None = None,
+    live_param_sources: tuple[Mapping[str, Any], list] | None = None,
 ) -> DeploymentDecision:
     """Issue #993 Fix Punkt 1 — die EINZIGE zulaessige Quelle einer Deployment-Entscheidung.
 
@@ -277,6 +323,9 @@ def evaluate_deployment_eligibility(
     ``current_snapshot_sha256`` — der Datenstand ZUM Deployment-Zeitpunkt; ``None`` (Default) lässt
     diese Funktion ihn live via ``catalog_fingerprint()`` ermitteln (Produktionspfad); Tests
     injizieren einen festen Wert, um die Snapshot-Drift-Klausel deterministisch zu pruefen.
+    ``live_param_sources`` — ``(strategy_defaults, strategies_raw)`` fuer die Klausel
+    ``live_params_match_promotion`` (Issue #1360); ``None`` laedt sie aus ``config_dir()`` — dieselben
+    Dateien, aus denen der Bot seine Live-Parameter baut.
     """
     strategy, symbol = _pair_key(pair)
     record = (
@@ -307,6 +356,9 @@ def evaluate_deployment_eligibility(
         "cost_stress": _clause_cost_stress(record),
         "expectancy_outlier_robust": _clause_expectancy_outlier_robust(record),
     }
+    clause_results["live_params_match_promotion"], live_params_detail = (
+        _clause_live_params_match_promotion(
+            record, strategy=strategy, symbol=symbol, live_param_sources=live_param_sources))
 
     # Fail-closed: ``None`` (nicht auswertbar) zaehlt NICHT als erfuellt.
     admitted = all(clause_results[c] is True for c in DEPLOYMENT_CLAUSES)
@@ -320,6 +372,8 @@ def evaluate_deployment_eligibility(
         clause_results=clause_results,
         promotion_run_id=(record or {}).get("run_id"),
         data_snapshot_sha256=(record or {}).get("data_snapshot_sha256"),
+        clause_details={"live_params_match_promotion": live_params_detail}
+        if live_params_detail else {},
     )
 
 
@@ -343,6 +397,9 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "pbo": holdout_symbol.get("pbo"),
         "pbo_n_configs": holdout_symbol.get("pbo_n_configs"),
         "blocking_invariant_names": holdout_symbol.get("blocking_invariant_names"),
+        # Issue #1360 (GH #1256) — die VALIDIERTEN Parameter (confirm.py), Eingang der Klausel
+        # ``live_params_match_promotion``; ``None`` (Proposal ohne das Feld) ⇒ Klausel fail-closed.
+        "proposed_instrument_override": proposal.get("proposed_instrument_override"),
         # Issue #1042 (Katalog #866, E-1) — siehe _clause_cost_stress-Docstring.
         "expectancy_cost_stress_2x": holdout_symbol.get("oos_expectancy_cost_stress_2x"),
         # Issue #1073 (Katalog #866-2) — siehe _clause_expectancy_outlier_robust-Docstring. Issue
