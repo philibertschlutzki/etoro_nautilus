@@ -397,6 +397,11 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "pbo": holdout_symbol.get("pbo"),
         "pbo_n_configs": holdout_symbol.get("pbo_n_configs"),
         "blocking_invariant_names": holdout_symbol.get("blocking_invariant_names"),
+        # Issue #1362 (GH #1258) — Holdout-Round-Trip-Statistik (bps auf das Notional), Referenz des
+        # Live-Verteilungs-Auslösers B (live_risk); fehlt sie, trägt das Bot-Start-Event den Grund.
+        "holdout_trade_return_bps_mean": holdout_symbol.get("oos_trade_return_bps_mean"),
+        "holdout_trade_return_bps_std": holdout_symbol.get("oos_trade_return_bps_std"),
+        "holdout_trade_return_bps_n": holdout_symbol.get("oos_trade_return_bps_n"),
         # Issue #1360 (GH #1256) — die VALIDIERTEN Parameter (confirm.py), Eingang der Klausel
         # ``live_params_match_promotion``; ``None`` (Proposal ohne das Feld) ⇒ Klausel fail-closed.
         "proposed_instrument_override": proposal.get("proposed_instrument_override"),

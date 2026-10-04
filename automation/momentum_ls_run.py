@@ -23,6 +23,10 @@ with open("automation/config/instrument_map.json", "r") as f:
     ETORO_INSTRUMENTS = _imap.get("instruments", {})
 from automation.momentum_ls_allocator import MomentumLSAllocator
 from automation.live_risk import LiveCircuitBreakerWatchdog, LiveShutdownCoordinator
+from automation.live_equity_state import (
+    DEFAULT_DAILY_LOSS_TZ, HWM_PATH, HwmEnvironmentMismatch, PersistentEquityState,
+    distribution_references, exchange_day_key,
+)
 from automation.live_bot_lock import (
     EXIT_ALREADY_RUNNING, LOCK_PATH, LiveBotAlreadyRunning, LiveBotLock, compute_whitelist_sha256,
 )
@@ -193,12 +197,44 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     strat_config = ConfigClass(**cfg_kwargs)
     return StrategyClass(config=strat_config, allocator=allocator)
 
+def _reset_hwm(environment: str, *, hwm_path: Path = HWM_PATH, lock_path: Path = LOCK_PATH) -> int:
+    """Issue #1362 (GH #1258) Fix Punkt 1 — ``momentum_ls_run --reset-hwm``: der EINZIGE Weg, den
+    persistenten Hochwasserstand zurückzusetzen (Event ``LIVE_HWM_RESET``). Nimmt die exklusive
+    Bot-Sperre (ein laufender Bot würde den alten Stand sonst bei der nächsten Änderung wieder
+    persistieren) — gehaltene Sperre ⇒ Exit-Code 4, nichts zurückgesetzt. Exit-Code 0 bei Erfolg."""
+    lock = LiveBotLock(lock_path)
+    try:
+        lock.acquire(environment=environment, whitelist_sha256=None)
+    except LiveBotAlreadyRunning as exc:
+        logger.critical(
+            f"[LIVE_HWM_RESET] abgelehnt: ein Bot läuft ({exc.info}) — erst stoppen, dann zurücksetzen.")
+        return EXIT_ALREADY_RUNNING
+    try:
+        previous = PersistentEquityState(hwm_path, environment=environment).reset()
+        emit_execution_event(logger, "LIVE_HWM_RESET", {
+            "environment": environment, "hwm_path": str(hwm_path), "previous_state": previous,
+        }, level=logging.WARNING)
+        logger.warning(f"[LIVE_HWM_RESET] Hochwasserstand zurückgesetzt (vorher: {previous}).")
+        return 0
+    finally:
+        lock.release()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--universe", default="data/universe/momentum_ls.json")
-    parser.add_argument("--tournament", required=True)
+    parser.add_argument("--tournament", default=None,
+                        help="Whitelist-/Turnier-JSON (Pflicht, ausser mit --reset-hwm)")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--reset-hwm", action="store_true",
+                        help="Setzt den persistenten Equity-Hochwasserstand zurück und beendet sich "
+                             "(Event LIVE_HWM_RESET; Issue #1362).")
     args = parser.parse_args()
+
+    if args.reset_hwm:
+        sys.exit(_reset_hwm(ETORO_EXECUTION["environment"]))
+    if not args.tournament:
+        parser.error("--tournament ist erforderlich (ausser mit --reset-hwm)")
 
     load_dotenv()
     api_key = os.getenv("ETORO_API_KEY")
@@ -380,6 +416,34 @@ def main():
     # Issue #999 Fix Punkt 2 — Live-Circuit-Breaker-Wächter: unabhängig vom Backtest-seitigen
     # max_drawdown-Gate (das im Livebetrieb keine Entsprechung hatte) überwacht dieser Thread den
     # Equity-Verlauf des laufenden Nodes und flattet+stoppt bei Auslöser A/B (automation/live_risk.py).
+    # Issue #1362 (GH #1258) — persistentes Drawdown-Gedächtnis (Hochwasserstand + Tagesbasis), der
+    # Allocator-Dämpfer ψ(DD) startet mit dem persistierten Drawdown, und der Verteilungs-Auslöser B
+    # läuft je Paar gegen die Holdout-Round-Trip-Statistik der Whitelist.
+    equity_state = PersistentEquityState(HWM_PATH, environment=environment)
+    try:
+        equity_state.load()
+    except HwmEnvironmentMismatch as exc:
+        logger.critical(f"[LIVE_HWM] {exc}")
+        bot_lock.release()
+        sys.exit(5)
+    if equity_state.persisted_drawdown() is not None:
+        allocator.update_risk_state(current_drawdown=equity_state.persisted_drawdown())
+    daily_loss_tz = live_risk_cfg.get("daily_loss_tz", DEFAULT_DAILY_LOSS_TZ)
+    distribution_refs, distribution_disabled = distribution_references(
+        tournament_data.get("per_symbol_winners", {}))
+    distribution_refs = {s: r for s, r in distribution_refs.items() if s in set(active_symbols)}
+    distribution_disabled = {s: r for s, r in distribution_disabled.items() if s in set(active_symbols)}
+    emit_execution_event(logger, "LIVE_CIRCUIT_BREAKER_CONFIGURED", {
+        "dd_halt_fraction": live_risk_cfg.get("dd_halt_fraction", 0.10),
+        "daily_loss_halt_fraction": live_risk_cfg.get("daily_loss_halt_fraction", 0.03),
+        "daily_loss_tz": daily_loss_tz,
+        "persisted_hwm": equity_state.hwm,
+        "persisted_drawdown": equity_state.persisted_drawdown(),
+        "circuit_breaker_n_min_round_trips": live_risk_cfg.get("circuit_breaker_n_min_round_trips", 30),
+        "distribution_breaker_pairs": sorted(distribution_refs),
+        # Kein stiller toter Pfad: je Paar ohne Holdout-Statistik der Grund.
+        "distribution_breaker_disabled_reason": distribution_disabled or None,
+    })
     watchdog = LiveCircuitBreakerWatchdog(
         node,
         venue="ETORO",
@@ -389,6 +453,11 @@ def main():
         n_min_periods=live_risk_cfg.get("circuit_breaker_n_min_periods", 30),
         on_update=lambda d: allocator.update_risk_state(current_drawdown=d.dd_live),
         on_trip=lambda d: allocator.update_risk_state(tripped=True),
+        equity_state=equity_state,
+        daily_loss_halt_fraction=live_risk_cfg.get("daily_loss_halt_fraction", 0.03),
+        day_key_fn=lambda now: exchange_day_key(now, daily_loss_tz),
+        distribution_refs=distribution_refs,
+        n_min_round_trips=live_risk_cfg.get("circuit_breaker_n_min_round_trips", 30),
     )
     watchdog.start()
 

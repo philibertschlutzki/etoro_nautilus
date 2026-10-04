@@ -1088,8 +1088,14 @@ def phase5_live_deployment(
                 # beides je Paar vor add_strategy (LIVE_PARAMS_MISMATCH ⇒ Paar übersprungen).
                 entry["live_params_sha256"] = live_params_sha256(
                     resolve_live_params(strategy, symbol, *live_param_sources))
-                entry["proposed_instrument_override"] = (
-                    (promotion_records.get((strategy, symbol)) or {}).get("proposed_instrument_override"))
+                _record = promotion_records.get((strategy, symbol)) or {}
+                entry["proposed_instrument_override"] = _record.get("proposed_instrument_override")
+                # Issue #1362 (GH #1258) Fix Punkt 3 — Holdout-Round-Trip-Statistik des promovierten
+                # Trials für den Live-Verteilungs-Auslöser B (live_risk); fehlt sie, bleibt das Feld
+                # None und der Bot nennt den Grund im Start-Event (kein stiller toter Pfad).
+                for _field in ("holdout_trade_return_bps_mean", "holdout_trade_return_bps_std",
+                               "holdout_trade_return_bps_n"):
+                    entry[_field] = _record.get(_field)
                 whitelisted_winners[symbol] = entry
             else:
                 rejected_by_clause[decision.blocking_clause] = rejected_by_clause.get(decision.blocking_clause, 0) + 1

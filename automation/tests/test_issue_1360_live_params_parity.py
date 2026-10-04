@@ -245,7 +245,10 @@ def test_phase5_whitelist_entry_carries_live_params_sha256_and_override(tmp_path
             "deflated_dsr": 0.97, "oos_psr": 0.80, "holdout_ci_lower_sortino": 0.05, "pbo": 0.30,
             "pbo_n_configs": 40, "blocking_invariant_names": [],
             "oos_expectancy_cost_stress_2x": 0.001, "oos_expectancy": 12.5,
-            "oos_expectancy_winsorized": 10.0}, "global": {}},
+            "oos_expectancy_winsorized": 10.0,
+            # Issue #1362 — Holdout-Round-Trip-Statistik fuer den Live-Verteilungs-Ausloeser B.
+            "oos_trade_return_bps_mean": 12.5, "oos_trade_return_bps_std": 40.0,
+            "oos_trade_return_bps_n": 77}, "global": {}},
     }
     (optimizer_dir / "proposal_SmaCrossoverStrategy_AAA.ETORO.json").write_text(
         json.dumps(proposal), encoding="utf-8")
@@ -260,3 +263,5 @@ def test_phase5_whitelist_entry_carries_live_params_sha256_and_override(tmp_path
     assert entry["deployment_gate"]["clause_results"]["live_params_match_promotion"] is True
     assert entry["live_params_sha256"] == live_params_sha256(live)
     assert entry["proposed_instrument_override"] == override
+    assert (entry["holdout_trade_return_bps_mean"], entry["holdout_trade_return_bps_std"],
+            entry["holdout_trade_return_bps_n"]) == (12.5, 40.0, 77)

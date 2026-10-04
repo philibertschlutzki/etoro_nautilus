@@ -80,6 +80,12 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_expectancy_capital_weighted_gross": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted_gross, #1257)",
     "oos_expectancy_winsorized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_winsorized)",
     "oos_expectancy_outlier_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_outlier_count)",
+    # Issue #1362 (GH #1258) — nur am promovierten Holdout-Kandidaten gebraucht (Whitelist-Felder
+    # holdout_trade_return_bps_mean/std/n, deployment_gate.build_promotion_record_from_proposal), nicht
+    # je Sweep-Trial.
+    "oos_trade_return_bps_mean": "holdout-only (confirm.py-Re-Evaluation, siehe deployment_gate holdout_trade_return_bps_mean, #1362)",
+    "oos_trade_return_bps_std": "holdout-only (confirm.py-Re-Evaluation, siehe deployment_gate holdout_trade_return_bps_std, #1362)",
+    "oos_trade_return_bps_n": "holdout-only (confirm.py-Re-Evaluation, siehe deployment_gate holdout_trade_return_bps_n, #1362)",
     "oos_expectancy_cost_stress_1_5x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_1_5x)",
     "oos_expectancy_cost_stress_2x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_2x)",
     "oos_expectancy_cost_stress_full_realism": "holdout-only (confirm.py-Re-Evaluation, siehe #1162/Issue 1010)",

@@ -576,6 +576,11 @@ def _metrics_dict(m) -> dict:
             m, "oos_expectancy_capital_weighted_gross", None),
         "oos_expectancy_winsorized": getattr(m, "oos_expectancy_winsorized", None),
         "oos_expectancy_outlier_count": getattr(m, "oos_expectancy_outlier_count", 0),
+        # Issue #1362 (GH #1258) Fix Punkt 3 — Holdout-Round-Trip-Statistik (bps auf das Notional)
+        # des promovierten Kandidaten: Referenz des Live-Verteilungs-Auslösers B.
+        "oos_trade_return_bps_mean": getattr(m, "oos_trade_return_bps_mean", None),
+        "oos_trade_return_bps_std": getattr(m, "oos_trade_return_bps_std", None),
+        "oos_trade_return_bps_n": getattr(m, "oos_trade_return_bps_n", 0),
         "oos_expectancy_notional_degenerate_count": getattr(
             m, "oos_expectancy_notional_degenerate_count", 0),
         # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips, an der Round-Trip-QUELLE verworfen

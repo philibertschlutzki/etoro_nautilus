@@ -4935,7 +4935,13 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     # richtige Serie.
     f_realized_values: list[float] = []
     f_realized_peak_values: list[float] = []
+    # Issue #1362 (GH #1258) Fix Punkt 3 — die sizing-invariante Skala des Live-Verteilungs-
+    # Ausloesers B: Netto-Rendite je Round-Trip in bps auf das Positions-Notional (``pnl_bps``,
+    # siehe _finalize_round_trip), UNBEDINGT ueber ALLE Round-Trips (auch Gewinne und Null).
+    trade_return_bps: list[float] = []
     for m in meta_list or []:
+        if m.get("pnl_bps") is not None:
+            trade_return_bps.append(float(m["pnl_bps"]))
         # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
         # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
         # damit die Summe des Histogramms exakt der Round-Trip-Zahl der Ebene entspricht.
@@ -5023,6 +5029,13 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     _rt_notionals_sorted = sorted(rt_notionals)
     return {
         "exit_reason_histogram": histogram,
+        # Issue #1362 — Mittel/Standardabweichung (Stichprobe, ddof=1)/Anzahl der Round-Trip-Renditen
+        # (bps auf das Notional) DIESER Ebene; Rohmaterial der Whitelist-Felder
+        # ``holdout_trade_return_bps_mean/std/n`` (Live-Verteilungs-Auslöser B, ``live_risk``).
+        "trade_return_bps_mean": statistics.mean(trade_return_bps) if trade_return_bps else None,
+        "trade_return_bps_std": (
+            statistics.stdev(trade_return_bps) if len(trade_return_bps) >= 2 else None),
+        "trade_return_bps_n": len(trade_return_bps),
         "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
         # Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — robustes Gegenstueck zu
         # gross_loss_mean_bps (ALLE Verlust-Round-Trips, nicht nur TRAILING_STOP), Nenner fuer

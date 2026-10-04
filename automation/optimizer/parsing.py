@@ -57,6 +57,12 @@ class TournamentMetrics:
     oos_expectancy_winsorized: float | None = None
     oos_expectancy_outlier_count: int = 0
     oos_expectancy_notional_degenerate_count: int = 0
+    # Issue #1362 (GH #1258) — Round-Trip-Renditen (bps auf das Positions-Notional) dieser Ebene:
+    # Mittel/Std/Anzahl, Rohmaterial der Whitelist-Felder ``holdout_trade_return_bps_*`` (Live-
+    # Verteilungs-Auslöser B). ``None``/0 ohne Round-Trips bzw. Legacy-JSONs (rückwärtskompatibel).
+    oos_trade_return_bps_mean: float | None = None
+    oos_trade_return_bps_std: float | None = None
+    oos_trade_return_bps_n: int = 0
     # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips (Notional < 5% des Median-Notionals),
     # jetzt AN DER QUELLE verworfen (``backtest_runner._filter_dust_round_trips``, VOR jeder
     # IS/OOS-Aufteilung), statt nur an der Expectancy-Konsumstelle (die vormalige ``oos_expectancy_
@@ -638,6 +644,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_alpha_n_in_market = oos_metrics.get("oos_alpha_n_in_market")
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
+    oos_trade_return_bps_mean = oos_metrics.get("trade_return_bps_mean")
+    oos_trade_return_bps_std = oos_metrics.get("trade_return_bps_std")
+    oos_trade_return_bps_n = oos_metrics.get("trade_return_bps_n")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
     # Issue #946/#1112 (Katalog #960) — siehe TournamentMetrics-Docstring.
     oos_dust_round_trips_filtered_count = oos_metrics.get("dust_round_trips_filtered_count")
@@ -747,6 +756,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             float(oos_expectancy_winsorized) if oos_expectancy_winsorized is not None else None),
         oos_expectancy_outlier_count=(
             int(oos_expectancy_outlier_count) if oos_expectancy_outlier_count is not None else 0),
+        oos_trade_return_bps_mean=(
+            float(oos_trade_return_bps_mean) if oos_trade_return_bps_mean is not None else None),
+        oos_trade_return_bps_std=(
+            float(oos_trade_return_bps_std) if oos_trade_return_bps_std is not None else None),
+        oos_trade_return_bps_n=int(oos_trade_return_bps_n) if oos_trade_return_bps_n is not None else 0,
         oos_expectancy_notional_degenerate_count=(
             int(oos_expectancy_notional_degenerate_count)
             if oos_expectancy_notional_degenerate_count is not None else 0),
