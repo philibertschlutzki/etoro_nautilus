@@ -35,8 +35,9 @@ def test_catalog_schema_version_is_2():
 # ── simulation_semantics_version ──────────────────────────────────────────────────────────────
 
 def test_simulation_semantics_version_bumped_to_8():
+    # Monoton steigend: #1371 (GH #1268) hob die Version weiter auf 9 — v8 bleibt dokumentiert.
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
-    assert cfg["simulation_semantics_version"] == 8
+    assert cfg["simulation_semantics_version"] >= 8
 
 
 def test_v8_documentation_names_all_three_triggers():
