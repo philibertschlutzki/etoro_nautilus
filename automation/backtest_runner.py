@@ -40,6 +40,7 @@ import pyarrow.parquet as pq
 from automation.utils import _fallback_precisions
 from automation.disaster_stop import DISASTER_STOP_MODE_SIMULATED, resolve_disaster_stop_params
 from automation.catalog_paths import (
+    EngineCatalogViewError,
     engine_catalog_view,
     resolve_quote_tick_files, resolve_quote_tick_columns, decode_fsb16_price,
 )
@@ -7568,9 +7569,18 @@ def run_single_backtest_worker(
             # ``<symbol>/OneHour/data.parquet``-Layout 0 Ticks. Kein ``ParquetDataCatalog`` mehr auf
             # dem Original-``catalog_path`` für Quote-Ticks; Precision-Normalisierung schreibt in die
             # Sicht, nie ins Original.
-            engine_view = engine_catalog_view(catalog_path, inst_id_str)
-            _normalize_view_size_precision(engine_view, inst_id_str)
-            effective_catalog_path = str(engine_view.root)
+            try:
+                engine_view = engine_catalog_view(catalog_path, inst_id_str)
+            except EngineCatalogViewError as exc:
+                # Keine Quote-Tick-Datei für das Symbol (weder ``OneHour/`` noch flach): es gibt nichts
+                # zu verlinken. Fail-open wie vor #1354 — der Katalog auf ``catalog_path`` liefert 0
+                # Ticks, und der benannte "keine Ticks"-Pfad unten entscheidet (kein generisches
+                # "tick_load_failed" für einen fehlenden Datenbestand).
+                wlog(f"   ℹ️  Keine Engine-Sicht für {inst_id_str}: {exc}")
+                effective_catalog_path = str(catalog_path)
+            else:
+                _normalize_view_size_precision(engine_view, inst_id_str)
+                effective_catalog_path = str(engine_view.root)
 
             catalog = ParquetDataCatalog(effective_catalog_path)
 
