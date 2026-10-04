@@ -22,6 +22,7 @@ Usage in a strategy:
 from __future__ import annotations
 
 import enum
+import functools
 import logging
 import statistics
 import traceback
@@ -57,7 +58,11 @@ from automation.disaster_stop import (
 from automation.live_risk import compute_sizing_cap_correction
 from automation.log_manager import emit_execution_event
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
-from automation.session_windows import session_window_from_param
+from automation.session_windows import (
+    bars_in_session_on_day,
+    session_window_from_param,
+    trading_day_of_candle,
+)
 
 log = logging.getLogger(__name__)
 
@@ -321,6 +326,22 @@ def _bar_interval_ns_of(bar_type) -> int:
         return default
 
 
+def _session_gated(on_bar):
+    """Issue #1361 (GH #1257) — umhüllt das ``on_bar`` JEDER Strategie-Unterklasse (siehe
+    ``HourlyStrategyBase.__init_subclass__``): erste Anweisung ist der Session-Gate. Eine Bar, deren Kerze
+    ``[ts_event − Intervall, ts_event)`` keine Session eines Handelstags schneidet, erreicht weder
+    Indikatoren noch Exits noch Signale — der Bar-Zähler einer offenen Position steigt nur in der Session."""
+    @functools.wraps(on_bar)
+    def gated(self, bar):
+        if not self._bar_in_session(bar):
+            self._note_out_of_session_bar(bar)
+            return None
+        self._note_in_session_bar(bar)
+        return on_bar(self, bar)
+    gated._session_gated = True
+    return gated
+
+
 class HourlyStrategyBase(Strategy):
     """
     Base strategy providing ATR Trailing Stop and Time-based Exit for hourly candles.
@@ -331,6 +352,14 @@ class HourlyStrategyBase(Strategy):
       _bars_in_position: int              — bars elapsed since last entry
       _in_position: bool                  — whether a position is currently open
     """
+
+    def __init_subclass__(cls, **kwargs):
+        # Issue #1361 (GH #1257) — jede Unterklasse, die ``on_bar`` definiert, bekommt den Session-Gate
+        # als erste Anweisung (kein Opt-in je Strategie, das eine der 15 vergessen könnte).
+        super().__init_subclass__(**kwargs)
+        on_bar = cls.__dict__.get("on_bar")
+        if on_bar is not None and not getattr(on_bar, "_session_gated", False):
+            cls.on_bar = _session_gated(on_bar)
 
     def __init__(self, config: HourlyStrategyConfig, allocator: MomentumLSAllocator | None = None):
         super().__init__(config)
@@ -377,6 +406,14 @@ class HourlyStrategyBase(Strategy):
         # Issue #1356 (GH #1252) — Session-Fenster (Börsen-Lokalzeit) und Bar-Intervall der Achse.
         self._session_window = session_window_from_param(getattr(config, "session_window", None))
         self._bar_interval_ns: int = _bar_interval_ns_of(getattr(config, "bar_type", None))
+        # Issue #1361 (GH #1257) — Session-Gate-Zustand (siehe ``_bar_in_session``).
+        self._out_of_session_bars: int = 0
+        self._out_of_session_since_event: int = 0
+        self._out_of_session_last_event_ns: int | None = None
+        self._session_bar_day = None
+        self._session_bar_day_count: int = 0
+        self._session_bar_day_partial: bool = True
+        self._session_telemetry_live: bool | None = None   # None ⇒ aus dem Clock-Typ abgeleitet
         # Issue #1359 (GH #1255, P0) — Katastrophen-Stop (siehe HourlyStrategyConfig.k_disaster).
         self._disaster_stop_mode = getattr(config, "disaster_stop_mode", None) or DISASTER_STOP_MODE_BROKER
         if self._disaster_stop_mode not in DISASTER_STOP_MODES:
@@ -561,6 +598,85 @@ class HourlyStrategyBase(Strategy):
             )
             self._gr04_subscribed = True
 
+    # ── Issue #1361 (GH #1257) — Session-Gate ───────────────────────────────────────────────
+
+    def _bar_in_session(self, bar) -> bool:
+        """Schneidet die Kerze ``[bar.ts_event − Intervall, bar.ts_event)`` die Session eines Handelstags
+        (``session_windows.trading_day_of_candle``, Börsen-Lokalzeit, Feiertage = Nicht-Handelstage)?
+        Ohne ``session_window`` (24/7-Märkte) immer ``True``. Backtest und Live nutzen DENSELBEN Gate: der
+        Backtest-Aggregator gibt für Stunden ohne Ticks (nachts, am Wochenende) flache Füllbars aus, live
+        quotiert eToro je Instrument auch ausserhalb der RTH — beide Ströme erreichen die Strategie nur in
+        der Session."""
+        window = getattr(self, "_session_window", None)
+        if window is None:
+            return True
+        ts = int(bar.ts_event)
+        interval = int(getattr(self, "_bar_interval_ns", 3_600_000_000_000))
+        self._last_bar_trading_day = trading_day_of_candle(ts - interval, ts, window)
+        return self._last_bar_trading_day is not None
+
+    def _session_telemetry_is_live(self) -> bool:
+        flag = getattr(self, "_session_telemetry_live", None)
+        if flag is not None:
+            return bool(flag)
+        try:
+            from nautilus_trader.common.component import LiveClock
+            return isinstance(self.clock, LiveClock)
+        except Exception:
+            return False
+
+    def _note_out_of_session_bar(self, bar) -> None:
+        """Zähler + Telemetrie ``LIVE_BAR_SKIPPED_OUT_OF_SESSION`` (live, höchstens ein Event je Stunde
+        Bar-Zeit, mit der Zahl der seit dem letzten Event verworfenen Bars)."""
+        self._out_of_session_bars = getattr(self, "_out_of_session_bars", 0) + 1
+        self._out_of_session_since_event = getattr(self, "_out_of_session_since_event", 0) + 1
+        if not self._session_telemetry_is_live():
+            return
+        ts = int(bar.ts_event)
+        last = getattr(self, "_out_of_session_last_event_ns", None)
+        if last is not None and ts - last < 3_600_000_000_000:
+            return
+        try:
+            emit_execution_event(log, "LIVE_BAR_SKIPPED_OUT_OF_SESSION", {
+                "instrument_id": str(getattr(self, "instrument_id", "")),
+                "bar_ts_event": ts,
+                "skipped_since_last_event": self._out_of_session_since_event,
+                "skipped_total": self._out_of_session_bars,
+                "session_window": self._session_window.to_config() if self._session_window else None,
+            })
+        except Exception:
+            pass
+        self._out_of_session_last_event_ns = ts
+        self._out_of_session_since_event = 0
+
+    def _note_in_session_bar(self, bar) -> None:
+        """Zählt die In-Session-Bars je lokalem Handelstag. Beim Tageswechsel (live): Bot-Log-Invariante
+        ``LIVE_SESSION_BAR_COUNT`` — In-Session-Bars == erwartete Bars dieses Handelstags (``BARS_PER_
+        TRADING_DAY``, DST-exakt; Feiertage erzeugen keinen Handelstag). Der erste beobachtete Tag (Start
+        mitten in der Session) wird nicht bewertet."""
+        window = getattr(self, "_session_window", None)
+        if window is None:
+            return
+        day = getattr(self, "_last_bar_trading_day", None)
+        if day == getattr(self, "_session_bar_day", None):
+            self._session_bar_day_count += 1
+            return
+        previous, count = getattr(self, "_session_bar_day", None), getattr(self, "_session_bar_day_count", 0)
+        partial = getattr(self, "_session_bar_day_partial", True)
+        if previous is not None and not partial and self._session_telemetry_is_live():
+            expected = bars_in_session_on_day(previous, window, self._bar_interval_ns)
+            try:
+                emit_execution_event(log, "LIVE_SESSION_BAR_COUNT", {
+                    "instrument_id": str(getattr(self, "instrument_id", "")),
+                    "trading_day": previous.isoformat(),
+                    "n_bars_in_session": count, "expected": expected, "passed": count == expected,
+                }, level=logging.INFO if count == expected else logging.WARNING)
+            except Exception:
+                pass
+        self._session_bar_day_partial = previous is None
+        self._session_bar_day = day
+        self._session_bar_day_count = 1
+
     def _reconcile_after_reconnect(self) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if not positions:
@@ -602,7 +718,8 @@ class HourlyStrategyBase(Strategy):
             return None
         if not bars:
             return None
-        return sum(1 for b in bars if int(b.ts_event) > since_ns)
+        # Issue #1361 (GH #1257) — dieselbe Achse wie der Bar-Zähler: nur In-Session-Bars zählen.
+        return sum(1 for b in bars if int(b.ts_event) > since_ns and self._bar_in_session(b))
 
     def _on_gr04_close_request(self, msg) -> None:
         """Issue #717 (GR-04) — Reaktion auf das Phantom-Positions-Signal des Execution-Clients

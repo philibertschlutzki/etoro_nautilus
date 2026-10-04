@@ -33,6 +33,7 @@ from automation.live_bot_lock import (
 from automation.log_manager import emit_execution_event
 from automation.live_params import live_params_sha256, mismatching_live_params, resolve_live_params
 from automation.disaster_stop import DISASTER_STOP_MODE_BROKER, resolve_disaster_stop_params
+from automation.session_windows import load_session_window_for_symbol, session_window_to_param
 
 ETORO_EXECUTION = {
     "environment": os.getenv("ETORO_ENV", "demo"),
@@ -193,6 +194,12 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     )
     if "max_open_positions" in bot_spec:
         cfg_kwargs["max_open_positions"] = bot_spec["max_open_positions"]
+    # Issue #1361 (GH #1257) — Session-Gate: dasselbe Fenster (Börsen-Lokalzeit), das der Backtest-Runner
+    # aus backtest.json auflöst (session_windows.resolve_session_window) — live verwirft die Strategie
+    # Extended-Hours-Bars, wie der Backtest Ticks/Füllbars ausserhalb der Session nie sieht. Nie aus dem
+    # Suchraum, daher überschreibend.
+    cfg_kwargs["session_window"] = session_window_to_param(
+        load_session_window_for_symbol(bot_spec["symbol"]))
 
     strat_config = ConfigClass(**cfg_kwargs)
     return StrategyClass(config=strat_config, allocator=allocator)

@@ -189,6 +189,33 @@ def resolve_session_window(
         session_hours_by_asset_class.get(asset_class_key), label=asset_class_key)
 
 
+def load_session_window_for_symbol(symbol: str, config_dir: str | Path | None = None) -> SessionWindow | None:
+    """Issue #1361 (GH #1257) — Fenster eines Symbols aus den Config-Dateien (Live-Bot): Asset-Class aus
+    ``instrument_map.json`` (dieselbe Lesart wie ``backtest_runner._resolve_asset_class_for_symbol``:
+    ``asset_class`` gross geschrieben), Fenster über ``resolve_session_window`` aus
+    ``backtest.json['session_hours_by_asset_class']`` — DIESELBE Auflösung wie der Backtest-Runner.
+    Unbekanntes Symbol/fehlende Asset-Class ⇒ ``None`` (kein Gate) mit WARNING."""
+    base = Path(config_dir) if config_dir else Path(__file__).resolve().parent / "config"
+    try:
+        instruments = (json.loads((base / "instrument_map.json").read_text("utf-8")) or {}).get("instruments") or {}
+        session_cfg = (json.loads((base / "backtest.json").read_text("utf-8")) or {}).get(
+            "session_hours_by_asset_class")
+    except (OSError, ValueError) as exc:
+        logger.warning("Session-Fenster für %s nicht auflösbar (%s) — kein Session-Gate.", symbol, exc)
+        return None
+    asset_class = None
+    for entry in instruments.values():
+        if entry.get("symbol") == symbol:
+            raw = (entry.get("asset_class") or "").strip()
+            asset_class = raw.upper() if raw and raw.lower() != "unknown" else None
+            break
+    if asset_class is None:
+        logger.warning("Session-Fenster: %s hat keine Asset-Class in instrument_map.json — kein Session-Gate.",
+                       symbol)
+        return None
+    return resolve_session_window(asset_class, session_cfg)
+
+
 # ─── Feiertage ───────────────────────────────────────────────────────────────────────
 
 @lru_cache(maxsize=None)
