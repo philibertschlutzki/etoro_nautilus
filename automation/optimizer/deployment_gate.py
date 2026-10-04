@@ -66,6 +66,8 @@ DEPLOYMENT_CLAUSES: tuple[str, ...] = (
     # Issue #1360 (GH #1256, P0) — zwölfte Klausel: siehe _clause_live_params_match_promotion-
     # Docstring. Ebenfalls ans Ende gestellt (Anzeige-/Auswertungsreihenfolge, keine Prioritaet).
     "live_params_match_promotion",
+    # Issue #1357 (GH #1253, P0) — dreizehnte Klausel: siehe _clause_holdout_disjoint-Docstring.
+    "holdout_disjoint",
 )
 
 # Issue #993 Akzeptanzkriterium — dieselbe #663-Default-Schwelle wie confirm._study_pbo
@@ -304,6 +306,27 @@ def _clause_live_params_match_promotion(
     return (not mismatching), detail
 
 
+def _clause_holdout_disjoint(record: Mapping[str, Any] | None) -> bool | None:
+    """Issue #1357 (GH #1253, P0) — dreizehnte Klausel: der Confirm-Holdout enthielt keine Selektionsdaten
+    (``holdout_overlap_days == 0``) UND zwischen Selektionsende und Holdout-Beginn lag mindestens
+    ``holdout_embargo_days``. Fail-closed: fehlt eines der Felder (Proposal vor #1357, Stempel nicht
+    möglich), ist die Klausel ``None`` — "nicht geprüft" ist KEINE bestandene Prüfung."""
+    if not record:
+        return None
+    overlap = record.get("holdout_overlap_days")
+    sel, hold, emb = (record.get("selection_end_utc"), record.get("holdout_start_utc"),
+                      record.get("holdout_embargo_days"))
+    if overlap is None or sel is None or hold is None or emb is None:
+        return None
+    import datetime as _dt
+    try:
+        gap_days = (_dt.datetime.fromisoformat(str(hold).replace("Z", "+00:00"))
+                    - _dt.datetime.fromisoformat(str(sel).replace("Z", "+00:00"))).total_seconds() / 86_400.0
+    except ValueError:
+        return None
+    return int(overlap) == 0 and gap_days >= float(emb)
+
+
 def evaluate_deployment_eligibility(
     pair,
     promotion_records: Mapping[Any, Mapping[str, Any]],
@@ -355,6 +378,7 @@ def evaluate_deployment_eligibility(
         "study_invariants_clean": _clause_study_invariants_clean(record),
         "cost_stress": _clause_cost_stress(record),
         "expectancy_outlier_robust": _clause_expectancy_outlier_robust(record),
+        "holdout_disjoint": _clause_holdout_disjoint(record),
     }
     clause_results["live_params_match_promotion"], live_params_detail = (
         _clause_live_params_match_promotion(
@@ -405,6 +429,11 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         # Issue #1360 (GH #1256) — die VALIDIERTEN Parameter (confirm.py), Eingang der Klausel
         # ``live_params_match_promotion``; ``None`` (Proposal ohne das Feld) ⇒ Klausel fail-closed.
         "proposed_instrument_override": proposal.get("proposed_instrument_override"),
+        # Issue #1357 (GH #1253) — Eingang der Klausel ``holdout_disjoint`` (fehlend ⇒ fail-closed).
+        "selection_end_utc": proposal.get("selection_end_utc"),
+        "holdout_start_utc": proposal.get("holdout_start_utc"),
+        "holdout_embargo_days": proposal.get("holdout_embargo_days"),
+        "holdout_overlap_days": proposal.get("holdout_overlap_days"),
         # Issue #1042 (Katalog #866, E-1) — siehe _clause_cost_stress-Docstring.
         "expectancy_cost_stress_2x": holdout_symbol.get("oos_expectancy_cost_stress_2x"),
         # Issue #1073 (Katalog #866-2) — siehe _clause_expectancy_outlier_robust-Docstring. Issue

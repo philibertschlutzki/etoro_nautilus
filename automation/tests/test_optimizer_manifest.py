@@ -49,16 +49,18 @@ def test_build_trial_end_time_weekday(tmp_path):
         study_name="s", trial_number=0, seed=42, now=now, holdout_days=45, n_folds=4)
     m = json.loads(Path(mpath).read_text("utf-8"))
     assert m["manifest_version"] == "1.0"
-    assert m["global_settings"]["end_time"] == "2026-04-26T00:00:00Z"   # 2026-06-10 − 45 Tage
+    # 2026-06-10 − 45 Tage Holdout − 3 Tage Holdout-Embargo (Issue #1357, backtest.json)
+    assert m["global_settings"]["end_time"] == "2026-04-23T00:00:00Z"
     assert m["strategies"][0]["params"]["sma_period"] == 8
 
 def test_build_trial_sunday_rollback(tmp_path):
-    now = dt.datetime(2026, 6, 7, 9, 0, tzinfo=UTC)     # Sonntag → −1 Tag (06.06.) − 45
+    now = dt.datetime(2026, 6, 7, 9, 0, tzinfo=UTC)     # Sonntag → −1 Tag (06.06.) − 45 − 3 Embargo
     _, mpath = trial_config.build_trial(
         "SmaCrossoverStrategy", {}, study_name="s", trial_number=1, seed=42,
         now=now, holdout_days=45, n_folds=4)
     m = json.loads(Path(mpath).read_text("utf-8"))
-    assert m["global_settings"]["end_time"] == "2026-04-22T00:00:00Z"   # 2026-06-06 − 45 Tage
+    # 2026-06-06 − 45 Tage Holdout − 3 Tage Holdout-Embargo (Issue #1357)
+    assert m["global_settings"]["end_time"] == "2026-04-19T00:00:00Z"
 
 # --- build_trial: self-describing manifest (ISSUE-OPT-374) -----------------
 def test_build_trial_manifest_is_self_describing():

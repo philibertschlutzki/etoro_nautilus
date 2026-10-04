@@ -2216,6 +2216,14 @@ def _study_record(proposal: dict, study,
         "budget_executed_fraction": budget_execution["budget_executed_fraction"],
         # Issue #983 Fix Punkt 3 Akzeptanzkriterium — siehe run_optimization._emit_study_summary.
         "budget_degradation_factor": study_user_attrs.get("budget_degradation_factor", 1.0),
+        # Issue #1357 (GH #1253) — Selektions-/Holdout-Geometrie (run_optimization stempelt sie beim
+        # Study-Start, trial_config.selection_holdout_geometry); Eingang von check_selection_holdout_disjoint.
+        "selection_end_utc": study_user_attrs.get("selection_end_utc"),
+        "holdout_start_utc": study_user_attrs.get("holdout_start_utc"),
+        "selection_end_ns": study_user_attrs.get("selection_end_ns"),
+        "holdout_start_ns": study_user_attrs.get("holdout_start_ns"),
+        "holdout_embargo_days": study_user_attrs.get("holdout_embargo_days"),
+        "holdout_overlap_days": study_user_attrs.get("holdout_overlap_days"),
         "stop_reason": budget_execution["stop_reason"],
         "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "coherence_violations": coherence_violations,
@@ -5842,6 +5850,10 @@ def _build_report(
     # Issue #1359 (GH #1255) Fix Punkt 4 — der Katastrophen-Stop darf im Normalbetrieb nie binden
     # (Anteil DISASTER_STOP-Exits <= 1 % je Study).
     all_checks.append(("global", _inv.check_disaster_stop_non_binding(studies_out)))
+
+    # Issue #1357 (GH #1253) — Study-Ebene: der Confirm-Holdout jeder Study enthält keine Selektionsdaten
+    # (Selektionsende + Holdout-Embargo <= Holdout-Beginn); blockierend.
+    all_checks.append(("global", _inv.check_selection_holdout_disjoint(studies_out)))
 
     # Issue #923 Fix 4 — n_periods streut innerhalb desselben Symbols stark je Strategie; ab einem
     # Faktor > deflation_max_n_periods_ratio-Kalibrierpunkt (Default 6.0 hier, 4.0 dort) ist die

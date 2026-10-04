@@ -37,6 +37,10 @@ def _record(**overrides) -> dict:
         "blocking_invariant_names": [], "expectancy_cost_stress_2x": 0.001,
         "holdout_expectancy_notional_weighted": 0.05, "holdout_expectancy_winsorized": 0.04,
         "proposed_instrument_override": {}, "run_id": "run_x",
+        # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
+        # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
+        "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
     }
     rec.update(overrides)
     return rec
@@ -81,11 +85,13 @@ def test_live_params_sha256_is_order_independent_and_value_sensitive():
 # ─── Zwölfte Deployment-Klausel ────────────────────────────────────────────────────
 
 def test_twelfth_clause_exists_last_and_completeness_check_follows():
-    assert len(DEPLOYMENT_CLAUSES) == 12
-    assert DEPLOYMENT_CLAUSES[-1] == "live_params_match_promotion"
+    # Issue #1357 (GH #1253) haengt ``holdout_disjoint`` als dreizehnte Klausel dahinter.
+    assert len(DEPLOYMENT_CLAUSES) == 13
+    assert DEPLOYMENT_CLAUSES[11] == "live_params_match_promotion"
     full = {"deployment_gate": {"clause_results": {c: True for c in DEPLOYMENT_CLAUSES}}}
     assert check_deployment_gate_completeness({"X": full}).passed is True
-    eleven = {"deployment_gate": {"clause_results": {c: True for c in DEPLOYMENT_CLAUSES[:-1]}}}
+    eleven = {"deployment_gate": {"clause_results": {
+        c: True for c in DEPLOYMENT_CLAUSES if c != "live_params_match_promotion"}}}
     r = check_deployment_gate_completeness({"X": eleven})
     assert r.passed is False and r.actual == {"X": ["live_params_match_promotion"]}
 
@@ -241,6 +247,10 @@ def test_phase5_whitelist_entry_carries_live_params_sha256_and_override(tmp_path
         "status": "READY_FOR_PR", "R_symbol": 1.0, "R_global": 0.2, "promotion_margin": 0.0,
         "data_snapshot_sha256": catalog_fingerprint(),
         "proposed_instrument_override": override,
+        # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
+        # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
+        "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
         "holdout": {"symbol": {
             "deflated_dsr": 0.97, "oos_psr": 0.80, "holdout_ci_lower_sortino": 0.05, "pbo": 0.30,
             "pbo_n_configs": 40, "blocking_invariant_names": [],

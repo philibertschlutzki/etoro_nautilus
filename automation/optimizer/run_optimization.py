@@ -1686,7 +1686,8 @@ def make_objective(
             trial_number=trial.number,
             seed=seed,
             n_folds=4,
-            holdout_days=45,
+            # Issue #1357 (GH #1253) — KEIN holdout_days-Argument: build_trial liest es (und das
+            # Holdout-Embargo) aus der Config, dieselbe Quelle wie confirm.py.
             copy_config=study_config_dir is None,
             study_config_dir=study_config_dir,
         )
@@ -1996,12 +1997,12 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True)
-    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
-    # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
-    # build_trial uebergibt (siehe make_objective) — muessen hier identisch sein, sonst wuerde
-    # jeder Trial gegen das FALSCHE eingefrorene walk_forward laufen.
+    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4 und die
+    # Holdout-Tage aus der Config (Issue #1357: kein Literal) sind exakt die Werte, die die Objective-
+    # Closure unten pro Trial an build_trial uebergibt (siehe make_objective) — muessen hier identisch
+    # sein, sonst wuerde jeder Trial gegen das FALSCHE eingefrorene walk_forward laufen.
     study_config_dir = freeze_study_config(
-        study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
+        study_name, resolve_wf_settings(cfg_dir, n_folds=4), base_cfg=cfg_dir)
     disk_guard_cb = partial(disk_budget_callback, opt_data=opt_data)
     # Issue #803 — periodischer Fruehabbruch bei systematischer Kohaerenz-Verletzung (statt erst
     # nach dem vollen Budget zu urteilen).
@@ -3574,6 +3575,25 @@ def _resolve_family_median_n_periods(trial: "optuna.trial.Trial") -> float | Non
     return float(statistics.median(values))
 
 
+def _stamp_selection_holdout_geometry(study, cfg_dir: Path, *, catalog_newest_ns: int | None,
+                                     n_folds: int | None = None, now: "dt.datetime | None" = None) -> dict:
+    """Issue #1357 (GH #1253) — stempelt die Selektions-/Holdout-Geometrie in ``study.user_attrs`` (siehe
+    ``trial_config.selection_holdout_geometry``) und liefert sie zurück."""
+    import datetime as dt
+
+    from automation.optimizer.trial_config import selection_holdout_geometry
+
+    with open(Path(cfg_dir) / "backtest.json", "r", encoding="utf-8") as f:
+        bt_data = json.load(f) or {}
+    geometry = selection_holdout_geometry(
+        bt_data, now=now or dt.datetime.now(dt.timezone.utc), catalog_newest_ns=catalog_newest_ns,
+        n_folds=n_folds)
+    for key in ("selection_end_utc", "holdout_start_utc", "selection_end_ns", "holdout_start_ns",
+                "holdout_embargo_days", "holdout_overlap_days"):
+        study.set_user_attr(key, geometry[key])
+    return geometry
+
+
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial,
                           catalog_newest_ns: int | None = None,
@@ -3626,7 +3646,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial_number=trial.number,
             seed=seed,
             n_folds=4,
-            holdout_days=45,
+            # Issue #1357 (GH #1253) — holdout_days/holdout_embargo_days aus der Config (build_trial).
             instruments=[symbol],
             catalog_newest_ns=catalog_newest_ns,
             catalog_span_days=catalog_span_days,
@@ -4434,11 +4454,22 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # ist fuer denselben Zweck nicht besser als ein WARNING-Logeintrag in einem 6-MB-Log.
     study.set_user_attr("budget_degradation_factor", round(_degrade_factor, 4))
 
-    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
-    # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
-    # build_trial uebergibt (siehe make_symbol_objective) — muessen hier identisch sein.
+    # Issue #1357 (GH #1253) — Selektions-/Holdout-Geometrie dieser Study stempeln (dieselbe Fenster-
+    # Funktion und dieselben Settings wie build_trial/confirm.py): selection_end_utc, holdout_start_utc,
+    # holdout_overlap_days — Eingang von check_selection_holdout_disjoint (report.py) und der
+    # Deployment-Klausel ``holdout_disjoint`` (über das Proposal).
+    try:
+        _stamp_selection_holdout_geometry(study, cfg_dir, catalog_newest_ns=catalog_newest_ns, n_folds=4)
+    except Exception:
+        logging.getLogger("optimizer").warning(
+            "[#1357] Selektions-/Holdout-Geometrie nicht stempelbar — die Deployment-Klausel "
+            "holdout_disjoint bleibt fail-closed.", exc_info=True)
+
+    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4 und die
+    # Holdout-Tage aus der Config (Issue #1357: kein Literal) sind exakt die Werte, die die Objective-
+    # Closure unten pro Trial an build_trial uebergibt (siehe make_symbol_objective).
     study_config_dir = freeze_study_config(
-        study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
+        study_name, resolve_wf_settings(cfg_dir, n_folds=4), base_cfg=cfg_dir)
     objective = make_symbol_objective(
         strategy, symbol, global_best,
         run_backtest=run_backtest, build_trial=build_trial,

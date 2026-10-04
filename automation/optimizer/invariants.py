@@ -9193,6 +9193,54 @@ def check_cost_model_realism_admissible(
 
 
 @invariant_scope("run")
+def check_selection_holdout_disjoint(geometries) -> InvariantResult:
+    """Issue #1357 (GH #1253, P0) — der Confirm-Holdout darf KEINE Selektionsdaten enthalten:
+    ``selection_end_ns + holdout_embargo_days · 1 d <= holdout_start_ns`` (``selection_end`` = Ende des
+    letzten Selektions-OOS-Folds, ``trial_config.selection_holdout_geometry``). Vorher lief die Selektion
+    mit einem Literal (45 Tage) gegen einen 60-Tage-Holdout aus der Config: 15 Holdout-Tage (25 %) waren
+    Selektionsdaten, PSR/DSR/Bootstrap-CI/R-Edge des Holdouts aufwärts verzerrt.
+
+    ``geometries`` — EINE Geometrie (Run-Ebene: Preflight aus der Config, ``sweep.py``) oder eine Liste von
+    Study-Records mit denselben Feldern (Study-Ebene: ``report.py``; Studies ohne die Felder zählen als
+    nicht gemessen). Nichts gemessen ⇒ INCONCLUSIVE (``passed=None``)."""
+    expected = "selection_end + holdout_embargo_days <= holdout_start (holdout_overlap_days == 0)"
+    items = [geometries] if isinstance(geometries, dict) else list(geometries or [])
+    measured, violations = 0, {}
+    for i, g in enumerate(items):
+        sel, hold, emb = g.get("selection_end_ns"), g.get("holdout_start_ns"), g.get("holdout_embargo_days")
+        if sel is None or hold is None or emb is None:
+            continue
+        measured += 1
+        if int(sel) + int(emb) * 86_400_000_000_000 > int(hold):
+            label = f"{g.get('strategy')}/{g.get('symbol')}" if g.get("strategy") else f"geometry_{i}"
+            violations[label] = {
+                "selection_end_utc": g.get("selection_end_utc"), "holdout_start_utc": g.get("holdout_start_utc"),
+                "holdout_embargo_days": emb, "holdout_overlap_days": g.get("holdout_overlap_days"),
+            }
+    if measured == 0:
+        return InvariantResult(
+            name="check_selection_holdout_disjoint", passed=None, expected=expected, actual=None,
+            severity="blocking", inconclusive=True, evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "NO_SELECTION_HOLDOUT_GEOMETRY",
+                          "n_studies_measured": 0},
+            detail="Keine Selektions-/Holdout-Geometrie gestempelt — nicht auswertbar.")
+    passed = not violations
+    provenance = {
+        label: {"numerator": v["selection_end_utc"], "denominator": v["holdout_start_utc"],
+                "numerator_definition": "selection_end_utc + holdout_embargo_days",
+                "source_field": "selection_end_utc/holdout_start_utc/holdout_embargo_days"}
+        for label, v in violations.items()} or None
+    return InvariantResult(
+        name="check_selection_holdout_disjoint", passed=passed, expected=expected,
+        actual=violations or {"n_measured": measured}, severity="blocking", provenance=provenance,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": measured},
+        detail=("OK" if passed else
+                f"Selektion und Confirm-Holdout überlappen bzw. unterschreiten das Holdout-Embargo: "
+                f"{violations} — der Holdout bestätigt Selektionsdaten (Issue #1357)."),
+    )
+
+
+@invariant_scope("run")
 def check_promotion_confidence_reachability(
     t_holdout: int | None, promotion_confidence: float | None, *,
     reference_sr: float = 0.11386,

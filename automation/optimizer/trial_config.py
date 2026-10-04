@@ -13,6 +13,62 @@ def config_dir() -> Path:
     return PROJECT_ROOT / "automation" / "config"
 
 
+# Issue #1357 (GH #1253, P0) — Holdout-Disjunktheit. Vorher existierten drei Holdout-Begriffe:
+# Preflight/Geometrie/Confirm lasen ``walk_forward.holdout_days`` (60), die Selektion lief mit vier
+# Literalen (holdout_days 45) in ``run_optimization.py``, und die Fallback-Defaults hier/in
+# ``confirm.py`` waren ebenfalls 45 — der letzte Selektions-OOS-Fold reichte 15 Tage (25 %) in den
+# Confirm-Holdout hinein. Jetzt: ``holdout_days`` NUR aus der Config (fehlender Key wirft), plus ein
+# Embargo zwischen Selektionsende und Holdout-Beginn.
+HOLDOUT_EMBARGO_DAYS_DEFAULT = 3
+# Der Confirm-Holdout-Trial IST der Holdout: er schneidet selbst keinen weiteren Holdout ab und hält
+# kein Holdout-Embargo (sein einziger OOS-Fold ist ``[Katalogende − holdout_days, Katalogende]``).
+CONFIRM_TRIAL_INNER_HOLDOUT_DAYS = 0
+
+
+class HoldoutConfigError(ValueError):
+    """``walk_forward.holdout_days``/``holdout_embargo_days`` fehlt oder ist unzulässig (Issue #1357)."""
+
+
+def _holdout_days_from_bt_data(bt_data: dict) -> int:
+    wf = (bt_data or {}).get("walk_forward") or {}
+    if "holdout_days" not in wf:
+        raise HoldoutConfigError(
+            "backtest.json: walk_forward.holdout_days fehlt — kein Fallback-Default (Issue #1357: ein "
+            "zweiter Holdout-Begriff liess die Selektion in den Confirm-Holdout hineinlaufen).")
+    value = wf["holdout_days"]
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise HoldoutConfigError(f"walk_forward.holdout_days={value!r} ist keine positive ganze Zahl.")
+    return value
+
+
+def resolve_holdout_days(cfg_dir: Path | None = None) -> int:
+    """Issue #1357 — DIE Quelle von ``holdout_days`` (Selektion, Confirm, Preflights): ``backtest.json
+    ['walk_forward']['holdout_days']``; fehlender Key ⇒ ``HoldoutConfigError`` (kein Default)."""
+    base = cfg_dir if cfg_dir is not None else config_dir()
+    with open(Path(base) / "backtest.json", "r", encoding="utf-8") as f:
+        return _holdout_days_from_bt_data(json.load(f) or {})
+
+
+def holdout_embargo_floor_days() -> int:
+    """Untergrenze des Holdout-Embargos: ``ceil(max_bars_in_trade_cap / BARS_PER_TRADING_DAY) + 1`` — eine
+    beim Selektionsende offene Position (höchstens ``max_bars_in_trade_cap`` Session-Bars) ist vor
+    Holdout-Beginn sicher geschlossen, plus ein Tag Puffer."""
+    import math
+    from automation.optimizer._contracts import BARS_PER_TRADING_DAY, MAX_BARS_IN_TRADE_HARD_CAP
+    return int(math.ceil(MAX_BARS_IN_TRADE_HARD_CAP / BARS_PER_TRADING_DAY)) + 1
+
+
+def _holdout_embargo_days_from_bt_data(bt_data: dict) -> int:
+    wf = (bt_data or {}).get("walk_forward") or {}
+    value = wf.get("holdout_embargo_days", HOLDOUT_EMBARGO_DAYS_DEFAULT)
+    floor = holdout_embargo_floor_days()
+    if isinstance(value, bool) or not isinstance(value, int) or value < floor:
+        raise HoldoutConfigError(
+            f"walk_forward.holdout_embargo_days={value!r} unterschreitet die Untergrenze {floor} "
+            f"(ceil(max_bars_in_trade_cap / BARS_PER_TRADING_DAY) + 1, Issue #1357).")
+    return value
+
+
 def compute_walk_forward_window(
     *,
     now: dt.datetime,
@@ -22,6 +78,7 @@ def compute_walk_forward_window(
     n_folds: int,
     embargo_period_days: int = 0,
     catalog_newest_ns: int | None = None,
+    holdout_embargo_days: int = 0,
 ) -> tuple[dt.datetime, dt.datetime]:
     """Issue #457 (Pitfall #84) — die EINZIGE Quelle der Walk-Forward-Fenster-Arithmetik.
 
@@ -46,6 +103,11 @@ def compute_walk_forward_window(
     ``oos_end_{n-1} = start + is + embargo + n_folds×oos = end`` (kein Overflow). Die früheste
     OOS-Sub-Fenster-Grenze (fold=0) ist damit ``start + is_window_days + embargo_period_days``.
     ``embargo_period_days=0`` reproduziert das Alt-Verhalten bit-identisch.
+
+    Issue #1357 (GH #1253) — ``holdout_embargo_days`` liegt ZWISCHEN Selektionsende und Holdout-Beginn:
+    ``end`` -= ``holdout_days`` + ``holdout_embargo_days``. Der Confirm-Holdout ist ``[Katalogende −
+    holdout_days, Katalogende]``; der letzte Selektions-OOS-Fold endet damit ``holdout_embargo_days`` VOR
+    dessen Beginn (``selection_holdout_geometry``). Default 0 ⇒ bit-identisch zum Alt-Verhalten.
     """
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if catalog_newest_ns is not None:
@@ -55,7 +117,7 @@ def compute_walk_forward_window(
     # Sonntag (weekday() == 6) → Samstag, BEVOR holdout abgezogen wird.
     if end.weekday() == 6:
         end -= dt.timedelta(days=1)
-    end -= dt.timedelta(days=holdout_days)
+    end -= dt.timedelta(days=holdout_days + holdout_embargo_days)
     start = end - dt.timedelta(days=is_window_days + embargo_period_days + n_folds * oos_window_days)
     return start, end
 
@@ -65,6 +127,7 @@ def _wf_settings_from_bt_data(
     holdout_days: int | None = None,
     n_folds: int | None = None,
     oos_window_days_override: int | None = None,
+    holdout_embargo_days: int | None = None,
 ) -> dict:
     """Issue #796 — aus ``build_trial`` extrahiert (rein, kein I/O), damit die Walk-Forward-
     ``wf_settings`` NIE zwischen der Pro-Trial-Manifest-Konstruktion und ``freeze_study_config``
@@ -74,7 +137,10 @@ def _wf_settings_from_bt_data(
     ``resolve_wf_settings`` fuer die I/O-Variante)."""
     wf = bt_data.get("walk_forward", {})
     if holdout_days is None:
-        holdout_days = wf.get("holdout_days", 45)
+        # Issue #1357 — kein Fallback-Default: ein fehlender Key wirft (HoldoutConfigError).
+        holdout_days = _holdout_days_from_bt_data(bt_data)
+    if holdout_embargo_days is None:
+        holdout_embargo_days = _holdout_embargo_days_from_bt_data(bt_data)
     if n_folds is None:
         n_folds = wf.get("splits", 1)
 
@@ -86,6 +152,7 @@ def _wf_settings_from_bt_data(
         "oos_window_days": oos_window_days,
         "splits": n_folds,
         "holdout_days": holdout_days,
+        "holdout_embargo_days": holdout_embargo_days,
         "embargo_period_days": embargo_period_days,
         "walk_forward_active": True,
     }
@@ -97,6 +164,7 @@ def resolve_wf_settings(
     holdout_days: int | None = None,
     n_folds: int | None = None,
     oos_window_days_override: int | None = None,
+    holdout_embargo_days: int | None = None,
 ) -> dict:
     """I/O-Variante von ``_wf_settings_from_bt_data`` fuer Aufrufer OHNE bereits geladenes
     ``bt_data`` (``confirm.py``/``run_optimization.py`` vor ``freeze_study_config``, je Study
@@ -111,7 +179,59 @@ def resolve_wf_settings(
     return _wf_settings_from_bt_data(
         bt_data, holdout_days=holdout_days, n_folds=n_folds,
         oos_window_days_override=oos_window_days_override,
+        holdout_embargo_days=holdout_embargo_days,
     )
+
+
+def confirm_trial_kwargs(cfg_dir: Path | None = None) -> dict:
+    """Issue #1357 — die Fenster-Argumente des Confirm-Holdout-Trials (``resolve_wf_settings``/
+    ``build_trial``): ein Fold, dessen OOS-Fenster der Holdout ist (``oos_window_days_override =
+    holdout_days`` aus der Config), kein weiterer Holdout und kein Holdout-Embargo innerhalb des
+    Holdout-Trials. EINE Stelle statt Literalen in ``confirm.py``."""
+    return {
+        "holdout_days": CONFIRM_TRIAL_INNER_HOLDOUT_DAYS,
+        "n_folds": 1,
+        "oos_window_days_override": resolve_holdout_days(cfg_dir),
+        "holdout_embargo_days": 0,
+    }
+
+
+def selection_holdout_geometry(
+    bt_data: dict, *, now: dt.datetime, catalog_newest_ns: int | None = None,
+    n_folds: int | None = None,
+) -> dict:
+    """Issue #1357 (GH #1253) — Selektions- und Holdout-Fenster aus DERSELBEN Fenster-Funktion
+    (``compute_walk_forward_window``) und denselben Settings wie ``build_trial``/``confirm.py``:
+    ``selection_end`` = Ende des letzten Selektions-OOS-Folds (das äussere Fensterende, #548),
+    ``holdout_start``/``holdout_end`` = OOS-Fenster des Confirm-Holdout-Trials. ``holdout_overlap_days =
+    max(0, selection_end − holdout_start)`` in Tagen, ``gap_days = holdout_start − selection_end``."""
+    sel = _wf_settings_from_bt_data(bt_data, n_folds=n_folds)
+    _, selection_end = compute_walk_forward_window(
+        now=now, holdout_days=sel["holdout_days"], is_window_days=sel["is_window_days"],
+        oos_window_days=sel["oos_window_days"], n_folds=sel["splits"],
+        embargo_period_days=sel["embargo_period_days"], catalog_newest_ns=catalog_newest_ns,
+        holdout_embargo_days=sel["holdout_embargo_days"])
+    hold = _wf_settings_from_bt_data(
+        bt_data, holdout_days=CONFIRM_TRIAL_INNER_HOLDOUT_DAYS, n_folds=1,
+        oos_window_days_override=sel["holdout_days"], holdout_embargo_days=0)
+    _, holdout_end = compute_walk_forward_window(
+        now=now, holdout_days=hold["holdout_days"], is_window_days=hold["is_window_days"],
+        oos_window_days=hold["oos_window_days"], n_folds=hold["splits"],
+        embargo_period_days=hold["embargo_period_days"], catalog_newest_ns=catalog_newest_ns,
+        holdout_embargo_days=hold["holdout_embargo_days"])
+    holdout_start = holdout_end - dt.timedelta(days=hold["oos_window_days"])
+    gap = holdout_start - selection_end
+    return {
+        "selection_end_utc": selection_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "holdout_start_utc": holdout_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "holdout_end_utc": holdout_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "selection_end_ns": int(selection_end.timestamp()) * 1_000_000_000,
+        "holdout_start_ns": int(holdout_start.timestamp()) * 1_000_000_000,
+        "holdout_days": sel["holdout_days"],
+        "holdout_embargo_days": sel["holdout_embargo_days"],
+        "gap_days": gap.days,
+        "holdout_overlap_days": max(0, -gap.days),
+    }
 
 
 def freeze_study_config(study_name: str, wf_settings: dict, *, base_cfg: Path | None = None) -> Path:
@@ -151,6 +271,7 @@ def build_trial(
     holdout_days: int | None = None,
     n_folds: int | None = None,
     oos_window_days_override: int | None = None,
+    holdout_embargo_days: int | None = None,
     base_cfg: Path | None = None,
     instruments: list[str] | None = None,
     copy_config: bool = True,
@@ -184,11 +305,13 @@ def build_trial(
     wf_settings = _wf_settings_from_bt_data(
         bt_data, holdout_days=holdout_days, n_folds=n_folds,
         oos_window_days_override=oos_window_days_override,
+        holdout_embargo_days=holdout_embargo_days,
     )
     is_window_days = wf_settings["is_window_days"]
     oos_window_days = wf_settings["oos_window_days"]
     n_folds = wf_settings["splits"]
     holdout_days = wf_settings["holdout_days"]
+    holdout_embargo_days = wf_settings["holdout_embargo_days"]
     embargo_period_days = wf_settings["embargo_period_days"]
 
     # Issue #445 — Fail-Loud-Startup-Assertion: die Walk-Forward-Geometrie darf die dokumentierte
@@ -199,12 +322,14 @@ def build_trial(
     wf = bt_data.get("walk_forward", {})
     data_history_days = wf.get("data_history_days")
     if data_history_days is not None:
-        required_total = is_window_days + (n_folds * oos_window_days) + embargo_period_days + holdout_days
+        required_total = (is_window_days + (n_folds * oos_window_days) + embargo_period_days + holdout_days
+                          + holdout_embargo_days)
         if required_total > data_history_days:
             raise ValueError(
                 f"Walk-Forward-Geometrie übersteigt die dokumentierte Datenhistorie (Issue #445): "
                 f"is_window {is_window_days} + splits {n_folds} × oos {oos_window_days} + embargo {embargo_period_days} + holdout "
-                f"{holdout_days} = {required_total} Tage > data_history_days {data_history_days}. "
+                f"{holdout_days} + holdout_embargo {holdout_embargo_days} = {required_total} Tage > "
+                f"data_history_days {data_history_days}. "
                 f"Reduziere die Geometrie ODER erhöhe backtest.json.walk_forward.data_history_days "
                 f"(und beschaffe entsprechend mehr Katalog-Historie)."
             )
@@ -217,7 +342,8 @@ def build_trial(
     if catalog_span_days is not None:
         from automation.optimizer.gate import assert_walk_forward_geometry, InsufficientGeometryError
         _wf_geometry = {"is_window_days": is_window_days, "oos_window_days": oos_window_days,
-                        "splits": n_folds, "holdout_days": holdout_days}
+                        "splits": n_folds, "holdout_days": holdout_days,
+                        "holdout_embargo_days": holdout_embargo_days}
         _symbol = instruments[0] if instruments else None
         try:
             assert_walk_forward_geometry(actual_span_days=catalog_span_days,
@@ -247,6 +373,7 @@ def build_trial(
         n_folds=n_folds,
         embargo_period_days=embargo_period_days,
         catalog_newest_ns=catalog_newest_ns,
+        holdout_embargo_days=holdout_embargo_days,
     )
 
     # Setup directories

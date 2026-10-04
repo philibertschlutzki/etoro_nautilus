@@ -183,7 +183,8 @@ def test_enumerate_emits_gate1_rejection_on_insufficient_history(monkeypatch):
 
 def test_build_trial_fail_loud_on_insufficient_catalog_span():
     now = dt.datetime(2026, 5, 18, tzinfo=UTC)
-    # Default-Geometrie fordert 405 Tage; nur 360 real vorhanden ⇒ deterministischer Abbruch.
+    # Default-Geometrie fordert 405 Tage + 3 Tage Holdout-Embargo (Issue #1357) = 408; nur 360 real
+    # vorhanden ⇒ deterministischer Abbruch.
     with pytest.raises(InsufficientGeometryError) as ei:
         build_trial(
             "ComboTrendVwapStrategy", {}, study_name="issue531_fail",
@@ -191,7 +192,7 @@ def test_build_trial_fail_loud_on_insufficient_catalog_span():
             instruments=["TSLA.ETORO"], copy_config=False, catalog_span_days=360.0,
         )
     assert ei.value.code == "REJECT_DATA_INSUFFICIENT_GEOMETRY"
-    assert ei.value.required == 405.0 and ei.value.actual == 360.0
+    assert ei.value.required == 408.0 and ei.value.actual == 360.0
 
 
 def test_build_trial_noop_without_catalog_span(tmp_path):

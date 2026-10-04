@@ -41,6 +41,10 @@ def _promoted_proposal(**holdout_symbol_overrides) -> dict:
         # Issue #1360 (GH #1256) — zwoelfte Klausel 'live_params_match_promotion': ein leeres
         # promoviertes Override besteht trivial, ein fehlendes Feld waere fail-closed.
         "proposed_instrument_override": {},
+        # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
+        # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
+        "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
         "holdout": {"symbol": holdout_symbol},
     }
 

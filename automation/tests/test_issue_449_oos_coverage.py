@@ -217,8 +217,11 @@ def test_enumerate_preflight_failopen_without_telemetry():
 def test_compute_oos_window_start_ns_matches():
     now = dt.datetime(2026, 6, 25, tzinfo=dt.timezone.utc)
     start_ns = sweep.compute_oos_window_start_ns(_GATE_CFG, now=now)
+    # Issue #1357 — dasselbe Holdout-Embargo wie build_trial (Default 3 ohne Config-Key).
+    from automation.optimizer.trial_config import HOLDOUT_EMBARGO_DAYS_DEFAULT
     start, _end = compute_walk_forward_window(
-        now=now, holdout_days=45, is_window_days=180, oos_window_days=45, n_folds=4)
+        now=now, holdout_days=45, is_window_days=180, oos_window_days=45, n_folds=4,
+        holdout_embargo_days=HOLDOUT_EMBARGO_DAYS_DEFAULT)
     expected = int((start).timestamp()) * 1_000_000_000
     assert start_ns == expected
 

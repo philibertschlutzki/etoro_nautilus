@@ -32,7 +32,9 @@ from automation.optimizer._contracts import pair_key, split_pair_key, ReportCoho
 from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
-from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
+from automation.optimizer.trial_config import (
+    HOLDOUT_EMBARGO_DAYS_DEFAULT, config_dir, compute_walk_forward_window,
+)
 from automation.optimizer.manifest import (
     WORK, PERSISTENT_CACHE_ROOT, RUN_FINGERPRINT_INDEX_PATH, write_json_atomic,
     catalog_fingerprint, library_versions, git_commit, sha256_file, read_jsonl)
@@ -1722,6 +1724,8 @@ def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None,
         oos_window_days=wf["oos_window_days"],
         n_folds=wf["splits"],
         catalog_newest_ns=catalog_newest_ns,
+        # Issue #1357 — dasselbe Holdout-Embargo wie build_trial (sonst begänne das Laden 3 Tage später).
+        holdout_embargo_days=wf.get("holdout_embargo_days", HOLDOUT_EMBARGO_DAYS_DEFAULT),
     )
     return int(start.timestamp()) * 1_000_000_000
 
@@ -3376,6 +3380,35 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         logging.getLogger("optimizer").debug(
             "[#1340] Promotionskonfidenz-Reachability-Preflight fehlgeschlagen (non-fatal).",
             exc_info=True)
+
+    # Issue #1357 (GH #1253, P0) — Run-Ebene: Selektion und Confirm-Holdout sind disjunkt (Selektionsende +
+    # Holdout-Embargo <= Holdout-Beginn), berechnet aus DERSELBEN Fenster-Funktion und Config wie
+    # build_trial/confirm.py. Eine fehlende/unzulässige Holdout-Config ist ein FAIL (blockierend), kein
+    # stiller Default. Die Study-Ebene prüft report.py über die gestempelten Study-Geometrien.
+    try:
+        from automation.optimizer.trial_config import HoldoutConfigError, selection_holdout_geometry
+        _bt_cfg_disjoint = json.loads((config_dir() / "backtest.json").read_text("utf-8")) or {}
+        try:
+            _geometry = selection_holdout_geometry(_bt_cfg_disjoint, now=dt.datetime.now(dt.timezone.utc))
+            _disjoint = invariants.check_selection_holdout_disjoint(_geometry)
+        except HoldoutConfigError as _cfg_err:
+            _disjoint = invariants.InvariantResult(
+                name="check_selection_holdout_disjoint", passed=False,
+                expected="walk_forward.holdout_days/holdout_embargo_days konfiguriert und zulässig",
+                actual=str(_cfg_err), severity="blocking", detail=f"HOLDOUT_CONFIG_INVALID: {_cfg_err}")
+        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+            "name": "check_selection_holdout_disjoint",
+            "check": "check_selection_holdout_disjoint",
+            "passed": _disjoint.passed, "source": "sweep", "scope": None,
+            "expected": _disjoint.expected, "actual": _disjoint.actual,
+            "detail": _disjoint.detail, "severity": _disjoint.severity,
+        }, level=logging.INFO if _disjoint.passed is not False else logging.ERROR)
+        if _disjoint.passed is False:
+            logging.getLogger("optimizer").error(
+                "[#1357] Selektion und Confirm-Holdout nicht disjunkt: %s", _disjoint.detail)
+    except Exception:
+        logging.getLogger("optimizer").debug(
+            "[#1357] Selektions-/Holdout-Disjunktheits-Preflight fehlgeschlagen (non-fatal).", exc_info=True)
 
     # Issue #1334 (GH #1228) — Auflösungs-Homogenitäts-Preflight VOR Gate 1: ``per_symbol_span_
     # stats`` oben misst nur die RANDPUNKTE (``latest - earliest``) — ein Katalog kann eine grosse
