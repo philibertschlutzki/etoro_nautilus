@@ -1230,7 +1230,8 @@ def resolve_spread_bps(inst_id_str: str,
                        spread_bps_by_asset_class: dict | None,
                        spread_bps_by_symbol: dict | None,
                        asset_class_key: str = "DEFAULT",
-                       *, tick_floor_bps: float = 0.0) -> float:
+                       *, tick_floor_bps: float = 0.0,
+                       measured_spread_bps: float | None = None) -> float:
     """Issue #566 — Single Source of Truth für die Spread-Auflösung (bps).
 
     Auflösungsreihenfolge (strikt): Symbol-Override (``spread_bps_by_symbol[inst_id]``) →
@@ -1250,18 +1251,30 @@ def resolve_spread_bps(inst_id_str: str,
     jeden Aufrufer, der ihn nicht setzt) ist eine physikalische UNTERGRENZE
     (``tick_floor_spread_bps``): das Ergebnis ist NIE kleiner als dieser Wert, unabhängig davon,
     ob die Config-Konstante (Symbol-Override oder Asset-Class) darunter liegt. ``max(...)`` ist
-    Absicht — bei Kostenschätzung ist die konservativere (höhere) Zahl die sicherere."""
+    Absicht — bei Kostenschätzung ist die konservativere (höhere) Zahl die sicherere.
+
+    Issue #1366 (GH #1263) — ``measured_spread_bps`` (Median des gemessenen eToro-Spreads aus den Echt-Ticks,
+    ``calibration.calibrate_spread_from_realtick``) ist eine weitere Untergrenze: ``max(Config, gemessen)``,
+    sobald kalibriert. ``None`` ⇒ bit-identisch."""
+    floor = max(tick_floor_bps, float(measured_spread_bps) if measured_spread_bps is not None else 0.0)
     if spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol:
-        return max(float(spread_bps_by_symbol[inst_id_str]), tick_floor_bps)
+        return max(float(spread_bps_by_symbol[inst_id_str]), floor)
     if not spread_bps_by_asset_class:
-        return tick_floor_bps
+        return floor
     if asset_class_key not in spread_bps_by_asset_class:
         raise ValueError(
             f"resolve_spread_bps: asset_class_key='{asset_class_key}' ({inst_id_str}) ist nicht in "
             f"spread_bps_by_asset_class ({sorted(spread_bps_by_asset_class)}) — stiller Rückfall auf "
             f"DEFAULT ist seit Issue #898 verboten (Konfigurationsfehler, kein unbekanntes Symbol)."
         )
-    return max(float(spread_bps_by_asset_class[asset_class_key]), tick_floor_bps)
+    return max(float(spread_bps_by_asset_class[asset_class_key]), floor)
+
+
+def _measured_spread_p50(inst_id_str: str, calibrated_spread_by_symbol: dict | None) -> float | None:
+    """Issue #1366 — gemessener Median-Spread (bps) des Symbols aus dem Kalibrierungs-Cache (oder ``None``)."""
+    entry = (calibrated_spread_by_symbol or {}).get(inst_id_str) or {}
+    value = entry.get("p50")
+    return float(value) if value is not None else None
 
 
 def resolve_atr_floor_bps(inst_id_str: str,
@@ -2790,8 +2803,13 @@ def _read_default_round_trip_cost_bps(inst_id_str: str | None = None) -> float:
                 has_symbol_override = bool(inst_id_str in spread_by_symbol)
                 if spread_by_asset_class and not has_symbol_override:
                     asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
+                # Issue #1366 — derselbe gemessene Spread-Floor wie im Worker (Kalibrierungs-Cache).
+                from automation.optimizer.calibration import read_calibrated_spread_cache
+                from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT
                 spread_resolved = resolve_spread_bps(
-                    inst_id_str, spread_by_asset_class, spread_by_symbol, asset_class_key)
+                    inst_id_str, spread_by_asset_class, spread_by_symbol, asset_class_key,
+                    measured_spread_bps=_measured_spread_p50(
+                        inst_id_str, read_calibrated_spread_cache(PERSISTENT_CACHE_ROOT)))
             else:
                 spread_resolved = float(spread_by_asset_class.get("DEFAULT", 4.0))
             val = commission_bps + spread_resolved
@@ -5542,7 +5560,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day_long: float = 0.0, financing_bps_per_day_short: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class") -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day_long: float = 0.0, financing_bps_per_day_short: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class", spread_telemetry: dict | None = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -6516,6 +6534,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Study von der feineren, diskriminierenden Kalibrierung profitiert oder auf den
             # Asset-Class-Fallback zurueckfiel.
             _level_metrics["slippage_calibration_scope"] = slippage_calibration_scope
+            # Issue #1366 (GH #1263) — angewandter Spread, gemessene Referenz (Echt-Ticks) und Quelle;
+            # Rohmaterial fuer invariants.check_modeled_spread_not_below_measured.
+            for _k, _v in (spread_telemetry or {}).items():
+                _level_metrics[_k] = _v
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -7489,6 +7511,10 @@ def run_single_backtest_worker(
     # RTH-Fenster (resolve_session_hours_by_asset_class/is_within_session_hours, #1260/GH #1130),
     # dieselbe EINMAL-im-Elternprozess-geladen-Konvention wie atr_floor_bps_by_asset_class oben.
     session_hours_by_asset_class: dict | None = None,
+    # Issue #1366 (GH #1263) — gemessener eToro-Spread je Symbol (``calibrated_spread.json``,
+    # ``calibration.calibrate_spread_from_realtick``), im Elternprozess EINMAL geladen; der angewandte Spread
+    # ist ``max(Config, gemessener Median)``.
+    calibrated_spread_by_symbol: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -7594,9 +7620,17 @@ def run_single_backtest_worker(
                 _tick_floor_bps = tick_floor_spread_bps(
                     _median_price_sample, 10.0 ** -_price_precision)
 
-            spread_bps = resolve_spread_bps(
+            _spread_bps_config = resolve_spread_bps(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key,
                 tick_floor_bps=_tick_floor_bps)
+            # Issue #1366 (GH #1263) — gemessener Spread als weitere Untergrenze (max(Config, Median)).
+            _measured_spread = (calibrated_spread_by_symbol or {}).get(inst_id_str) or {}
+            spread_bps = resolve_spread_bps(
+                inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key,
+                tick_floor_bps=_tick_floor_bps,
+                measured_spread_bps=_measured_spread_p50(inst_id_str, calibrated_spread_by_symbol))
+            _spread_source = ("realtick" if spread_bps > _spread_bps_config + 1e-12
+                              else ("symbol_override" if has_symbol_override else "config"))
             atr_floor_bps_resolved = resolve_atr_floor_bps(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
             # Issue #987/#1141 (Katalog #986) — dieselbe Asset-Class-Auflösung wie oben, fail-open
@@ -7677,6 +7711,11 @@ def run_single_backtest_worker(
                 "source": _cost_source,
                 "tick_floor_bps": round(_tick_floor_bps, 4),
                 "atr_floor_bps": atr_floor_bps_resolved,
+                # Issue #1366 (GH #1263) — Herkunft und gemessene Referenz des angewandten Spreads.
+                "spread_source": _spread_source,
+                "spread_bps_config": _spread_bps_config,
+                "spread_bps_measured_p50": _measured_spread.get("p50"),
+                "spread_bps_measured_p75": _measured_spread.get("p75"),
             })
 
             # Issue #1298 (GH #1175, P0) Fix Punkt 2 — Tick-/Fenster-Zähler dieses Aufrufs, ins
@@ -7910,7 +7949,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day_long=financing_bps_per_day_long, financing_bps_per_day_short=financing_bps_per_day_short, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day_long=financing_bps_per_day_long, financing_bps_per_day_short=financing_bps_per_day_short, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved, spread_telemetry={"spread_bps_applied": spread_bps, "spread_bps_measured_p50": _measured_spread.get("p50"), "spread_bps_measured_p75": _measured_spread.get("p75"), "spread_source": _spread_source})
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -8195,6 +8234,14 @@ def run_backtest() -> None:
     # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die #1260/GH #1130-
     # Verdrahtungsluecke (siehe load_ticks_from_catalog/_filter_ticks_to_session_hours-Docstrings).
     session_hours_by_asset_class = backtest_global_cfg.get("session_hours_by_asset_class", {})
+    # Issue #1366 (GH #1263) — gemessener eToro-Spread je Symbol (Kalibrierungs-Cache), EINMAL geladen.
+    calibrated_spread_by_symbol: dict = {}
+    try:
+        from automation.optimizer.calibration import read_calibrated_spread_cache
+        from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT as _PCR_SPREAD
+        calibrated_spread_by_symbol = read_calibrated_spread_cache(_PCR_SPREAD)
+    except Exception:
+        calibrated_spread_by_symbol = {}
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -8547,6 +8594,7 @@ def run_backtest() -> None:
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                         session_hours_by_asset_class=session_hours_by_asset_class,
+                        calibrated_spread_by_symbol=calibrated_spread_by_symbol,
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -8564,6 +8612,7 @@ def run_backtest() -> None:
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                         session_hours_by_asset_class=session_hours_by_asset_class,
+                        calibrated_spread_by_symbol=calibrated_spread_by_symbol,
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -8606,6 +8655,7 @@ def run_backtest() -> None:
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                         session_hours_by_asset_class=session_hours_by_asset_class,
+                        calibrated_spread_by_symbol=calibrated_spread_by_symbol,
                     )
                     break
                 except Exception as e:
@@ -8701,6 +8751,8 @@ def _run_remaining_sequentially(
     min_stop_to_cost_ratio: float = 3.0,
     # Issue #1275 (GH #1148, Katalog #1272-1297, P0) — siehe run_single_backtest_worker-Docstring.
     session_hours_by_asset_class: dict | None = None,
+    # Issue #1366 (GH #1263) — siehe run_single_backtest_worker-Docstring.
+    calibrated_spread_by_symbol: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -8725,6 +8777,7 @@ def _run_remaining_sequentially(
             slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
             min_stop_to_cost_ratio=min_stop_to_cost_ratio,
             session_hours_by_asset_class=session_hours_by_asset_class,
+            calibrated_spread_by_symbol=calibrated_spread_by_symbol,
         )
         _flush_worker_log(rem_log)
         done_count += 1

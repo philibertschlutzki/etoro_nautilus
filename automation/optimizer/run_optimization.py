@@ -136,6 +136,12 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_slippage_calibration_scope": "holdout-only (confirm.py-Re-Evaluation, siehe report.py slippage_calibration_scope, #1266/GH #1136 check_cost_stress_discriminates)",
+    # Issue #1366 (GH #1263) — Spread-Telemetrie (angewandt/gemessen/Quelle) erreicht den Study-Record
+    # ueber den Holdout (confirm.py), Eingang von check_modeled_spread_not_below_measured.
+    "oos_spread_bps_applied": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_bps_applied, #1366/GH #1263 check_modeled_spread_not_below_measured)",
+    "oos_spread_bps_measured_p50": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_bps_measured_p50, #1366/GH #1263)",
+    "oos_spread_bps_measured_p75": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_bps_measured_p75, #1366/GH #1263)",
+    "oos_spread_source": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_source, #1366/GH #1263)",
     "oos_selection_cost_basis": "holdout-only (confirm.py-Re-Evaluation, siehe report.py selection_cost_basis, #1078/#1226 check_selection_cost_basis_contract)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden

@@ -2682,6 +2682,12 @@ def _study_record(proposal: dict, study,
         # Issue #1266 (GH #1136), Pitfall #453 — welche Kalibrierungsebene tatsaechlich aufgeloest
         # hat; Rohmaterial fuer invariants.check_cost_stress_discriminates.
         "slippage_calibration_scope": holdout_metrics.get("oos_slippage_calibration_scope"),
+        # Issue #1366 (GH #1263) — angewandter vs. gemessener Spread (Echt-Ticks) und Quelle; Eingang von
+        # invariants.check_modeled_spread_not_below_measured.
+        "spread_bps_applied": holdout_metrics.get("oos_spread_bps_applied"),
+        "spread_bps_measured_p50": holdout_metrics.get("oos_spread_bps_measured_p50"),
+        "spread_bps_measured_p75": holdout_metrics.get("oos_spread_bps_measured_p75"),
+        "spread_source": holdout_metrics.get("oos_spread_source"),
         # Issue #1268 (GH #1138), Pitfall #442 (siebte Instanz) — Holdout-Exit-Telemetrie: war im
         # Holdout-Re-Evaluationspfad (confirm.py) bereits korrekt GEPARST, erreichte aber nie den
         # Study-Record; Rohmaterial fuer invariants.check_selection_cost_basis_contract.
@@ -5854,6 +5860,10 @@ def _build_report(
     # Issue #1357 (GH #1253) — Study-Ebene: der Confirm-Holdout jeder Study enthält keine Selektionsdaten
     # (Selektionsende + Holdout-Embargo <= Holdout-Beginn); blockierend.
     all_checks.append(("global", _inv.check_selection_holdout_disjoint(studies_out)))
+
+    # Issue #1366 (GH #1263) — promotions-blockierend: modellierter Spread >= gemessener Median je
+    # promoviertem Symbol.
+    all_checks.append(("global", _inv.check_modeled_spread_not_below_measured(studies_out)))
 
     # Issue #923 Fix 4 — n_periods streut innerhalb desselben Symbols stark je Strategie; ab einem
     # Faktor > deflation_max_n_periods_ratio-Kalibrierpunkt (Default 6.0 hier, 4.0 dort) ist die

@@ -9218,9 +9218,11 @@ def check_selection_holdout_disjoint(geometries) -> InvariantResult:
                 "holdout_embargo_days": emb, "holdout_overlap_days": g.get("holdout_overlap_days"),
             }
     if measured == 0:
+        # Ohne Geometrie keine Evidenz für einen Verstoss: INCONCLUSIVE ohne Abbruch (wie
+        # check_disaster_stop_non_binding, Pitfall #404) — ein Lauf ohne Studies wird dadurch nicht herabgestuft.
         return InvariantResult(
-            name="check_selection_holdout_disjoint", passed=None, expected=expected, actual=None,
-            severity="blocking", inconclusive=True, evaluable=False,
+            name="check_selection_holdout_disjoint", passed=True, expected=expected, actual=None,
+            severity="blocking", inconclusive=True,
             evaluability={"evaluable": False, "inconclusive_reason": "NO_SELECTION_HOLDOUT_GEOMETRY",
                           "n_studies_measured": 0},
             detail="Keine Selektions-/Holdout-Geometrie gestempelt — nicht auswertbar.")
@@ -9237,6 +9239,50 @@ def check_selection_holdout_disjoint(geometries) -> InvariantResult:
         detail=("OK" if passed else
                 f"Selektion und Confirm-Holdout überlappen bzw. unterschreiten das Holdout-Embargo: "
                 f"{violations} — der Holdout bestätigt Selektionsdaten (Issue #1357)."),
+    )
+
+
+@invariant_scope("promotion")
+def check_modeled_spread_not_below_measured(study_records: list[dict]) -> InvariantResult:
+    """Issue #1366 (GH #1263) — PROMOTIONS-BLOCKIEREND: je promoviertem Symbol muss der im Backtest angewandte
+    Spread (``spread_bps_applied``) mindestens der gemessene Median-Spread der eToro-Echt-Ticks
+    (``spread_bps_measured_p50``, ``calibration.calibrate_spread_from_realtick``) sein. Ein unterschätzter
+    Spread überschätzt die Rendite je Round-Trip um die Differenz (5 bps × 252 Round-Trips ≈ 12,6
+    Prozentpunkte p. a.). Ohne promoviertes Symbol mit Messung ⇒ INCONCLUSIVE ohne Abbruch."""
+    offenders: dict[str, dict] = {}
+    measured = 0
+    for r in study_records:
+        if r.get("promotion_outcome") not in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT"):
+            continue
+        p50, applied = r.get("spread_bps_measured_p50"), r.get("spread_bps_applied")
+        if p50 is None:
+            continue
+        measured += 1
+        if applied is None or float(applied) + 1e-9 < float(p50):
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "spread_bps_applied": applied, "spread_bps_measured_p50": p50,
+                "spread_source": r.get("spread_source")}
+    if measured == 0:
+        return InvariantResult(
+            name="check_modeled_spread_not_below_measured", passed=True,
+            expected="spread_bps_applied >= spread_bps_measured_p50 je promoviertem Symbol",
+            actual=None, severity="blocking", inconclusive=True,
+            evaluability={"evaluable": False, "inconclusive_reason": "NO_PROMOTED_SYMBOL_WITH_MEASURED_SPREAD",
+                          "n_studies_measured": 0},
+            detail="Kein promoviertes Symbol mit gemessenem Spread — nicht auswertbar.")
+    passed = not offenders
+    return InvariantResult(
+        name="check_modeled_spread_not_below_measured", passed=passed,
+        expected="spread_bps_applied >= spread_bps_measured_p50 je promoviertem Symbol",
+        actual=offenders or {"n_measured": measured}, severity="blocking",
+        provenance={k: {"numerator": v["spread_bps_applied"], "denominator": v["spread_bps_measured_p50"],
+                        "numerator_definition": "spread_bps_applied",
+                        "source_field": "spread_bps_applied/spread_bps_measured_p50"}
+                    for k, v in offenders.items()} or None,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": measured},
+        detail=("OK" if passed else
+                f"Modellierter Spread unter dem gemessenen Median: {offenders} — die Rendite je Round-Trip "
+                "ist um die Differenz überschätzt (Issue #1366)."),
     )
 
 

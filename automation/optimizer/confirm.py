@@ -626,6 +626,11 @@ def _metrics_dict(m) -> dict:
         # Issue #1266 (GH #1136) — siehe parsing.TournamentMetrics-Docstring; Rohmaterial fuer
         # invariants.check_cost_stress_discriminates.
         "oos_slippage_calibration_scope": getattr(m, "oos_slippage_calibration_scope", None),
+        # Issue #1366 (GH #1263) — Spread-Telemetrie fuer den Study-Record.
+        "oos_spread_bps_applied": getattr(m, "oos_spread_bps_applied", None),
+        "oos_spread_bps_measured_p50": getattr(m, "oos_spread_bps_measured_p50", None),
+        "oos_spread_bps_measured_p75": getattr(m, "oos_spread_bps_measured_p75", None),
+        "oos_spread_source": getattr(m, "oos_spread_source", None),
         # Issue #1268 (GH #1138), siebte Instanz von Pitfall #442 (Brücken-Fehlerklasse) — die
         # Exit-Telemetrie ist im HOLDOUT-Re-Evaluationspfad genau wie im regulären OOS-Pfad bereits
         # via ``m = parse_tournament(...)`` korrekt geparst (dieselbe Pipeline), erreichte aber

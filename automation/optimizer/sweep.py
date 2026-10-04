@@ -3518,6 +3518,44 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         if _stale_syms:
             syms = [s for s in syms if s not in _stale_syms]
 
+    # Issue #1366 (GH #1263) — gemessener eToro-Spread je Symbol aus den Echt-Ticks (RealTick/, nur in der
+    # Session), VOR Phase 1 kalibriert und im Kalibrierungs-Cache abgelegt: die Backtest-Worker wenden
+    # max(Config, gemessener Median) an. Best-effort — ein Lesefehler blockiert den Sweep nie.
+    if syms and using_real_optimize:
+        try:
+            from automation.optimizer.calibration import (
+                SPREAD_CALIBRATION_N_MIN_DEFAULT, calibrate_spread_from_realtick, read_calibrated_spread_cache,
+                write_calibrated_spread_cache,
+            )
+            _opt_cfg_spread = _load_optimizer_config()
+            _bt_cfg_spread = json.loads((config_dir() / "backtest.json").read_text("utf-8")) or {}
+            _catalog_spread = config_dir().parent.parent / _bt_cfg_spread.get("catalog_path", "data/nautilus")
+            _spread_cache = read_calibrated_spread_cache(PERSISTENT_CACHE_ROOT)
+            _calibrated_now: dict[str, dict] = {}
+            for _sym in syms:
+                _window_spread = _resolve_session_window(
+                    _resolve_asset_class_key_for_symbol_lightweight(_sym),
+                    _bt_cfg_spread.get("session_hours_by_asset_class"))
+                _cal = calibrate_spread_from_realtick(
+                    _sym, _catalog_spread,
+                    window_days=float(_opt_cfg_spread.get("spread_calibration_window_days", 30)),
+                    n_min=int(_opt_cfg_spread.get("spread_calibration_n_min", SPREAD_CALIBRATION_N_MIN_DEFAULT)),
+                    session_window=_window_spread)
+                if _cal is not None:
+                    _cal["calibrated_utc"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    _calibrated_now[_sym] = _cal
+            if _calibrated_now:
+                _spread_cache.update(_calibrated_now)
+                write_calibrated_spread_cache(PERSISTENT_CACHE_ROOT, _spread_cache)
+            emit_execution_event(logging.getLogger("optimizer"), "SPREAD_CALIBRATED", {
+                "n_symbols": len(syms), "n_calibrated": len(_calibrated_now),
+                "by_symbol": {k: {"p50": v["p50"], "p75": v["p75"], "n_ticks": v["n_ticks"]}
+                              for k, v in _calibrated_now.items()},
+            })
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#1366] Spread-Kalibrierung aus RealTick fehlgeschlagen (non-fatal).", exc_info=True)
+
     # Issue #1334 (GH #1228) — Auflösungs-Homogenitäts-Preflight VOR Gate 1: ``per_symbol_span_
     # stats`` oben misst nur die RANDPUNKTE (``latest - earliest``) — ein Katalog kann eine grosse
     # rohe Spanne meinen, obwohl nur ein kleiner, jüngerer Teil davon tatsächlich auf der

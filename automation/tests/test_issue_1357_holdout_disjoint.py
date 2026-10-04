@@ -123,7 +123,8 @@ def test_study_level_invariant_over_records():
     assert inv.check_selection_holdout_disjoint([good, {"strategy": "C"}]).passed is True
     res = inv.check_selection_holdout_disjoint([good, bad])
     assert res.passed is False and "B/Y" in res.actual
-    assert inv.check_selection_holdout_disjoint([{"strategy": "C"}]).passed is None
+    empty = inv.check_selection_holdout_disjoint([{"strategy": "C"}])
+    assert empty.passed is True and empty.inconclusive is True       # keine Evidenz ⇒ kein Abbruch
 
 
 def test_invariant_is_wired_on_run_and_study_level():
