@@ -7524,10 +7524,10 @@ def run_single_backtest_worker(
     try:
         # --- Ticks laden (mit Schema Injection falls nötig) ---
         try:
-            # Issue #1354 (GH #1251, P0) — die Engine liest AUSSCHLIESSLICH die Sicht (``data/
-            # quote_tick/<symbol>/data.parquet`` als Link auf die OneHour-Datei): NautilusTraders
-            # Katalog identifiziert Instrumente über den Elternordner und lädt aus dem
-            # ``<symbol>/OneHour/data.parquet``-Layout 0 Ticks. Kein ``ParquetDataCatalog`` mehr auf
+            # Issue #1354 (GH #1251, P0) — die Engine liest AUSSCHLIESSLICH die Sicht (die Parquet-Datei
+            # direkt unter ``quote_tick/<symbol>/`` als Link auf die OneHour-Datei, catalog_paths.
+            # engine_catalog_view): NautilusTraders Katalog identifiziert Instrumente über den
+            # Elternordner und lädt aus dem ``<symbol>/OneHour/``-Layout 0 Ticks. Kein ``ParquetDataCatalog`` mehr auf
             # dem Original-``catalog_path`` für Quote-Ticks; Precision-Normalisierung schreibt in die
             # Sicht, nie ins Original.
             try:
