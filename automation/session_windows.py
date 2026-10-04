@@ -425,6 +425,20 @@ def count_trading_days(first_day: date, last_day: date, window: SessionWindow) -
     return n
 
 
+def expected_trading_day_fraction(window: SessionWindow) -> float:
+    """Issue #1367 (GH #1264) — langjähriger Anteil der Handelstage an den Kalendertagen: über die von der
+    Feiertagstabelle abgedeckten Jahre gezählt (NYSE 2025-2027 ≈ 0,687 ≈ 251/365); ohne Kalender 5/7."""
+    if not window.calendar:
+        return 5.0 / 7.0
+    _, coverage = load_exchange_holidays()
+    span = coverage.get(window.calendar)
+    if span is None:
+        return 5.0 / 7.0
+    first, last = date(span[0], 1, 1), date(span[1], 12, 31)
+    total = last.toordinal() - first.toordinal() + 1
+    return count_trading_days(first, last, window) / total
+
+
 def expected_bars_between(
     start_ns: int, end_ns: int, window: SessionWindow, bar_interval_ns: int = NS_PER_HOUR,
 ) -> int:

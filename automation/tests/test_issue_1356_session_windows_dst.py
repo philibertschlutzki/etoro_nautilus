@@ -199,8 +199,9 @@ def test_holiday_is_a_non_trading_day_not_a_data_hole():
     t = sweep.compute_holdout_bar_count(
         6, session_cfg, "EQUITY", end_ns=_ns(date(2026, 11, 29), 20))
     assert t == 4 * 7
-    # Ohne Ende: unverändert der 5/7-Erwartungswert (#1340).
-    assert sweep.compute_holdout_bar_count(60, session_cfg, "EQUITY") == round(60 * 5 / 7 * 7)
+    # Ohne Ende: Erwartungswert der Handelstage aus der Feiertagstabelle (Issue #1367; vorher 5/7).
+    assert sweep.compute_holdout_bar_count(60, session_cfg, "EQUITY") == round(
+        60 * sw.expected_trading_day_fraction(sw.parse_session_window(_NY)) * 7) == 288
 
 
 def test_dates_beyond_the_holiday_table_warn_once_and_count_as_trading_days(caplog):

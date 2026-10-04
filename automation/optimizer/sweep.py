@@ -699,8 +699,9 @@ def compute_holdout_bar_count(
 
     Issue #1356 (GH #1252) — mit ``end_ns`` (Ende des Holdout-Fensters bekannt) EXAKT: Handelstage in Börsen-
     Lokalzeit im Fenster ``[end − holdout_days, end]``, Feiertage ausgenommen, Bins je Tag DST-exakt. Ohne
-    ``end_ns`` (Preflight vor dem Laden der Daten) bleibt der Erwartungswert ``5/7`` Handelstage je
-    Kalendertag (ohne Feiertagsabschlag, ≈ +3,5 % gegenüber 252/365)."""
+    ``end_ns`` der Erwartungswert der Handelstage je Kalendertag aus der Feiertagstabelle
+    (``session_windows.expected_trading_day_fraction``; Issue #1367: vorher pauschal 5/7 — 261 Werktage
+    gegen ≈ 252 Handelstage, T um ≈ 3,6 % zu hoch)."""
     window = _resolve_session_window(asset_class_key, session_hours_by_asset_class)
     if window is None:
         bars_per_day = int(round(86_400_000_000_000 / bar_interval_ns))
@@ -709,8 +710,9 @@ def compute_holdout_bar_count(
         from automation.session_windows import expected_bars_between
         start_ns = int(end_ns) - int(round(float(holdout_days) * 86_400_000_000_000))
         return expected_bars_between(start_ns, int(end_ns), window, int(bar_interval_ns))
+    from automation.session_windows import expected_trading_day_fraction
     bins_per_trading_day = _expected_session_bins_per_day(window, bar_interval_ns=bar_interval_ns)
-    return int(round(holdout_days * (5.0 / 7.0) * bins_per_trading_day))
+    return int(round(holdout_days * expected_trading_day_fraction(window) * bins_per_trading_day))
 
 
 def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, *,
@@ -823,6 +825,8 @@ def check_data_depth_eta(effective_span_days: float | None, required_span_days: 
 # Issue #1363 — die Daten-Tiefen-Prognose des LETZTEN run_per_symbol_sweep-Aufrufs (main() stuft damit
 # einen sonst 'completed_invalid' Lauf auf 'waiting_for_data' um).
 _LAST_DATA_DEPTH_ETA: dict | None = None
+# Issue #1367 — Nachweisbarkeit (MDS, Ziel, nötiger Holdout) des LETZTEN Laufs für den Report-Abschnitt.
+_LAST_DETECTABILITY: dict | None = None
 
 
 def check_engine_reader_parity(
@@ -3398,18 +3402,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     _wf = config.get("walk_forward") or {}
     _req_span = required_span_days(_wf)
     _span_stats = per_symbol_span_stats(latest_ts, _earliest_ts, syms, required_span_days=_req_span)
-    logging.getLogger("optimizer").info(
-        "[#624] Holdout-Geometrie: required_span_days=%s (is=%s + embargo=%s + %s×oos=%s + holdout=%s); "
-        "min_span_days=%s, median_span_days=%s (je Symbol, latest-earliest), "
-        "n_symbols_below_required=%s von %d. 45-d-Holdout ⇒ T≈202 Bars ⇒ PSR(0)≈0.946 < 0.95 "
-        "(T≥211 nötig). Promotionsschwelle DSR/PSR wird EXPLIZIT und dokumentiert getragen (siehe "
-        "manuals/strategie_optimierung.md §Holdout-Signifikanz).",
-        _req_span, _wf.get("is_window_days"), _wf.get("embargo_period_days"),
-        _wf.get("splits"), _wf.get("oos_window_days"), _wf.get("holdout_days"),
-        None if _span_stats["min_span_days"] is None else round(_span_stats["min_span_days"], 1),
-        None if _span_stats["median_span_days"] is None else round(_span_stats["median_span_days"], 1),
-        _span_stats["n_symbols_below_required"], len(syms),
-    )
+    # Issue #1367 (GH #1264) — die [#624]-Geometriezeile wird NACH dem Erreichbarkeits-Preflight unten aus
+    # DENSELBEN Werten erzeugt (vorher behauptete sie ein Literal (45 d Holdout, T≈202, PSR≈0.946), während
+    # das JSON-Event derselben Sekunde 60 Tage / T=300 / 0,975 meldete).
 
     # Issue #1344 (GH #1238) Fix Punkt 3 — sammelt JEDES abgewiesene Symbol dieses Laufs (Grund +
     # Detail), unabhängig davon, in welchem der Preflight-Blöcke unten (Auflösungs-Homogenität/
@@ -3440,10 +3435,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _t_holdout = None
         if _holdout_days is not None and syms:
             _first_asset_class = _resolve_asset_class_key_for_symbol_lightweight(syms[0])
+            # Issue #1367 — mit bekanntem Katalogende exakt (Handelstage inkl. Feiertage, #1356).
             _t_holdout = compute_holdout_bar_count(
-                _holdout_days, _session_hours_for_holdout, _first_asset_class)
+                _holdout_days, _session_hours_for_holdout, _first_asset_class,
+                end_ns=global_catalog_newest_ns)
         _reachability = invariants.check_promotion_confidence_reachability(
-            _t_holdout, _promotion_confidence)
+            _t_holdout, _promotion_confidence,
+            target_annual_sharpe=_tournament_cfg.get(
+                "promotion_target_annual_sharpe", invariants.PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT))
+        global _LAST_DETECTABILITY
+        _LAST_DETECTABILITY = {"run_id": run_id, "passed": _reachability.passed,
+                               "holdout_days": _holdout_days, **(_reachability.actual or {})}
         emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
             "name": "check_promotion_confidence_reachability",
             "check": "check_promotion_confidence_reachability",
@@ -3454,6 +3456,21 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         if _reachability.passed is False:
             logging.getLogger("optimizer").error(
                 "[#1340] Promotionsschwelle strukturell unerreichbar: %s", _reachability.detail)
+        _act = _reachability.actual or {}
+        logging.getLogger("optimizer").info(
+            "[#624] Holdout-Geometrie: required_span_days=%s (is=%s + embargo=%s + %s×oos=%s + holdout=%s + "
+            "holdout_embargo=%s); min_span_days=%s, median_span_days=%s (je Symbol, latest-earliest), "
+            "n_symbols_below_required=%s von %d. %s-d-Holdout ⇒ T=%s Bars ⇒ Mindest-nachweisbare Sharpe "
+            "%s p. a. bei Konfidenz %s (Ziel %s; nötig T=%s ≈ %s Tage).",
+            _req_span, _wf.get("is_window_days"), _wf.get("embargo_period_days"),
+            _wf.get("splits"), _wf.get("oos_window_days"), _wf.get("holdout_days"),
+            _wf.get("holdout_embargo_days"),
+            None if _span_stats["min_span_days"] is None else round(_span_stats["min_span_days"], 1),
+            None if _span_stats["median_span_days"] is None else round(_span_stats["median_span_days"], 1),
+            _span_stats["n_symbols_below_required"], len(syms), _holdout_days, _t_holdout,
+            _act.get("mds_annual"), _promotion_confidence, _act.get("promotion_target_annual_sharpe"),
+            _act.get("required_t_for_target"), _act.get("required_holdout_days_for_target"),
+        )
     except Exception:
         logging.getLogger("optimizer").debug(
             "[#1340] Promotionskonfidenz-Reachability-Preflight fehlgeschlagen (non-fatal).",
@@ -5912,6 +5929,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # "ungültig", sondern wartet auf Daten (terminaler Status mit eta_utc).
         if run_status == "completed_invalid":
             run_status = _apply_waiting_for_data_status(report_path, run_status)
+        _stamp_detectability_section(report_path)
         # Issue #1066/#1216 — siehe _stamp_report_artifact_metadata-Docstring: das Ergebnis von
         # invariants.check_report_artifact_written (unten emittiert) kann strukturell nie im
         # eigenen invariant_checks-Strom stehen; run.json traegt es stattdessen direkt.
@@ -6194,6 +6212,24 @@ def _sweep_completion_event(run_status: str) -> tuple[str, int]:
     if run_status.startswith("aborted_"):
         return "SWEEP_ABORTED", logging.WARNING
     return "SWEEP_FINISHED", logging.INFO
+
+
+def _stamp_detectability_section(report_path) -> None:
+    """Issue #1367 (GH #1264) — Report-Abschnitt "Nachweisbarkeit" (``detectability``: MDS je Bar/annualisiert,
+    Ziel-Sharpe, nötige Holdout-Bars/-Tage) aus DERSELBEN Preflight-Rechnung wie das Invarianten-Event.
+    Fail-open."""
+    det = _LAST_DETECTABILITY
+    if not det:
+        return
+    try:
+        written_report = json.loads(Path(report_path).read_text("utf-8"))
+        if det.get("run_id") not in (None, written_report.get("run_id")):
+            return
+        written_report["detectability"] = {k: v for k, v in det.items() if k != "run_id"}
+        write_json_atomic(report_path, written_report)
+    except Exception:
+        logging.getLogger("optimizer").debug("[#1367] detectability-Abschnitt nicht geschrieben.",
+                                             exc_info=True)
 
 
 def _apply_waiting_for_data_status(report_path, run_status: str) -> str:

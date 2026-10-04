@@ -697,10 +697,13 @@ def _section_2_monetary_result(report: dict) -> str:
         "einen OOS-Wert tragen, aber NIE einen Holdout-Wert."
     )
     lines.append("")
+    # Issue #1367 (GH #1264) — die Holdout-Länge aus dem Report (Preflight-Rechnung), kein Literal.
+    _holdout_days_label = (report.get("detectability") or {}).get("holdout_days")
     lines.append(
         "Alle oben genannten Zahlen sind **simulierte Backtest-Ergebnisse** über das Holdout-"
-        "Fenster (45 Tage) unter dem im Lauf konfigurierten Kostenmodell (Spread + Kommission je "
-        "Asset-Klasse, #774/#775) — kein garantiertes zukünftiges Ergebnis."
+        f"Fenster ({_holdout_days_label if _holdout_days_label is not None else 'k. A.'} Tage) unter dem im "
+        "Lauf konfigurierten Kostenmodell (Spread + Kommission je Asset-Klasse, #774/#775) — kein "
+        "garantiertes zukünftiges Ergebnis."
     )
     # Issue #1010/#1162 (Katalog #1170, P0) — Akzeptanzkriterium 2: Abschnitt 2.4 nennt explizit
     # den methodischen Umfang, wenn financing_bps/slippage_bps ueberall 0.0 sind — die
@@ -1261,6 +1264,29 @@ def _section_4_longest_trades(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _section_detectability(report: dict) -> str | None:
+    """Issue #1367 (GH #1264) — Abschnitt "Nachweisbarkeit": welche Sharpe das Holdout-Fenster bei der
+    konfigurierten Konfidenz überhaupt zertifizieren kann (Mindest-nachweisbare Sharpe), das ökonomische Ziel
+    und der dafür nötige Holdout — aus DERSELBEN Preflight-Rechnung wie das Invarianten-Event."""
+    det = report.get("detectability")
+    if not det:
+        return None
+    lines = ["## Nachweisbarkeit", ""]
+    lines.append(
+        f"Holdout {det.get('holdout_days', 'k. A.')} Tage ⇒ T = {det.get('t_holdout', 'k. A.')} Bars; "
+        f"Konfidenz {det.get('promotion_confidence', 'k. A.')} ⇒ **Mindest-nachweisbare Sharpe "
+        f"{_fmt_num(det.get('mds_annual'), digits=2)} p. a.** ({_fmt_num(det.get('mds_bar'), digits=4)} je Bar).")
+    lines.append("")
+    lines.append(
+        f"Ziel-Sharpe {det.get('promotion_target_annual_sharpe', 'k. A.')} p. a. braucht T = "
+        f"{det.get('required_t_for_target', 'k. A.')} Bars ≈ {det.get('required_holdout_days_for_target', 'k. A.')} "
+        "Kalendertage Holdout — "
+        + ("erreichbar." if det.get("passed") else
+           "mit dem aktuellen Holdout **nicht** erreichbar: nur Kandidaten mit Holdout-Sharpe ≥ "
+           f"{_fmt_num(det.get('mds_annual'), digits=2)} sind promovierbar (Auflösung über Forward-Evidenz, #1368)."))
+    return "\n".join(lines)
+
+
 def _section_5_anomalies(report: dict) -> str:
     studies = _studies(report)
     lines = ["## 5. Auffälligkeiten", ""]
@@ -1486,6 +1512,9 @@ def generate_german_summary(report: dict, *, report_sha256: str | None = None) -
         _section_4_longest_trades(report),
         _section_5_anomalies(report),
     ]
+    _det = _section_detectability(report)
+    if _det:
+        sections.insert(1, _det)
     return header + "\n\n" + "\n\n".join(sections) + "\n"
 
 

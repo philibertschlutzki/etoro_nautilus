@@ -9197,7 +9197,7 @@ def check_selection_holdout_disjoint(geometries) -> InvariantResult:
     """Issue #1357 (GH #1253, P0) — der Confirm-Holdout darf KEINE Selektionsdaten enthalten:
     ``selection_end_ns + holdout_embargo_days · 1 d <= holdout_start_ns`` (``selection_end`` = Ende des
     letzten Selektions-OOS-Folds, ``trial_config.selection_holdout_geometry``). Vorher lief die Selektion
-    mit einem Literal (45 Tage) gegen einen 60-Tage-Holdout aus der Config: 15 Holdout-Tage (25 %) waren
+    mit einem Literal (45) gegen einen 60-Tage-Holdout aus der Config: 15 Holdout-Tage (25 %) waren
     Selektionsdaten, PSR/DSR/Bootstrap-CI/R-Edge des Holdouts aufwärts verzerrt.
 
     ``geometries`` — EINE Geometrie (Run-Ebene: Preflight aus der Config, ``sweep.py``) oder eine Liste von
@@ -9286,23 +9286,42 @@ def check_modeled_spread_not_below_measured(study_records: list[dict]) -> Invari
     )
 
 
+PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT = 1.5
+
+
 @invariant_scope("run")
 def check_promotion_confidence_reachability(
     t_holdout: int | None, promotion_confidence: float | None, *,
+    target_annual_sharpe: float | None = PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT,
+    bars_per_trading_day: int | None = None,
     reference_sr: float = 0.11386,
 ) -> InvariantResult:
-    """Issue #1340 (GH #1234) — der grösste Ertragshebel des #1246-Katalogs: ein achsenbewusster
-    Reachability-Preflight VOR Phase 1. Der ``[#624]``-Preflight protokollierte die
-    Unerreichbarkeit bislang nur als INFO-Zeile ("Promotionsschwelle DSR/PSR wird EXPLIZIT und
-    dokumentiert getragen") — ein dokumentiertes Tragen ist keine Lösung, sondern die Beschreibung
-    eines Deadlocks: kein Kandidat, auch kein perfekter, kann promoviert werden, solange
-    ``max_attainable_psr(t_holdout) < promotion_confidence`` gilt. Ein Lauf, dessen Deployment-Pfad
-    strukturell geschlossen ist, darf nicht als entscheidungsfähig starten.
+    """Issue #1340 (GH #1234) / Issue #1367 (GH #1264) — achsenbewusster Erreichbarkeits-Preflight VOR Phase 1.
 
-    ``t_holdout``/``promotion_confidence`` fehlend (``None``) ⇒ INCONCLUSIVE (kein FAIL — die
-    Geometrie/Konfidenz konnte nicht aufgelöst werden, z. B. weil die Bar-Achse selbst noch nicht
-    bekannt ist, siehe ``sweep.compute_holdout_bar_count``)."""
-    expected = f"max_attainable_psr(t_holdout) >= promotion_confidence (reference_sr={reference_sr})"
+    #1367: der Preflight prüfte gegen einen AUSREISSER-Kandidaten (``reference_sr = 0.11386`` je Bar ≈
+    Sharpe 4,6-4,8 p. a., ein einzelner Juli-Kandidat auf einer seither korrigierten Achse) und meldete
+    "erreichbar", obwohl ein 60-Tage-Holdout (T = 300) bei 0,95 nur Sharpe ≥ 4,0 p. a. zertifizieren kann;
+    ``required_t`` war ein Echo von ``t_holdout``. Jetzt die ehrliche Frage: die Mindest-nachweisbare
+    Sharpe ``mds_bar(T, conf)`` (``deflation.min_detectable_sharpe``), annualisiert mit
+    ``√(252 · BARS_PER_TRADING_DAY)``, gegen das ökonomisch begründete Ziel
+    ``tournament.json['promotion_target_annual_sharpe']`` (Default 1,5): ``passed = mds_annual <= Ziel``.
+    Dazu ``required_t_for_target``/``required_holdout_days_for_target`` (Kalendertage, 5/7 Handelstage) —
+    der Holdout, den das Ziel braucht. ``reference_sr`` bleibt als Telemetrie
+    (``reference_sr_historical_outlier``, ``required_t`` = dessen echtes Minimum, 212).
+
+    ``t_holdout``/``promotion_confidence`` fehlend ⇒ INCONCLUSIVE (kein FAIL)."""
+    import math
+
+    from automation.optimizer.deflation import min_detectable_sharpe, required_periods_for_sharpe
+
+    if bars_per_trading_day is None:
+        from automation.optimizer._contracts import BARS_PER_TRADING_DAY
+        bars_per_trading_day = BARS_PER_TRADING_DAY
+    annualization = math.sqrt(252.0 * float(bars_per_trading_day))
+    target = float(target_annual_sharpe if target_annual_sharpe is not None
+                   else PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT)
+    expected = (f"mds_annual(t_holdout, promotion_confidence) <= promotion_target_annual_sharpe ({target}) "
+                f"— der Holdout muss eine realistische Edge zertifizieren können")
     if t_holdout is None or promotion_confidence is None:
         return InvariantResult(
             name="check_promotion_confidence_reachability",
@@ -9317,8 +9336,8 @@ def check_promotion_confidence_reachability(
                          "n_studies_measured": 0},
             detail="t_holdout oder promotion_confidence nicht aufloesbar — nicht auswertbar.",
         )
-    max_attainable = max_attainable_psr(t_holdout, reference_sr=reference_sr)
-    if max_attainable is None:
+    mds_bar = min_detectable_sharpe(t_holdout, promotion_confidence)
+    if mds_bar is None:
         return InvariantResult(
             name="check_promotion_confidence_reachability",
             passed=None,
@@ -9329,25 +9348,37 @@ def check_promotion_confidence_reachability(
             evaluable=False,
             evaluability={"evaluable": False, "inconclusive_reason": "PSR_DEGENERATE",
                          "n_studies_measured": 0},
-            detail=f"max_attainable_psr({t_holdout}) numerisch nicht auswertbar (T < 2 oder "
-                   f"nicht-positiver Varianz-Term).",
+            detail=f"mds_bar({t_holdout}) numerisch nicht auswertbar (T < 2 oder degenerierter PSR).",
         )
-    passed = max_attainable >= promotion_confidence
+    mds_annual = mds_bar * annualization
+    required_t_for_target = required_periods_for_sharpe(target / annualization, promotion_confidence)
+    required_holdout_days = (None if required_t_for_target is None else
+                             round(required_t_for_target / float(bars_per_trading_day) * 7.0 / 5.0, 1))
+    max_attainable = max_attainable_psr(t_holdout, reference_sr=reference_sr)
+    passed = mds_annual <= target + 1e-12
     return InvariantResult(
         name="check_promotion_confidence_reachability",
         passed=passed,
         expected=expected,
         actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence,
-               "max_attainable_psr": round(max_attainable, 4), "reference_sr": reference_sr,
-               "required_t": t_holdout},
+                "mds_bar": round(mds_bar, 6), "mds_annual": round(mds_annual, 4),
+                "promotion_target_annual_sharpe": target,
+                "annualization_factor": round(annualization, 4),
+                "required_t_for_target": required_t_for_target,
+                "required_holdout_days_for_target": required_holdout_days,
+                # Telemetrie (früher die Entscheidungsgrösse): der historische Ausreisser-Kandidat.
+                "reference_sr_historical_outlier": reference_sr,
+                "max_attainable_psr": round(max_attainable, 4) if max_attainable is not None else None,
+                "required_t": required_periods_for_sharpe(reference_sr, promotion_confidence)},
         severity="blocking",
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
         detail=("OK" if passed else
-                f"max_attainable_psr({t_holdout})={max_attainable:.4f} < "
-                f"promotion_confidence={promotion_confidence} — die Promotionsschwelle ist mit "
-                f"diesem Holdout-Fenster fuer JEDEN Kandidaten unerreichbar, unabhaengig von "
-                f"dessen Qualitaet (#1340/GH #1234)."),
+                f"Mit T={t_holdout} Holdout-Bars und Konfidenz {promotion_confidence} ist die Mindest-"
+                f"nachweisbare Sharpe {mds_annual:.2f} p. a. > Ziel {target} — nur Kandidaten mit Holdout-"
+                f"Sharpe >= {mds_annual:.2f} sind promovierbar (vorwiegend Glückstreffer). Das Ziel braucht "
+                f"T={required_t_for_target} Bars ≈ {required_holdout_days} Kalendertage Holdout "
+                f"(#1367/GH #1264; Auflösung über Evidenz-Akkumulation, #1368)."),
     )
 
 

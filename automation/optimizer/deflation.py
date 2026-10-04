@@ -180,6 +180,62 @@ def max_attainable_psr(
         reference_sr, n_periods, skew=skew, kurtosis=kurtosis, sr_star=sr_star)
 
 
+def min_detectable_sharpe(
+    n_periods, confidence: float, *, skew: float = 0.0, kurtosis: float = 3.0, sr_star: float = 0.0,
+    tol: float = 1e-10,
+) -> float | None:
+    """Issue #1367 (GH #1264) — Mindest-nachweisbare Sharpe (MDS) je Periode: die kleinste ``ŜR``, für die
+    ``probabilistic_sharpe_ratio(ŜR, n_periods) >= confidence`` gilt (Bisektion; PSR ist in ``ŜR`` monoton
+    steigend auf ``[sr_star, 3]``). Beantwortet die Frage, die der Erreichbarkeits-Preflight stellen muss:
+    nicht "erreicht ein Ausreisser-Kandidat (``reference_sr``) die Schwelle", sondern "welche Sharpe muss ein
+    Kandidat mindestens haben, damit dieses Holdout-Fenster ihn zertifizieren kann". Referenz (γ₃=0, γ₄=3,
+    SR*=0, 0,95): T=300 ⇒ 0,0953 je Bar (annualisiert mit √(252·7) ≈ 4,00). ``None`` für ``T < 2`` oder wenn
+    selbst ŜR=3 nicht reicht."""
+    if n_periods is None or float(n_periods) < 2:
+        return None
+    lo, hi = float(sr_star), 3.0
+    top = probabilistic_sharpe_ratio(hi, n_periods, skew=skew, kurtosis=kurtosis, sr_star=sr_star)
+    if top is None or top < confidence:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        psr = probabilistic_sharpe_ratio(mid, n_periods, skew=skew, kurtosis=kurtosis, sr_star=sr_star)
+        if psr is not None and psr >= confidence:
+            hi = mid
+        else:
+            lo = mid
+        if hi - lo < tol:
+            break
+    return hi
+
+
+def required_periods_for_sharpe(
+    sr: float, confidence: float, *, skew: float = 0.0, kurtosis: float = 3.0, sr_star: float = 0.0,
+    max_periods: int = 10_000_000,
+) -> int | None:
+    """Issue #1367 — kleinste Periodenzahl ``T`` mit ``PSR(sr, T) >= confidence`` (analytischer Startwert aus
+    ``z²·(1 − γ₃·ŜR + (γ₄−1)/4·ŜR²) / (ŜR − SR*)² + 1``, dann exakt nachjustiert). ``reference_sr=0.11386`` ⇒
+    212 (nicht ``t_holdout`` — der frühere Preflight gab ``required_t`` als Echo von ``t_holdout`` aus)."""
+    if sr is None or float(sr) <= float(sr_star):
+        return None
+    z = _ND.inv_cdf(float(confidence))
+    den = 1.0 - float(skew) * float(sr) + ((float(kurtosis) - 1.0) / 4.0) * float(sr) ** 2
+    if den <= 0:
+        return None
+    t = max(2, int(math.ceil(z * z * den / (float(sr) - float(sr_star)) ** 2 + 1.0)))
+    while t > 2:
+        psr = probabilistic_sharpe_ratio(sr, t - 1, skew=skew, kurtosis=kurtosis, sr_star=sr_star)
+        if psr is None or psr < confidence:
+            break
+        t -= 1
+    while t <= max_periods:
+        psr = probabilistic_sharpe_ratio(sr, t, skew=skew, kurtosis=kurtosis, sr_star=sr_star)
+        if psr is not None and psr >= confidence:
+            return t
+        t += 1
+    return None
+
+
 def psr_from_z(z: float | None) -> float | None:
     """Φ(z) — die CDF fuer einen bereits (z. B. per Bootstrap) berechneten z-Score. Reine
     Convenience, damit Aufrufer wie ``bootstrap_psr_z`` nicht ``statistics.NormalDist`` duplizieren
