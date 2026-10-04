@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import math
+import signal
 import threading
 from dataclasses import dataclass
 from typing import Callable, Sequence
@@ -142,6 +143,164 @@ def drawdown_damper(dd_current: float | None, *, dd_halt_fraction: float = 0.10,
     if dd_current is None or dd_halt_fraction <= 0:
         return 1.0
     return max(psi_min, 1.0 - (dd_current / dd_halt_fraction))
+
+
+
+# ─── Issue #1358 (GH #1254) — geordnetes Herunterfahren bei SIGTERM/SIGINT ──────────────────────
+
+SHUTDOWN_POLICY_KEEP = "keep"
+SHUTDOWN_POLICY_FLATTEN = "flatten"
+
+
+def _has_broker_stop_tag(tags) -> bool:
+    for tag in (tags or []):
+        if isinstance(tag, str) and tag.startswith("SL:"):
+            try:
+                if float(tag[3:]) > 0:
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def open_positions_missing_broker_stop(cache) -> list[str]:
+    """Issue #1358 Fix Punkt 2 / #1359 — IDs offener Positionen OHNE Broker-Stop. Eine Position trägt
+    einen Broker-Stop, wenn ihre Eröffnungs-Order einen ``SL:<pct>``-Tag mit pct > 0 hatte (der
+    eToro-Adapter setzt daraus ``StopLossRate``/``IsNoStopLoss = False``). Eine Position, deren
+    Eröffnungs-Order nicht im Cache steht (z. B. nach einem Neustart per Reconciliation übernommen),
+    gilt FAIL-CLOSED als ungeschützt."""
+    missing: list[str] = []
+    try:
+        positions = list(cache.positions_open())
+    except Exception:
+        logger.exception("[LiveShutdown] Konnte offene Positionen nicht lesen — fail-closed: unbekannt.")
+        return ["<positions_unreadable>"]
+    for pos in positions:
+        try:
+            order = cache.order(pos.opening_order_id)
+        except Exception:
+            order = None
+        if order is None or not _has_broker_stop_tag(getattr(order, "tags", None)):
+            missing.append(str(getattr(pos, "id", pos)))
+    return missing
+
+
+def effective_shutdown_policy(configured: str | None, positions_without_broker_stop: Sequence[str]) -> str:
+    """Wirksame Policy beim Herunterfahren: ``keep`` (Default) ist nur zulässig, wenn JEDE offene
+    Position einen Broker-Stop trägt — sonst automatisch ``flatten`` (eine ungeschützte Position ohne
+    laufenden Bot wäre unverwaltet). Unbekannte Werte werden wie ``keep`` behandelt (Default)."""
+    policy = (configured or SHUTDOWN_POLICY_KEEP).strip().lower()
+    if policy == SHUTDOWN_POLICY_FLATTEN:
+        return SHUTDOWN_POLICY_FLATTEN
+    return SHUTDOWN_POLICY_FLATTEN if positions_without_broker_stop else SHUTDOWN_POLICY_KEEP
+
+
+class LiveShutdownCoordinator:
+    """Issue #1358 Fix Punkt 2 — ``SIGTERM``/``SIGINT`` ⇒ (1) Entry-Sperre setzen, (2) ``node.stop()``
+    über ``loop.call_soon_threadsafe`` (der Signal-Handler läuft im Hauptthread unter dem laufenden
+    Event-Loop), (3) Policy ``live_risk.on_shutdown`` (``keep`` | ``flatten``, siehe
+    ``effective_shutdown_policy``), (4) Event ``LIVE_BOT_SHUTDOWN`` mit offenen Positionen und der
+    gewählten Policy. Idempotent: ein zweites Signal löst nichts erneut aus.
+
+    Duck-typed gegen ``node`` (``.cache``, ``.trader``, ``.stop()``, ``.get_event_loop()``) und
+    testbar ohne laufenden ``TradingNode``."""
+
+    def __init__(
+        self,
+        node,
+        *,
+        policy: str = SHUTDOWN_POLICY_KEEP,
+        block_entries: Callable[[], None] | None = None,
+        emit: Callable[[str, dict], None] | None = None,
+    ) -> None:
+        self._node = node
+        self._policy = policy
+        self._block_entries = block_entries
+        self._emit = emit
+        self.requested = threading.Event()
+        self.shutdown_payload: dict | None = None
+        self._previous_handlers: dict[int, object] = {}
+        self._loop = None
+
+    def install(self, signals: Sequence[int] = (signal.SIGTERM, signal.SIGINT), *, loop=None) -> None:
+        """Registriert die Handler. Mit ``loop`` (der Event-Loop des Nodes) über
+        ``loop.add_signal_handler`` — das ersetzt die Handler, die der NautilusTrader-Kernel selbst
+        für SIGTERM/SIGINT/SIGABRT registriert (sie würden nur ``node.stop()`` aufrufen, ohne Policy
+        und Event). Ohne ``loop`` über ``signal.signal`` (Hauptthread)."""
+        self._loop = loop
+        for signum in signals:
+            if loop is not None:
+                loop.add_signal_handler(signum, self.request_shutdown, signum)
+                self._previous_handlers[signum] = None
+            else:
+                self._previous_handlers[signum] = signal.signal(signum, self._handle_signal)
+
+    def uninstall(self) -> None:
+        for signum, previous in self._previous_handlers.items():
+            try:
+                if getattr(self, "_loop", None) is not None:
+                    self._loop.remove_signal_handler(signum)
+                else:
+                    signal.signal(signum, previous)  # type: ignore[arg-type]
+            except (ValueError, TypeError, RuntimeError):
+                pass
+        self._previous_handlers.clear()
+
+    def _handle_signal(self, signum, _frame) -> None:
+        self.request_shutdown(signum)
+
+    def request_shutdown(self, signum: int | None = None) -> bool:
+        """True ⇔ dieser Aufruf hat das Herunterfahren ausgelöst (False: bereits angefordert)."""
+        if self.requested.is_set():
+            return False
+        self.requested.set()
+        if self._block_entries is not None:
+            try:
+                self._block_entries()
+            except Exception:
+                logger.exception("[LiveShutdown] Entry-Sperre konnte nicht gesetzt werden.")
+        try:
+            loop = self._node.get_event_loop()
+            loop.call_soon_threadsafe(self._shutdown_on_loop, signum)
+        except Exception:
+            logger.exception("[LiveShutdown] Kein Event-Loop erreichbar — direkter Shutdown-Versuch.")
+            self._shutdown_on_loop(signum)
+        return True
+
+    def _shutdown_on_loop(self, signum: int | None) -> None:
+        cache = getattr(self._node, "cache", None)
+        try:
+            open_ids = [str(getattr(p, "id", p)) for p in cache.positions_open()] if cache else []
+        except Exception:
+            logger.exception("[LiveShutdown] Konnte offene Positionen nicht lesen.")
+            open_ids = []
+        missing = open_positions_missing_broker_stop(cache) if (cache is not None and open_ids) else []
+        effective = effective_shutdown_policy(self._policy, missing)
+        self.shutdown_payload = {
+            "signal": int(signum) if signum is not None else None,
+            "open_positions": open_ids,
+            "positions_without_broker_stop": missing,
+            "policy_configured": self._policy,
+            "policy": effective,
+        }
+        if self._emit is not None:
+            try:
+                self._emit("LIVE_BOT_SHUTDOWN", self.shutdown_payload)
+            except Exception:
+                logger.exception("[LiveShutdown] Event-Emission fehlgeschlagen.")
+        if effective == SHUTDOWN_POLICY_FLATTEN:
+            try:
+                for strategy_id in list(self._node.trader.strategy_ids):
+                    try:
+                        self._node.trader.market_exit_strategy(strategy_id)
+                    except Exception:
+                        logger.exception(f"[LiveShutdown] market_exit_strategy({strategy_id}) fehlgeschlagen.")
+            except Exception:
+                logger.exception("[LiveShutdown] Konnte strategy_ids nicht lesen — Flatten übersprungen.")
+        try:
+            self._node.stop()
+        except Exception:
+            logger.exception("[LiveShutdown] node.stop() fehlgeschlagen.")
 
 
 class LiveCircuitBreakerWatchdog:

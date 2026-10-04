@@ -22,7 +22,11 @@ with open("automation/config/instrument_map.json", "r") as f:
     _imap = json.load(f)
     ETORO_INSTRUMENTS = _imap.get("instruments", {})
 from automation.momentum_ls_allocator import MomentumLSAllocator
-from automation.live_risk import LiveCircuitBreakerWatchdog
+from automation.live_risk import LiveCircuitBreakerWatchdog, LiveShutdownCoordinator
+from automation.live_bot_lock import (
+    EXIT_ALREADY_RUNNING, LOCK_PATH, LiveBotAlreadyRunning, LiveBotLock, compute_whitelist_sha256,
+)
+from automation.log_manager import emit_execution_event
 
 ETORO_EXECUTION = {
     "environment": os.getenv("ETORO_ENV", "demo"),
@@ -266,6 +270,26 @@ def main():
     dry_run = True if args.dry_run else ETORO_EXECUTION["dry_run"]
     enable_trailing_stop = ETORO_EXECUTION["enable_trailing_stop"]
 
+    # Issue #1358 (GH #1254) Fix Punkt 1 — exklusive Sperre VOR dem Aufbau des TradingNode: ein
+    # zweiter Start gegen dasselbe Konto beendet sich mit Exit-Code 4, ohne einen Node zu bauen.
+    # ``--dry-run`` handelt nie und nimmt die Sperre daher nicht (er darf neben dem Live-Bot laufen).
+    bot_lock = LiveBotLock(LOCK_PATH)
+    if not args.dry_run:
+        try:
+            bot_lock.acquire(
+                environment=environment,
+                whitelist_sha256=compute_whitelist_sha256(tournament_data.get("per_symbol_winners", {})),
+            )
+        except LiveBotAlreadyRunning as exc:
+            emit_execution_event(logger, "LIVE_BOT_ALREADY_RUNNING", {
+                "lock_path": str(LOCK_PATH), "holder": exc.info, "exit_code": EXIT_ALREADY_RUNNING,
+            }, level=logging.CRITICAL)
+            logger.critical(
+                f"[LIVE_BOT_ALREADY_RUNNING] {LOCK_PATH} wird bereits gehalten ({exc.info}) — "
+                f"zweiter Bot gegen dasselbe Konto verweigert (Exit-Code {EXIT_ALREADY_RUNNING})."
+            )
+            sys.exit(EXIT_ALREADY_RUNNING)
+
     log_dir = Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     nautilus_log_name = f"nautilus_mls_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
@@ -344,6 +368,20 @@ def main():
     )
     watchdog.start()
 
+    # Issue #1358 Fix Punkt 2 — SIGTERM/SIGINT: Entry-Sperre, node.stop() über den Event-Loop,
+    # Policy live_risk.on_shutdown (keep | flatten), Event LIVE_BOT_SHUTDOWN.
+    coordinator = LiveShutdownCoordinator(
+        node,
+        policy=live_risk_cfg.get("on_shutdown", "keep"),
+        block_entries=lambda: allocator.update_risk_state(tripped=True),
+        emit=lambda event, payload: emit_execution_event(logger, event, payload),
+    )
+    try:
+        coordinator.install(loop=node.get_event_loop())
+    except Exception as e:
+        logger.warning(f"Signal-Handler konnten nicht installiert werden ({e}) — Fallback signal.signal.")
+        coordinator.install()
+
     try:
         node.run()
     except KeyboardInterrupt:
@@ -351,8 +389,11 @@ def main():
     except Exception as e:
         logger.error(f"Laufzeitfehler: {e}\n{traceback.format_exc()}")
     finally:
+        coordinator.uninstall()
         watchdog.stop()
-        node.stop()
+        if not coordinator.requested.is_set():
+            node.stop()
+        bot_lock.release()
         logger.info("Bot erfolgreich beendet.")
 
     if watchdog.tripped_event.is_set():

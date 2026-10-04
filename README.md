@@ -246,6 +246,8 @@ Der Live-Bot (`momentum_ls_run.py`) startet als **detached Subprozess** und lies
 1. **Per-Pair-Check:** `fully_eligible_pairs > 0` **und** `winner_count > 0`, sonst harter Abbruch (`LIVE_DEPLOY_ABORTED`).
 2. **Aggregat-OOS-Check:** Der Aggregat-Gewinner muss `oos_evaluated == True` **und** `oos_eligible == True` vorweisen.
 
+**Bot-Lebenszyklus (Issue #1358):** Es läuft **genau ein** Bot je Konto. `momentum_ls_run.py` hält eine exklusive `flock`-Sperre auf `data/state/live_bot.lock` (Inhalt: `pid`, `started_utc`, `environment`, `whitelist_sha256`); ein zweiter Start beendet sich mit **Exit-Code 4** (`LIVE_BOT_ALREADY_RUNNING`), bevor ein `TradingNode` gebaut wird. Der tägliche Phase-5-Lauf liest die Sperre vor jedem Start: gleicher `whitelist_sha256` ⇒ **kein Neustart** (`LIVE_BOT_UNCHANGED`); abweichend ⇒ `SIGTERM`, Warten bis zu `live_risk.live_bot_stop_timeout_s` (Default 120 s) auf die Freigabe, dann genau ein Neustart (Timeout ⇒ Abbruch ohne zweiten Start). Jeder Phase-5-Pfad, der **keinen** Bot startet (0 zulässige Paare, OOS nicht auswertbar, OOS-Gate verfehlt, leere Whitelist), stoppt einen laufenden Bot (`LIVE_BOT_STOPPED_ON_DEMOTION`); `--no-deploy` fasst ihn nicht an. `SIGTERM`/`SIGINT` setzen die Entry-Sperre, rufen `node.stop()` auf und wenden `live_risk.on_shutdown` an (`"keep"` — nur zulässig, wenn jede offene Position einen Broker-Stop trägt, sonst automatisch `"flatten"`) und schreiben `LIVE_BOT_SHUTDOWN`.
+
 > 🔒 **Live-Trading-Sicherheitsregel (absolut):** **Null** OOS-taugliche Paare verhindern jeden Live-Deploy. Ein bestandenes Aggregat-OOS kann ein Per-Pair-Versagen **niemals** überstimmen. Kein Symbol-Strategie-Paar wird live geschaltet, solange seine Strategie nicht im Turnier OOS-tauglich verifiziert wurde (`OOS-DEPLOY-REJECT`-Filter in `_build_bots_config`).
 
 **Dreistufiger Echtgeld-Interlock** (alle drei nötig, sonst `sys.exit(1)`):
@@ -338,7 +340,7 @@ Der Prozess, der die besten Strategie-Parameter sucht (Kapitel 9), bewertet Kand
 | `data/state/execution_mapping.json` | eToro-Order-IDs ↔ Nautilus-Mapping |
 | `data/state/size_increment_cache.json` | Precision-Cache |
 | `data/state/inception_bounds.json` | Cache für historische Tiefe junger Instrumente |
-| `data/state/live_bot.pid` | Aktuelle Bot-PID |
+| `data/state/live_bot.lock` | Exklusive `flock`-Sperre des laufenden Live-Bots (Inhalt: `pid`, `started_utc`, `environment`, `whitelist_sha256`; Issue #1358) — ersetzt die nie gelesene PID-Datei |
 | `data/universe/momentum_ls.json` | Universe-Snapshot (`fetched_at` + `universe[]`) |
 | `logs/orchestrator_YYYYMMDD.log` | Pipeline-Hauptlog (RotatingFileHandler, 1 MB, 5 Backups) |
 | `logs/live_bot_YYYYMMDD.log` | Bot-Laufzeit-Log |

@@ -95,6 +95,14 @@ TOURNAMENT_CFG        = config_dir() / "tournament.json"
 BACKTEST_CFG          = config_dir() / "backtest.json"
 INSTRUMENT_MAP_PATH   = config_dir() / "instrument_map.json"
 
+# ─── Live-Bot-Sperre (Issue #1358 / GH #1254) ─────────────────────────────────
+from automation.live_bot_lock import (
+    DEFAULT_STOP_TIMEOUT_S as _LIVE_BOT_STOP_TIMEOUT_DEFAULT_S,
+    LOCK_PATH as LIVE_BOT_LOCK_PATH,
+    compute_whitelist_sha256,
+    reconcile_live_bot,
+)
+
 # ─── Logging-Konfiguration ────────────────────────────────────────────────────
 LOG_MAX_BYTES   = 1 * 1024 * 1024   # 1 MB max pro Log-Datei
 LOG_BACKUP_CNT  = 5
@@ -885,6 +893,44 @@ def _tail_log(log: logging.Logger, log_path: Path, tail: int = 50) -> None:
 # PHASE 5: Live Deployment
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _live_bot_stop_timeout_s() -> float:
+    """``backtest.json["live_risk"]["live_bot_stop_timeout_s"]`` (Default 120)."""
+    try:
+        with open(BACKTEST_CFG, "r", encoding="utf-8") as f:
+            return float(((json.load(f) or {}).get("live_risk") or {}).get(
+                "live_bot_stop_timeout_s", _LIVE_BOT_STOP_TIMEOUT_DEFAULT_S))
+    except (OSError, ValueError, TypeError):
+        return float(_LIVE_BOT_STOP_TIMEOUT_DEFAULT_S)
+
+
+def _stop_running_bot_on_demotion(log: logging.Logger, reason: str, *, no_deploy: bool = False) -> str:
+    """Issue #1358 (GH #1254) Fix Punkt 4 — JEDER Phase-5-Pfad, der keinen neuen Bot startet, stoppt
+    einen laufenden Bot (``LIVE_BOT_STOPPED_ON_DEMOTION``): was heute nicht zugelassen ist, handelt
+    heute nicht. Vor dem Fix beendeten 0 zulässige Paare / OOS nicht auswertbar / OOS-Gate verfehlt /
+    leere Whitelist nur den Orchestrator und liessen den Bot von gestern weiterhandeln.
+
+    ``--no-deploy`` fasst Phase 5 nicht an (der Schalter unterbindet ausschliesslich Phase 5). Wirft
+    nie. Rückgabe: die ``ReconcileResult.action`` (oder ``"skipped_no_deploy"``/``"error"``)."""
+    if no_deploy:
+        return "skipped_no_deploy"
+    try:
+        result = reconcile_live_bot(
+            LIVE_BOT_LOCK_PATH, None, stop_timeout_s=_live_bot_stop_timeout_s(), reason=reason)
+        for event_type, payload in result.events:
+            emit_json_event(log, event_type, payload)
+        if result.action == "stopped_on_demotion":
+            log.warning(f"[Phase 5] Laufender Bot (PID {result.holder_pid}) wegen '{reason}' gestoppt.")
+        elif result.action == "stop_timeout":
+            log.error(
+                f"[Phase 5] Laufender Bot (PID {result.holder_pid}) hat die Sperre nach SIGTERM nicht "
+                f"innerhalb des Timeouts freigegeben (Grund des Stopps: '{reason}')."
+            )
+        return result.action
+    except Exception as exc:  # defensiv: ein Stopp-Fehler darf Phase 5 nie crashen
+        log.error(f"[Phase 5] Stopp des laufenden Bots (Grund '{reason}') fehlgeschlagen: {exc}")
+        return "error"
+
+
 def phase5_live_deployment(
     log: logging.Logger,
     universe_result: dict,
@@ -925,11 +971,13 @@ def phase5_live_deployment(
                 "oos_not_evaluable_pairs": oos_not_evaluable_pairs,
                 "oos_failed_pairs": oos_failed_pairs
             })
+            _stop_running_bot_on_demotion(log, "zero_fully_eligible_pairs", no_deploy=no_deploy)
             return 1
 
         agg = t_data.get("aggregate_winner")
         if not agg:
             log.error("[Phase 5] Kein Aggregat-Sieger im Tournament. Abbruch.")
+            _stop_running_bot_on_demotion(log, "no_aggregate_winner", no_deploy=no_deploy)
             return 1
         oos_evaluated = bool(agg.get("oos_evaluated", False))
         oos_eligible  = bool(agg.get("oos_eligible", False))
@@ -951,6 +999,7 @@ def phase5_live_deployment(
                 "aggregate_oos_max_drawdown": agg_oos_dd,
                 "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
+            _stop_running_bot_on_demotion(log, "oos_gate_not_evaluable", no_deploy=no_deploy)
             return 0
 
         if not oos_eligible:
@@ -977,6 +1026,7 @@ def phase5_live_deployment(
                     "aggregate_oos_max_drawdown": agg_oos_dd,
                     "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
                 })
+                _stop_running_bot_on_demotion(log, "oos_gate_failed", no_deploy=no_deploy)
                 return 0
             else:
                 log.info(
@@ -1054,6 +1104,7 @@ def phase5_live_deployment(
                 "expected": completeness_check.expected, "actual": completeness_check.actual,
                 "detail": completeness_check.detail,
             })
+            _stop_running_bot_on_demotion(log, "deployment_gate_completeness_failed", no_deploy=no_deploy)
             return 1
 
         emit_json_event(log, "DEPLOYMENT_WHITELIST_GENERATED", {
@@ -1065,6 +1116,7 @@ def phase5_live_deployment(
 
         if len(whitelisted_winners) == 0:
             log.warning("[Phase 5] Whitelist ist leer (kein Paar besteht die vollstaendige Deployment-Grenze aus acht Klauseln, Issue #993). Live-Deploy abgebrochen.")
+            _stop_running_bot_on_demotion(log, "whitelist_empty", no_deploy=no_deploy)
             return 0
 
         tournament_path = str(whitelist_path)
@@ -1110,6 +1162,29 @@ def phase5_live_deployment(
         })
         return 0
 
+    # Issue #1358 (GH #1254) Fix Punkt 3 — vor JEDEM Start die Sperrdatei lesen: gleicher
+    # whitelist_sha256 ⇒ kein Neustart; abweichend ⇒ SIGTERM + Warten auf die Freigabe der Sperre,
+    # dann Start; Timeout ⇒ Abbruch OHNE zweiten Start. (Vorher: jeder tägliche Lauf = ein weiterer
+    # Bot gegen dasselbe Konto, n · 0,6 kumulierte Ziel-Exposure.)
+    whitelist_sha256 = compute_whitelist_sha256(whitelisted_winners)
+    reconcile = reconcile_live_bot(
+        LIVE_BOT_LOCK_PATH, whitelist_sha256, stop_timeout_s=_live_bot_stop_timeout_s(),
+        reason="whitelist_changed")
+    for event_type, payload in reconcile.events:
+        emit_json_event(log, event_type, payload)
+    if not reconcile.start_new:
+        if reconcile.action == "unchanged":
+            log.info(
+                f"[Phase 5] Whitelist unverändert (sha256={whitelist_sha256[:12]}…) — Bot "
+                f"PID {reconcile.holder_pid} läuft weiter, kein Neustart (LIVE_BOT_UNCHANGED)."
+            )
+            return 0
+        log.error(
+            f"[Phase 5] Laufender Bot (PID {reconcile.holder_pid}) gab die Sperre nach SIGTERM nicht "
+            f"innerhalb von {_live_bot_stop_timeout_s():.0f}s frei — Abbruch ohne zweiten Start."
+        )
+        return 1
+
     try:
         bot_log_handle = open(str(bot_log), "a", encoding="utf-8")
         proc = subprocess.Popen(
@@ -1121,11 +1196,13 @@ def phase5_live_deployment(
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         log.info(f"[Phase 5] Trading-Bot gestartet (PID: {proc.pid}).")
-        emit_json_event(log, "BOT_STARTED", {"pid": proc.pid, "log_file": str(bot_log)})
-
-        pid_file = logs_dir() / "live_bot.pid"
-        pid_file.write_text(str(proc.pid), encoding="utf-8")
-        log.info(f"[Phase 5] PID gespeichert: {pid_file}")
+        emit_json_event(log, "BOT_STARTED", {
+            "pid": proc.pid, "log_file": str(bot_log), "lock_file": str(LIVE_BOT_LOCK_PATH),
+            "whitelist_sha256": whitelist_sha256,
+        })
+        # Die PID-Datei (logs/live_bot.pid) wurde nie gelesen und ist entfallen: die Wahrheit über
+        # den laufenden Bot ist die flock-gehaltene Sperrdatei data/state/live_bot.lock, die der Bot
+        # selbst schreibt (pid, started_utc, environment, whitelist_sha256).
 
     except Exception as e:
         log.error(f"[Phase 5] Fehler beim Starten des Bot-Subprozesses: {e}\n{traceback.format_exc()}")
@@ -1152,7 +1229,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-api-fetch", action="store_true", help="API-Backfill überspringen.")
     parser.add_argument("--skip-backtest",  action="store_true", help="Phase 3+4 Matrix-Backtesting überspringen.")
     parser.add_argument("--reset-catalog", action="store_true",
-        help="Löscht data/nautilus/data/quote_tick/ vollständig vor Phase 2 (einmalig).")
+        help="Archiviert data/nautilus/data/quote_tick/ nach data/nautilus/archive/<UTC-ts>/ vor Phase 2 "
+             "(einmalig; Issue #1364 — es wird nichts mehr gelöscht).")
     return parser
 
 def main() -> int:
