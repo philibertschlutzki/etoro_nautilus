@@ -145,7 +145,10 @@ def _cost_model_realism_from_applied(
     Fallback ohne EINE klassifizierbare Study (kein Run-Studies mit aufgeloesten ``applied_*``-
     Feldern, z. B. ein Report ohne Holdout-Trades) — dieselbe konfigurationsbasierte Heuristik wie
     vor diesem Fix, da keine gemessenen Daten vorliegen, die die Konfiguration widerlegen koennten;
-    niemals ``mixed`` ohne mindestens zwei klassifizierbare Studies mit unterschiedlichem Befund."""
+    niemals ``mixed`` ohne mindestens zwei klassifizierbare Studies mit unterschiedlichem Befund.
+    Issue #1369 (GH #1266) — eine von Null verschiedene KONFIGURATION heisst im Fallback
+    ``config_nonzero`` (nicht ``calibrated_cache``): ohne Study wurde nichts aus dem Kalibrierungs-
+    Cache aufgeloest, die Aussage "aus dem Kalibrierungs-Cache" waere eine Behauptung ohne Messung."""
     classified: list[tuple[str, bool]] = []
     for r in studies:
         slippage = r.get("applied_slippage_bps")
@@ -156,7 +159,7 @@ def _cost_model_realism_from_applied(
         classified.append((key, float(slippage) == 0.0 and float(financing) == 0.0))
     if not classified:
         legacy = _cost_model_has_zero_realism(base_cfg)
-        return legacy, ("config_zero" if legacy else "calibrated_cache"), []
+        return legacy, ("config_zero" if legacy else "config_nonzero"), []
     zero_keys = sorted(k for k, is_zero in classified if is_zero)
     nonzero_keys = [k for k, is_zero in classified if not is_zero]
     if not nonzero_keys:
@@ -205,7 +208,10 @@ def _emit_cost_model_realism_event(cost_model_realism_source: str, studies: list
                      "(#1010/#1162, seit #1077/#1225 aus den GEMESSENEN Feldern bestaetigt, nicht "
                      "nur der Config, #1267).",
         }, level=logging.WARNING)
-    elif cost_model_realism_source in ("calibrated_cache", "mixed"):
+    elif cost_model_realism_source in ("calibrated_cache", "mixed") and any(
+            r.get("applied_slippage_bps") is not None for r in (studies or [])):
+        # Issue #1369 (GH #1266) — "mindestens eine Study traegt ..." ueber null Studies ist falsch:
+        # ohne eine Study mit aufgeloestem applied_slippage_bps kein ``…_FROM_CALIBRATION``-Event.
         emit_execution_event(_log, "COST_MODEL_REALISM_FROM_CALIBRATION", {
             "cost_model_realism_source": cost_model_realism_source,
             "applied_slippage_bps_median": _applied_slippage_bps_median_nonzero(studies),
@@ -4337,7 +4343,10 @@ def _compute_decision_admissible(invariant_checks: list[dict]) -> bool:
     Punkt 1), macht einen Lauf GENAUSO ``decision_admissible=False`` wie ein expliziter FAIL — ohne
     Codeänderung an dieser Stelle, siehe ``test_issue_1310_fail_fast_inconclusive.py``."""
     return not any(
-        c.get("severity") == "blocking" and not c.get("passed", True) for c in invariant_checks)
+        c.get("severity") == "blocking" and not c.get("passed", True)
+        # Issue #1369 — unterdrückte Folge-Invarianten zählen nicht als blockierend-INCONCLUSIVE.
+        and not _inv.is_suppressed_upstream(c)
+        for c in invariant_checks)
 
 
 def _compute_work_completed(
@@ -4452,6 +4461,10 @@ def _build_report(
     symbols_planned: int | None = None,
     symbols_discovered: int | None = None,
     symbols_gate1_rejected: int | None = None,
+    # Issue #1369 (GH #1266) — Symbol-Trichter: angefordert / im Preflight abgewiesen (mit Grund).
+    symbols_requested: int | None = None,
+    symbols_rejected_preflight: int | None = None,
+    symbols_rejected: list[dict] | None = None,
     report_source: str = "final",
     prior_probe_invariant_checks: list[dict] | None = None,
     blocking_invariant_triggered: str | None = None,
@@ -5952,7 +5965,9 @@ def _build_report(
     # (dieselbe Konvention wie die drei Wächter oben).
     fail_fast_inconclusive_budget_check = _inv.check_fail_fast_inconclusive_budget(
         _final_invariant_snapshot(all_checks, preflight_invariant_checks),
-        fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
+        fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"),
+        # Issue #1369 — eine Totalabweisung im Preflight: die fehlenden Verdikte sind Folge, nicht Ursache.
+        no_symbols_upstream=_inv.all_requested_symbols_rejected(symbols_requested, symbols_planned))
     all_checks.append(("global", fail_fast_inconclusive_budget_check))
 
     # Issue #941/#1107 (Katalog #960) — JEDER Eintrag in ``invariant_checks`` traegt am Ende die
@@ -6078,6 +6093,11 @@ def _build_report(
     # dortiger Kommentar — ``_decision_admissible`` bleibt bewusst NACH ihr, damit sie auch die
     # Abdeckungspruefung selbst mitzaehlt, wie zuvor).
     _work_completed = _compute_work_completed(symbols_completed, symbols_planned)
+    # Issue #1369 (GH #1266) — "Vollständig gerechnet (0/0 Symbole)" bei 3 angeforderten und 3 im Preflight
+    # abgewiesenen Symbolen war falsch: 0 von 3 angeforderten Symbolen wurden gerechnet.
+    _no_symbols_upstream = _inv.all_requested_symbols_rejected(symbols_requested, symbols_planned)
+    if _no_symbols_upstream:
+        _work_completed = False
     _work_aborted = _compute_work_aborted(run_status)
     # Issue #1037/#1186 (Katalog #1186, Akzeptanzkriterium 1/2) — permanenter Regressionswaechter
     # auf den gerade berechneten Achsen selbst (medium, rein diagnostisch — beeinflusst
@@ -6256,6 +6276,10 @@ def _build_report(
     # Issue #942/#1108 (Katalog #960) — die dritte orthogonale Achse: ``decision_admissible`` wird
     # ABSICHTLICH ERST HIER, NACH der obigen Abdeckungspruefung, aus dem finalen ``invariant_checks``-
     # Stand abgeleitet (dieselbe Reihenfolge wie vor #1037 — unveraendert).
+    # Issue #1369 (GH #1266) — EIN Wurzelbefund: jede INCONCLUSIVE-Invariante eines Laufs, in dem alle
+    # angeforderten Symbole im Preflight abgewiesen wurden, trägt SUPPRESSED_UPSTREAM_NO_SYMBOLS.
+    if _no_symbols_upstream:
+        _inv.suppress_inconclusive_for_no_symbols(invariant_checks)
     _decision_admissible = _compute_decision_admissible(invariant_checks)
 
     # Issue #1305 (GH #1182, P1) Fix Punkt 1/2 — Rückschrieb-Zulässigkeit dieses Laufs, EINMAL aus
@@ -6447,6 +6471,12 @@ def _build_report(
         # (symbols_planned/symbols_discovered) nicht vom Report ablesen.
         "symbols_discovered": symbols_discovered,
         "symbols_gate1_rejected": symbols_gate1_rejected,
+        # Issue #1369 (GH #1266) — angefordert / im Preflight abgewiesen (Anzahl + je Symbol Grund/Detail);
+        # ``symbols_planned`` ist die Zahl NACH dem Preflight.
+        "symbols_requested": symbols_requested,
+        "symbols_rejected_preflight": symbols_rejected_preflight,
+        "symbols_rejected": list(symbols_rejected or []),
+        "all_symbols_rejected_preflight": _no_symbols_upstream,
         # Issue #849 — im Report EINGEBETTET (statt eines zweiten config_dir()-Lesezugriffs in
         # summary_de.py, das bewusst reines Rueckgabedict-only bleibt, siehe Moduldocstring dort):
         # Sektion 5.2 zeigt hoechstens so viele Beispiel-Details je Check, bevor sie auf "... und N
@@ -6653,6 +6683,10 @@ def generate_sweep_report(
     symbols_planned: int | None = None,
     symbols_discovered: int | None = None,
     symbols_gate1_rejected: int | None = None,
+    # Issue #1369 (GH #1266) — Symbol-Trichter: angefordert / im Preflight abgewiesen (mit Grund).
+    symbols_requested: int | None = None,
+    symbols_rejected_preflight: int | None = None,
+    symbols_rejected: list[dict] | None = None,
     report_source: str = "final",
     prior_probe_invariant_checks: list[dict] | None = None,
     blocking_invariant_triggered: str | None = None,
@@ -6685,6 +6719,9 @@ def generate_sweep_report(
         symbols_planned=symbols_planned,
         symbols_discovered=symbols_discovered,
         symbols_gate1_rejected=symbols_gate1_rejected,
+        symbols_requested=symbols_requested,
+        symbols_rejected_preflight=symbols_rejected_preflight,
+        symbols_rejected=symbols_rejected,
         prior_probe_invariant_checks=prior_probe_invariant_checks,
         blocking_invariant_triggered=blocking_invariant_triggered,
         preflight_invariant_checks=preflight_invariant_checks,
@@ -6713,6 +6750,10 @@ def generate_report_for_run(
     symbols_planned: int | None = None,
     symbols_discovered: int | None = None,
     symbols_gate1_rejected: int | None = None,
+    # Issue #1369 (GH #1266) — Symbol-Trichter: angefordert / im Preflight abgewiesen (mit Grund).
+    symbols_requested: int | None = None,
+    symbols_rejected_preflight: int | None = None,
+    symbols_rejected: list[dict] | None = None,
     prior_probe_invariant_checks: list[dict] | None = None,
     blocking_invariant_triggered: str | None = None,
     preflight_invariant_checks: list[dict] | None = None,
@@ -6744,6 +6785,9 @@ def generate_report_for_run(
         symbols_planned=symbols_planned,
         symbols_discovered=symbols_discovered,
         symbols_gate1_rejected=symbols_gate1_rejected,
+        symbols_requested=symbols_requested,
+        symbols_rejected_preflight=symbols_rejected_preflight,
+        symbols_rejected=symbols_rejected,
         prior_probe_invariant_checks=prior_probe_invariant_checks,
         blocking_invariant_triggered=blocking_invariant_triggered,
         preflight_invariant_checks=preflight_invariant_checks,

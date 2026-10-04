@@ -17,7 +17,7 @@ import json
 import threading
 from pathlib import Path
 
-from automation.optimizer.invariants import invariant_scope
+from automation.optimizer.invariants import InvariantResult, invariant_scope
 
 # Issue #828 — prozessweites Signal fuer ein geordnetes Sweep-Ende wegen Laufzeit-Ueberschreitung
 # (getrennt von disk_guard.sweep_abort_requested, damit ein #833-Report den Abbruchgrund
@@ -25,15 +25,36 @@ from automation.optimizer.invariants import invariant_scope
 sweep_wallclock_exceeded = threading.Event()
 
 
-@invariant_scope("run")
-def check_wallclock_budget(elapsed_s: float, *, max_hours: float | None) -> bool:
+def wallclock_budget_exceeded(elapsed_s: float, *, max_hours: float | None) -> bool:
     """``True``, wenn die verstrichene Laufzeit (``elapsed_s``, Sekunden seit Sweep-Start) das
     konfigurierte Budget (``max_hours``, ``optimizer.json['sweep_max_wallclock_h']``) erreicht oder
     überschritten hat. ``max_hours=None`` (Key fehlt/ist ``null``) ⇒ IMMER ``False`` — kein Budget,
-    bit-identisch zum Pre-#828-Verhalten (ein 62-h-Lauf lief bereits vor diesem Fix unbegrenzt)."""
+    bit-identisch zum Pre-#828-Verhalten (ein 62-h-Lauf lief bereits vor diesem Fix unbegrenzt).
+
+    Issue #1370 (GH #1267) — umbenannt von ``check_wallclock_budget``: eine ``check_*``-Funktion mit
+    ``@invariant_scope`` liefert ein ``InvariantResult`` und erscheint im Strom (der ``bool`` tat beides
+    nicht ⇒ ``check_invariant_coverage`` FAIL). Das Urteil trägt jetzt ``check_wallclock_budget`` unten."""
     if max_hours is None:
         return False
     return elapsed_s >= float(max_hours) * 3600.0
+
+
+@invariant_scope("run")
+def check_wallclock_budget(elapsed_s: float, *, max_hours: float | None) -> InvariantResult:
+    """Issue #1370 (GH #1267) — das ``InvariantResult`` zu ``wallclock_budget_exceeded``; der Sweep meldet
+    es GENAU EINMAL je Lauf (auch ohne ein einziges gestartetes Symbol, z. B. nach einer Totalabweisung im
+    Preflight)."""
+    exceeded = wallclock_budget_exceeded(elapsed_s, max_hours=max_hours)
+    return InvariantResult(
+        name="check_wallclock_budget",
+        passed=not exceeded,
+        expected=(f"elapsed_s <= max_hours*3600 (max_hours={max_hours})" if max_hours is not None else
+                  "kein sweep_max_wallclock_h konfiguriert (Check inaktiv, Default-PASS)."),
+        actual={"elapsed_s": round(float(elapsed_s), 1), "max_hours": max_hours} if exceeded else None,
+        severity="high",
+        detail=(f"Laufzeit-Budget überschritten nach {float(elapsed_s):.0f}s (max_hours={max_hours})."
+                if exceeded else "Laufzeit-Budget nicht überschritten."),
+    )
 
 
 def reset_for_tests() -> None:

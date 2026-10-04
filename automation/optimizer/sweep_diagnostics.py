@@ -14,7 +14,7 @@ import json
 import statistics
 from pathlib import Path
 
-from automation.optimizer.invariants import invariant_scope
+from automation.optimizer.invariants import InvariantResult, invariant_scope
 
 # Issue #669/#769 — die moeglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible
 # Trial). Issue #769 — 'signal_frequency' wurde in 'signal_absent' (parameterunabhaengig, echte
@@ -1213,8 +1213,7 @@ def diagnose_symbol_degeneracy(symbol: str, per_strategy_diagnoses: list[dict], 
     }
 
 
-@invariant_scope("run")
-def check_bar_quality(highs: list[float], lows: list[float], closes: list[float], *,
+def bar_quality_profile(highs: list[float], lows: list[float], closes: list[float], *,
                       max_frac_high_eq_low: float = 0.20,
                       max_frac_identical_consecutive_closes: float = 0.5,
                       min_distinct_closes: int = 10,
@@ -1243,7 +1242,10 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
                       # liefert — eine Kalibrierung gegen die aktuelle (ggf. noch degenerierte)
                       # Achse waere eine Kalibrierung gegen ein Artefakt.
                       min_intrabar_range_median_bps: float = 0.0) -> dict:
-    """Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
+    """Issue #1370 (GH #1267) — umbenannt von ``check_bar_quality`` (das Profil-Dict ist kein
+    ``InvariantResult``); das Urteil trägt ``check_bar_quality`` unten (``severity='blocking'``).
+
+    Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
     degenerierte/konstante Bars VOR Phase 1 eines Symbols, statt erst nach 14 × 16 verbrannten
     Trials ueber 14 unabhaengige ``STRUCTURAL_ALL_UNEVALUABLE``-Diagnosen (siehe
     ``diagnose_symbol_degeneracy``-Docstring fuer den vollen Root-Cause-Befund, ``HYPE.ETORO``
@@ -1438,6 +1440,26 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         "passed": not reasons,
         "reason": "; ".join(reasons) if reasons else "OK",
     }
+
+
+@invariant_scope("run")
+def check_bar_quality(highs: list[float], lows: list[float], closes: list[float],
+                      **thresholds) -> InvariantResult:
+    """Issue #1370 (GH #1267) — das ``InvariantResult`` zu ``bar_quality_profile``. ``severity='blocking'``:
+    ``check_bar_quality`` steht in ``fail_fast_invariants`` und entscheidet über die Abweisung VOR Phase 1
+    (vorher trug der Strom ``'high'`` ⇒ ``check_fail_fast_invariants_are_blocking`` FAIL in jedem Lauf)."""
+    profile = bar_quality_profile(highs, lows, closes, **thresholds)
+    passed = profile.get("passed")
+    return InvariantResult(
+        name="check_bar_quality",
+        passed=passed,
+        expected="Bar-Qualitaets-Preflight besteht die konfigurierten Schwellen (#807/#1272).",
+        actual=None if passed else {k: v for k, v in profile.items()
+                                    if k not in ("passed", "reason", "severity")},
+        severity="blocking",
+        inconclusive=passed is None,
+        detail=profile.get("reason") or ("OK" if passed else "nicht auswertbar"),
+    )
 
 
 def load_symbol_strategy_denylist(base_cfg: Path | None = None) -> dict[tuple[str, str], str]:

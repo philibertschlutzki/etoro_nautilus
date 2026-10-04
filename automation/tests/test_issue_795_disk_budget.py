@@ -55,35 +55,35 @@ def test_measure_usage_missing_dir_returns_zero(tmp_path):
 def test_check_budget_ok_when_well_under_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(disk_guard, "measure_usage", lambda *a, **k: 1 * disk_guard.GIB)
     monkeypatch.setattr(disk_guard, "free_bytes", lambda *a, **k: 500 * disk_guard.GIB)
-    status = disk_guard.check_budget(tmp_path, budget_gb=200, reserve_gb=50)
+    status = disk_guard.budget_status(tmp_path, budget_gb=200, reserve_gb=50)
     assert status == disk_guard.STATUS_OK
 
 
 def test_check_budget_pressure_at_80_percent(tmp_path, monkeypatch):
     monkeypatch.setattr(disk_guard, "measure_usage", lambda *a, **k: 161 * disk_guard.GIB)
     monkeypatch.setattr(disk_guard, "free_bytes", lambda *a, **k: 500 * disk_guard.GIB)
-    status = disk_guard.check_budget(tmp_path, budget_gb=200, reserve_gb=50)
+    status = disk_guard.budget_status(tmp_path, budget_gb=200, reserve_gb=50)
     assert status == disk_guard.STATUS_PRESSURE
 
 
 def test_check_budget_pressure_when_free_space_low(tmp_path, monkeypatch):
     monkeypatch.setattr(disk_guard, "measure_usage", lambda *a, **k: 1 * disk_guard.GIB)
     monkeypatch.setattr(disk_guard, "free_bytes", lambda *a, **k: 99 * disk_guard.GIB)  # < 2*50
-    status = disk_guard.check_budget(tmp_path, budget_gb=200, reserve_gb=50)
+    status = disk_guard.budget_status(tmp_path, budget_gb=200, reserve_gb=50)
     assert status == disk_guard.STATUS_PRESSURE
 
 
 def test_check_budget_exceeded_at_full_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(disk_guard, "measure_usage", lambda *a, **k: 200 * disk_guard.GIB)
     monkeypatch.setattr(disk_guard, "free_bytes", lambda *a, **k: 500 * disk_guard.GIB)
-    status = disk_guard.check_budget(tmp_path, budget_gb=200, reserve_gb=50)
+    status = disk_guard.budget_status(tmp_path, budget_gb=200, reserve_gb=50)
     assert status == disk_guard.STATUS_EXCEEDED
 
 
 def test_check_budget_exceeded_when_free_space_below_reserve(tmp_path, monkeypatch):
     monkeypatch.setattr(disk_guard, "measure_usage", lambda *a, **k: 1 * disk_guard.GIB)
     monkeypatch.setattr(disk_guard, "free_bytes", lambda *a, **k: 40 * disk_guard.GIB)  # < 50
-    status = disk_guard.check_budget(tmp_path, budget_gb=200, reserve_gb=50)
+    status = disk_guard.budget_status(tmp_path, budget_gb=200, reserve_gb=50)
     assert status == disk_guard.STATUS_EXCEEDED
 
 
@@ -144,7 +144,7 @@ class _FakeTrial:
 
 def test_callback_is_a_noop_outside_the_check_interval(monkeypatch):
     from automation.optimizer import run_optimization as ro
-    monkeypatch.setattr(ro.disk_guard, "check_budget", lambda *a, **k: (_ for _ in ()).throw(
+    monkeypatch.setattr(ro.disk_guard, "budget_status", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("check_budget darf ausserhalb des Intervalls nicht aufgerufen werden")))
     study = _FakeStudy()
     ro.disk_budget_callback(study, _FakeTrial(7), opt_data={"disk_check_interval_trials": 200})
@@ -153,7 +153,7 @@ def test_callback_is_a_noop_outside_the_check_interval(monkeypatch):
 
 def test_callback_pressure_triggers_orphan_prune(monkeypatch):
     from automation.optimizer import run_optimization as ro
-    monkeypatch.setattr(ro.disk_guard, "check_budget", lambda *a, **k: disk_guard.STATUS_PRESSURE)
+    monkeypatch.setattr(ro.disk_guard, "budget_status", lambda *a, **k: disk_guard.STATUS_PRESSURE)
     pruned_calls = []
     monkeypatch.setattr(ro.retention, "prune_orphaned_trial_dirs",
                         lambda *a, **k: pruned_calls.append(1) or [])
@@ -166,7 +166,7 @@ def test_callback_pressure_triggers_orphan_prune(monkeypatch):
 
 def test_callback_exceeded_stops_study_and_sets_abort_flag(monkeypatch):
     from automation.optimizer import run_optimization as ro
-    monkeypatch.setattr(ro.disk_guard, "check_budget", lambda *a, **k: disk_guard.STATUS_EXCEEDED)
+    monkeypatch.setattr(ro.disk_guard, "budget_status", lambda *a, **k: disk_guard.STATUS_EXCEEDED)
     study = _FakeStudy()
     ro.disk_budget_callback(study, _FakeTrial(399), opt_data={"disk_check_interval_trials": 200})
     assert study.stopped is True
@@ -179,7 +179,7 @@ def test_callback_fails_open_on_internal_error(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("measurement blew up")
 
-    monkeypatch.setattr(ro.disk_guard, "check_budget", _boom)
+    monkeypatch.setattr(ro.disk_guard, "budget_status", _boom)
     study = _FakeStudy()
     # darf NICHT propagieren (fail-open, analog floor_plateau_callback/retention_callback)
     ro.disk_budget_callback(study, _FakeTrial(199), opt_data={"disk_check_interval_trials": 200})

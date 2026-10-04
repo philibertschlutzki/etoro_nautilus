@@ -40,10 +40,14 @@ def _nautilus_is_real() -> bool:
     return _has_file(mod) and (catalog_mod is None or _has_file(catalog_mod))
 
 
-_NAUTILUS_REAL = _nautilus_is_real()
+# Die Bibliotheks-Vertragstests laufen IMMER in einem sauberen Interpreter (Subprozess-Test unten setzt
+# ``_CLEAN_SUBPROCESS_ENV``): im Suite-Prozess (insbesondere unter pytest-xdist) installieren andere Module
+# ``nautilus_trader``-Mocks zur Import- UND Laufzeit — ein Prüfergebnis zur Sammelzeit ist nicht belastbar.
+_CLEAN_SUBPROCESS_ENV = "ETORO_REAL_NAUTILUS_SUBPROCESS"
+_NAUTILUS_REAL = os.environ.get(_CLEAN_SUBPROCESS_ENV) == "1" and _nautilus_is_real()
 real_engine = pytest.mark.skipif(
     not _NAUTILUS_REAL,
-    reason="nautilus_trader ist in diesem Prozess gemockt — läuft stattdessen im Subprozess-Test unten.")
+    reason="läuft im sauberen Subprozess (Subprozess-Test unten), nie im Suite-Prozess.")
 
 
 def _write_production_hourly(catalog: Path, n_days: int = 5, per_day: int = 7, price: float = 100.0,
@@ -332,7 +336,7 @@ def test_decode_helper_roundtrip_used_by_this_module():
     assert decode_fsb16_price(bf._encode_fsb16(100.0, 2)) == 100.0
 
 
-@pytest.mark.skipif(_NAUTILUS_REAL, reason="der Prozess hat die echte Bibliothek — die Tests laufen direkt.")
+@pytest.mark.skipif(os.environ.get(_CLEAN_SUBPROCESS_ENV) == "1", reason="bereits der saubere Subprozess.")
 def test_real_engine_tests_in_a_clean_subprocess_when_this_process_is_polluted():
     """Im Suite-Prozess sind ``nautilus_trader``-Module gemockt: dieselben Bibliotheks-Vertragstests
     laufen dann in einem sauberen Interpreter (``-p no:cacheprovider``, ohne die Mock-Module)."""
@@ -342,6 +346,7 @@ def test_real_engine_tests_in_a_clean_subprocess_when_this_process_is_polluted()
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", str(Path(__file__)), "-q", "-p", "no:cacheprovider",
          "-k", "not subprocess"],
-        cwd=str(repo), capture_output=True, text=True, timeout=600)
+        cwd=str(repo), capture_output=True, text=True, timeout=600,
+        env={**os.environ, _CLEAN_SUBPROCESS_ENV: "1"})
     assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-1000:]
     assert "skipped" not in proc.stdout.splitlines()[-1], proc.stdout[-500:]

@@ -21,7 +21,7 @@ import math
 import statistics
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 from automation.optimizer._contracts import BAR_SECONDS_DEFAULT as _BAR_SECONDS_DEFAULT
@@ -9144,7 +9144,8 @@ def check_cost_model_realism_admissible(
     ``report._compute_decision_admissible``) — Studies/Diagnostik laufen unverändert weiter (der
     Lauf bleibt als Suchraum-Erkundung wertvoll), aber der Deployment-Pfad ist geschlossen.
 
-    ``calibrated_cache``/``mixed`` (die EFFEKTIVE Kostenbasis ist nicht null, siehe
+    ``calibrated_cache``/``mixed``/``config_nonzero`` (#1369: Fallback ohne Study, von Null verschiedene
+    Config) (die EFFEKTIVE Kostenbasis ist nicht null, siehe
     ``report._cost_model_realism_from_applied``-Docstring) PASSen unbedingt — nur ``config_zero``
     ist betroffen; die Unterscheidung selbst ist NICHT Teil dieses Checks (sie bleibt bei
     ``_cost_model_realism_from_applied``, siehe dortiger Docstring: "die Unterscheidung ... bleibt
@@ -9538,6 +9539,44 @@ def _bar_axis_supports_stop_verdict(study_records: list[dict]) -> bool:
         bq.get("intrabar_path") for bq in _bar_quality_dicts
     )
     return has_positive_intrabar_range and has_stamped_intrabar_path
+
+
+# Issue #1369 (GH #1266) — eine Totalabweisung im Preflight (alle angeforderten Symbole abgewiesen) ist EIN
+# Wurzelbefund. Jede davon abhängige Invariante, die mangels Symbol/Study kein Verdikt fällen kann
+# (``passed is None``), trägt diesen Grund (analog ``SUPPRESSED_UPSTREAM_BAR_AXIS``) und zählt weder als
+# FAIL noch als blockierend-INCONCLUSIVE (``_compute_decision_admissible``, ``sweep._downgrade_run_status_
+# for_blocking_invariants``, ``check_fail_fast_inconclusive_budget``, Zusammenfassung Abschnitt 1/5.1b).
+SUPPRESSED_UPSTREAM_NO_SYMBOLS = "SUPPRESSED_UPSTREAM_NO_SYMBOLS"
+
+
+def is_suppressed_upstream(check: Mapping[str, Any]) -> bool:
+    """``True`` für ein Invarianten-Dict, das wegen eines vorgelagerten Wurzelbefunds unterdrückt ist."""
+    evaluability = check.get("evaluability") if isinstance(check, Mapping) else None
+    return (isinstance(check, Mapping) and check.get("suppressed_upstream") == SUPPRESSED_UPSTREAM_NO_SYMBOLS) or (
+        isinstance(evaluability, Mapping)
+        and evaluability.get("inconclusive_reason") == SUPPRESSED_UPSTREAM_NO_SYMBOLS)
+
+
+def all_requested_symbols_rejected(symbols_requested: int | None, symbols_planned: int | None) -> bool:
+    """Issue #1369 — die Totalabweisung: mindestens ein Symbol angefordert, keines nach dem Preflight geplant."""
+    return bool(symbols_requested) and symbols_planned == 0
+
+
+def suppress_inconclusive_for_no_symbols(checks: list[dict]) -> list[dict]:
+    """Stempelt jedes ``passed is None``-Dict (INCONCLUSIVE) mit ``SUPPRESSED_UPSTREAM_NO_SYMBOLS`` (in
+    place, Rückgabe dieselbe Liste). ``passed`` True/False bleibt unverändert — der Wurzelbefund selbst
+    (z. B. ``check_catalog_resolution_homogeneity`` FAIL je Symbol) wird nie unterdrückt."""
+    for check in checks:
+        if not isinstance(check, dict) or check.get("passed") is not None or is_suppressed_upstream(check):
+            continue
+        evaluability = dict(check.get("evaluability") or {})
+        evaluability.update({"evaluable": False, "inconclusive_reason": SUPPRESSED_UPSTREAM_NO_SYMBOLS})
+        check["evaluability"] = evaluability
+        check["suppressed_upstream"] = SUPPRESSED_UPSTREAM_NO_SYMBOLS
+        check["detail"] = (f"{SUPPRESSED_UPSTREAM_NO_SYMBOLS} (#1369): alle angeforderten Symbole wurden im "
+                           f"Preflight abgewiesen — kein eigenständiger Befund. Ursprünglich: "
+                           f"{check.get('detail')}")
+    return checks
 
 
 def suppress_stop_verdict_if_bar_axis_degenerate(
@@ -10437,6 +10476,7 @@ def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
 @invariant_scope("run")
 def check_fail_fast_inconclusive_budget(
     invariant_checks: list[dict], *, fail_fast_invariants: list[str] | None = None,
+    no_symbols_upstream: bool = False,
 ) -> InvariantResult:
     """Issue #1310 (GH #1187, P1) — vierter Meta-Wächter derselben Familie (nach ``check_fail_fast_
     invariants_wired``/``_actual_convention``/``_are_blocking``): SELBST wenn jeder fail-fast-Check
@@ -10453,7 +10493,12 @@ def check_fail_fast_inconclusive_budget(
     "fehlt der Check komplett" zustaendig, DIESER Wächter fragt nur "wie viele UEBERHAUPT ein
     Verdikt gefaellt haben", unabhaengig vom Grund). Bei einer Mehrfachnennung desselben Namens im
     Strom zaehlt das ERSTE Vorkommen (dieselbe Konvention wie ``check_fail_fast_invariants_are_
-    blocking``). ``fail_fast_invariants`` leer/fehlend ⇒ nicht anwendbar (PASS)."""
+    blocking``). ``fail_fast_invariants`` leer/fehlend ⇒ nicht anwendbar (PASS).
+
+    Issue #1369 (GH #1266) — ``no_symbols_upstream=True`` (alle angeforderten Symbole im Preflight
+    abgewiesen): die fehlenden Verdikte sind FOLGE des Wurzelbefunds, nicht Ursache —
+    ``SUPPRESSED_UPSTREAM_NO_SYMBOLS``, sie zählen nicht gegen das Budget (ebenso jedes bereits als
+    unterdrückt gestempelte Dict)."""
     configured = sorted(set(fail_fast_invariants or []))
     if not configured:
         return InvariantResult(
@@ -10471,6 +10516,11 @@ def check_fail_fast_inconclusive_budget(
     passed_by_name = _first_non_none_by_name(
         invariant_checks, value_field="passed", restrict_to=set(configured))
     inconclusive = sorted(n for n in configured if passed_by_name.get(n) is None)
+    suppressed_names = {
+        (c.get("name") or c.get("check")) for c in invariant_checks
+        if isinstance(c, Mapping) and is_suppressed_upstream(c)}
+    suppressed = sorted(n for n in inconclusive if no_symbols_upstream or n in suppressed_names)
+    inconclusive = [n for n in inconclusive if n not in suppressed]
     n_configured = len(configured)
     n_inconclusive = len(inconclusive)
     passed = n_inconclusive <= n_configured / 2.0
@@ -10478,7 +10528,9 @@ def check_fail_fast_inconclusive_budget(
         name="check_fail_fast_inconclusive_budget",
         passed=passed,
         expected="<= 50% der konfigurierten fail_fast_invariants tragen passed=None (kein Verdikt)",
-        actual={"inconclusive": inconclusive, "n_configured": n_configured} if not passed else None,
+        actual=({"inconclusive": inconclusive, "n_configured": n_configured} if not passed else
+                ({"suppressed_upstream": suppressed, "reason": SUPPRESSED_UPSTREAM_NO_SYMBOLS}
+                 if suppressed else None)),
         severity="blocking",
         detail=("OK" if passed else
                 f"{n_inconclusive}/{n_configured} konfigurierte fail_fast_invariants tragen kein "

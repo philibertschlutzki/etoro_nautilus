@@ -43,7 +43,7 @@ def _study_with_trials(n, n_violations, evaluated=True):
 def test_rate_over_threshold_sets_flag_and_emits_event():
     study = _study_with_trials(10, n_violations=3)  # 30%
     lg, events = _quiet_logger("t773_over")
-    result = ro.check_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.2}, logger=lg)
+    result = ro.enforce_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.2}, logger=lg)
     assert result is True
     assert study.user_attrs.get("coherence_violation_rate_exceeded") is True
     assert any("STUDY_ABORTED_ON_INVARIANT" in e for e in events)
@@ -51,27 +51,27 @@ def test_rate_over_threshold_sets_flag_and_emits_event():
 
 def test_rate_at_or_below_threshold_is_bit_identical_no_op():
     study = _study_with_trials(10, n_violations=1)  # 10%
-    result = ro.check_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.5})
+    result = ro.enforce_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.5})
     assert result is False
     assert study.user_attrs.get("coherence_violation_rate_exceeded") is None
 
 
 def test_zero_violations_is_bit_identical():
     study = _study_with_trials(10, n_violations=0)
-    result = ro.check_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.0})
+    result = ro.enforce_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.0})
     assert result is False
 
 
 def test_missing_config_key_is_a_no_op():
     study = _study_with_trials(10, n_violations=10)
-    result = ro.check_study_coherence_violation_rate(study, {})
+    result = ro.enforce_study_coherence_violation_rate(study, {})
     assert result is False
     assert study.user_attrs.get("coherence_violation_rate_exceeded") is None
 
 
 def test_no_evaluated_trials_is_a_no_op():
     study = _study_with_trials(5, n_violations=0, evaluated=False)
-    result = ro.check_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.0})
+    result = ro.enforce_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.0})
     assert result is False
 
 

@@ -26,10 +26,10 @@ from automation.optimizer.trial_config import build_trial, config_dir, freeze_st
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import (
-    compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
-    check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
+    compute_reward, assert_penalty_scale_calibrated, any_arm_reachability_violations,
+    any_arm_reachability_live_violations, resolve_any_arm_policy, assert_gate_collinearity_guard,
     gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
-    check_mandatory_gate_reachability_live, _normalize_clause as _reward_normalize_clause,
+    mandatory_gate_reachability_live_violations, _normalize_clause as _reward_normalize_clause,
     resolve_alpha_tstat_gate_threshold,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
@@ -1345,7 +1345,7 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
     try:
         budget_gb = float(opt_data.get("disk_budget_gb") or 200)
         reserve_gb = float(opt_data.get("disk_reserve_gb") or 50)
-        status = disk_guard.check_budget(WORK, budget_gb=budget_gb, reserve_gb=reserve_gb)
+        status = disk_guard.budget_status(WORK, budget_gb=budget_gb, reserve_gb=reserve_gb)
         # Issue #1015/#1167 (Katalog #1170) — vorher nur bei STATUS_PRESSURE/STATUS_EXCEEDED ein
         # Event, STATUS_OK spurlos: ein Lauf, in dem das Budget nie eng wurde, und einer, in dem
         # diese Pruefung nie ausgefuehrt wurde, waren im Report ununterscheidbar. Symmetrisch (PASS
@@ -1358,7 +1358,7 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
                        f">= reserve_gb={reserve_gb}.",
             "actual": {"status": status, "budget_gb": budget_gb, "reserve_gb": reserve_gb,
                       "trial_number": trial.number} if status != disk_guard.STATUS_OK else None,
-            "detail": f"disk_guard.check_budget ⇒ {status}.",
+            "detail": f"disk_guard.budget_status ⇒ {status}.",
             "severity": "high" if status == disk_guard.STATUS_EXCEEDED else "medium",
         }, level=logging.INFO if status == disk_guard.STATUS_OK else logging.WARNING)
         if status == disk_guard.STATUS_PRESSURE:
@@ -1386,10 +1386,44 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
         log.warning("[#795] Disk-Budget-Callback fehlgeschlagen (non-fatal).", exc_info=True)
 
 
+def _coherence_violation_stats(study, opt_data: dict) -> tuple:
+    """``(max_rate, n_evaluated, n_violations, rate)`` über die ``oos_evaluated``-Trials einer Study."""
+    max_rate = (opt_data or {}).get("max_coherence_violation_rate")
+    trials = [t for t in getattr(study, "trials", None) or []
+              if getattr(t, "user_attrs", {}).get("oos_evaluated") is True]
+    n_evaluated = len(trials)
+    violations = sum(1 for t in trials if t.user_attrs.get("oos_coherence_violation") is True)
+    return max_rate, n_evaluated, violations, (violations / n_evaluated if n_evaluated else None)
+
+
 @_inv.invariant_scope("study")
-def check_study_coherence_violation_rate(study, opt_data: dict, *,
-                                         logger: logging.Logger | None = None) -> bool:
-    """Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,
+def check_study_coherence_violation_rate(study, opt_data: dict) -> "_inv.InvariantResult":
+    """Issue #1370 (GH #1267) — das reine ``InvariantResult`` (ohne Seiteneffekte) zu
+    ``enforce_study_coherence_violation_rate``: PASS ohne konfigurierte Schwelle/ohne ausgewertete Trials
+    oder bei ``rate <= max_coherence_violation_rate``."""
+    max_rate, n_evaluated, violations, rate = _coherence_violation_stats(study, opt_data)
+    passed = max_rate is None or not n_evaluated or rate <= float(max_rate)
+    return _inv.InvariantResult(
+        name="check_study_coherence_violation_rate",
+        passed=passed,
+        expected=(f"oos_coherence_violation-Rate <= max_coherence_violation_rate={max_rate}."
+                  if max_rate is not None else
+                  "kein max_coherence_violation_rate konfiguriert (Check inaktiv, Default-PASS)."),
+        actual=None if passed else {"rate": rate, "n_evaluated": n_evaluated, "n_violations": violations},
+        severity="high",
+        detail=("OK" if passed else
+                f"{violations}/{n_evaluated} Trials mit oos_coherence_violation (#756-Identitaet verletzt) "
+                f"> max_coherence_violation_rate={max_rate}."),
+    )
+
+
+def enforce_study_coherence_violation_rate(study, opt_data: dict, *,
+                                           logger: logging.Logger | None = None) -> bool:
+    """Issue #1370 (GH #1267) — umbenannt von ``check_study_coherence_violation_rate`` (``bool`` mit
+    Seiteneffekten statt ``InvariantResult``); meldet sein Urteil weiterhin unter
+    ``check_study_coherence_violation_rate`` in den Strom.
+
+    Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,
     wenn der Anteil ``oos_coherence_violation``-markierter Trials (#589/#620/#756/#771) ueber
     ``optimizer.json.max_coherence_violation_rate`` liegt.
 
@@ -1502,7 +1536,7 @@ def coherence_violation_early_abort_callback(study, trial, *, opt_data: dict | N
     if check_interval_trials <= 0 or (trial.number + 1) % check_interval_trials != 0:
         return
     try:
-        if check_study_coherence_violation_rate(study, opt_data, logger=log):
+        if enforce_study_coherence_violation_rate(study, opt_data, logger=log):
             _stop_study_safely(study, log)
     except Exception:
         log.warning("[#803] Kohaerenz-Fruehabbruch-Callback fehlgeschlagen (non-fatal).", exc_info=True)
@@ -1934,7 +1968,7 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     tournament_path_check = cfg_dir / "tournament.json"
     if tournament_path_check.exists():
         with open(tournament_path_check, "r", encoding="utf-8") as f:
-            _any_arm_unreachable = check_any_arm_reachability(json.load(f) or {})
+            _any_arm_unreachable = any_arm_reachability_violations(json.load(f) or {})
         _emit_any_arm_reachability_result(
             logging.getLogger("optimizer"), _any_arm_unreachable,
             check_name="check_any_arm_reachability", scope=strategy)
@@ -3206,7 +3240,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             _tcfg_arm = json.loads(opt_path_arm.read_text("utf-8")) or {}
             # Issue #759 — n_evaluated durchreichen: eine Reachability-Aussage ohne einen einzigen
             # ausgewerteten Trial ist inhaltsleer (siehe check_any_arm_reachability_live-Docstring).
-            any_arm_live_unreachable = check_any_arm_reachability_live(
+            any_arm_live_unreachable = any_arm_reachability_live_violations(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
             any_arm_policy_decision = resolve_any_arm_policy(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
@@ -3224,7 +3258,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             # tragen, unabhängig davon, ob tournament.json['eligible_requires_all'] die Klausel
             # mit oder ohne 'oos_'-Präfix listet (Pitfall #448): reward._normalize_clause ist die
             # EINE Stelle, die diese Form definiert.
-            mandatory_gate_live_unreachable = check_mandatory_gate_reachability_live(
+            mandatory_gate_live_unreachable = mandatory_gate_reachability_live_violations(
                 _tcfg_arm,
                 {_reward_normalize_clause("oos_min_alpha_tstat"): live_alpha_tstats},
                 n_evaluated=evaluable)
@@ -4240,7 +4274,7 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     tournament_path_check = cfg_dir / "tournament.json"
     if tournament_path_check.exists():
         with open(tournament_path_check, "r", encoding="utf-8") as f:
-            _any_arm_unreachable = check_any_arm_reachability(json.load(f) or {})
+            _any_arm_unreachable = any_arm_reachability_violations(json.load(f) or {})
         _emit_any_arm_reachability_result(
             logging.getLogger("optimizer"), _any_arm_unreachable,
             check_name="check_any_arm_reachability", scope=strategy)
@@ -4527,7 +4561,7 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         # Study bereits als ueberschritten markiert, wuerde diese erneute Pruefung dasselbe
         # STUDY_ABORTED_ON_INVARIANT-Ereignis ein zweites Mal emittieren — daher uebersprungen.
         if not (getattr(study, "user_attrs", None) or {}).get("coherence_violation_rate_exceeded"):
-            check_study_coherence_violation_rate(study, opt_data)
+            enforce_study_coherence_violation_rate(study, opt_data)
     finally:
         # Issue #851 — im finally-Block (analog #833s Abbruchresilienz): auch eine vorzeitig
         # abgebrochene Study (Disk-/Wallclock-Guard, Kohaerenz-Abbruch, Exception) traegt eine

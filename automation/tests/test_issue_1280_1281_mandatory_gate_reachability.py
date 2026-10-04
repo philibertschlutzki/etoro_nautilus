@@ -72,7 +72,7 @@ def test_mandatory_gate_result_is_no_longer_merged_into_any_arm_live_unreachable
     """Strukturbeweis: der #1093/#1241-Aufruf von check_mandatory_gate_reachability_live speist
     NICHT MEHR any_arm_live_unreachable (Root-Cause #1280/#1281)."""
     source = inspect.getsource(ro)
-    idx_call = source.index("mandatory_gate_live_unreachable = check_mandatory_gate_reachability_live(")
+    idx_call = source.index("mandatory_gate_live_unreachable = mandatory_gate_reachability_live_violations(")  # #1370
     # Im unmittelbaren Merge-Ausdruck (die naechsten ~120 Zeichen nach dem Aufruf) darf
     # any_arm_live_unreachable NICHT als Zielvariable dieser Zuweisung erscheinen.
     snippet_before = source[max(0, idx_call - 80):idx_call]

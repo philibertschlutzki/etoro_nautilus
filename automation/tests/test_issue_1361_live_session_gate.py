@@ -15,6 +15,8 @@ im Backtest genauso wie Extended-Hours-Bars live; erst damit sind Backtest-Bars 
 """
 from __future__ import annotations
 
+import os
+
 import json
 import logging
 import types
@@ -46,10 +48,14 @@ def _nautilus_is_real() -> bool:
     return (mod is None or _has_file(mod)) and (strat_mod is None or _has_file(strat_mod))
 
 
-_NAUTILUS_REAL = _nautilus_is_real()
+# Die Bibliotheks-Vertragstests laufen IMMER in einem sauberen Interpreter (Subprozess-Test unten setzt
+# ``_CLEAN_SUBPROCESS_ENV``): im Suite-Prozess (insbesondere unter pytest-xdist) installieren andere Module
+# ``nautilus_trader``-Mocks zur Import- UND Laufzeit — ein Prüfergebnis zur Sammelzeit ist nicht belastbar.
+_CLEAN_SUBPROCESS_ENV = "ETORO_REAL_NAUTILUS_SUBPROCESS"
+_NAUTILUS_REAL = os.environ.get(_CLEAN_SUBPROCESS_ENV) == "1" and _nautilus_is_real()
 real_nautilus = pytest.mark.skipif(
     not _NAUTILUS_REAL,
-    reason="nautilus_trader ist in diesem Prozess gemockt — läuft stattdessen im Subprozess-Test unten.")
+    reason="läuft im sauberen Subprozess (Subprozess-Test unten), nie im Suite-Prozess.")
 
 
 # ─── reine Auflösung (ohne nautilus) ──────────────────────────────────────────────────
@@ -285,7 +291,7 @@ def test_engine_with_session_filtered_ticks_drops_the_aggregator_filler_bars():
     assert [ts for ts, _ in live["seen"]][:len(gated["seen"])] == [ts for ts, _ in gated["seen"]]
 
 
-@pytest.mark.skipif(_NAUTILUS_REAL, reason="der Prozess hat die echte Bibliothek — die Tests laufen direkt.")
+@pytest.mark.skipif(os.environ.get(_CLEAN_SUBPROCESS_ENV) == "1", reason="bereits der saubere Subprozess.")
 def test_real_nautilus_tests_in_a_clean_subprocess_when_this_process_is_polluted():
     import subprocess
     import sys
@@ -294,7 +300,8 @@ def test_real_nautilus_tests_in_a_clean_subprocess_when_this_process_is_polluted
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", str(Path(__file__)), "-q", "-p", "no:cacheprovider",
          "-k", "not subprocess"],
-        cwd=str(repo), capture_output=True, text=True, timeout=600)
+        cwd=str(repo), capture_output=True, text=True, timeout=600,
+        env={**os.environ, _CLEAN_SUBPROCESS_ENV: "1"})
     assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-1000:]
     assert "skipped" not in proc.stdout.splitlines()[-1], proc.stdout[-500:]
 

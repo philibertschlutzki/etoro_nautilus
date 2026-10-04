@@ -18,7 +18,7 @@ import logging
 import pytest
 
 from automation.optimizer import sweep
-from automation.optimizer.sweep_diagnostics import check_bar_quality, diagnose_symbol_degeneracy
+from automation.optimizer.sweep_diagnostics import bar_quality_profile, diagnose_symbol_degeneracy
 
 
 # ---------------------------------------------------------------------------
@@ -42,13 +42,13 @@ def _healthy_bars(n=200):
 
 def test_healthy_bars_pass():
     highs, lows, closes = _healthy_bars()
-    result = check_bar_quality(highs, lows, closes)
+    result = bar_quality_profile(highs, lows, closes)
     assert result["passed"] is True
     assert result["reason"] == "OK"
 
 
 def test_empty_bars_fail_closed():
-    result = check_bar_quality([], [], [])
+    result = bar_quality_profile([], [], [])
     assert result["passed"] is False
     assert result["n_bars"] == 0
 
@@ -58,7 +58,7 @@ def test_all_high_eq_low_fails():
     closes = [100.0 + i * 0.01 for i in range(n)]  # genug distinkte Closes
     highs = list(closes)
     lows = list(closes)
-    result = check_bar_quality(highs, lows, closes)
+    result = bar_quality_profile(highs, lows, closes)
     assert result["passed"] is False
     assert "frac_high_eq_low" in result["reason"]
 
@@ -76,7 +76,7 @@ def test_mostly_identical_consecutive_closes_fails():
             closes.append(price)
     highs = [c * 1.001 for c in closes]
     lows = [c * 0.999 for c in closes]
-    result = check_bar_quality(highs, lows, closes)
+    result = bar_quality_profile(highs, lows, closes)
     assert result["passed"] is False
     assert "frac_identical_consecutive_closes" in result["reason"]
 
@@ -87,7 +87,7 @@ def test_too_few_distinct_closes_fails():
     closes = [100.0, 101.0, 102.0] * (n // 3) + [100.0] * (n % 3)
     highs = [c * 1.002 for c in closes]
     lows = [c * 0.998 for c in closes]
-    result = check_bar_quality(highs, lows, closes, min_distinct_closes=10)
+    result = bar_quality_profile(highs, lows, closes, min_distinct_closes=10)
     assert result["passed"] is False
     assert "n_distinct_closes" in result["reason"]
 
@@ -95,7 +95,7 @@ def test_too_few_distinct_closes_fails():
 def test_custom_thresholds_are_respected():
     highs, lows, closes = _healthy_bars()
     # Ein absurd strenger Schwellenwert laesst sogar gesunde Bars durchfallen.
-    result = check_bar_quality(highs, lows, closes, min_distinct_closes=10_000)
+    result = bar_quality_profile(highs, lows, closes, min_distinct_closes=10_000)
     assert result["passed"] is False
 
 

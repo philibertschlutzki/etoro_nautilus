@@ -77,8 +77,8 @@ def test_full_rth_coverage_yields_ratio_near_one_not_0_177(tmp_path):
 
 
 def test_half_missing_session_hours_yields_ratio_near_half_and_still_fails():
-    from automation.optimizer.sweep_diagnostics import check_bar_quality
-    result = check_bar_quality(
+    from automation.optimizer.sweep_diagnostics import bar_quality_profile
+    result = bar_quality_profile(
         [100.0] * 20, [99.0] * 20, [99.5] * 20,
         min_distinct_closes=1, bar_coverage_ratio=0.5, min_bar_coverage_ratio=0.6)
     assert result["passed"] is False

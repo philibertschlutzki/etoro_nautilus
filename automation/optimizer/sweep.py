@@ -58,7 +58,7 @@ from automation.optimizer import symbol_coverage
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
-    check_bar_quality, diagnose_symbol_degeneracy, record_diagnosed_pair,
+    bar_quality_profile, diagnose_symbol_degeneracy, record_diagnosed_pair,
 )
 from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
@@ -2834,7 +2834,7 @@ def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None
                        "BAR_QUALITY_SAMPLE_UNAVAILABLE im Log).",
             }
             continue
-        _quality = check_bar_quality(
+        _quality = bar_quality_profile(
             _sample["highs"], _sample["lows"], _sample["closes"],
             median_delta_t_s=_sample.get("median_delta_t_s"),
         )
@@ -3411,6 +3411,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Tick-Population/Bar-Qualität) es abgewiesen wurde. Erscheint als ``symbols_rejected`` im
     # ``sweep_completed``-Ereignis.
     _symbols_rejected: list[dict] = []
+    # Issue #1370 (GH #1267) — laufweites Urteil über die OR-Arm-Erreichbarkeit, vor jedem Symbol-Preflight.
+    _emit_any_arm_reachability_run_result()
 
     # Issue #1340 (GH #1234) — Promotionskonfidenz-Erreichbarkeits-Preflight: der GRÖSSTE
     # Ertragshebel des #1246-Katalogs. Läuft VOR Phase 1, EINMAL je Lauf (RUN-WEIT, kein
@@ -3461,7 +3463,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             "[#624] Holdout-Geometrie: required_span_days=%s (is=%s + embargo=%s + %s×oos=%s + holdout=%s + "
             "holdout_embargo=%s); min_span_days=%s, median_span_days=%s (je Symbol, latest-earliest), "
             "n_symbols_below_required=%s von %d. %s-d-Holdout ⇒ T=%s Bars ⇒ Mindest-nachweisbare Sharpe "
-            "%s p. a. bei Konfidenz %s (Ziel %s; nötig T=%s ≈ %s Tage).",
+            "%s p. a. bei Konfidenz %s (Ziel %s; nötig T=%s ≈ %s Tage; siehe "
+            "manuals/strategie_optimierung.md §Holdout-Signifikanz).",
             _req_span, _wf.get("is_window_days"), _wf.get("embargo_period_days"),
             _wf.get("splits"), _wf.get("oos_window_days"), _wf.get("holdout_days"),
             _wf.get("holdout_embargo_days"),
@@ -3878,7 +3881,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 _sample = None  # fail-open — ein eigener Lesefehler blockiert den Sweep nie.
             if _sample is None:
                 continue
-            _quality = check_bar_quality(
+            _quality = bar_quality_profile(
                 _sample["highs"], _sample["lows"], _sample["closes"],
                 max_frac_high_eq_low=_bar_quality_cfg.get("max_frac_high_eq_low", 0.20),
                 max_frac_identical_consecutive_closes=_bar_quality_cfg.get(
@@ -3984,7 +3987,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # meldet sich mit severity='blocking' statt der bisherigen festen 'high'; die
                 # Funktion selbst entscheidet ueber check_bar_quality()['severity'] (siehe dortiger
                 # Docstring), nicht diese Aufrufstelle.
-                "severity": _quality.get("severity", "high"),
+                # Issue #1370 (GH #1267) — ``check_bar_quality`` steht in ``fail_fast_invariants`` und
+                # entscheidet über die Abweisung VOR Phase 1 ⇒ severity 'blocking' (vorher 'high' ausser
+                # bei BAR_AXIS_NO_INTRABAR_INFORMATION ⇒ check_fail_fast_invariants_are_blocking FAIL in
+                # jedem Lauf). Die Abweisung bleibt symbol-skopiert (#1344-Ausnahme beim Downgrade).
+                "severity": "blocking",
             }, level=logging.INFO if _quality["passed"] else logging.WARNING)
             # Issue #1337 (GH #1231) — ``passed is None`` (INCONCLUSIVE, Tri-State #1307: die
             # Stichprobe deckt die geforderte Spanne nicht ab) ist KEIN Ablehnungsgrund — es ist
@@ -4092,7 +4099,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "detail": "Kein Symbol tatsaechlich geprueft (using_real_optimize=False, keine "
                          "geplanten Symbole, oder das Katalog-Wurzelverzeichnis selbst fehlt) — "
                          "nicht auswertbar, kein Befund (#1046/#1195).",
-                "severity": "high", "evaluable": False,
+                # Issue #1370 — dieselbe Schwere wie das Urteil selbst (blocking); der Stub ist global
+                # skopiert und damit beim Downgrade ausgenommen, solange ein Symbol überlebt (#1344),
+                # und nach einer Totalabweisung SUPPRESSED_UPSTREAM_NO_SYMBOLS (#1369).
+                "severity": "blocking", "evaluable": False,
             }, level=logging.INFO)
 
     # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
@@ -4379,6 +4389,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # gefilterte Endzahl zu zeigen.
             "symbols_discovered": len(syms),
             "symbols_gate1_rejected": len(_gate1_rejected_symbols),
+            # Issue #1369 (GH #1266) — angefordert vs. im Preflight abgewiesen (vorher: "0 von 0
+            # Symbolen" bei 3 angeforderten und 3 abgewiesenen; symbols_planned ist die Zahl NACH dem
+            # Preflight).
+            **_preflight_funnel(_requested_syms, pairs_by_symbol, _symbols_rejected, _gate1_rejected_symbols),
             # Issue #840 Punkt 5 — SHA-256 über Strategien + reward_semantics_version +
             # simulation_semantics_version (#854); main() validiert dies gegen den aktuellen
             # Stand, BEVOR ein --resume startet (sonst mischt der Resume Studies zweier
@@ -4712,6 +4726,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # (kein zweiter Scan über bereits verarbeitete Symbole nötig).
     _cumulative_trials_done = 0
     _cumulative_eligible_total = 0
+    _wallclock_result_emitted = False
     for symbol, symbol_pairs in pairs_by_symbol.items():
         # Issue #908 Fix 2 — die #842-Prognose hat eine Kürzung angeordnet: ab hier keine weiteren
         # Symbole starten (die bereits laufenden/abgeschlossenen bleiben unangetastet). Der Lauf
@@ -4748,27 +4763,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # ENOSPC-Äquivalent, aber ein 62-h-Lauf ohne Obergrenze ist operativ nicht steuerbar.
         # Laufende Studies werden NICHT abgebrochen, nur keine neuen mehr gestartet.
         _wallclock_elapsed_s = time.perf_counter() - sweep_t0
-        _wallclock_exceeded = wallclock_guard.check_wallclock_budget(
+        _wallclock_exceeded = wallclock_guard.wallclock_budget_exceeded(
             _wallclock_elapsed_s, max_hours=_sweep_max_wallclock_h,
         )
-        # Issue #1015/#1167 (Katalog #1170) — vorher nur bei Ueberschreitung ein WARNING-Log, sonst
-        # spurlos: ein Lauf, der das Budget NIE erreichte, und ein Lauf, in dem diese Pruefung nie
-        # ausgefuehrt wurde, waren im Report ununterscheidbar. Symmetrisch (PASS UND FAIL), source=
-        # "sweep" (dieselbe "optimizer"-Sidecar-Datei, die report.py bereits liest).
-        emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
-            "name": "check_wallclock_budget", "check": "check_wallclock_budget",
-            "passed": not _wallclock_exceeded, "source": "sweep", "scope": "global",
-            "expected": (f"elapsed_s <= max_hours*3600 (max_hours={_sweep_max_wallclock_h})"
-                        if _sweep_max_wallclock_h is not None else
-                        "kein sweep_max_wallclock_h konfiguriert (Check inaktiv, Default-PASS)."),
-            "actual": {"elapsed_s": round(_wallclock_elapsed_s, 1),
-                      "max_hours": _sweep_max_wallclock_h} if _wallclock_exceeded else None,
-            "detail": (f"Laufzeit-Budget überschritten nach {_wallclock_elapsed_s:.0f}s "
-                      f"(max_hours={_sweep_max_wallclock_h})." if _wallclock_exceeded else
-                      "Laufzeit-Budget nicht überschritten."),
-            "severity": "high",
-        }, level=logging.INFO if not _wallclock_exceeded else logging.WARNING)
+        # Issue #1015/#1167 (Katalog #1170) — symmetrisch (PASS UND FAIL) im Strom. Issue #1370 (GH #1267)
+        # — das Urteil ist jetzt das ``InvariantResult`` von ``wallclock_guard.check_wallclock_budget``,
+        # GENAU EINMAL je Lauf: hier bei Überschreitung, sonst nach der Symbolschleife (auch wenn kein
+        # einziges Symbol startete — vorher fehlte der Check nach einer Totalabweisung im Strom).
         if _wallclock_exceeded:
+            _emit_wallclock_budget_result(_wallclock_elapsed_s, _sweep_max_wallclock_h)
+            _wallclock_result_emitted = True
             wallclock_guard.sweep_wallclock_exceeded.set()
             logging.getLogger("optimizer").warning(
                 "[#828] Laufzeit-Budget überschritten (sweep_max_wallclock_h=%s) — verbleibende "
@@ -5300,6 +5304,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                     # abgeschlossen sind (Sweep läuft fort statt abzubrechen).
                     sweep_fail_fast_invariant = None
 
+    if not _wallclock_result_emitted:
+        _emit_wallclock_budget_result(time.perf_counter() - sweep_t0, _sweep_max_wallclock_h)
+
     # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
     # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne
     # Log-Parsing). Zeitdauer-Pflicht §18: jeder Lauf-Pfad weist seine Wall-Clock aus.
@@ -5377,6 +5384,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # damit ein Lauf mit k>0 von n überlebenden Symbolen nachvollziehbar bleibt (statt nur
         # ``symbols_planned``/``symbols_completed`` zu zeigen, ohne WARUM ein Symbol fehlt).
         "symbols_rejected": _symbols_rejected,
+        # Issue #1369 (GH #1266) — dieselben Trichter-Zähler wie SWEEP_FINISHED und Report.
+        **{k: v for k, v in _preflight_funnel(
+            _requested_syms, pairs_by_symbol, _symbols_rejected, _gate1_rejected_symbols).items()
+           if k != "symbols_rejected"},
+        "symbols_planned": len(pairs_by_symbol),
+        "symbols_completed": len(completed_symbols),
         # Issue #625 — familienweise N_eff je Symbol (Σ eligibler Trials über die Strategien-Studies).
         # Issue #1005/#1157 (Katalog #1170) — umbenannt von ``deflation_n_family``: derselbe
         # Feldname trug im selben Lauf DREI numerisch verschiedene Groessen (dieses Sweep-Ereignis,
@@ -5811,22 +5824,29 @@ def main(argv: list[str] | None = None) -> list[Path]:
     symbols_planned: int | None = None
     symbols_discovered: int | None = None
     symbols_gate1_rejected: int | None = None
+    _funnel: dict = {}
     if sweep_symbol_funnel is not None and sweep_symbol_funnel.get("run_id") == run_id:
-        symbols_completed = len(sweep_symbol_funnel.get("completed_symbols") or [])
-        symbols_planned = sweep_symbol_funnel.get("symbols_planned")
-        symbols_discovered = sweep_symbol_funnel.get("symbols_discovered")
-        symbols_gate1_rejected = sweep_symbol_funnel.get("symbols_gate1_rejected")
+        _funnel = sweep_symbol_funnel
     else:
         try:
             _checkpoint = json.loads((WORK / "sweep_progress.json").read_text("utf-8"))
             if _checkpoint.get("run_id") == run_id:
-                symbols_completed = len(_checkpoint.get("completed_symbols") or [])
-                symbols_planned = _checkpoint.get("symbols_planned")
-                # Issue #942 — optional (aeltere Checkpoints ohne diese Felder bleiben lesbar).
-                symbols_discovered = _checkpoint.get("symbols_discovered")
-                symbols_gate1_rejected = _checkpoint.get("symbols_gate1_rejected")
+                _funnel = _checkpoint
         except (OSError, ValueError):
             pass
+    if _funnel:
+        symbols_completed = len(_funnel.get("completed_symbols") or [])
+        symbols_planned = _funnel.get("symbols_planned")
+        # Issue #942 — optional (aeltere Checkpoints ohne diese Felder bleiben lesbar).
+        symbols_discovered = _funnel.get("symbols_discovered")
+        symbols_gate1_rejected = _funnel.get("symbols_gate1_rejected")
+    # Issue #1369 (GH #1266) — angefordert / im Preflight abgewiesen (optional, ältere Checkpoints ohne).
+    symbols_requested = _funnel.get("symbols_requested")
+    symbols_rejected_preflight = _funnel.get("symbols_rejected_preflight")
+    symbols_rejected_detail = list(_funnel.get("symbols_rejected") or [])
+    # Issue #1369 — terminaler Status einer Totalabweisung im Preflight (statt "Vollständig gerechnet
+    # (0/0)"); fehlt ausschliesslich Historie, bleibt es beim terminalen Wartestatus aus #1363.
+    run_status = _preflight_terminal_status(run_status, symbols_requested, symbols_planned, run_id=run_id)
 
     # Issue #1065 (Pitfall #? — Vollständigkeit ≠ Gültigkeit) — ``run_status='aborted_invariant'``
     # bedeutet "eine blockierende Invariante hat FAILt", NICHT "Arbeit wurde abgebrochen". Der
@@ -5894,6 +5914,9 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_completed=symbols_completed, symbols_planned=symbols_planned,
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
+                symbols_requested=symbols_requested,
+                symbols_rejected_preflight=symbols_rejected_preflight,
+                symbols_rejected=symbols_rejected_detail,
                 prior_probe_invariant_checks=_prior_probe_checks,
                 blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
@@ -5911,6 +5934,9 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_completed=symbols_completed, symbols_planned=symbols_planned,
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
+                symbols_requested=symbols_requested,
+                symbols_rejected_preflight=symbols_rejected_preflight,
+                symbols_rejected=symbols_rejected_detail,
                 prior_probe_invariant_checks=_prior_probe_checks,
                 blocking_invariant_triggered=_blocking_invariant_triggered,
                 preflight_invariant_checks=_preflight_checks,
@@ -5985,6 +6011,9 @@ def main(argv: list[str] | None = None) -> list[Path]:
     _sweep_event_payload = {
         "run_id": run_id, "run_status": run_status,
         "symbols_completed": symbols_completed, "symbols_planned": symbols_planned,
+        # Issue #1369 (GH #1266) — dieselben Trichter-Zähler wie sweep_completed und Report.
+        "symbols_requested": symbols_requested,
+        "symbols_rejected_preflight": symbols_rejected_preflight,
         # Issue #939 — auditierbar, WELCHE Symbole isoliert scheiterten (statt nur, dass
         # run_status von 'complete' abweicht).
         "failed_symbols": sorted(sweep_failed_symbols),
@@ -6185,6 +6214,67 @@ def _fail_fast_systemic_verdict(
     return len(offending_symbols) >= min_offending_symbols, policy
 
 
+def _emit_invariant_result(result, *, scope: str = "global") -> None:
+    """Ein ``InvariantResult`` als ``INVARIANT_STREAM_RESULT`` (source ``sweep``) — dieselbe Form wie die
+    übrigen sweep-seitigen Meldungen."""
+    payload = result.to_dict()
+    payload.update({"name": result.name, "check": result.name, "source": "sweep", "scope": scope})
+    emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", payload,
+                         level=logging.INFO if result.passed is not False else logging.WARNING)
+
+
+def _emit_wallclock_budget_result(elapsed_s: float, max_hours: float | None) -> None:
+    """Issue #1370 (GH #1267) — ``wallclock_guard.check_wallclock_budget`` im Strom (genau einmal je Lauf)."""
+    _emit_invariant_result(wallclock_guard.check_wallclock_budget(elapsed_s, max_hours=max_hours))
+
+
+def _emit_any_arm_reachability_run_result() -> None:
+    """Issue #1370 (GH #1267) — ``reward.check_any_arm_reachability`` einmal je Lauf (``scope='global'``)
+    gegen ``tournament.json`` — auch wenn keine Strategie optimiert wird (Totalabweisung im Preflight).
+    Fail-open: eine unlesbare Config meldet nichts (``check_invariant_coverage`` macht das sichtbar)."""
+    from automation.optimizer.reward import check_any_arm_reachability
+    try:
+        tournament_cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return
+    _emit_invariant_result(check_any_arm_reachability(tournament_cfg))
+
+
+def _preflight_terminal_status(run_status: str, symbols_requested: int | None, symbols_planned: int | None,
+                               *, run_id: str | None = None) -> str:
+    """Issue #1369 (GH #1266) — ``aborted_preflight_all_symbols_rejected``, wenn ein sonst vollständiger Lauf
+    ALLE angeforderten Symbole im Preflight abgewiesen hat; scheitern sie ausschliesslich an der Historien-
+    Spanne (``_LAST_DATA_DEPTH_ETA['waiting']`` dieses Laufs), bleibt der Weg zum terminalen Wartestatus
+    ``waiting_for_data`` (#1363) offen. Jeder andere Status bleibt unverändert."""
+    if run_status != "complete" or not invariants.all_requested_symbols_rejected(symbols_requested,
+                                                                                 symbols_planned):
+        return run_status
+    eta = _LAST_DATA_DEPTH_ETA or {}
+    if eta.get("waiting") and eta.get("run_id") in (None, run_id):
+        return run_status
+    return "aborted_preflight_all_symbols_rejected"
+
+
+def _preflight_funnel(requested_syms, pairs_by_symbol, symbols_rejected: list[dict],
+                      gate1_rejected_symbols=()) -> dict:
+    """Issue #1369 (GH #1266) — ``symbols_requested``/``symbols_rejected_preflight``/``symbols_rejected``:
+    jedes angeforderte Symbol, das NICHT geplant wurde, mit Grund (Preflight-Ablehnung, sonst Gate 1)."""
+    requested = list(dict.fromkeys(requested_syms or []))
+    planned = set(pairs_by_symbol or {})
+    by_symbol: dict[str, dict] = {}
+    for entry in symbols_rejected or []:
+        sym = entry.get("symbol")
+        if sym in requested and sym not in planned and sym not in by_symbol:
+            by_symbol[sym] = {"symbol": sym, "reason": entry.get("reason"), "detail": entry.get("detail")}
+    for sym in requested:
+        if sym not in planned and sym not in by_symbol:
+            by_symbol[sym] = {"symbol": sym,
+                              "reason": "GATE1_REJECTED" if sym in set(gate1_rejected_symbols or ()) else
+                              "NOT_PLANNED", "detail": None}
+    return {"symbols_requested": len(requested), "symbols_rejected_preflight": len(by_symbol),
+            "symbols_rejected": [by_symbol[s] for s in requested if s in by_symbol]}
+
+
 def _sweep_completion_event(run_status: str) -> tuple[str, int]:
     """Issue #1009/#1161 (Katalog #1170) — ``SWEEP_ABORTED`` bei einem erfolgreichen Lauf.
 
@@ -6321,6 +6411,8 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
             c for c in (written_report.get("invariant_checks") or [])
             if c.get("severity") == "blocking" and c.get("passed", True) is None
             and not _is_scoped_preflight_rejection(c)
+            # Issue #1369 — Folge-Invarianten einer Totalabweisung sind kein eigener Befund.
+            and not invariants.is_suppressed_upstream(c)
         ]
         if not blocking_fails and not blocking_inconclusive:
             return "complete"

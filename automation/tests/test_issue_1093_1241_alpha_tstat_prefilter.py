@@ -154,21 +154,21 @@ def test_mandatory_gate_reachability_live_flags_structurally_unreachable_alpha_g
     tcfg = _load_production_tournament_cfg()
     assert "oos_min_alpha_tstat" in tcfg["eligible_requires_all"]
     observed = {"min_alpha_tstat": [0.1, 0.3, -0.2, 0.5, 0.4, 0.2, 0.6, 0.1, 0.3, 0.2, 0.4]}
-    unreachable = reward.check_mandatory_gate_reachability_live(tcfg, observed, n_evaluated=11)
+    unreachable = reward.mandatory_gate_reachability_live_violations(tcfg, observed, n_evaluated=11)
     assert unreachable == ["oos_min_alpha_tstat"]
 
 
 def test_mandatory_gate_reachability_live_passes_when_reachable():
     tcfg = _load_production_tournament_cfg()
     observed = {"min_alpha_tstat": [0.1, 3.0, 2.5, 0.5, 4.0, 0.2, 2.1, 0.1, 3.3, 0.2, 2.9]}
-    unreachable = reward.check_mandatory_gate_reachability_live(tcfg, observed, n_evaluated=11)
+    unreachable = reward.mandatory_gate_reachability_live_violations(tcfg, observed, n_evaluated=11)
     assert unreachable == []
 
 
 def test_mandatory_gate_reachability_live_insufficient_data_is_silent():
     tcfg = _load_production_tournament_cfg()
     observed = {"min_alpha_tstat": [0.1, 0.2]}  # < any_arm_min_observations (Default 10)
-    unreachable = reward.check_mandatory_gate_reachability_live(tcfg, observed, n_evaluated=2)
+    unreachable = reward.mandatory_gate_reachability_live_violations(tcfg, observed, n_evaluated=2)
     assert unreachable == []
 
 

@@ -30,18 +30,22 @@ def _reset_wallclock_guard():
     wallclock_guard.reset_for_tests()
 
 
-# ── wallclock_guard.check_wallclock_budget: reine Arithmetik ────────────────────────────────────────
+# ── wallclock_guard.wallclock_budget_exceeded: reine Arithmetik ─────────────────────────────────────
+# Issue #1370 (GH #1267) — umbenannt von ``check_wallclock_budget`` (der ``bool`` war kein
+# ``InvariantResult``); ``check_wallclock_budget`` ist seither der Strom-Wrapper.
 def test_check_wallclock_budget_false_when_under_budget():
-    assert wallclock_guard.check_wallclock_budget(3600.0, max_hours=24.0) is False
+    assert wallclock_guard.wallclock_budget_exceeded(3600.0, max_hours=24.0) is False
+    assert wallclock_guard.check_wallclock_budget(3600.0, max_hours=24.0).passed is True
 
 
 def test_check_wallclock_budget_true_when_at_or_over_budget():
-    assert wallclock_guard.check_wallclock_budget(24.0 * 3600.0, max_hours=24.0) is True
-    assert wallclock_guard.check_wallclock_budget(25.0 * 3600.0, max_hours=24.0) is True
+    assert wallclock_guard.wallclock_budget_exceeded(24.0 * 3600.0, max_hours=24.0) is True
+    assert wallclock_guard.wallclock_budget_exceeded(25.0 * 3600.0, max_hours=24.0) is True
+    assert wallclock_guard.check_wallclock_budget(25.0 * 3600.0, max_hours=24.0).passed is False
 
 
 def test_check_wallclock_budget_none_means_unlimited():
-    assert wallclock_guard.check_wallclock_budget(10_000.0 * 3600.0, max_hours=None) is False
+    assert wallclock_guard.wallclock_budget_exceeded(10_000.0 * 3600.0, max_hours=None) is False
 
 
 # ── Fix Punkt 3: max_workers nicht mehr an len(symbol_pairs) gedeckelt ──────────────────────────────

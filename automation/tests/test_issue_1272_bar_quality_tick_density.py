@@ -22,7 +22,7 @@ import logging
 import pytest
 
 from automation.optimizer import sweep
-from automation.optimizer.sweep_diagnostics import check_bar_quality
+from automation.optimizer.sweep_diagnostics import bar_quality_profile
 
 
 # ---------------------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ def _healthy_bars(n=40):
 
 def test_ticks_per_bar_median_at_or_below_one_fails_blocking_with_named_code():
     highs, lows, closes = _healthy_bars()
-    result = check_bar_quality(highs, lows, closes, ticks_per_bar_median=1.0,
+    result = bar_quality_profile(highs, lows, closes, ticks_per_bar_median=1.0,
                                frac_bars_single_tick=1.0)
     assert result["passed"] is False
     assert result["severity"] == "blocking"
@@ -48,7 +48,7 @@ def test_ticks_per_bar_median_at_or_below_one_fails_blocking_with_named_code():
 
 def test_ticks_per_bar_median_above_one_does_not_trigger_the_blocking_reason():
     highs, lows, closes = _healthy_bars()
-    result = check_bar_quality(highs, lows, closes, ticks_per_bar_median=5.0,
+    result = bar_quality_profile(highs, lows, closes, ticks_per_bar_median=5.0,
                                frac_bars_single_tick=0.1)
     assert "BAR_AXIS_NO_INTRABAR_INFORMATION" not in (result["reason"] or "")
     assert result["severity"] == "high"
@@ -56,7 +56,7 @@ def test_ticks_per_bar_median_above_one_does_not_trigger_the_blocking_reason():
 
 def test_frac_bars_single_tick_above_threshold_fails_blocking():
     highs, lows, closes = _healthy_bars()
-    result = check_bar_quality(highs, lows, closes, ticks_per_bar_median=3.0,
+    result = bar_quality_profile(highs, lows, closes, ticks_per_bar_median=3.0,
                                frac_bars_single_tick=0.6)
     assert result["passed"] is False
     assert result["severity"] == "blocking"
@@ -65,7 +65,7 @@ def test_frac_bars_single_tick_above_threshold_fails_blocking():
 
 def test_frac_bars_single_tick_at_threshold_passes():
     highs, lows, closes = _healthy_bars()
-    result = check_bar_quality(highs, lows, closes, ticks_per_bar_median=3.0,
+    result = bar_quality_profile(highs, lows, closes, ticks_per_bar_median=3.0,
                                frac_bars_single_tick=0.5)
     assert result["severity"] == "high"
 
@@ -73,7 +73,7 @@ def test_frac_bars_single_tick_at_threshold_passes():
 def test_none_tick_density_fields_are_not_evaluated():
     """Kein Aufrufer liefert die Tick-Zahlen (Legacy-Pfad) -> kein Fail allein deswegen."""
     highs, lows, closes = _healthy_bars()
-    result = check_bar_quality(highs, lows, closes)
+    result = bar_quality_profile(highs, lows, closes)
     assert "BAR_AXIS_NO_INTRABAR_INFORMATION" not in (result["reason"] or "")
     assert result["ticks_per_bar_median"] is None
 
@@ -85,7 +85,7 @@ def test_reason_lists_blocking_code_before_derived_symptoms():
     highs = [100.0] * n
     lows = [100.0] * n  # high==low in jeder Bar -> triggert auch frac_high_eq_low/frac_zero_true_range
     closes = [100.0] * n
-    result = check_bar_quality(highs, lows, closes, ticks_per_bar_median=1.0,
+    result = bar_quality_profile(highs, lows, closes, ticks_per_bar_median=1.0,
                                frac_bars_single_tick=1.0)
     assert result["passed"] is False
     first_reason = result["reason"].split(";")[0].strip()
@@ -93,7 +93,7 @@ def test_reason_lists_blocking_code_before_derived_symptoms():
 
 
 def test_severity_field_present_on_empty_input():
-    result = check_bar_quality([], [], [])
+    result = bar_quality_profile([], [], [])
     assert result["passed"] is False
     assert result["severity"] == "high"
     assert result["ticks_per_bar_median"] is None

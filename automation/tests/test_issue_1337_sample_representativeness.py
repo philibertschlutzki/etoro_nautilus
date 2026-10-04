@@ -9,12 +9,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from automation.optimizer import sweep
-from automation.optimizer.sweep_diagnostics import check_bar_quality
+from automation.optimizer.sweep_diagnostics import bar_quality_profile
 from automation._serde import encode_price_fsb16
 
 
 def test_check_bar_quality_is_inconclusive_when_sample_span_too_short():
-    result = check_bar_quality(
+    result = bar_quality_profile(
         [101.0] * 20, [99.0] * 20, [100.0] * 20, min_distinct_closes=1,
         sample_covers_required_span=False, sample_span_days=70.0)
     assert result["passed"] is None
@@ -23,7 +23,7 @@ def test_check_bar_quality_is_inconclusive_when_sample_span_too_short():
 
 
 def test_check_bar_quality_never_reports_inconclusive_as_pass_or_fail():
-    result = check_bar_quality(
+    result = bar_quality_profile(
         [101.0] * 20, [99.0] * 20, [100.0] * 20, min_distinct_closes=1,
         sample_covers_required_span=False, sample_span_days=70.0)
     assert result["passed"] is not True
@@ -37,7 +37,7 @@ def test_check_bar_quality_default_sample_covers_required_span_is_backward_compa
     closes = [100.0 + i * 0.3 for i in range(30)]
     highs = [c + 0.5 for c in closes]
     lows = [c - 0.5 for c in closes]
-    result = check_bar_quality(highs, lows, closes, min_distinct_closes=5)
+    result = bar_quality_profile(highs, lows, closes, min_distinct_closes=5)
     assert result["passed"] is True
 
 

@@ -108,7 +108,7 @@ def test_single_isolated_trial_violation_no_longer_aborts_the_study():
     Trial-Ebene (oben) faengt den Einzelfall bereits individuell ab; die Study selbst darf
     weiterlaufen (Akzeptanzkriterium #803: 'Study mit 1/64 Verletzungen: laeuft durch')."""
     study = _study_with_trials(64, n_violations=1)
-    result = ro.check_study_coherence_violation_rate(
+    result = ro.enforce_study_coherence_violation_rate(
         study, {"max_coherence_violation_rate": 0.10})
     assert result is False
     assert study.user_attrs.get("coherence_violation_rate_exceeded") is None
@@ -116,7 +116,7 @@ def test_single_isolated_trial_violation_no_longer_aborts_the_study():
 
 def test_systematic_violation_rate_still_aborts_the_study():
     study = _study_with_trials(64, n_violations=35)  # 54.7%
-    result = ro.check_study_coherence_violation_rate(
+    result = ro.enforce_study_coherence_violation_rate(
         study, {"max_coherence_violation_rate": 0.10})
     assert result is True
     assert study.user_attrs.get("coherence_violation_rate_exceeded") is True
@@ -125,7 +125,7 @@ def test_systematic_violation_rate_still_aborts_the_study():
 def test_aborted_event_carries_budget_execution_telemetry(caplog):
     study = _study_with_trials(64, n_violations=35, n_trials_budget=64)
     with caplog.at_level(logging.INFO, logger="optimizer"):
-        ro.check_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.10})
+        ro.enforce_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.10})
     import json as _json
     events = [_json.loads(r.message.split("[JSON_EVENT]", 1)[1].strip())
              for r in caplog.records if "[JSON_EVENT]" in r.message]
@@ -137,7 +137,7 @@ def test_aborted_event_carries_budget_execution_telemetry(caplog):
 
 def test_budget_execution_fraction_is_none_without_a_known_budget():
     study = _study_with_trials(64, n_violations=35)  # kein n_trials_budget gesetzt
-    ro.check_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.10})
+    ro.enforce_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.10})
     # kein Crash, kein stiller Default — None ist explizit "kein Budget bekannt".
 
 

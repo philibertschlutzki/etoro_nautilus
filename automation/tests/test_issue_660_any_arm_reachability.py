@@ -15,7 +15,7 @@ import logging
 
 import pytest
 
-from automation.optimizer.reward import check_any_arm_reachability_live
+from automation.optimizer.reward import any_arm_reachability_live_violations  # #1370: umbenannt
 
 
 _TCFG = {"eligible_requires_any": ["min_profit_factor", "min_win_rate"], "oos_min_win_rate": 0.15}
@@ -26,7 +26,7 @@ def test_unreachable_when_observed_p99_below_threshold(caplog):
     WARNING, Klausel als unreachable gemeldet."""
     observed = {"min_win_rate": [0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11] * 3}
     with caplog.at_level(logging.WARNING, logger="optimizer"):
-        unreachable = check_any_arm_reachability_live(_TCFG, observed)
+        unreachable = any_arm_reachability_live_violations(_TCFG, observed)
     assert unreachable == ["min_win_rate"]
     assert any("[#660]" in r.message for r in caplog.records)
 
@@ -34,35 +34,35 @@ def test_unreachable_when_observed_p99_below_threshold(caplog):
 def test_reachable_when_observed_p99_above_threshold():
     """Beobachtetes p99 über der Schwelle ⇒ kein Warning, keine gemeldete Klausel."""
     observed = {"min_win_rate": [0.10, 0.15, 0.18, 0.20, 0.22, 0.25, 0.30] * 3}
-    unreachable = check_any_arm_reachability_live(_TCFG, observed)
+    unreachable = any_arm_reachability_live_violations(_TCFG, observed)
     assert unreachable == []
 
 
 def test_no_judgement_with_too_few_samples():
     """< 5 beobachtete Werte ⇒ kein Urteil (zu wenig Daten für ein p99, kein False-Positive)."""
     observed = {"min_win_rate": [0.05, 0.06, 0.07]}
-    unreachable = check_any_arm_reachability_live(_TCFG, observed)
+    unreachable = any_arm_reachability_live_violations(_TCFG, observed)
     assert unreachable == []
 
 
 def test_inactive_when_clause_not_in_eligible_requires_any():
     tcfg = {"eligible_requires_any": ["min_profit_factor"], "oos_min_win_rate": 0.15}
     observed = {"min_win_rate": [0.01] * 10}
-    unreachable = check_any_arm_reachability_live(tcfg, observed)
+    unreachable = any_arm_reachability_live_violations(tcfg, observed)
     assert unreachable == []
 
 
 def test_inactive_when_threshold_missing():
     tcfg = {"eligible_requires_any": ["min_profit_factor", "min_win_rate"]}
     observed = {"min_win_rate": [0.01] * 10}
-    unreachable = check_any_arm_reachability_live(tcfg, observed)
+    unreachable = any_arm_reachability_live_violations(tcfg, observed)
     assert unreachable == []
 
 
 def test_no_observed_values_is_a_no_op():
-    unreachable = check_any_arm_reachability_live(_TCFG, {})
+    unreachable = any_arm_reachability_live_violations(_TCFG, {})
     assert unreachable == []
-    unreachable = check_any_arm_reachability_live(_TCFG, None)
+    unreachable = any_arm_reachability_live_violations(_TCFG, None)
     assert unreachable == []
 
 
@@ -70,8 +70,8 @@ def test_complements_not_replaces_static_fixture_check():
     """Akzeptanzkriterium (#660): die statische #633-Prüfung bleibt unverändert grün für 0.15
     (< Fixture-p99=0.197) — die LIVE-Prüfung ist eine ZUSÄTZLICHE, studien-spezifische Diagnose,
     kein Ersatz."""
-    from automation.optimizer.reward import check_any_arm_reachability
-    assert check_any_arm_reachability(_TCFG) == []   # #633: 0.15 < 0.197 ⇒ "erreichbar"
+    from automation.optimizer.reward import any_arm_reachability_violations   # #1370: umbenannt
+    assert any_arm_reachability_violations(_TCFG) == []   # #633: 0.15 < 0.197 ⇒ "erreichbar"
     # ... aber DIESE Study beobachtete strukturell weniger:
     observed = {"min_win_rate": [0.05, 0.07, 0.09, 0.10, 0.11] * 3}
-    assert check_any_arm_reachability_live(_TCFG, observed) == ["min_win_rate"]
+    assert any_arm_reachability_live_violations(_TCFG, observed) == ["min_win_rate"]

@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 from automation.optimizer.reward import (
-    check_any_arm_reachability,
+    any_arm_reachability_violations as check_any_arm_reachability,  # Issue #1370: umbenannt
     assert_any_condition_parity,
     _CALIBRATION_FIXTURE_WIN_RATES,
 )
