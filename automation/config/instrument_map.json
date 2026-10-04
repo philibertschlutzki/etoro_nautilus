@@ -885,6 +885,150 @@
       "asset_class": "equity",
       "price_precision": 2,
       "size_precision": 2
+    },
+    "1063": {
+      "symbol": "LNTH.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1483": {
+      "symbol": "PSX.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9123": {
+      "symbol": "RLAY.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9500": {
+      "symbol": "PARR.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5660": {
+      "symbol": "RUN.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6654": {
+      "symbol": "QS.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10829": {
+      "symbol": "SN.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1027": {
+      "symbol": "MRK.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1557": {
+      "symbol": "NUE.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4346": {
+      "symbol": "FTNT.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5604": {
+      "symbol": "KTOS.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6669": {
+      "symbol": "DHT.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1503": {
+      "symbol": "MPC.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1135": {
+      "symbol": "ORCL.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6086": {
+      "symbol": "NTRA.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4312": {
+      "symbol": "HPE.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1959": {
+      "symbol": "XYL.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9250": {
+      "symbol": "GRAB.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10968": {
+      "symbol": "DFTX.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4157": {
+      "symbol": "SU.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4077": {
+      "symbol": "ILMN.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "15239": {
+      "symbol": "SKHY.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4483": {
+      "symbol": "PDD.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1021": {
+      "symbol": "INTC.ETORO",
+      "asset_class": null,
+      "price_precision": 2,
+      "size_precision": 2
     }
   }
 }
