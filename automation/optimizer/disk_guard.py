@@ -25,6 +25,7 @@ import threading
 import time
 from pathlib import Path
 
+from automation.catalog_paths import is_catalog_archive_path
 from automation.optimizer.invariants import invariant_scope
 
 # Issue #795 — einfache String-Konstanten statt enum.Enum: Konvention dieses Repos (event_type,
@@ -62,7 +63,11 @@ def measure_usage(work_dir: Path, *, use_cache: bool = True) -> int:
             return cached_val
     total = 0
     if Path(work_dir).exists():
-        for dirpath, _dirnames, filenames in os.walk(work_dir):
+        for dirpath, dirnames, filenames in os.walk(work_dir):
+            # Issue #1364 (GH #1260) Fix Punkt 5: das Katalog-Archiv (data/nautilus/archive/) zählt
+            # nicht zum Optimizer-Budget und ist von jeder automatischen Bereinigung ausgenommen.
+            dirnames[:] = [d for d in dirnames
+                           if not is_catalog_archive_path(Path(dirpath) / d)]
             for name in filenames:
                 fp = os.path.join(dirpath, name)
                 try:

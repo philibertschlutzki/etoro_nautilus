@@ -30,6 +30,7 @@ from pathlib import Path
 
 import optuna
 
+from automation.catalog_paths import is_catalog_archive_path as _is_catalog_archive_path
 from automation.optimizer.manifest import WORK
 from automation.optimizer.trial_config import config_dir
 
@@ -170,6 +171,9 @@ def purge_stale_studies(*, sweep_dir: Path | None = None, current_version: int |
                     logger.error("Fehler beim Löschen von %s: %s", db_path, e)
                     continue
             if trial_root.exists():
+                if _is_catalog_archive_path(Path(trial_root).resolve()):
+                    logger.error("[#1364] Verweigere Löschung im Katalog-Archiv: %s", trial_root)
+                    continue
                 try:
                     shutil.rmtree(trial_root)
                     logger.warning(

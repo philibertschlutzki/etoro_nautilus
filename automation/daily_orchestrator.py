@@ -1173,10 +1173,16 @@ def main() -> int:
 
     # ── Catalog-Reset (einmalig) ────────────────────────────────────────────
     if args.reset_catalog:
-        import shutil
+        # Issue #1364 (GH #1260) / Pitfall #490: kein rmtree — Historie, die die API nicht
+        # zurückliefert (akkumulierte Vorwärts-Kerzen, Echt-Ticks), wäre unwiederbringlich verloren.
+        # Der Katalog wird je Instrument nach data/nautilus/archive/<UTC-ts>/<symbol>/ VERSCHOBEN.
+        from automation.catalog_paths import catalog_archive_root
+        from automation.historical_fetcher import archive_all_instrument_catalogs, _utc_ts_label
         if QUOTE_TICK_PATH.exists():
-            shutil.rmtree(str(QUOTE_TICK_PATH))
-            log.info(f"[RESET] Catalog geleert: {QUOTE_TICK_PATH}")
+            archived = archive_all_instrument_catalogs(
+                QUOTE_TICK_PATH, catalog_archive_root(QUOTE_TICK_PATH.parent.parent) / _utc_ts_label())
+            log.info(f"[RESET] Catalog archiviert (nicht gelöscht): {len(archived)} Instrument(e) "
+                     f"aus {QUOTE_TICK_PATH}")
         QUOTE_TICK_PATH.mkdir(parents=True, exist_ok=True)
 
     log.info("╔" + "═" * 60 + "╗")

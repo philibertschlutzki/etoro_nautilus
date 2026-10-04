@@ -17,6 +17,31 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Issue #1364 (GH #1260) — Archiv-Verzeichnis des Katalogs. ``--rebuild-catalog`` VERSCHIEBT einen
+# Instrument-Katalog hierher (``<catalog>/archive/<UTC-ts>/<symbol>/``), statt ihn zu löschen: Historie
+# jenseits der API-Tiefe und Echt-Ticks sind nach einem ``rmtree`` unwiederbringlich verloren.
+# Jede automatische Bereinigung (``optimizer/retention.py``, ``optimizer/disk_guard.py``) schliesst
+# diesen Pfad über ``is_catalog_archive_path`` aus.
+ARCHIVE_DIRNAME = "archive"
+
+
+def catalog_archive_root(catalog_path: str | Path) -> Path:
+    """``<catalog_path>/archive`` — Wurzel aller Rebuild-Archive (siehe ``ARCHIVE_DIRNAME``)."""
+    return Path(catalog_path) / ARCHIVE_DIRNAME
+
+
+def is_catalog_archive_path(path: str | Path) -> bool:
+    """True, wenn ``path`` im Katalog-Archiv liegt (Komponentenfolge ``nautilus/archive``).
+
+    Reine Pfad-Prüfung ohne Dateisystemzugriff — die einzige Quelle für „darf eine automatische
+    Bereinigung diesen Pfad anfassen?" (Antwort bei True: nie)."""
+    parts = Path(path).parts
+    return any(
+        parts[i] == "nautilus" and parts[i + 1] == ARCHIVE_DIRNAME
+        for i in range(len(parts) - 1)
+    )
+
+
 # Reihenfolge ist Präferenzreihenfolge: der klassische Einzeldatei-Name zuerst, dann die
 # NautilusTrader-typischen partitionierten Layouts. ``*.parquet`` als letzter, weitester Fallback.
 _QUOTE_TICK_GLOB_PATTERNS: tuple[str, ...] = ("data.parquet", "part-*.parquet", "*.parquet")

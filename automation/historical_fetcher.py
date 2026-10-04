@@ -559,7 +559,386 @@ def ensure_walkforward_history(
     return report
 
 
-# ─── Catalog Rebuild (Issue #1333 / GH #1227) ────────────────────────────────
+# ─── Catalog Rebuild (Issue #1333 / GH #1227, Issue #1364 / GH #1260) ────────
+
+_DAY_NS = 86_400_000_000_000
+REALTICK_INTERVAL = "RealTick"
+
+
+class HistoryLossRefused(RuntimeError):
+    """Issue #1364 (GH #1260) Fix Punkt 3: der Probelauf sagt ``history_lost_days > 0`` voraus und
+    ``--accept-history-loss`` fehlt. Wird VOR jeder Verschiebung geworfen — der Katalog ist
+    unverändert."""
+
+
+def _utc_ts_label(now: datetime | None = None) -> str:
+    return (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _file_range_ns(parquet_file: Path) -> tuple[int, int] | None:
+    """``(erster, letzter) ts_event`` einer Katalogdatei, ``None`` bei leer/nicht lesbar."""
+    try:
+        import pyarrow.compute as pc
+        t = pq.read_table(str(parquet_file), columns=["ts_event"])
+        if len(t) == 0:
+            return None
+        mm = pc.min_max(t.column("ts_event")).as_py()
+        return int(mm["min"]), int(mm["max"])
+    except Exception:
+        return None
+
+
+def uncovered_days(old: tuple[int, int], new: tuple[int, int] | None) -> float:
+    """Tage des alten Bereichs ``old`` = ``[first, last]``, die der neue Bereich ``new`` NICHT
+    abdeckt — die Messgrösse hinter ``history_lost_days`` (Issue #1364 Fix Punkt 2). Reine
+    Funktion; ``new = None`` (nichts neu geliefert) ⇒ der ganze alte Bereich."""
+    old_first, old_last = old
+    if new is None:
+        return max(0, old_last - old_first) / _DAY_NS
+    new_first, new_last = new
+    lost = max(0, min(new_first, old_last) - old_first)
+    lost += max(0, old_last - max(new_last, old_first))
+    return lost / _DAY_NS
+
+
+def classify_catalog_files(inst_dir: Path) -> list[dict]:
+    """Klassifiziert alle Datendateien eines Instrument-Katalogverzeichnisses für den Rebuild.
+
+    Je Eintrag: ``interval`` (``OneHour``/``OneDay``/``RealTick``/…), ``path``, ``range`` (ns oder
+    ``None``), ``version`` (``catalog_schema_version`` oder ``None``), ``representable`` (lässt sich
+    ins aktuelle Schema zurückführen — gleiche Version oder registrierte Migration, siehe
+    ``api_backfiller.has_schema_migration``) und ``reason``.
+
+    * ``<interval>/data.parquet`` mit Kerzen-Auflösung: darstellbar ⇔ gleiche/migrierbare Version.
+      Eine v1-Ein-Tick-Kerze (Version ``None``) ist NICHT darstellbar.
+    * ``RealTick/data.parquet`` und die flache ``data.parquet`` (Echt-Ticks des ``catalog_service``,
+      siehe ``daily_orchestrator._merge_symbol``): darstellbar als ``RealTick`` — es sei denn, die
+      flache Datei deklariert per ``catalog_interval`` eine Kerzen-Auflösung.
+    * unbekannte Unterverzeichnisse: nicht darstellbar (``unknown_interval``)."""
+    from automation.api_backfiller import (
+        CATALOG_SCHEMA_VERSION, INTERVAL_TO_NS, _read_catalog_schema_version, has_schema_migration,
+    )
+
+    entries: list[dict] = []
+    if not inst_dir.is_dir():
+        return entries
+
+    def _entry(path: Path, interval: str) -> dict:
+        version = _read_catalog_schema_version(path)
+        if interval == REALTICK_INTERVAL:
+            representable, reason = True, "realtick"
+        elif interval in INTERVAL_TO_NS:
+            if version == CATALOG_SCHEMA_VERSION:
+                representable, reason = True, "same_schema_version"
+            elif has_schema_migration(version):
+                representable, reason = True, "migratable"
+            else:
+                representable, reason = False, f"schema_version_{version!r}_not_representable"
+        else:
+            representable, reason = False, "unknown_interval"
+        return {
+            "interval": interval, "path": path, "range": _file_range_ns(path),
+            "version": version, "representable": representable, "reason": reason,
+        }
+
+    flat = inst_dir / "data.parquet"
+    if flat.is_file():
+        declared = None
+        try:
+            declared = (pq.read_schema(str(flat)).metadata or {}).get(b"catalog_interval")
+        except Exception:
+            declared = None
+        declared_s = declared.decode() if declared else REALTICK_INTERVAL
+        entries.append(_entry(flat, declared_s if declared_s in INTERVAL_TO_NS else REALTICK_INTERVAL))
+    for sub in sorted(p for p in inst_dir.iterdir() if p.is_dir()):
+        f = sub / "data.parquet"
+        if f.is_file():
+            entries.append(_entry(f, sub.name))
+    return entries
+
+
+def predict_history_loss(
+    symbols: list[str],
+    probe_oldest_ns: dict[str, dict[str, int | None]],
+    *,
+    now_ns: int | None = None,
+    quote_tick_path: Path | None = None,
+) -> dict[str, dict[str, dict]]:
+    """Probelauf (Issue #1364 Fix Punkt 3): sagt je Symbol und Intervall ``history_lost_days``
+    VORAUS, ohne etwas zu verschieben. Darstellbare Dateien kommen aus dem Archiv zurück ⇒ 0.
+    Nicht darstellbare Kerzen-Dateien gehen verloren, soweit ihr Bereich nicht von dem abgedeckt
+    wird, was die API liefert (``probe_oldest_ns[symbol][interval]`` = ältester per API erreichbarer
+    Zeitstempel, ``None``/fehlend = unbekannt ⇒ nichts abgedeckt, konservativ)."""
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    now_ns = now_ns if now_ns is not None else int(datetime.now(timezone.utc).timestamp() * 1e9)
+    out: dict[str, dict[str, dict]] = {}
+    for sym in symbols:
+        per_interval: dict[str, dict] = {}
+        for e in classify_catalog_files(root / sym):
+            if e["range"] is None:
+                continue
+            if e["representable"]:
+                lost = 0.0
+            else:
+                oldest = (probe_oldest_ns.get(sym) or {}).get(e["interval"])
+                lost = uncovered_days(e["range"], None if oldest is None else (int(oldest), now_ns))
+            per_interval[e["interval"]] = {
+                "predicted_history_lost_days": lost, "representable": e["representable"],
+                "reason": e["reason"],
+            }
+        out[sym] = per_interval
+    return out
+
+
+async def _probe_symbol_depth(
+    session: aiohttp.ClientSession, etoro_id: str, symbol: str, intervals: list[str],
+    api_key: str, user_key: str, target_start: datetime,
+) -> dict[str, int | None]:
+    """Ältester per API erreichbarer Zeitstempel je Auflösung (paginiert rückwärts bis zur
+    Tiefengrenze — wie ``_fetch_symbol``, aber ohne etwas zu schreiben)."""
+    result: dict[str, int | None] = {}
+    for interval in intervals:
+        end_time = datetime.now(timezone.utc)
+        last_oldest: int | None = None
+        reached: int | None = None
+        while end_time > target_start:
+            chunk = await _fetch_candle_chunk(session, etoro_id, end_time, api_key, user_key, interval)
+            if not chunk:
+                break
+            oldest_ns = _oldest_ts_ns_from_chunk(chunk)
+            if oldest_ns is None or (last_oldest is not None and oldest_ns == last_oldest):
+                break
+            reached = oldest_ns if reached is None else min(reached, oldest_ns)
+            last_oldest = oldest_ns
+            end_time = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc) - timedelta(seconds=1)
+            await asyncio.sleep(1.1)
+        result[interval] = reached
+    return result
+
+
+def _default_probe_fn(api_key: str, user_key: str, id_by_symbol: dict[str, str], months: int):
+    """Default-Probe für ``rebuild_catalog_with_report``: echte API-Tiefenmessung."""
+    def _probe(needed: dict[str, list[str]]) -> dict[str, dict[str, int | None]]:
+        async def _run() -> dict[str, dict[str, int | None]]:
+            target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
+            out: dict[str, dict[str, int | None]] = {}
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                for sym, intervals in sorted(needed.items()):
+                    eid = id_by_symbol.get(sym)
+                    if eid is None:
+                        out[sym] = {}
+                        continue
+                    out[sym] = await _probe_symbol_depth(
+                        session, eid, sym, intervals, api_key, user_key, target_start)
+            return out
+        return asyncio.run(_run())
+    return _probe
+
+
+def archive_instrument_catalog(
+    symbol: str, archive_dir: Path, *, quote_tick_path: Path | None = None,
+) -> Path | None:
+    """Verschiebt ``quote_tick/<symbol>/`` atomar (``os.replace``) nach ``archive_dir/<symbol>/``.
+    Löscht nie (Issue #1364 Fix Punkt 1). ``None``, wenn es nichts zu archivieren gibt."""
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    inst_dir = root / symbol
+    if not inst_dir.exists():
+        return None
+    dest = archive_dir / symbol
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(inst_dir, dest)
+    return dest
+
+
+def archive_all_instrument_catalogs(quote_tick_path: Path, archive_dir: Path) -> list[Path]:
+    """Verschiebt JEDES Instrument-Verzeichnis unter ``quote_tick_path`` ins Archiv (Pfad für
+    ``daily_orchestrator --reset-catalog``, Issue #1364). Nie löschen; Rückgabe: die Archivpfade."""
+    out: list[Path] = []
+    if not quote_tick_path.is_dir():
+        return out
+    for inst in sorted(p for p in quote_tick_path.iterdir() if p.is_dir()):
+        dest = archive_instrument_catalog(inst.name, archive_dir, quote_tick_path=quote_tick_path)
+        if dest is not None:
+            out.append(dest)
+    return out
+
+
+def _restore_from_archive(
+    symbol: str, archived_dir: Path, *, quote_tick_path: Path, logger: logging.Logger,
+) -> dict[str, dict]:
+    """Führt alle darstellbaren Zeilen aus ``archived_dir`` in den frisch gebauten Katalog zurück
+    und liefert den Bericht je Intervall (``history_lost_days`` aus dem alten gegen den neuen
+    Bereich nach der Rückführung)."""
+    from automation.api_backfiller import (
+        CATALOG_SCHEMA_VERSION, INTERVAL_TO_NS, SCHEMA_MIGRATIONS, restore_archived_rows,
+        schema_migration_path,
+    )
+
+    report: dict[str, dict] = {}
+    for e in classify_catalog_files(archived_dir):
+        interval = e["interval"]
+        old_range = e["range"]
+        entry = {
+            "representable": e["representable"], "reason": e["reason"],
+            "restored_rows": 0, "archive_path": str(e["path"]),
+        }
+        if e["representable"] and old_range is not None:
+            table = pq.read_table(str(e["path"]))
+            meta = table.schema.metadata or {}
+            if interval in INTERVAL_TO_NS and e["version"] != CATALOG_SCHEMA_VERSION:
+                for step in schema_migration_path(1 if e["version"] is None else e["version"],
+                                                  CATALOG_SCHEMA_VERSION) or []:
+                    table = SCHEMA_MIGRATIONS[step](table)
+                    table = table.replace_schema_metadata(meta)
+            live_file = quote_tick_path / symbol / interval / "data.parquet"
+            live_meta = {}
+            if live_file.exists():
+                try:
+                    live_meta = pq.read_schema(str(live_file)).metadata or {}
+                except Exception:
+                    live_meta = {}
+
+            def _prec(key: bytes, fallback: int) -> int:
+                for m in (live_meta, meta):
+                    if key in m:
+                        try:
+                            return int(m[key].decode())
+                        except ValueError:
+                            pass
+                return fallback
+
+            fb_price, fb_size = _fallback_precisions(symbol)
+            try:
+                entry["restored_rows"] = restore_archived_rows(
+                    logger, table, symbol, interval,
+                    price_prec=_prec(b"price_precision", fb_price),
+                    size_prec=_prec(b"size_precision", fb_size),
+                    quote_tick_path=quote_tick_path,
+                )
+            except CatalogSchemaVersionMismatch as exc:
+                logger.error(str(exc))
+                entry["error"] = str(exc)
+        live_file = quote_tick_path / symbol / interval / "data.parquet"
+        new_range = _file_range_ns(live_file) if live_file.exists() else None
+        entry["old_first_utc"] = (
+            datetime.fromtimestamp(old_range[0] / 1e9, tz=timezone.utc).isoformat() if old_range else None)
+        entry["old_last_utc"] = (
+            datetime.fromtimestamp(old_range[1] / 1e9, tz=timezone.utc).isoformat() if old_range else None)
+        entry["new_first_utc"] = (
+            datetime.fromtimestamp(new_range[0] / 1e9, tz=timezone.utc).isoformat() if new_range else None)
+        entry["new_last_utc"] = (
+            datetime.fromtimestamp(new_range[1] / 1e9, tz=timezone.utc).isoformat() if new_range else None)
+        entry["history_lost_days"] = uncovered_days(old_range, new_range) if old_range else 0.0
+        report[interval] = entry
+    return report
+
+
+def rebuild_catalog_with_report(
+    api_key: str,
+    user_key: str,
+    etoro_id_to_symbol: dict[str, str],
+    target: str,
+    months: int = 12,
+    *,
+    accept_history_loss: bool = False,
+    probe_fn=None,
+    fetch_fn=None,
+    now: datetime | None = None,
+    quote_tick_path: Path | None = None,
+    archive_root: Path | None = None,
+) -> dict:
+    """Baut den Katalog für ``target`` (Symbol oder ``"all"``) aus der API neu auf — OHNE Historie zu
+    vernichten (Issue #1364 / GH #1260; ersetzt die ``rmtree``-Variante aus #1333/GH #1227):
+
+    1. Probelauf VOR jeder Verschiebung: ``predict_history_loss``. Sagt er ``history_lost_days > 0``
+       voraus und fehlt ``accept_history_loss`` ⇒ ``HistoryLossRefused``, nichts verschoben.
+    2. Jedes Instrument-Verzeichnis wird atomar nach ``<catalog>/archive/<UTC-ts>/<symbol>/``
+       VERSCHOBEN (``os.replace``), nie gelöscht.
+    3. Neuaufbau aus der API (``fetch_fn`` oder ``run_historical_fetch(force=True)``).
+    4. Darstellbare archivierte Zeilen (gleiche ``catalog_schema_version`` / registrierte Migration /
+       Echt-Ticks) werden zurückgeführt (Dedup wie ``_merge_and_save``, frische Zeilen gewinnen);
+       nicht darstellbare (z. B. v1-Ein-Tick-Kerzen) bleiben im Archiv.
+    5. Bericht ``history_lost_days`` je Symbol und Intervall (auch als ``rebuild_report.json`` im
+       Archivordner).
+
+    Rückgabe: ``{"rebuilt": [...], "archive_dir": str|None, "symbols": {sym: {interval: {...}}},
+    "predicted": {...}, "history_lost_days_total": float}``."""
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    from automation.catalog_paths import catalog_archive_root
+
+    symbols = sorted(set(etoro_id_to_symbol.values())) if target == "all" else [target]
+    wanted = set(symbols)
+    to_fetch = {eid: sym for eid, sym in etoro_id_to_symbol.items() if sym in wanted}
+    report: dict = {"rebuilt": [], "archive_dir": None, "symbols": {}, "predicted": {},
+                    "history_lost_days_total": 0.0}
+    if not to_fetch:
+        log.error(f"[historical_fetcher] --rebuild-catalog: Symbol(e) {sorted(wanted)} nicht im Universe.")
+        return report
+
+    # 1. Probelauf — nur Symbole mit nicht darstellbaren Kerzen-Dateien brauchen eine API-Messung.
+    needed: dict[str, list[str]] = {}
+    for sym in symbols:
+        for e in classify_catalog_files(root / sym):
+            if not e["representable"] and e["range"] is not None:
+                needed.setdefault(sym, []).append(e["interval"])
+    probe = probe_fn
+    if probe is None and needed:
+        id_by_symbol = {sym: eid for eid, sym in etoro_id_to_symbol.items()}
+        probe = _default_probe_fn(api_key, user_key, id_by_symbol, months)
+    probed = probe(needed) if (probe is not None and needed) else {}
+    now_dt = now or datetime.now(timezone.utc)
+    predicted = predict_history_loss(
+        symbols, probed, now_ns=int(now_dt.timestamp() * 1e9), quote_tick_path=root)
+    report["predicted"] = predicted
+    predicted_total = sum(
+        v["predicted_history_lost_days"] for per in predicted.values() for v in per.values())
+    if predicted_total > 0 and not accept_history_loss:
+        detail = {
+            sym: {itv: round(v["predicted_history_lost_days"], 2) for itv, v in per.items()
+                  if v["predicted_history_lost_days"] > 0}
+            for sym, per in predicted.items()
+            if any(v["predicted_history_lost_days"] > 0 for v in per.values())
+        }
+        raise HistoryLossRefused(
+            f"[#1364] --rebuild-catalog sagt {predicted_total:.1f} verlorene Historie-Tage voraus "
+            f"({detail}). Nichts wurde verschoben. Mit --accept-history-loss bewusst fortfahren "
+            f"(die Zeilen bleiben im Archiv unter {catalog_archive_root(root.parent.parent)}/)."
+        )
+
+    # 2. Archivieren (atomar verschieben, nie löschen).
+    archive_dir = (Path(archive_root) if archive_root is not None
+                   else catalog_archive_root(root.parent.parent)) / _utc_ts_label(now_dt)
+    archived: dict[str, Path] = {}
+    for sym in symbols:
+        dest = archive_instrument_catalog(sym, archive_dir, quote_tick_path=root)
+        if dest is not None:
+            log.warning(f"[{sym}] --rebuild-catalog: Katalog nach {dest} archiviert (nicht gelöscht).")
+            archived[sym] = dest
+    report["archive_dir"] = str(archive_dir) if archived else None
+
+    # 3. Neuaufbau aus der API.
+    if fetch_fn is not None:
+        rebuilt = list(fetch_fn(to_fetch) or [])
+    else:
+        rebuilt = asyncio.run(run_historical_fetch(
+            api_key=api_key, user_key=user_key, etoro_id_to_symbol=to_fetch,
+            months=months, force=True,
+        ))
+    report["rebuilt"] = rebuilt
+
+    # 4./5. Rückführung + Bericht (auch für Symbole, die die API nicht mehr geliefert hat).
+    for sym, dest in archived.items():
+        report["symbols"][sym] = _restore_from_archive(sym, dest, quote_tick_path=root, logger=log)
+    report["history_lost_days_total"] = sum(
+        v["history_lost_days"] for per in report["symbols"].values() for v in per.values())
+    if archived:
+        try:
+            (archive_dir / "rebuild_report.json").write_text(
+                json.dumps(report, indent=2, default=str), encoding="utf-8")
+        except OSError as exc:  # pragma: no cover - Bericht ist Zusatz, kein Abbruchgrund
+            log.warning(f"[historical_fetcher] rebuild_report.json nicht schreibbar: {exc}")
+    return report
+
 
 def rebuild_catalog(
     api_key: str,
@@ -567,37 +946,42 @@ def rebuild_catalog(
     etoro_id_to_symbol: dict[str, str],
     target: str,
     months: int = 12,
+    *,
+    accept_history_loss: bool = False,
+    **kwargs,
 ) -> list[str]:
-    """Verwirft den bestehenden Katalog für ``target`` (Symbol oder ``"all"``) vollständig und
-    baut ihn aus der API neu auf (Issue #1333/GH #1227 Fix Punkt 3).
+    """Kompatibilitäts-Wrapper um ``rebuild_catalog_with_report`` — liefert die Liste der neu
+    befüllten Symbole. Wirft ``HistoryLossRefused`` bei vorhergesagtem Verlust ohne
+    ``accept_history_loss``."""
+    return rebuild_catalog_with_report(
+        api_key, user_key, etoro_id_to_symbol, target, months,
+        accept_history_loss=accept_history_loss, **kwargs,
+    )["rebuilt"]
 
-    Löscht ZUERST das komplette Instrument-Verzeichnis (alle Auflösungs-Unterordner UND ein
-    eventuelles Alt-Layout-File), damit ``_merge_and_save`` nicht gegen eine
-    ``catalog_schema_version``-Grenze läuft (``CatalogSchemaVersionMismatch``) — ein Rebuild ist
-    die explizit angeforderte, bewusste Alternative zum stillen Merge über eine Schemagrenze."""
-    import shutil
 
-    if target == "all":
-        symbols = sorted(set(etoro_id_to_symbol.values()))
-    else:
-        symbols = [target]
-
-    wanted = set(symbols)
-    to_fetch = {eid: sym for eid, sym in etoro_id_to_symbol.items() if sym in wanted}
-    if not to_fetch:
-        log.error(f"[historical_fetcher] --rebuild-catalog: Symbol(e) {sorted(wanted)} nicht im Universe.")
-        return []
-
-    for sym in symbols:
-        inst_dir = QUOTE_TICK_PATH / sym
-        if inst_dir.exists():
-            log.warning(f"[{sym}] --rebuild-catalog: verwerfe bestehenden Katalog ({inst_dir}).")
-            shutil.rmtree(inst_dir)
-
-    return asyncio.run(run_historical_fetch(
-        api_key=api_key, user_key=user_key, etoro_id_to_symbol=to_fetch,
-        months=months, force=True,
-    ))
+def migrate_catalog(target: str, etoro_id_to_symbol: dict[str, str] | None = None) -> list[Path]:
+    """CLI-Pfad ``--migrate-catalog`` (Issue #1364 Fix Punkt 4): verlustfreie Schema-Migration
+    ``catalog_schema_version`` → aktuelle Version für ``target`` (Symbol oder ``"all"``).
+    Wirft ``CatalogSchemaMigrationUnavailable``, wenn für die gefundene Version keine Migration
+    registriert ist."""
+    from automation.api_backfiller import (
+        CATALOG_SCHEMA_VERSION, _read_catalog_schema_version, INTERVAL_TO_NS, migrate_catalog_schema,
+    )
+    symbols = None if target == "all" else [target]
+    migrated: list[Path] = []
+    found: set[int] = set()
+    if QUOTE_TICK_PATH.is_dir():
+        for inst in QUOTE_TICK_PATH.iterdir():
+            if symbols is not None and inst.name not in symbols:
+                continue
+            for itv in INTERVAL_TO_NS:
+                f = inst / itv / "data.parquet"
+                if f.exists():
+                    v = _read_catalog_schema_version(f)
+                    found.add(1 if v is None else v)
+    for from_v in sorted(found - {CATALOG_SCHEMA_VERSION}):
+        migrated += migrate_catalog_schema(from_v, CATALOG_SCHEMA_VERSION, symbols=symbols)
+    return migrated
 
 
 # ─── CLI Entry-Point ──────────────────────────────────────────────────────────
@@ -617,6 +1001,16 @@ def main() -> int:
         "--rebuild-catalog", type=str, default=None, metavar="SYMBOL|all",
         help="Verwirft den bestehenden Katalog für SYMBOL (oder 'all') und baut ihn vollständig "
              "aus der API neu auf (Issue #1333/GH #1227) — erzeugt catalog_schema_version=2.",
+    )
+    parser.add_argument(
+        "--accept-history-loss", action="store_true",
+        help="--rebuild-catalog trotz vorhergesagtem Historie-Verlust (history_lost_days > 0) ausführen "
+             "(Issue #1364/GH #1260). Der Katalog wird nie gelöscht, sondern nach "
+             "data/nautilus/archive/ verschoben.",
+    )
+    parser.add_argument(
+        "--migrate-catalog", type=str, default=None, metavar="SYMBOL|all",
+        help="Verlustfreie catalog_schema_version-Migration (Issue #1364/GH #1260) statt Rebuild.",
     )
     args = parser.parse_args()
 
@@ -641,12 +1035,31 @@ def main() -> int:
         log.error("[historical_fetcher] Keine Instrumente im Universe — Abbruch.")
         return 1
 
+    if args.migrate_catalog:
+        from automation.api_backfiller import CatalogSchemaMigrationUnavailable
+        try:
+            migrated = migrate_catalog(args.migrate_catalog, etoro_id_map)
+        except CatalogSchemaMigrationUnavailable as exc:
+            log.error(str(exc))
+            return 3
+        log.info(f"[historical_fetcher] Migration abgeschlossen: {len(migrated)} Dateien.")
+        return 0
+
     if args.rebuild_catalog:
-        rebuilt = rebuild_catalog(
-            api_key=api_key, user_key=user_key, etoro_id_to_symbol=etoro_id_map,
-            target=args.rebuild_catalog, months=args.months,
+        try:
+            rep = rebuild_catalog_with_report(
+                api_key=api_key, user_key=user_key, etoro_id_to_symbol=etoro_id_map,
+                target=args.rebuild_catalog, months=args.months,
+                accept_history_loss=args.accept_history_loss,
+            )
+        except HistoryLossRefused as exc:
+            log.error(str(exc))
+            return 2
+        rebuilt = rep["rebuilt"]
+        log.info(
+            f"[historical_fetcher] Rebuild abgeschlossen: {len(rebuilt)} Symbole befüllt: {rebuilt}; "
+            f"history_lost_days_total={rep['history_lost_days_total']:.1f}; Archiv: {rep['archive_dir']}"
         )
-        log.info(f"[historical_fetcher] Rebuild abgeschlossen: {len(rebuilt)} Symbole befüllt: {rebuilt}")
         return 0 if rebuilt else 1
 
     if args.symbol:
