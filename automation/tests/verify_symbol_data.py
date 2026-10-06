@@ -28,6 +28,8 @@ der die Divergenz anzeigt, nur ein plötzliches 100-%-Fehlschlagen ohne erkennba
 das ist hier passiert: Issue #1331 fuehrte Interval-Unterverzeichnisse ein, dieses Skript suchte
 weiter nur flach). Wer künftig das Katalog-Verzeichnislayout ändert, MUSS
 ``resolve_quote_tick_files`` unten explizit mitziehen — als eigenständige Kopie, nicht als Import.
+``test_issue_1353_1271_verify_symbol_data_layout_parity.py`` vergleicht beide Auflöser auf jedem
+bekannten Layout und macht eine Divergenz zum Testfehler (Katalog #1353, GH #1271).
 
 Nutzung:
     python verify_symbol_data.py --repo-root ~/etoro_nautilus --symbols TSLA.ETORO NVDA.ETORO

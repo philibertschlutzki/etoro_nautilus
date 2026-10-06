@@ -62,6 +62,36 @@ _ETORO_ASSET_CLASS_MAP: dict[str, str] = {
 }
 
 
+_CANONICAL_ASSET_CLASSES = frozenset(_ETORO_ASSET_CLASS_MAP.values())
+
+# Katalog #1352 (GH #1270) — eToros Instrument-Metadaten tragen die Asset-Klasse als numerische
+# ``InstrumentTypeID`` (Vokabular des Endpunkts ``/market-data/instrument-types``): 1 Currencies,
+# 2 Commodities, 4 Indices, 5 Stocks, 6 ETF, 10 Crypto. Der erste #1352-Fix las ausschliesslich das
+# Feld ``AssetClass`` — im Produktionslauf vom 2026-10-04 blieben damit 24 von 24 neu aufgelösten IDs
+# (MRK, INTC, ORCL, PDD, …) ``asset_class: null`` und wurden im Backtest per
+# ``unknown_asset_class_policy='reject'`` abgewiesen. Indizes (4) haben keinen Kosten-Bucket in
+# ``backtest.json['spread_bps_by_asset_class']`` und bleiben bewusst unklassifiziert.
+_ETORO_INSTRUMENT_TYPE_MAP: dict[int, str] = {
+    1: "forex",
+    2: "commodity",
+    5: "equity",
+    6: "equity",
+    10: "crypto",
+}
+
+# Katalog #1352 (GH #1270) — Precision-Default je Bucket für Symbole, die die symbolbasierte Tabelle
+# (``_fallback_precisions``) nicht kennt und deshalb als Equity (2, 2) einstuft; dieselben Werte wie
+# die bestehenden Einträge der Klasse (BTC/ETH: 2/8, USDZAR/NATGAS: 5/5). Ohne die Angleichung
+# verletzte ein neu als 'forex' klassifiziertes Paar mit price_precision=2 die blockierende Regel
+# ``forex ⇒ price_precision >= 4`` und hielte jeden Sweep-Start an.
+_EQUITY_DEFAULT_PRECISIONS = (2, 2)
+_CLASS_DEFAULT_PRECISIONS: dict[str, tuple[int, int]] = {
+    "crypto": (2, 8),
+    "forex": (5, 5),
+    "commodity": (5, 5),
+}
+
+
 def _normalize_asset_class(raw_asset_class: str | None) -> str | None:
     """Bildet eToros ``AssetClass``-Rohwert auf einen kanonischen Bucket ab.
 
@@ -71,7 +101,80 @@ def _normalize_asset_class(raw_asset_class: str | None) -> str | None:
     and asset_class:``)."""
     if not raw_asset_class:
         return None
-    return _ETORO_ASSET_CLASS_MAP.get(raw_asset_class.strip().lower())
+    return _ETORO_ASSET_CLASS_MAP.get(str(raw_asset_class).strip().lower())
+
+
+def _is_canonical_asset_class(asset_class: Any) -> bool:
+    return isinstance(asset_class, str) and asset_class in _CANONICAL_ASSET_CLASSES
+
+
+def _meta_field(item: dict, *names: str) -> Any:
+    """Erstes vorhandenes Feld aus ``names`` — der statische Metadaten-Endpunkt liefert PascalCase
+    (``InstrumentTypeID``), die Public API camelCase (``instrumentTypeID``)."""
+    for name in names:
+        value = item.get(name)
+        if value is not None:
+            return value
+    return None
+
+
+def _classify_instrument_metadata(item: dict) -> str | None:
+    """Katalog #1352 (GH #1270) — kanonischer Bucket aus einem ``InstrumentDisplayDatas``-Eintrag:
+    zuerst ein ``AssetClass``-Rohwert, dann die ``InstrumentTypeID``. ``None``, wenn keines der
+    beiden auswertbar ist (nie geraten, nie das Literal ``"Unknown"``)."""
+    asset_class = _normalize_asset_class(_meta_field(item, "AssetClass", "assetClass"))
+    if asset_class:
+        return asset_class
+    type_id = _meta_field(item, "InstrumentTypeID", "instrumentTypeID", "instrumentTypeId")
+    try:
+        return _ETORO_INSTRUMENT_TYPE_MAP.get(int(type_id))
+    except (TypeError, ValueError):
+        return None
+
+
+def _describe_classification_input(item: dict) -> str:
+    return (f"AssetClass={_meta_field(item, 'AssetClass', 'assetClass')!r}, "
+            f"InstrumentTypeID={_meta_field(item, 'InstrumentTypeID', 'instrumentTypeID', 'instrumentTypeId')!r}")
+
+
+def _precisions_for(symbol: str, asset_class: str | None) -> tuple[int, int]:
+    precisions = _fallback_precisions(symbol)
+    if precisions == _EQUITY_DEFAULT_PRECISIONS and asset_class in _CLASS_DEFAULT_PRECISIONS:
+        return _CLASS_DEFAULT_PRECISIONS[asset_class]
+    return precisions
+
+
+def _reclassify_existing_entries(existing_map: dict, meta_lookup: dict[str, dict]) -> int:
+    """Katalog #1352 (GH #1270) — Bestandseinträge ohne kanonische ``asset_class`` (``null``, das
+    Alt-Literal ``"Unknown"``, ein roher eToro-Wert wie ``"Stocks"``) werden an der Schreibstelle
+    nachklassifiziert. Neue IDs laufen nur einmal durch ``run_fetch()``; ein einmal falsch
+    geschriebener Eintrag blieb deshalb dauerhaft stehen und blockierte jeden Sweep-Start
+    (Pitfall #481). Eine manuell gesetzte kanonische Klasse wird nie angefasst.
+
+    Reihenfolge: gespeicherter Rohwert, dann eToro-Metadaten. Bleibt der Eintrag unklassifizierbar,
+    wird ein nicht-kanonischer Wert auf ``null`` gesetzt (FEHLEND statt FALSCH: das Symbol wird im
+    Backtest einzeln abgewiesen, statt die Kohärenzprüfung für alle zu blockieren). Gibt die Zahl
+    geänderter Einträge zurück."""
+    changed = 0
+    for uid, entry in existing_map.items():
+        old = entry.get("asset_class")
+        if _is_canonical_asset_class(old):
+            continue
+        new = _normalize_asset_class(old)
+        if new is None and uid in meta_lookup:
+            new = _classify_instrument_metadata(meta_lookup[uid])
+        if new is None and old is None:
+            continue
+        entry["asset_class"] = new
+        stored_precisions = (entry.get("price_precision"), entry.get("size_precision"))
+        if new is not None and stored_precisions == _EQUITY_DEFAULT_PRECISIONS:
+            entry["price_precision"], entry["size_precision"] = _precisions_for(entry.get("symbol") or "", new)
+        changed += 1
+        logger.warning(
+            f"[Katalog #1352] Reklassifiziert {uid} ({entry.get('symbol')}): asset_class "
+            f"{old!r} -> {new!r}"
+        )
+    return changed
 
 def get_etoro_metadata():
     """Fetch eToro metadata with caching and retries."""
@@ -223,88 +326,113 @@ async def run_fetch(
                 "raw_name": symbol.split(".")[0]
             })
 
-    if unknown_instruments:
-        logger.info(f"Found {len(unknown_instruments)} unknown instrument IDs. Attempting to resolve...")
+    # Katalog #1352 (GH #1270) — auch Bestandseinträge ohne kanonische asset_class brauchen die
+    # Metadaten (siehe _reclassify_existing_entries), nicht nur neu entdeckte IDs.
+    with open(instrument_map_path, "r", encoding="utf-8") as f:
+        instrument_map_data = json.load(f)
+    existing_map = instrument_map_data.setdefault("instruments", {})
+    needs_reclassification = any(
+        not _is_canonical_asset_class(entry.get("asset_class")) for entry in existing_map.values())
+
+    meta_lookup: dict[str, dict] | None = None
+    if unknown_instruments or needs_reclassification:
+        if unknown_instruments:
+            logger.info(f"Found {len(unknown_instruments)} unknown instrument IDs. Attempting to resolve...")
         metadata = get_etoro_metadata()
         if metadata:
-            instruments_list = metadata.get("InstrumentDisplayDatas", [])
-            meta_lookup = {str(item.get("InstrumentID")): item for item in instruments_list}
+            instruments_list = _meta_field(metadata, "InstrumentDisplayDatas", "instrumentDisplayDatas") or []
+            meta_lookup = {
+                str(_meta_field(item, "InstrumentID", "instrumentID", "instrumentId")): item
+                for item in instruments_list if isinstance(item, dict)
+            }
 
-            with open(instrument_map_path, "r", encoding="utf-8") as f:
-                instrument_map_data = json.load(f)
+    newly_mapped = 0
+    if unknown_instruments and meta_lookup is not None:
+        for uid, info in unknown_instruments.items():
+            if uid in meta_lookup:
+                item = meta_lookup[uid]
+                symbol_full = _meta_field(item, "SymbolFull", "symbolFull")
+                symbol = f"{symbol_full}.ETORO" if symbol_full else None
+                asset_class = _classify_instrument_metadata(item)
+                precisions = _precisions_for(symbol or "", asset_class)
 
-            if "instruments" not in instrument_map_data:
-                instrument_map_data["instruments"] = {}
-
-            existing_map = instrument_map_data["instruments"]
-            newly_mapped = 0
-
-            for uid, info in unknown_instruments.items():
-                if uid in meta_lookup:
-                    item = meta_lookup[uid]
-                    symbol_full = item.get("SymbolFull")
-                    symbol = f"{symbol_full}.ETORO" if symbol_full else None
-                    raw_asset_class = item.get("AssetClass")
-                    asset_class = _normalize_asset_class(raw_asset_class)
-                    precisions = _fallback_precisions(symbol if symbol else (raw_asset_class or ""))
-
-                    existing_map[uid] = {
-                        "symbol": symbol,
-                        "asset_class": asset_class,
-                        "price_precision": precisions[0],
-                        "size_precision": precisions[1]
-                    }
-                    newly_mapped += 1
-                    if asset_class is None:
-                        # Issue #1249 (Katalog #1352) — unklassifizierbarer Wert wird als
-                        # asset_class=null persistiert statt als Literal "Unknown", und laut
-                        # Fix-Vorgabe fail-loud statt still auf INFO protokolliert.
-                        logger.error(
-                            f"Resolved {uid} -> {symbol}: AssetClass '{raw_asset_class}' konnte "
-                            "keinem kanonischen Bucket (equity/crypto/commodity/forex) zugeordnet "
-                            "werden - schreibe asset_class=null."
-                        )
-                    else:
-                        logger.info(f"Resolved {uid} -> {symbol} ({asset_class})")
-
-                    # Update universe entry on-the-fly
-                    for u in universe:
-                        if u["etoro_id"] == uid:
-                            u["symbol"] = symbol
+                existing_map[uid] = {
+                    "symbol": symbol,
+                    "asset_class": asset_class,
+                    "price_precision": precisions[0],
+                    "size_precision": precisions[1]
+                }
+                newly_mapped += 1
+                if asset_class is None:
+                    # Issue #1249 (Katalog #1352) — unklassifizierbarer Wert wird als
+                    # asset_class=null persistiert statt als Literal "Unknown", und laut
+                    # Fix-Vorgabe fail-loud statt still auf INFO protokolliert.
+                    logger.error(
+                        f"Resolved {uid} -> {symbol}: {_describe_classification_input(item)} konnte "
+                        "keinem kanonischen Bucket (equity/crypto/commodity/forex) zugeordnet "
+                        "werden - schreibe asset_class=null."
+                    )
                 else:
-                    logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - could not resolve in metadata")
+                    logger.info(f"Resolved {uid} -> {symbol} ({asset_class})")
 
-            if newly_mapped > 0:
-                with open(instrument_map_path, "w", encoding="utf-8") as f:
-                    json.dump(instrument_map_data, f, indent=2, ensure_ascii=False)
-                logger.info(f"Saved {newly_mapped} new mappings to {instrument_map_path}")
-                known_count += newly_mapped
+                # Update universe entry on-the-fly
+                for u in universe:
+                    if u["etoro_id"] == uid:
+                        u["symbol"] = symbol
+            else:
+                logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - could not resolve in metadata")
+    elif unknown_instruments:
+        logger.error("Could not fetch eToro metadata to resolve unknown instruments.")
+        for uid, info in unknown_instruments.items():
+            logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - occurred {info['count']} times")
 
-                # Issue #1249 (Katalog #1352) — Kohärenz sofort nach dem Schreiben prüfen, statt
-                # erst Stunden/Tage später beim naechsten manuellen Sweep-Start
-                # (assert_instrument_metadata_coherence() in sweep.py). Der Defekt wird hier am
-                # Ort und zur Zeit seiner Entstehung (Daily-Orchestrator-Lauf) sichtbar.
-                try:
-                    from automation.optimizer import invariants as _inv
-                    backtest_path = instrument_map_path.parent / "backtest.json"
-                    spread_by_asset_class = None
-                    if backtest_path.exists():
-                        spread_by_asset_class = (
-                            json.loads(backtest_path.read_text(encoding="utf-8")) or {}
-                        ).get("spread_bps_by_asset_class")
-                    coherence_result = _inv.check_instrument_metadata_coherence(
-                        existing_map, spread_bps_by_asset_class=spread_by_asset_class)
-                    if not coherence_result.passed:
-                        logger.error(
-                            "[Issue-Katalog #920] INSTRUMENT_METADATA_INCOHERENT nach run_fetch(): "
-                            f"{coherence_result.detail}"
-                        )
-                except (OSError, ValueError) as e:
-                    logger.warning(f"Could not run post-write instrument metadata coherence check: {e}")
-        else:
-            logger.error("Could not fetch eToro metadata to resolve unknown instruments.")
-            for uid, info in unknown_instruments.items():
-                logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - occurred {info['count']} times")
+    reclassified = (_reclassify_existing_entries(existing_map, meta_lookup or {})
+                    if needs_reclassification else 0)
+
+    if newly_mapped or reclassified:
+        with open(instrument_map_path, "w", encoding="utf-8") as f:
+            json.dump(instrument_map_data, f, indent=2, ensure_ascii=False)
+        if newly_mapped:
+            logger.info(f"Saved {newly_mapped} new mappings to {instrument_map_path}")
+            known_count += newly_mapped
+        if reclassified:
+            logger.info(f"Saved {reclassified} reclassified asset_class value(s) to {instrument_map_path}")
+
+        # Issue #1249 (Katalog #1352) — Kohärenz sofort nach dem Schreiben prüfen, statt
+        # erst Stunden/Tage später beim naechsten manuellen Sweep-Start
+        # (assert_instrument_metadata_coherence() in sweep.py). Der Defekt wird hier am
+        # Ort und zur Zeit seiner Entstehung (Daily-Orchestrator-Lauf) sichtbar.
+        try:
+            from automation.optimizer import invariants as _inv
+            backtest_path = instrument_map_path.parent / "backtest.json"
+            spread_by_asset_class = None
+            if backtest_path.exists():
+                spread_by_asset_class = (
+                    json.loads(backtest_path.read_text(encoding="utf-8")) or {}
+                ).get("spread_bps_by_asset_class")
+            coherence_result = _inv.check_instrument_metadata_coherence(
+                existing_map, spread_bps_by_asset_class=spread_by_asset_class)
+            if not coherence_result.passed:
+                logger.error(
+                    "[Issue-Katalog #920] INSTRUMENT_METADATA_INCOHERENT nach run_fetch(): "
+                    f"{coherence_result.detail}"
+                )
+        except (OSError, ValueError) as e:
+            logger.warning(f"Could not run post-write instrument metadata coherence check: {e}")
+
+    # Katalog #1352 (GH #1270) — die Kohärenzprüfung überspringt eine fehlende asset_class bewusst
+    # (FEHLEND ist nicht FALSCH); der Backtest weist das Symbol dann einzeln ab. Damit das nicht
+    # erst dort auffällt, meldet die Schreibstelle jeden noch unklassifizierten Eintrag selbst.
+    unclassified = sorted(
+        str(entry.get("symbol") or uid) for uid, entry in existing_map.items()
+        if entry.get("asset_class") is None)
+    if unclassified:
+        logger.error(
+            f"[Katalog #1352] {len(unclassified)} Instrument(e) in {instrument_map_path.name} ohne "
+            f"asset_class: {unclassified} — unter unknown_asset_class_policy='reject' vor jedem "
+            "Backtest abgewiesen (REJECT_INSTRUMENT_METADATA_INCOMPLETE); manuell klassifizieren "
+            "(equity/crypto/commodity/forex)."
+        )
 
     output_data = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
