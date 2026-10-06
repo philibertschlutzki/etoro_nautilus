@@ -139,6 +139,7 @@ class DonchianRegimeBreakoutStrategy(HourlyStrategyBase):
         order = self.order_factory.market(
             instrument_id=self.instrument_id, order_side=OrderSide.BUY,
             quantity=qty, time_in_force=TimeInForce.GTC,
+            tags=self._entry_order_tags(bar),
         )
         self.submit_order(order)
 
@@ -163,6 +164,7 @@ class DonchianRegimeBreakoutStrategy(HourlyStrategyBase):
         order = self.order_factory.market(
             instrument_id=self.instrument_id, order_side=OrderSide.SELL,
             quantity=qty, time_in_force=TimeInForce.GTC,
+            tags=self._entry_order_tags(bar),
         )
         self.submit_order(order)
 

@@ -15,7 +15,42 @@ beide mit unterschiedlichen, teils schweren Import-Graphen."""
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 from pathlib import Path
+
+# Issue #1364 (GH #1260) — Archiv-Verzeichnis des Katalogs. ``--rebuild-catalog`` VERSCHIEBT einen
+# Instrument-Katalog hierher (``<catalog>/archive/<UTC-ts>/<symbol>/``), statt ihn zu löschen: Historie
+# jenseits der API-Tiefe und Echt-Ticks sind nach einem ``rmtree`` unwiederbringlich verloren.
+# Jede automatische Bereinigung (``optimizer/retention.py``, ``optimizer/disk_guard.py``) schliesst
+# diesen Pfad über ``is_catalog_archive_path`` aus.
+ARCHIVE_DIRNAME = "archive"
+
+# Issue #1354/#1366 (GH #1251/#1263) — Auflösungs-Unterordner der ECHT-Ticks des 24/7-Collectors
+# (``catalog_service`` → ``daily_orchestrator._merge_symbol``): ``<symbol>/RealTick/data.parquet`` mit
+# ``bar_interval_ns = 0`` und Metadatum ``catalog_interval = "RealTick"``. Die Engine liest diesen Strom
+# NIE (``engine_catalog_view`` enthält ausschliesslich die Kerzen-Auflösung); er speist die
+# Spread-Kalibrierung (#1366).
+REALTICK_INTERVAL = "RealTick"
+
+
+def catalog_archive_root(catalog_path: str | Path) -> Path:
+    """``<catalog_path>/archive`` — Wurzel aller Rebuild-Archive (siehe ``ARCHIVE_DIRNAME``)."""
+    return Path(catalog_path) / ARCHIVE_DIRNAME
+
+
+def is_catalog_archive_path(path: str | Path) -> bool:
+    """True, wenn ``path`` im Katalog-Archiv liegt (Komponentenfolge ``nautilus/archive``).
+
+    Reine Pfad-Prüfung ohne Dateisystemzugriff — die einzige Quelle für „darf eine automatische
+    Bereinigung diesen Pfad anfassen?" (Antwort bei True: nie)."""
+    parts = Path(path).parts
+    return any(
+        parts[i] == "nautilus" and parts[i + 1] == ARCHIVE_DIRNAME
+        for i in range(len(parts) - 1)
+    )
+
 
 # Reihenfolge ist Präferenzreihenfolge: der klassische Einzeldatei-Name zuerst, dann die
 # NautilusTrader-typischen partitionierten Layouts. ``*.parquet`` als letzter, weitester Fallback.
@@ -65,6 +100,91 @@ def resolve_quote_tick_files(
         if matches:
             return matches
     return []
+
+
+# Issue #1354 (GH #1251, P0) — die Sicht, die die Backtest-ENGINE liest.
+#
+# NautilusTraders ``ParquetDataCatalog.get_file_list_from_data_cls`` globbt rekursiv ``data/quote_tick/
+# **/*.parquet``; ``filter_files`` vergleicht danach ``file_path.split("/")[-2]`` EXAKT mit der
+# Instrument-ID. Für ``…/TSLA.ETORO/OneHour/data.parquet`` ist dieser Wert ``"OneHour"`` ⇒ die Datei
+# fällt heraus: seit dem #1331-Layout lud die Engine 0 Stunden-Ticks, während jeder Preflight (der über
+# ``resolve_quote_tick_files`` liest) „Daten vorhanden" meldete (Pitfall #483: Preflight und Engine
+# müssen denselben Leser benutzen). Die Sicht ist ein temporäres Katalog-Wurzelverzeichnis, in dem
+# ``data/quote_tick/<symbol>/data.parquet`` ein Hardlink (Fallback Symlink, Fallback Kopie) auf die von
+# ``resolve_quote_tick_files`` gewählte Datei ist — genau das einzige Layout, das NautilusTrader liest.
+# ``query(..., files=[...])`` scheidet aus (PyArrow-Pfad, dessen ``Wrangler.from_schema`` jedes
+# Schema-Metadatum als Konstruktor-Argument übergibt und an ``catalog_schema_version``/
+# ``catalog_interval``/... bricht).
+
+class EngineCatalogViewError(RuntimeError):
+    """Für ``symbol``/``interval`` existiert keine Quote-Tick-Datei, aus der eine Sicht gebaut werden kann."""
+
+
+class EngineCatalogView:
+    """Temporäres, von der Engine lesbares Katalog-Wurzelverzeichnis (siehe oben). Kontextmanager;
+    ``close()`` räumt auf (idempotent). ``link_kind`` ∈ ``{"hardlink", "symlink", "copy"}``."""
+
+    def __init__(self, root: Path, symbol: str, source: Path, link_kind: str) -> None:
+        self.root = Path(root)
+        self.symbol = symbol
+        self.source = Path(source)
+        self.link_kind = link_kind
+
+    @property
+    def data_file(self) -> Path:
+        return self.root / "data" / "quote_tick" / self.symbol / "data.parquet"
+
+    def replace_data_file(self, writer) -> None:
+        """Schreibt die Sicht-Datei NEU (``writer(path)``), ohne je den Originalkatalog zu berühren:
+        ein Hardlink teilt den Inode mit dem Original — ein direktes Überschreiben würde das Original
+        mitverändern, daher wird der Link vorher gelöst. Die Precision-Normalisierung
+        (``backtest_runner``) läuft ausschliesslich über diesen Weg."""
+        target = self.data_file
+        target.unlink()
+        self.link_kind = "copy"
+        writer(target)
+
+    def close(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def __enter__(self) -> "EngineCatalogView":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+def engine_catalog_view(
+    catalog_path: str | Path, symbol: str, interval: str = "OneHour",
+) -> EngineCatalogView:
+    """Baut die Engine-Sicht für ``symbol`` (Hardlink → Symlink → Kopie). Wirft
+    ``EngineCatalogViewError`` ohne Quelldatei. Als ``with``-Block oder mit explizitem ``close()``
+    verwenden. Die Sicht enthält GENAU EINE Datei: die Auflösung ``interval`` (Default ``OneHour``) —
+    nie ``OneDay``-Zeilen oder Echt-Ticks (``RealTick/``, #1366)."""
+    files = resolve_quote_tick_files(catalog_path, symbol, interval=interval)
+    if not files:
+        raise EngineCatalogViewError(
+            f"Keine Quote-Tick-Datei für {symbol}/{interval} unter {catalog_path} — keine Engine-Sicht.")
+    source = files[0]
+    root = Path(tempfile.mkdtemp(prefix="nautilus_engine_view_"))
+    dst_dir = root / "data" / "quote_tick" / str(symbol)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / "data.parquet"
+    try:
+        try:
+            os.link(source, dst)
+            kind = "hardlink"
+        except OSError:
+            try:
+                os.symlink(source.resolve(), dst)
+                kind = "symlink"
+            except OSError:
+                shutil.copy2(source, dst)
+                kind = "copy"
+    except BaseException:
+        shutil.rmtree(root, ignore_errors=True)
+        raise
+    return EngineCatalogView(root, str(symbol), source, kind)
 
 
 def resolve_quote_tick_columns(schema_names) -> dict[str, str] | None:

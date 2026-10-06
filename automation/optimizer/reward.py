@@ -5,7 +5,7 @@ import statistics
 from typing import TYPE_CHECKING
 
 from automation.optimizer._contracts import TIME_BOX_BARS as _TIME_BOX_BARS
-from automation.optimizer.invariants import invariant_scope
+from automation.optimizer.invariants import InvariantResult, invariant_scope
 
 if TYPE_CHECKING:
     from automation.optimizer.parsing import TournamentMetrics
@@ -284,9 +284,12 @@ def calculate_continuous_time_decay_penalty(
     return float(math.exp(-k * (float(holding_time_hours) - float(t_soft_hours))))
 
 
-@invariant_scope("run")
-def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
-    """Issue #633 — warnt (WARNING-Log, KEIN Abbruch — Zero-Hardcoding-Diagnose statt Hard-Fail, weil
+def any_arm_reachability_violations(tournament_cfg: dict | None) -> list[str]:
+    """Issue #1370 (GH #1267) — umbenannt von ``check_any_arm_reachability`` (eine ``check_*``-Funktion mit
+    ``@invariant_scope`` liefert ein ``InvariantResult``, das im Strom erscheint; diese Liste tat beides
+    nicht). Das Urteil trägt ``check_any_arm_reachability`` unten.
+
+    Issue #633 — warnt (WARNING-Log, KEIN Abbruch — Zero-Hardcoding-Diagnose statt Hard-Fail, weil
     die wahre Erreichbarkeit strategie-/symbolabhängig ist), wenn eine ``eligible_requires_any``-
     Schwelle STRUKTURELL über dem p99 der dokumentierten Kalibrier-Fixture-Verteilung liegt. Ein
     solcher OR-Arm ist faktisch unerreichbar (#633-Root-Cause: ``oos_min_win_rate=0.25`` bei einem
@@ -319,6 +322,26 @@ def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
     return unreachable
 
 
+@invariant_scope("run")
+def check_any_arm_reachability(tournament_cfg: dict | None) -> InvariantResult:
+    """Issue #1370 (GH #1267) — das ``InvariantResult`` zu ``any_arm_reachability_violations``: JEDE
+    ``eligible_requires_any``-Klausel liegt unter dem p99 der Kalibrier-Fixture. Der Sweep meldet es einmal
+    je Lauf (``scope='global'``, unabhängig davon, ob eine Strategie optimiert wird); ``run_optimization``
+    meldet es zusätzlich je Strategie."""
+    unreachable = any_arm_reachability_violations(tournament_cfg)
+    passed = not unreachable
+    return InvariantResult(
+        name="check_any_arm_reachability",
+        passed=passed,
+        expected="jede eligible_requires_any-Klausel liegt unter dem p99 der Referenzverteilung "
+                 "(strukturell erreichbar).",
+        actual={"unreachable_clauses": unreachable} if not passed else None,
+        severity="medium",
+        detail=(f"OR-Arm-Klausel(n) strukturell unerreichbar: {', '.join(unreachable)}."
+                if not passed else "Alle eligible_requires_any-Klauseln erreichbar."),
+    )
+
+
 # Issue #660 — clause -> Threshold-Key, für die LIVE-Variante von check_any_arm_reachability. Die
 # statische #633-Fixture (_ANY_ARM_CALIBRATION) ist ein CROSS-STRATEGY-Referenzwert (p99=0.197 über
 # 336 Trials mehrerer Trend-/Breakout-Strategien) — für ein SPEZIFISCHES Symbol/Tier kann die real
@@ -327,11 +350,13 @@ def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
 _ANY_ARM_LIVE_THRESHOLD_KEYS = {"min_win_rate": "oos_min_win_rate"}
 
 
-@invariant_scope("trial")
-def check_any_arm_reachability_live(tournament_cfg: dict | None,
-                                    observed_values: dict[str, list] | None, *,
-                                    n_evaluated: int | None = None) -> list[str]:
-    """Issue #660 — wie ``check_any_arm_reachability`` (#633), aber gegen die TATSÄCHLICH in EINER
+def any_arm_reachability_live_violations(tournament_cfg: dict | None,
+                                         observed_values: dict[str, list] | None, *,
+                                         n_evaluated: int | None = None) -> list[str]:
+    """Issue #1370 (GH #1267) — umbenannt von ``check_any_arm_reachability_live`` (Liste statt
+    ``InvariantResult``); das Urteil trägt ``check_any_arm_reachability_live`` unten.
+
+    Issue #660 — wie ``check_any_arm_reachability`` (#633), aber gegen die TATSÄCHLICH in EINER
     KONKRETEN Study beobachtete empirische Verteilung (``observed_values``, z. B.
     ``{"min_win_rate": [0.05, 0.08, ...]}`` aus den Trial-User-Attrs), NICHT das statische,
     cross-strategy Kalibrier-Fixture aus #633. Root-Cause #660: ``oos_min_win_rate=0.15`` liegt
@@ -419,10 +444,32 @@ _ALL_CLAUSE_LIVE_THRESHOLD_KEYS = {"min_alpha_tstat": "oos_min_alpha_tstat"}
 
 
 @invariant_scope("trial")
-def check_mandatory_gate_reachability_live(tournament_cfg: dict | None,
-                                           observed_values: dict[str, list] | None, *,
-                                           n_evaluated: int | None = None) -> list[str]:
-    """Issue #1093/#1241 (P1) — wie ``check_any_arm_reachability_live`` (#660), aber für
+def check_any_arm_reachability_live(tournament_cfg: dict | None,
+                                    observed_values: dict[str, list] | None, *,
+                                    n_evaluated: int | None = None) -> InvariantResult:
+    """Issue #1370 (GH #1267) — das ``InvariantResult`` zu ``any_arm_reachability_live_violations``."""
+    unreachable = any_arm_reachability_live_violations(
+        tournament_cfg, observed_values, n_evaluated=n_evaluated)
+    passed = not unreachable
+    return InvariantResult(
+        name="check_any_arm_reachability_live",
+        passed=passed,
+        expected="jede eligible_requires_any-Klausel liegt unter dem p99 der Referenzverteilung "
+                 "(strukturell erreichbar).",
+        actual={"unreachable_clauses": unreachable} if not passed else None,
+        severity="medium",
+        detail=(f"OR-Arm-Klausel(n) strukturell unerreichbar: {', '.join(unreachable)}."
+                if not passed else "Alle eligible_requires_any-Klauseln erreichbar."),
+    )
+
+
+def mandatory_gate_reachability_live_violations(tournament_cfg: dict | None,
+                                                observed_values: dict[str, list] | None, *,
+                                                n_evaluated: int | None = None) -> list[str]:
+    """Issue #1370 (GH #1267) — umbenannt von ``check_mandatory_gate_reachability_live`` (Liste statt
+    ``InvariantResult``); das Urteil trägt ``check_mandatory_gate_reachability_live`` unten.
+
+    Issue #1093/#1241 (P1) — wie ``check_any_arm_reachability_live`` (#660), aber für
     ``eligible_requires_all``-Klauseln (siehe ``_ALL_CLAUSE_LIVE_THRESHOLD_KEYS``-Docstring für die
     Begründung der getrennten Funktion statt einer Wiederverwendung). Symptom (#1241): ``0 von 42``
     Studies auf drei steigenden Symbolen bestanden ein absolutes Excess-Return-Gate; das neue
@@ -462,6 +509,27 @@ def check_mandatory_gate_reachability_live(tournament_cfg: dict | None,
                 clause, float(threshold), p99, len(samples), threshold_key,
             )
     return unreachable
+
+
+@invariant_scope("trial")
+def check_mandatory_gate_reachability_live(tournament_cfg: dict | None,
+                                           observed_values: dict[str, list] | None, *,
+                                           n_evaluated: int | None = None) -> InvariantResult:
+    """Issue #1370 (GH #1267) — das ``InvariantResult`` zu ``mandatory_gate_reachability_live_violations``
+    (``severity='high'``: eine unerreichbare ``requires_all``-Klausel lehnt JEDEN Trial ab)."""
+    unreachable = mandatory_gate_reachability_live_violations(
+        tournament_cfg, observed_values, n_evaluated=n_evaluated)
+    passed = not unreachable
+    return InvariantResult(
+        name="check_mandatory_gate_reachability_live",
+        passed=passed,
+        expected="jede eligible_requires_all-Klausel liegt unter dem p99 der Referenzverteilung "
+                 "(strukturell erreichbar).",
+        actual={"unreachable_clauses": unreachable} if not passed else None,
+        severity="high",
+        detail=(f"Pflicht-Klausel(n) strukturell unerreichbar: {', '.join(unreachable)}."
+                if not passed else "Alle eligible_requires_all-Klauseln erreichbar."),
+    )
 
 
 # Issue #668 — gültige Werte für tournament.json['any_arm_unreachable_policy']. 'warn' (Default,
@@ -540,7 +608,7 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
         result["any_arm_decision"] = "insufficient_data"
         return result
 
-    unreachable = check_any_arm_reachability_live(
+    unreachable = any_arm_reachability_live_violations(
         tournament_cfg, observed_values, n_evaluated=n_evaluated)
     if not unreachable:
         return result

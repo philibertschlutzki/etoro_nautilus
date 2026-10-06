@@ -77,21 +77,39 @@ _FETCH_INTERVALS: tuple[str, ...] = ("OneHour", "OneDay")
 
 # ─── Cache Helpers ────────────────────────────────────────────────────────────
 
-def _load_inception_bounds() -> dict[str, int]:
-    """Liest die JSON-Datei mit Inception-Bounds."""
+BACKFILL_RETRY_DAYS_DEFAULT = 7
+
+
+def _load_inception_bounds() -> dict[str, dict]:
+    """Issue #1363 (GH #1259) — Inception-Bounds JE INTERVALL: ``{symbol: {"OneHour": ns, "OneDay": ns,
+    "observed_utc": iso}}``. Das Altformat ``{symbol: ns}`` (ein Wert, registriert aus der OneHour-Datei,
+    wenn die GESAMTE Kaskade das Ziel verfehlte) wird beim Lesen migriert (``OneHour``, ``observed_utc``
+    unbekannt ⇒ ``None``)."""
     if not INCEPTION_CACHE_PATH.exists():
         return {}
     try:
         with open(INCEPTION_CACHE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f) or {}
     except Exception as e:
         log.warning(f"Fehler beim Laden von {INCEPTION_CACHE_PATH}: {e}")
         return {}
+    out: dict[str, dict] = {}
+    for symbol, value in raw.items():
+        if isinstance(value, dict):
+            out[symbol] = dict(value)
+        elif isinstance(value, (int, float)):
+            out[symbol] = {"OneHour": int(value), "observed_utc": None}
+    return out
 
-def _save_inception_bound(symbol: str, ts_ns: int) -> None:
-    """Speichert den Inception-Zeitstempel atomar ab."""
+
+def _save_inception_bound(symbol: str, ts_ns: int, interval: str = "OneHour",
+                          *, now: datetime | None = None) -> None:
+    """Speichert die erreichte Tiefe ``ts_ns`` für ``symbol``/``interval`` atomar (Issue #1363: je Intervall,
+    mit ``observed_utc`` — Grundlage der ``backfill_retry_days``-Sperre)."""
     bounds = _load_inception_bounds()
-    bounds[symbol] = ts_ns
+    entry = bounds.setdefault(symbol, {})
+    entry[interval] = int(ts_ns)
+    entry["observed_utc"] = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     INCEPTION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = INCEPTION_CACHE_PATH.with_suffix(".tmp.json")
     try:
@@ -102,6 +120,27 @@ def _save_inception_bound(symbol: str, ts_ns: int) -> None:
         log.warning(f"Fehler beim Speichern von {INCEPTION_CACHE_PATH} für {symbol}: {e}")
         if tmp_path.exists():
             tmp_path.unlink()
+
+
+def inception_bound(symbol: str, interval: str = "OneHour") -> int | None:
+    """Registrierte API-Tiefe (ältester erreichbarer Zeitstempel, ns) für ``symbol``/``interval``."""
+    value = (_load_inception_bounds().get(symbol) or {}).get(interval)
+    return int(value) if value is not None else None
+
+
+def inception_bound_is_fresh(symbol: str, interval: str = "OneHour", *,
+                             retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
+                             now: datetime | None = None) -> bool:
+    """Issue #1363 — ``True``, solange die für ``interval`` registrierte Tiefe jünger als ``retry_days``
+    beobachtet wurde: ein erneuter Rückwärts-Abruf ist dann zwecklos (die API liefert nicht tiefer)."""
+    entry = _load_inception_bounds().get(symbol) or {}
+    if entry.get(interval) is None or not entry.get("observed_utc"):
+        return False
+    try:
+        observed = datetime.fromisoformat(str(entry["observed_utc"]).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (now or datetime.now(timezone.utc)) - observed < timedelta(days=retry_days)
 
 # ─── Sufficiency Check ────────────────────────────────────────────────────────
 
@@ -129,12 +168,11 @@ def is_backtest_range_covered(
             return False
         oldest_ts = int(pc.min(t.column("ts_event")).as_py())
 
-        # NEU: Inception-Bounds prüfen
-        bounds = _load_inception_bounds()
-        if symbol in bounds:
-            if oldest_ts <= bounds[symbol]:
-                log.info(f"[{symbol}] Inception-Bound-Check erfolgreich: Volle historische Tiefe ({datetime.fromtimestamp(oldest_ts/1e9, tz=timezone.utc).date()}) liegt vor.")
-                return True
+        # Inception-Bound (Issue #1363: je Intervall) — die lokale Historie reicht bis zur API-Tiefe.
+        bound = inception_bound(symbol, interval)
+        if bound is not None and oldest_ts <= bound:
+            log.info(f"[{symbol}] Inception-Bound-Check erfolgreich: Volle historische Tiefe ({datetime.fromtimestamp(oldest_ts/1e9, tz=timezone.utc).date()}) liegt vor.")
+            return True
 
         return oldest_ts <= start_ns
     except Exception:
@@ -251,6 +289,46 @@ async def _fetch_candle_chunk(
     return []
 
 
+# ─── Vorwärts-Schritt (Issue #1363) ──────────────────────────────────────────
+
+def forward_fill_count(gap_hours: float) -> int:
+    """``count = min(1000, ceil(gap_h) + 24)`` — die Lücke seit dem jüngsten lokalen Tick plus ein Tag
+    Überlappung (Issue #1363; vorher fix 168 Kerzen: eine längere Lücke blieb als Loch)."""
+    import math
+    return int(min(1000, math.ceil(max(0.0, gap_hours)) + 24))
+
+
+async def fetch_forward_candles(
+    session, etoro_id: str, symbol: str, latest_local_ns: int, *, api_key: str, user_key: str,
+    interval: str = "OneHour", now: datetime | None = None, fetch_chunk=None, max_pages: int = 50,
+) -> list[dict]:
+    """Issue #1363 (GH #1259) Fix Punkt 1 — Vorwärts-Schritt: von ``now`` rückwärts bis zur Überlappung mit
+    ``latest_local_ns`` (paginiert, ``count`` aus der Lücke). Vorher kamen neue Kerzen ausschliesslich über
+    Phase 2c (fix 168 Kerzen), die ``--skip-api-fetch`` übersprang — im dokumentierten Betrieb wuchs der
+    ``OneHour``-Katalog nicht mehr."""
+    fetch = fetch_chunk or _fetch_candle_chunk
+    now = now or datetime.now(timezone.utc)
+    gap_h = (now.timestamp() - latest_local_ns / 1e9) / 3600.0
+    if gap_h < 1.0:
+        return []
+    out: list[dict] = []
+    end_time, last_oldest = now, None
+    count = forward_fill_count(gap_h)
+    for _ in range(max_pages):
+        chunk = await fetch(session, etoro_id, end_time, api_key, user_key, interval, count=count)
+        if not chunk:
+            break
+        out.extend(chunk)
+        oldest = _oldest_ts_ns_from_chunk(chunk)
+        if oldest is None or oldest <= latest_local_ns or oldest == last_oldest:
+            break
+        last_oldest = oldest
+        end_time = datetime.fromtimestamp(oldest / 1e9, tz=timezone.utc) - timedelta(seconds=1)
+        count = forward_fill_count((end_time.timestamp() - latest_local_ns / 1e9) / 3600.0)
+    log.info(f"[{symbol}] Vorwärts-Schritt {interval}: {len(out)} Kerzen (Lücke {gap_h:.1f} h).")
+    return out
+
+
 # ─── Per-Symbol Fetch ─────────────────────────────────────────────────────────
 
 async def _fetch_symbol(
@@ -263,8 +341,16 @@ async def _fetch_symbol(
     price_prec: int,
     size_prec: int,
     start_ns: int = 0,
+    backfill_retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
 ) -> bool:
     """Fetches and saves historical candle data for one symbol. Returns True on success.
+
+    Issue #1363 (GH #1259): ZUERST der Vorwärts-Schritt (``fetch_forward_candles``, von ``now`` bis zum
+    jüngsten lokalen Tick), DANN der Rückwärts-Schritt. Die erreichte API-Tiefe wird JE INTERVALL
+    registriert, sobald dessen Kaskade endet (vorher nur, wenn die GESAMTE Kaskade das Ziel verfehlte —
+    da ``OneDay`` das Ziel erreichte, wurde die ``OneHour``-Tiefe nie registriert und jeder Lauf rief
+    erneut ab). Ein Intervall mit frisch registrierter Tiefe (< ``backfill_retry_days``) wird rückwärts
+    nicht erneut abgerufen.
 
     Issue #1331 (GH #1225): die `OneHour`/`OneDay`-Kaskade sammelte beide Auflösungen in
     EINER Liste, konvertierte sie mit EINEM Aufruf und schrieb sie in EINE Datei — die
@@ -281,6 +367,16 @@ async def _fetch_symbol(
     else:
         target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
 
+    candles_by_interval: dict[str, list[dict]] = {itv: [] for itv in _FETCH_INTERVALS}
+
+    # Issue #1363 Fix Punkt 1 — Vorwärts-Schritt VOR dem Rückwärts-Schritt (primäre Auflösung).
+    if dest_file.exists():
+        latest_local_ns = _get_latest_ts_ns(dest_file)
+        if latest_local_ns is not None:
+            candles_by_interval[primary_interval].extend(await fetch_forward_candles(
+                session, etoro_id, symbol, latest_local_ns, api_key=api_key, user_key=user_key,
+                interval=primary_interval))
+
     # Delta-update: iterate backwards from the oldest locally stored timestamp
     current_end_time = datetime.now(timezone.utc)
     if dest_file.exists():
@@ -289,13 +385,24 @@ async def _fetch_symbol(
             oldest_dt = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc)
             current_end_time = oldest_dt - timedelta(seconds=1)
             log.info(f"[{symbol}] Delta-Update: Fetch ab {current_end_time.isoformat()} rückwärts bis {target_start.isoformat()}")
-    candles_by_interval: dict[str, list[dict]] = {itv: [] for itv in _FETCH_INTERVALS}
     cascade_end_time = current_end_time
 
     # Cascade: OneHour first, then OneDay to reach deeper history — jede Auflösung sammelt
     # in ihren EIGENEN Kandidaten-Puffer (kein all_candles.extend() über die Kaskade hinweg).
     for interval in _FETCH_INTERVALS:
         last_oldest_ts_ns: int | None = None
+        if cascade_end_time > target_start and inception_bound_is_fresh(
+                symbol, interval, retry_days=backfill_retry_days):
+            # Issue #1363 — die API-Tiefe dieses Intervalls ist bekannt und jünger als
+            # backfill_retry_days beobachtet: kein erneuter (wirkungsloser) Rückwärts-Abruf; die Kaskade
+            # setzt an der registrierten Tiefe mit der nächsten Auflösung fort.
+            known = inception_bound(symbol, interval)
+            log.info(f"[{symbol}] {interval}: API-Tiefe bekannt "
+                     f"({datetime.fromtimestamp(known / 1e9, tz=timezone.utc).date()}) — kein erneuter "
+                     f"Rückwärts-Abruf (< {backfill_retry_days} Tage).")
+            cascade_end_time = min(cascade_end_time,
+                                   datetime.fromtimestamp(known / 1e9, tz=timezone.utc) - timedelta(seconds=1))
+            continue
 
         while cascade_end_time > target_start:
             chunk = await _fetch_candle_chunk(
@@ -330,13 +437,14 @@ async def _fetch_symbol(
             log.info(f"[{symbol}] Ziel-Startdatum mit {interval} erreicht.")
             break
 
-    # Wenn die Schleifen beendet wurden, wir aber das target_start nicht erreicht haben,
-    # ist das Instrument jünger als das angeforderte Backtest-Warmup-Fenster.
-    if cascade_end_time > target_start:
-        final_oldest_ns = _get_oldest_ts_ns(dest_file)
-        if final_oldest_ns is not None:
-            _save_inception_bound(symbol, final_oldest_ns)
-            log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
+        # Issue #1363 Fix Punkt 2 — die Kaskade DIESES Intervalls endete vor dem Ziel: seine API-Tiefe
+        # registrieren (unabhängig davon, ob die nächste Auflösung das Ziel noch erreicht).
+        _local_oldest = _get_oldest_ts_ns(QUOTE_TICK_PATH / symbol / interval / "data.parquet")
+        _depth = min((x for x in (_local_oldest, last_oldest_ts_ns) if x is not None), default=None)
+        if _depth is not None:
+            _save_inception_bound(symbol, _depth, interval)
+            log.info(f"[{symbol}] {interval}: API-Tiefe registriert "
+                     f"({datetime.fromtimestamp(_depth / 1e9, tz=timezone.utc).isoformat()}).")
 
     if not any(candles_by_interval.values()):
         log.warning(f"[{symbol}] Keine Candles gefunden — überspringe.")
@@ -360,13 +468,6 @@ async def _fetch_symbol(
         except CatalogSchemaVersionMismatch as e:
             log.error(str(e))
 
-    # Nach dem erfolgreichen Speichern nochmal Inception-Bound prüfen (primäre Auflösung)
-    if any_saved and cascade_end_time > target_start:
-        final_oldest_ns = _get_oldest_ts_ns(dest_file)
-        if final_oldest_ns is not None:
-            _save_inception_bound(symbol, final_oldest_ns)
-            log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
-
     return any_saved
 
 
@@ -379,6 +480,7 @@ async def run_historical_fetch(
     months: int = 12,
     start_ns: int = 0,
     force: bool = False,
+    backfill_retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
 ) -> list[str]:
     """
     Fetches historical data for symbols that are insufficient.
@@ -441,7 +543,7 @@ async def run_historical_fetch(
                 ok = await _fetch_symbol(
                     session, etoro_id, symbol, months,
                     api_key, user_key, price_prec, size_prec,
-                    start_ns=real_start_ns,
+                    start_ns=real_start_ns, backfill_retry_days=backfill_retry_days,
                 )
                 if ok:
                     fetched.append(symbol)
@@ -499,6 +601,19 @@ def _default_backfill_fetch(
     ))
 
 
+def measure_span_days(symbol: str, catalog_path: Path = CATALOG_PATH, interval: str = "OneHour") -> float:
+    """Rohe Spanne (Tage, ``newest − oldest``) der ``interval``-Datei; 0.0 ohne Datei/Ticks."""
+    from automation.catalog_paths import resolve_quote_tick_files
+
+    files = resolve_quote_tick_files(catalog_path, symbol, interval=interval)
+    if not files:
+        return 0.0
+    oldest, newest = _get_oldest_ts_ns(files[0]), _get_latest_ts_ns(files[0])
+    if oldest is None or newest is None:
+        return 0.0
+    return max(0.0, (newest - oldest) / 86_400_000_000_000)
+
+
 def ensure_walkforward_history(
     symbols: list[str],
     walk_forward_dict: dict,
@@ -510,21 +625,28 @@ def ensure_walkforward_history(
     universe_path: Path = UNIVERSE_PATH,
     api_key: str | None = None,
     user_key: str | None = None,
+    span_fn=None,
+    backfill_retry_days: int = BACKFILL_RETRY_DAYS_DEFAULT,
+    now: datetime | None = None,
 ) -> dict:
     """Issue #531 — Pre-Sweep-Hook: erzwingt die volle Walk-Forward-Historie VOR dem Sweep.
 
     Liegt die REAL vorhandene Bar-Spanne eines Symbols (``span_days_by_symbol[sym]``, vom Aufrufer
-    aus den Parquet-Statistiken injiziert) unter ``required_span_days + gate1_buffer_days`` (z. B.
-    405 + 30 = 435 Tage), wird ein **synchroner** Backfill-Request an den ``historical_fetcher``
-    abgesetzt, um das fehlende Delta (z. B. TSLA.ETORO-1h) nachzuladen, bevor der Sweep iteriert.
+    aus den Parquet-Statistiken injiziert) unter ``required_span_days + gate1_buffer_days``, wird ein
+    **synchroner** Backfill-Request an den ``historical_fetcher`` abgesetzt, bevor der Sweep iteriert.
 
-    Rein orchestrierend und vollständig injizierbar (HI-7): ``span_days_by_symbol`` und ``fetch_fn``
-    kommen von außen, es findet KEIN eigenständiges Parquet-I/O statt. Gibt einen Report zurück
-    (``required_days``/``threshold_days``/``deficient``/``backfilled``); wirft NIE — schlägt der
-    Backfill fehl (keine Keys, Netzfehler), entscheidet das nachgelagerte Gate-1 fail-loud."""
+    Issue #1363 (GH #1259) — mit NACHBEDINGUNG: die Spanne wird vorher/nachher gemessen (``span_fn``,
+    Default ``measure_span_days``); der Report trägt ``span_before_days``/``span_after_days``/
+    ``gain_days`` je Symbol. ``gain_days < 1`` ⇒ WARNING ``BACKFILL_NO_GAIN`` und die erreichte Tiefe wird
+    registriert (vorher meldete der Hook "3/3 nachgeladen" bei 0 Tagen Zugewinn — und wiederholte den
+    wirkungslosen Abruf in jedem Lauf). Symbole, deren ``OneHour``-Tiefe jünger als
+    ``backfill_retry_days`` registriert ist, werden NICHT erneut abgerufen (``skipped_known_depth``).
+
+    Wirft NIE — schlägt der Backfill fehl (keine Keys, Netzfehler), entscheidet das nachgelagerte Gate."""
     from automation.optimizer.gate import required_span_days
 
     log = logger or logging.getLogger("historical_fetcher")
+    measure = span_fn or measure_span_days
     required = required_span_days(walk_forward_dict)
     threshold = required + int(gate1_buffer_days)
     deficient = sorted(
@@ -536,30 +658,473 @@ def ensure_walkforward_history(
         "threshold_days": threshold,
         "deficient": deficient,
         "backfilled": [],
+        "skipped_known_depth": [],
+        "span_before_days": {},
+        "span_after_days": {},
+        "gain_days": {},
+        "no_gain": [],
     }
     if not deficient:
+        return report
+
+    to_fetch = []
+    for sym in deficient:
+        if inception_bound_is_fresh(sym, "OneHour", retry_days=backfill_retry_days, now=now):
+            report["skipped_known_depth"].append(sym)
+        else:
+            to_fetch.append(sym)
+    if report["skipped_known_depth"]:
+        log.info("[#1363] %d Symbol(e) mit bekannter API-Tiefe (< %d Tage registriert) — kein erneuter "
+                 "Rückwärts-Abruf: %s", len(report["skipped_known_depth"]), backfill_retry_days,
+                 report["skipped_known_depth"])
+    if not to_fetch:
         return report
 
     log.warning(
         "[#531] %d Symbol(e) unter der Walk-Forward-Schwelle (%d Tage = %d + Puffer %d) — "
         "synchroner Pre-Sweep-Backfill: %s",
-        len(deficient), threshold, required, int(gate1_buffer_days), deficient,
+        len(to_fetch), threshold, required, int(gate1_buffer_days), to_fetch,
     )
+    for sym in to_fetch:
+        # Vorher/nachher mit DERSELBEN Messung (``span_fn``) — ``span_days_by_symbol`` (vom Aufrufer, ggf.
+        # aus Bar-Zählern abgeleitet) entscheidet nur über die Unterdeckung.
+        try:
+            before = float(measure(sym))
+        except Exception:
+            before = float(span_days_by_symbol.get(sym, 0.0))
+        report["span_before_days"][sym] = round(before, 4)
     fetch = fetch_fn or _default_backfill_fetch
     try:
         fetched = fetch(
-            deficient, required_days=required, buffer_days=int(gate1_buffer_days),
+            to_fetch, required_days=required, buffer_days=int(gate1_buffer_days),
             universe_path=universe_path, api_key=api_key, user_key=user_key, logger=log,
         )
         report["backfilled"] = list(fetched or [])
-        log.info("[#531] Pre-Sweep-Backfill abgeschlossen: %d/%d Symbol(e) nachgeladen.",
-                 len(report["backfilled"]), len(deficient))
     except Exception as e:  # pragma: no cover - defensiv: Backfill darf den Sweep nie crashen
         log.warning("[#531] Pre-Sweep-Backfill fehlgeschlagen (%s) — Gate-1 entscheidet fail-loud.", e)
+
+    for sym in to_fetch:
+        try:
+            after = float(measure(sym))
+        except Exception:
+            after = report["span_before_days"][sym]
+        report["span_after_days"][sym] = round(after, 4)
+        gain = after - report["span_before_days"][sym]
+        report["gain_days"][sym] = round(gain, 4)
+        if gain < 1.0:
+            report["no_gain"].append(sym)
+    if report["no_gain"]:
+        log.warning("[#1363] BACKFILL_NO_GAIN: %d Symbol(e) ohne Spannen-Zugewinn (< 1 Tag): %s — die "
+                    "API liefert nicht tiefer; Tiefe registriert, kein erneuter Abruf für %d Tage.",
+                    len(report["no_gain"]), {s: report["gain_days"][s] for s in report["no_gain"]},
+                    backfill_retry_days)
+        try:
+            from automation.log_manager import emit_execution_event
+            emit_execution_event(log, "BACKFILL_NO_GAIN", {
+                "symbols": report["no_gain"],
+                "span_before_days": {s: report["span_before_days"][s] for s in report["no_gain"]},
+                "span_after_days": {s: report["span_after_days"][s] for s in report["no_gain"]},
+                "required_days": required, "backfill_retry_days": backfill_retry_days,
+            }, level=logging.WARNING)
+        except Exception:
+            pass
+        for sym in report["no_gain"]:
+            files_oldest = None
+            try:
+                from automation.catalog_paths import resolve_quote_tick_files
+                files = resolve_quote_tick_files(CATALOG_PATH, sym, interval="OneHour")
+                files_oldest = _get_oldest_ts_ns(files[0]) if files else None
+            except Exception:
+                files_oldest = None
+            # Ohne lokale Daten ist keine Tiefe bekannt (nichts geliefert ≠ API-Tiefe erreicht) — dann keine
+            # Retry-Sperre, der nächste Lauf versucht es erneut.
+            if files_oldest is not None:
+                _save_inception_bound(sym, files_oldest, "OneHour", now=now)
+    log.info("[#531] Pre-Sweep-Backfill abgeschlossen: %d/%d Symbol(e) geschrieben, Zugewinn je Symbol "
+             "(Tage): %s.", len(report["backfilled"]), len(to_fetch), report["gain_days"])
     return report
 
 
-# ─── Catalog Rebuild (Issue #1333 / GH #1227) ────────────────────────────────
+# ─── Catalog Rebuild (Issue #1333 / GH #1227, Issue #1364 / GH #1260) ────────
+
+_DAY_NS = 86_400_000_000_000
+from automation.catalog_paths import REALTICK_INTERVAL  # noqa: E402  (Issue #1354/#1366)
+
+
+class HistoryLossRefused(RuntimeError):
+    """Issue #1364 (GH #1260) Fix Punkt 3: der Probelauf sagt ``history_lost_days > 0`` voraus und
+    ``--accept-history-loss`` fehlt. Wird VOR jeder Verschiebung geworfen — der Katalog ist
+    unverändert."""
+
+
+def _utc_ts_label(now: datetime | None = None) -> str:
+    return (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _file_range_ns(parquet_file: Path) -> tuple[int, int] | None:
+    """``(erster, letzter) ts_event`` einer Katalogdatei, ``None`` bei leer/nicht lesbar."""
+    try:
+        import pyarrow.compute as pc
+        t = pq.read_table(str(parquet_file), columns=["ts_event"])
+        if len(t) == 0:
+            return None
+        mm = pc.min_max(t.column("ts_event")).as_py()
+        return int(mm["min"]), int(mm["max"])
+    except Exception:
+        return None
+
+
+def uncovered_days(old: tuple[int, int], new: tuple[int, int] | None) -> float:
+    """Tage des alten Bereichs ``old`` = ``[first, last]``, die der neue Bereich ``new`` NICHT
+    abdeckt — die Messgrösse hinter ``history_lost_days`` (Issue #1364 Fix Punkt 2). Reine
+    Funktion; ``new = None`` (nichts neu geliefert) ⇒ der ganze alte Bereich."""
+    old_first, old_last = old
+    if new is None:
+        return max(0, old_last - old_first) / _DAY_NS
+    new_first, new_last = new
+    lost = max(0, min(new_first, old_last) - old_first)
+    lost += max(0, old_last - max(new_last, old_first))
+    return lost / _DAY_NS
+
+
+def classify_catalog_files(inst_dir: Path) -> list[dict]:
+    """Klassifiziert alle Datendateien eines Instrument-Katalogverzeichnisses für den Rebuild.
+
+    Je Eintrag: ``interval`` (``OneHour``/``OneDay``/``RealTick``/…), ``path``, ``range`` (ns oder
+    ``None``), ``version`` (``catalog_schema_version`` oder ``None``), ``representable`` (lässt sich
+    ins aktuelle Schema zurückführen — gleiche Version oder registrierte Migration, siehe
+    ``api_backfiller.has_schema_migration``) und ``reason``.
+
+    * ``<interval>/data.parquet`` mit Kerzen-Auflösung: darstellbar ⇔ gleiche/migrierbare Version.
+      Eine v1-Ein-Tick-Kerze (Version ``None``) ist NICHT darstellbar.
+    * ``RealTick/data.parquet`` und die flache ``data.parquet`` (Echt-Ticks des ``catalog_service``,
+      siehe ``daily_orchestrator._merge_symbol``): darstellbar als ``RealTick`` — es sei denn, die
+      flache Datei deklariert per ``catalog_interval`` eine Kerzen-Auflösung.
+    * unbekannte Unterverzeichnisse: nicht darstellbar (``unknown_interval``)."""
+    from automation.api_backfiller import (
+        CATALOG_SCHEMA_VERSION, INTERVAL_TO_NS, _read_catalog_schema_version, has_schema_migration,
+    )
+
+    entries: list[dict] = []
+    if not inst_dir.is_dir():
+        return entries
+
+    def _entry(path: Path, interval: str) -> dict:
+        version = _read_catalog_schema_version(path)
+        if interval == REALTICK_INTERVAL:
+            representable, reason = True, "realtick"
+        elif interval in INTERVAL_TO_NS:
+            if version == CATALOG_SCHEMA_VERSION:
+                representable, reason = True, "same_schema_version"
+            elif has_schema_migration(version):
+                representable, reason = True, "migratable"
+            else:
+                representable, reason = False, f"schema_version_{version!r}_not_representable"
+        else:
+            representable, reason = False, "unknown_interval"
+        return {
+            "interval": interval, "path": path, "range": _file_range_ns(path),
+            "version": version, "representable": representable, "reason": reason,
+        }
+
+    flat = inst_dir / "data.parquet"
+    if flat.is_file():
+        declared = None
+        try:
+            declared = (pq.read_schema(str(flat)).metadata or {}).get(b"catalog_interval")
+        except Exception:
+            declared = None
+        declared_s = declared.decode() if declared else REALTICK_INTERVAL
+        entries.append(_entry(flat, declared_s if declared_s in INTERVAL_TO_NS else REALTICK_INTERVAL))
+    for sub in sorted(p for p in inst_dir.iterdir() if p.is_dir()):
+        f = sub / "data.parquet"
+        if f.is_file():
+            entries.append(_entry(f, sub.name))
+    return entries
+
+
+def predict_history_loss(
+    symbols: list[str],
+    probe_oldest_ns: dict[str, dict[str, int | None]],
+    *,
+    now_ns: int | None = None,
+    quote_tick_path: Path | None = None,
+) -> dict[str, dict[str, dict]]:
+    """Probelauf (Issue #1364 Fix Punkt 3): sagt je Symbol und Intervall ``history_lost_days``
+    VORAUS, ohne etwas zu verschieben. Darstellbare Dateien kommen aus dem Archiv zurück ⇒ 0.
+    Nicht darstellbare Kerzen-Dateien gehen verloren, soweit ihr Bereich nicht von dem abgedeckt
+    wird, was die API liefert (``probe_oldest_ns[symbol][interval]`` = ältester per API erreichbarer
+    Zeitstempel, ``None``/fehlend = unbekannt ⇒ nichts abgedeckt, konservativ)."""
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    now_ns = now_ns if now_ns is not None else int(datetime.now(timezone.utc).timestamp() * 1e9)
+    out: dict[str, dict[str, dict]] = {}
+    for sym in symbols:
+        per_interval: dict[str, dict] = {}
+        for e in classify_catalog_files(root / sym):
+            if e["range"] is None:
+                continue
+            if e["representable"]:
+                lost = 0.0
+            else:
+                oldest = (probe_oldest_ns.get(sym) or {}).get(e["interval"])
+                lost = uncovered_days(e["range"], None if oldest is None else (int(oldest), now_ns))
+            per_interval[e["interval"]] = {
+                "predicted_history_lost_days": lost, "representable": e["representable"],
+                "reason": e["reason"],
+            }
+        out[sym] = per_interval
+    return out
+
+
+async def _probe_symbol_depth(
+    session: aiohttp.ClientSession, etoro_id: str, symbol: str, intervals: list[str],
+    api_key: str, user_key: str, target_start: datetime,
+) -> dict[str, int | None]:
+    """Ältester per API erreichbarer Zeitstempel je Auflösung (paginiert rückwärts bis zur
+    Tiefengrenze — wie ``_fetch_symbol``, aber ohne etwas zu schreiben)."""
+    result: dict[str, int | None] = {}
+    for interval in intervals:
+        end_time = datetime.now(timezone.utc)
+        last_oldest: int | None = None
+        reached: int | None = None
+        while end_time > target_start:
+            chunk = await _fetch_candle_chunk(session, etoro_id, end_time, api_key, user_key, interval)
+            if not chunk:
+                break
+            oldest_ns = _oldest_ts_ns_from_chunk(chunk)
+            if oldest_ns is None or (last_oldest is not None and oldest_ns == last_oldest):
+                break
+            reached = oldest_ns if reached is None else min(reached, oldest_ns)
+            last_oldest = oldest_ns
+            end_time = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc) - timedelta(seconds=1)
+            await asyncio.sleep(1.1)
+        result[interval] = reached
+    return result
+
+
+def _default_probe_fn(api_key: str, user_key: str, id_by_symbol: dict[str, str], months: int):
+    """Default-Probe für ``rebuild_catalog_with_report``: echte API-Tiefenmessung."""
+    def _probe(needed: dict[str, list[str]]) -> dict[str, dict[str, int | None]]:
+        async def _run() -> dict[str, dict[str, int | None]]:
+            target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
+            out: dict[str, dict[str, int | None]] = {}
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+                for sym, intervals in sorted(needed.items()):
+                    eid = id_by_symbol.get(sym)
+                    if eid is None:
+                        out[sym] = {}
+                        continue
+                    out[sym] = await _probe_symbol_depth(
+                        session, eid, sym, intervals, api_key, user_key, target_start)
+            return out
+        return asyncio.run(_run())
+    return _probe
+
+
+def archive_instrument_catalog(
+    symbol: str, archive_dir: Path, *, quote_tick_path: Path | None = None,
+) -> Path | None:
+    """Verschiebt ``quote_tick/<symbol>/`` atomar (``os.replace``) nach ``archive_dir/<symbol>/``.
+    Löscht nie (Issue #1364 Fix Punkt 1). ``None``, wenn es nichts zu archivieren gibt."""
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    inst_dir = root / symbol
+    if not inst_dir.exists():
+        return None
+    dest = archive_dir / symbol
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(inst_dir, dest)
+    return dest
+
+
+def archive_all_instrument_catalogs(quote_tick_path: Path, archive_dir: Path) -> list[Path]:
+    """Verschiebt JEDES Instrument-Verzeichnis unter ``quote_tick_path`` ins Archiv (Pfad für
+    ``daily_orchestrator --reset-catalog``, Issue #1364). Nie löschen; Rückgabe: die Archivpfade."""
+    out: list[Path] = []
+    if not quote_tick_path.is_dir():
+        return out
+    for inst in sorted(p for p in quote_tick_path.iterdir() if p.is_dir()):
+        dest = archive_instrument_catalog(inst.name, archive_dir, quote_tick_path=quote_tick_path)
+        if dest is not None:
+            out.append(dest)
+    return out
+
+
+def _restore_from_archive(
+    symbol: str, archived_dir: Path, *, quote_tick_path: Path, logger: logging.Logger,
+) -> dict[str, dict]:
+    """Führt alle darstellbaren Zeilen aus ``archived_dir`` in den frisch gebauten Katalog zurück
+    und liefert den Bericht je Intervall (``history_lost_days`` aus dem alten gegen den neuen
+    Bereich nach der Rückführung)."""
+    from automation.api_backfiller import (
+        CATALOG_SCHEMA_VERSION, INTERVAL_TO_NS, SCHEMA_MIGRATIONS, restore_archived_rows,
+        schema_migration_path,
+    )
+
+    report: dict[str, dict] = {}
+    for e in classify_catalog_files(archived_dir):
+        interval = e["interval"]
+        old_range = e["range"]
+        entry = {
+            "representable": e["representable"], "reason": e["reason"],
+            "restored_rows": 0, "archive_path": str(e["path"]),
+        }
+        if e["representable"] and old_range is not None:
+            table = pq.read_table(str(e["path"]))
+            meta = table.schema.metadata or {}
+            if interval in INTERVAL_TO_NS and e["version"] != CATALOG_SCHEMA_VERSION:
+                for step in schema_migration_path(1 if e["version"] is None else e["version"],
+                                                  CATALOG_SCHEMA_VERSION) or []:
+                    table = SCHEMA_MIGRATIONS[step](table)
+                    table = table.replace_schema_metadata(meta)
+            live_file = quote_tick_path / symbol / interval / "data.parquet"
+            live_meta = {}
+            if live_file.exists():
+                try:
+                    live_meta = pq.read_schema(str(live_file)).metadata or {}
+                except Exception:
+                    live_meta = {}
+
+            def _prec(key: bytes, fallback: int) -> int:
+                for m in (live_meta, meta):
+                    if key in m:
+                        try:
+                            return int(m[key].decode())
+                        except ValueError:
+                            pass
+                return fallback
+
+            fb_price, fb_size = _fallback_precisions(symbol)
+            try:
+                entry["restored_rows"] = restore_archived_rows(
+                    logger, table, symbol, interval,
+                    price_prec=_prec(b"price_precision", fb_price),
+                    size_prec=_prec(b"size_precision", fb_size),
+                    quote_tick_path=quote_tick_path,
+                )
+            except CatalogSchemaVersionMismatch as exc:
+                logger.error(str(exc))
+                entry["error"] = str(exc)
+        live_file = quote_tick_path / symbol / interval / "data.parquet"
+        new_range = _file_range_ns(live_file) if live_file.exists() else None
+        entry["old_first_utc"] = (
+            datetime.fromtimestamp(old_range[0] / 1e9, tz=timezone.utc).isoformat() if old_range else None)
+        entry["old_last_utc"] = (
+            datetime.fromtimestamp(old_range[1] / 1e9, tz=timezone.utc).isoformat() if old_range else None)
+        entry["new_first_utc"] = (
+            datetime.fromtimestamp(new_range[0] / 1e9, tz=timezone.utc).isoformat() if new_range else None)
+        entry["new_last_utc"] = (
+            datetime.fromtimestamp(new_range[1] / 1e9, tz=timezone.utc).isoformat() if new_range else None)
+        entry["history_lost_days"] = uncovered_days(old_range, new_range) if old_range else 0.0
+        report[interval] = entry
+    return report
+
+
+def rebuild_catalog_with_report(
+    api_key: str,
+    user_key: str,
+    etoro_id_to_symbol: dict[str, str],
+    target: str,
+    months: int = 12,
+    *,
+    accept_history_loss: bool = False,
+    probe_fn=None,
+    fetch_fn=None,
+    now: datetime | None = None,
+    quote_tick_path: Path | None = None,
+    archive_root: Path | None = None,
+) -> dict:
+    """Baut den Katalog für ``target`` (Symbol oder ``"all"``) aus der API neu auf — OHNE Historie zu
+    vernichten (Issue #1364 / GH #1260; ersetzt die ``rmtree``-Variante aus #1333/GH #1227):
+
+    1. Probelauf VOR jeder Verschiebung: ``predict_history_loss``. Sagt er ``history_lost_days > 0``
+       voraus und fehlt ``accept_history_loss`` ⇒ ``HistoryLossRefused``, nichts verschoben.
+    2. Jedes Instrument-Verzeichnis wird atomar nach ``<catalog>/archive/<UTC-ts>/<symbol>/``
+       VERSCHOBEN (``os.replace``), nie gelöscht.
+    3. Neuaufbau aus der API (``fetch_fn`` oder ``run_historical_fetch(force=True)``).
+    4. Darstellbare archivierte Zeilen (gleiche ``catalog_schema_version`` / registrierte Migration /
+       Echt-Ticks) werden zurückgeführt (Dedup wie ``_merge_and_save``, frische Zeilen gewinnen);
+       nicht darstellbare (z. B. v1-Ein-Tick-Kerzen) bleiben im Archiv.
+    5. Bericht ``history_lost_days`` je Symbol und Intervall (auch als ``rebuild_report.json`` im
+       Archivordner).
+
+    Rückgabe: ``{"rebuilt": [...], "archive_dir": str|None, "symbols": {sym: {interval: {...}}},
+    "predicted": {...}, "history_lost_days_total": float}``."""
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    from automation.catalog_paths import catalog_archive_root
+
+    symbols = sorted(set(etoro_id_to_symbol.values())) if target == "all" else [target]
+    wanted = set(symbols)
+    to_fetch = {eid: sym for eid, sym in etoro_id_to_symbol.items() if sym in wanted}
+    report: dict = {"rebuilt": [], "archive_dir": None, "symbols": {}, "predicted": {},
+                    "history_lost_days_total": 0.0}
+    if not to_fetch:
+        log.error(f"[historical_fetcher] --rebuild-catalog: Symbol(e) {sorted(wanted)} nicht im Universe.")
+        return report
+
+    # 1. Probelauf — nur Symbole mit nicht darstellbaren Kerzen-Dateien brauchen eine API-Messung.
+    needed: dict[str, list[str]] = {}
+    for sym in symbols:
+        for e in classify_catalog_files(root / sym):
+            if not e["representable"] and e["range"] is not None:
+                needed.setdefault(sym, []).append(e["interval"])
+    probe = probe_fn
+    if probe is None and needed:
+        id_by_symbol = {sym: eid for eid, sym in etoro_id_to_symbol.items()}
+        probe = _default_probe_fn(api_key, user_key, id_by_symbol, months)
+    probed = probe(needed) if (probe is not None and needed) else {}
+    now_dt = now or datetime.now(timezone.utc)
+    predicted = predict_history_loss(
+        symbols, probed, now_ns=int(now_dt.timestamp() * 1e9), quote_tick_path=root)
+    report["predicted"] = predicted
+    predicted_total = sum(
+        v["predicted_history_lost_days"] for per in predicted.values() for v in per.values())
+    if predicted_total > 0 and not accept_history_loss:
+        detail = {
+            sym: {itv: round(v["predicted_history_lost_days"], 2) for itv, v in per.items()
+                  if v["predicted_history_lost_days"] > 0}
+            for sym, per in predicted.items()
+            if any(v["predicted_history_lost_days"] > 0 for v in per.values())
+        }
+        raise HistoryLossRefused(
+            f"[#1364] --rebuild-catalog sagt {predicted_total:.1f} verlorene Historie-Tage voraus "
+            f"({detail}). Nichts wurde verschoben. Mit --accept-history-loss bewusst fortfahren "
+            f"(die Zeilen bleiben im Archiv unter {catalog_archive_root(root.parent.parent)}/)."
+        )
+
+    # 2. Archivieren (atomar verschieben, nie löschen).
+    archive_dir = (Path(archive_root) if archive_root is not None
+                   else catalog_archive_root(root.parent.parent)) / _utc_ts_label(now_dt)
+    archived: dict[str, Path] = {}
+    for sym in symbols:
+        dest = archive_instrument_catalog(sym, archive_dir, quote_tick_path=root)
+        if dest is not None:
+            log.warning(f"[{sym}] --rebuild-catalog: Katalog nach {dest} archiviert (nicht gelöscht).")
+            archived[sym] = dest
+    report["archive_dir"] = str(archive_dir) if archived else None
+
+    # 3. Neuaufbau aus der API.
+    if fetch_fn is not None:
+        rebuilt = list(fetch_fn(to_fetch) or [])
+    else:
+        rebuilt = asyncio.run(run_historical_fetch(
+            api_key=api_key, user_key=user_key, etoro_id_to_symbol=to_fetch,
+            months=months, force=True,
+        ))
+    report["rebuilt"] = rebuilt
+
+    # 4./5. Rückführung + Bericht (auch für Symbole, die die API nicht mehr geliefert hat).
+    for sym, dest in archived.items():
+        report["symbols"][sym] = _restore_from_archive(sym, dest, quote_tick_path=root, logger=log)
+    report["history_lost_days_total"] = sum(
+        v["history_lost_days"] for per in report["symbols"].values() for v in per.values())
+    if archived:
+        try:
+            (archive_dir / "rebuild_report.json").write_text(
+                json.dumps(report, indent=2, default=str), encoding="utf-8")
+        except OSError as exc:  # pragma: no cover - Bericht ist Zusatz, kein Abbruchgrund
+            log.warning(f"[historical_fetcher] rebuild_report.json nicht schreibbar: {exc}")
+    return report
+
 
 def rebuild_catalog(
     api_key: str,
@@ -567,37 +1132,42 @@ def rebuild_catalog(
     etoro_id_to_symbol: dict[str, str],
     target: str,
     months: int = 12,
+    *,
+    accept_history_loss: bool = False,
+    **kwargs,
 ) -> list[str]:
-    """Verwirft den bestehenden Katalog für ``target`` (Symbol oder ``"all"``) vollständig und
-    baut ihn aus der API neu auf (Issue #1333/GH #1227 Fix Punkt 3).
+    """Kompatibilitäts-Wrapper um ``rebuild_catalog_with_report`` — liefert die Liste der neu
+    befüllten Symbole. Wirft ``HistoryLossRefused`` bei vorhergesagtem Verlust ohne
+    ``accept_history_loss``."""
+    return rebuild_catalog_with_report(
+        api_key, user_key, etoro_id_to_symbol, target, months,
+        accept_history_loss=accept_history_loss, **kwargs,
+    )["rebuilt"]
 
-    Löscht ZUERST das komplette Instrument-Verzeichnis (alle Auflösungs-Unterordner UND ein
-    eventuelles Alt-Layout-File), damit ``_merge_and_save`` nicht gegen eine
-    ``catalog_schema_version``-Grenze läuft (``CatalogSchemaVersionMismatch``) — ein Rebuild ist
-    die explizit angeforderte, bewusste Alternative zum stillen Merge über eine Schemagrenze."""
-    import shutil
 
-    if target == "all":
-        symbols = sorted(set(etoro_id_to_symbol.values()))
-    else:
-        symbols = [target]
-
-    wanted = set(symbols)
-    to_fetch = {eid: sym for eid, sym in etoro_id_to_symbol.items() if sym in wanted}
-    if not to_fetch:
-        log.error(f"[historical_fetcher] --rebuild-catalog: Symbol(e) {sorted(wanted)} nicht im Universe.")
-        return []
-
-    for sym in symbols:
-        inst_dir = QUOTE_TICK_PATH / sym
-        if inst_dir.exists():
-            log.warning(f"[{sym}] --rebuild-catalog: verwerfe bestehenden Katalog ({inst_dir}).")
-            shutil.rmtree(inst_dir)
-
-    return asyncio.run(run_historical_fetch(
-        api_key=api_key, user_key=user_key, etoro_id_to_symbol=to_fetch,
-        months=months, force=True,
-    ))
+def migrate_catalog(target: str, etoro_id_to_symbol: dict[str, str] | None = None) -> list[Path]:
+    """CLI-Pfad ``--migrate-catalog`` (Issue #1364 Fix Punkt 4): verlustfreie Schema-Migration
+    ``catalog_schema_version`` → aktuelle Version für ``target`` (Symbol oder ``"all"``).
+    Wirft ``CatalogSchemaMigrationUnavailable``, wenn für die gefundene Version keine Migration
+    registriert ist."""
+    from automation.api_backfiller import (
+        CATALOG_SCHEMA_VERSION, _read_catalog_schema_version, INTERVAL_TO_NS, migrate_catalog_schema,
+    )
+    symbols = None if target == "all" else [target]
+    migrated: list[Path] = []
+    found: set[int] = set()
+    if QUOTE_TICK_PATH.is_dir():
+        for inst in QUOTE_TICK_PATH.iterdir():
+            if symbols is not None and inst.name not in symbols:
+                continue
+            for itv in INTERVAL_TO_NS:
+                f = inst / itv / "data.parquet"
+                if f.exists():
+                    v = _read_catalog_schema_version(f)
+                    found.add(1 if v is None else v)
+    for from_v in sorted(found - {CATALOG_SCHEMA_VERSION}):
+        migrated += migrate_catalog_schema(from_v, CATALOG_SCHEMA_VERSION, symbols=symbols)
+    return migrated
 
 
 # ─── CLI Entry-Point ──────────────────────────────────────────────────────────
@@ -617,6 +1187,16 @@ def main() -> int:
         "--rebuild-catalog", type=str, default=None, metavar="SYMBOL|all",
         help="Verwirft den bestehenden Katalog für SYMBOL (oder 'all') und baut ihn vollständig "
              "aus der API neu auf (Issue #1333/GH #1227) — erzeugt catalog_schema_version=2.",
+    )
+    parser.add_argument(
+        "--accept-history-loss", action="store_true",
+        help="--rebuild-catalog trotz vorhergesagtem Historie-Verlust (history_lost_days > 0) ausführen "
+             "(Issue #1364/GH #1260). Der Katalog wird nie gelöscht, sondern nach "
+             "data/nautilus/archive/ verschoben.",
+    )
+    parser.add_argument(
+        "--migrate-catalog", type=str, default=None, metavar="SYMBOL|all",
+        help="Verlustfreie catalog_schema_version-Migration (Issue #1364/GH #1260) statt Rebuild.",
     )
     args = parser.parse_args()
 
@@ -641,12 +1221,31 @@ def main() -> int:
         log.error("[historical_fetcher] Keine Instrumente im Universe — Abbruch.")
         return 1
 
+    if args.migrate_catalog:
+        from automation.api_backfiller import CatalogSchemaMigrationUnavailable
+        try:
+            migrated = migrate_catalog(args.migrate_catalog, etoro_id_map)
+        except CatalogSchemaMigrationUnavailable as exc:
+            log.error(str(exc))
+            return 3
+        log.info(f"[historical_fetcher] Migration abgeschlossen: {len(migrated)} Dateien.")
+        return 0
+
     if args.rebuild_catalog:
-        rebuilt = rebuild_catalog(
-            api_key=api_key, user_key=user_key, etoro_id_to_symbol=etoro_id_map,
-            target=args.rebuild_catalog, months=args.months,
+        try:
+            rep = rebuild_catalog_with_report(
+                api_key=api_key, user_key=user_key, etoro_id_to_symbol=etoro_id_map,
+                target=args.rebuild_catalog, months=args.months,
+                accept_history_loss=args.accept_history_loss,
+            )
+        except HistoryLossRefused as exc:
+            log.error(str(exc))
+            return 2
+        rebuilt = rep["rebuilt"]
+        log.info(
+            f"[historical_fetcher] Rebuild abgeschlossen: {len(rebuilt)} Symbole befüllt: {rebuilt}; "
+            f"history_lost_days_total={rep['history_lost_days_total']:.1f}; Archiv: {rep['archive_dir']}"
         )
-        log.info(f"[historical_fetcher] Rebuild abgeschlossen: {len(rebuilt)} Symbole befüllt: {rebuilt}")
         return 0 if rebuilt else 1
 
     if args.symbol:

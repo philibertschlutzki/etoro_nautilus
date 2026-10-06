@@ -7059,3 +7059,68 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 
 ### 🟡 Pitfall #480 — Eine Meta-Invariante über Vollständigkeit braucht einen Erreichbarkeitsbegriff [Katalog #1330–#1351, GitHub-Issue #1240]
 **Verbatim (Issue #1246):** `check_invariant_coverage` meldete auf einem 0-Study-Lauf 29 fehlende Checks und maskierte damit den Fall, für den sie gebaut wurde. „Fehlt" und „konnte in diesem Lauf-Skope nicht erscheinen" sind zwei Aussagen.
+
+## Issue-Katalog #1354–#1371 — Engine-Datenpfad, Börsen-Lokalzeit, Holdout-Disjunktheit, Live-Lebenszyklus, Forward-Evidenz (GitHub-Issues #1251–#1268, Sitzung 2026-10-04)
+
+**Änderungsprotokoll.** Umgesetzt in der Merge-Reihenfolge aus #1371 (Stufe 0 Schutz → 1 Engine-Datenpfad → 2 Selektion → 3 Daten → 4 Nachweisbarkeit/Ertrag → 5 Bericht → 6 Bump). GH #1262 ist ein Duplikat von GH #1261 (#1365); #1355 (erste/letzte RTH-Kerze vollständig) war nicht Teil dieses Auftrags: die Kerzen-Überlappung (Intervall statt Punkt-Test, ganzzahlige ns) ist mit #1356 umgesetzt, die Telemetrie `session_partial_candle_count` (Abnahmeprotokoll Punkt 2) **nicht** — offen.
+
+| Katalog-Nr. (GH) | Stufe | Kernänderung | Dateien |
+|---|---|---|---|
+| **#1364** (#1260) | 0 | `rebuild_catalog`/`--reset-catalog` archivieren je Instrument nach `data/nautilus/archive/<UTC-ts>/` statt `rmtree`. Pitfall #490. | `historical_fetcher.py`, `daily_orchestrator.py`, `catalog_paths.py` |
+| **#1358** (#1254) | 0 | Genau ein Bot je Konto: `flock`-Sperre `data/state/live_bot.lock`, Exit 4 beim Zweitstart, Reconcile über `whitelist_sha256`, Stopp bei Demotion, Shutdown-Policy. Pitfall #488. | `live_bot_lock.py`, `momentum_ls_run.py`, `daily_orchestrator.py`, `live_risk.py` |
+| **#1359** (#1255) | 0 | Katastrophen-Stop für alle Strategien (Backtest + Broker-`SL:` live). Pitfall #489. | `disaster_stop.py`, `strategies/*`, `backtest_runner.py` |
+| **#1360** (#1256) | 0 | `resolve_live_params` als EINE Quelle für Gate und Bot; zwölfte Deployment-Klausel `live_params_match_promotion`. Pitfall #487. | `live_params.py`, `deployment_gate.py`, `momentum_ls_run.py` |
+| **#1362** (#1258) | 0 | Persistenter Hochwasserstand, Tagesverlust-Auslöser C, Verteilungs-Auslöser B je Paar. Pitfall #488. | `live_equity_state.py`, `live_risk.py`, `momentum_ls_run.py` |
+| **#1354** (#1251) | 1 | Engine-Katalogsicht (`engine_catalog_view`): die Engine liest erstmals die `OneHour`-Kerzen; `check_engine_reader_parity`. Pitfall #483. | `catalog_paths.py`, `backtest_runner.py`, `optimizer/sweep.py` |
+| **#1356** (#1252) | 1 | Session-Fenster in Börsen-Lokalzeit (`session_windows.py`, NYSE-Kalender, DST), Kerzen-Überlappung statt Punkt-Test. Pitfalls #485/#486. | `session_windows.py`, `config/backtest.json`, `config/exchange_holidays.json`, `optimizer/sweep.py` |
+| **#1361** (#1257) | 1 | Live-Session-Gate in `HourlyStrategyBase` (dieselbe Achse wie der Backtest); verwirft auch die Füllbars des Aggregators — **kein** Backtest-No-Op, deshalb Bump-Auslöser. Pitfall #487. | `strategies/hourly_strategy_base.py`, `momentum_ls_run.py` |
+| **#1357** (#1253) | 2 | `holdout_days` nur aus der Config, `holdout_embargo_days`, blockierende `check_selection_holdout_disjoint`, 13. Deployment-Klausel `holdout_disjoint`. Pitfall #484. | `optimizer/trial_config.py`, `optimizer/run_optimization.py`, `optimizer/invariants.py`, `optimizer/deployment_gate.py` |
+| **#1363** (#1259) | 3 | Vorwärts-Füllung je Tag, Tiefe je Intervall, `check_catalog_freshness`, ETA, `waiting_for_data`. Pitfall #493. | `api_backfiller.py`, `daily_orchestrator.py`, `optimizer/sweep.py` |
+| **#1366** (#1263) | 3 | Gemessener RealTick-Spread `max(Config, Median)` im Kostenmodell; Invariante `check_modeled_spread_not_below_measured`. | `optimizer/calibration.py`, `backtest_runner.py`, `optimizer/invariants.py` |
+| **#1365** (#1261, Dup. #1262) | 3 | `effective_span_days` aus Tick-Segmenten statt Monatsrundung. Pitfall #491. | `optimizer/sweep.py` |
+| **#1367** (#1264) | 4 | Mindest-nachweisbare Sharpe gegen `promotion_target_annual_sharpe` (1,5) statt Referenz-SR; Abschnitt „Nachweisbarkeit". Pitfall #492. | `optimizer/deflation.py`, `optimizer/invariants.py`, `optimizer/sweep.py`, `optimizer/summary_de.py` |
+| **#1368** (#1265) | 4 | Demo-Inkubation (`incubation.py`), sequenzieller Bonferroni-Test (`optimizer/sequential.py`), Phase 5b (Default aus), `--incubation` nur `demo`. | `incubation.py`, `optimizer/sequential.py`, `daily_orchestrator.py`, `momentum_ls_run.py`, `momentum_ls_allocator.py`, `config/tournament.json` |
+| **#1369** (#1266) | 5 | Totalabweisung im Preflight: `aborted_preflight_all_symbols_rejected`, `SUPPRESSED_UPSTREAM_NO_SYMBOLS`, Trichter-Zähler, Laufzeit in s/min, `config_nonzero`. Pitfall #493. | `optimizer/sweep.py`, `optimizer/report.py`, `optimizer/summary_de.py`, `optimizer/invariants.py` |
+| **#1370** (#1267) | 5 | `check_bar_quality` blocking; jede `check_*`-Funktion mit `@invariant_scope` liefert ein `InvariantResult` (Rohfunktionen umbenannt). | `optimizer/reward.py`, `optimizer/wallclock_guard.py`, `optimizer/disk_guard.py`, `optimizer/sweep_diagnostics.py`, `optimizer/run_optimization.py`, `optimizer/sweep.py` |
+| **#1371** (#1268) | 6 | `simulation_semantics_version` 8 → 9 (Auslöser #1354, #1355, #1356, #1357, #1359, #1366), `reward_semantics_version` bleibt 27, `catalog_schema_version` bleibt 2; Purge als letzte Aktion. Pitfalls #483–#493. | `config/optimizer.json`, `AGENTS.md` |
+
+**Sperrvermerke (#1371).** Kein `--rebuild-catalog` und kein `catalog_schema_version`-Bump vor dem Merge von #1364 · `deflation_confidence` bleibt 0,95 (Lock #1246) · kein `real`-Environment für `INCUBATING`; kein Live-Start vor Abschluss von Stufe 0 · kein Sweep-Ergebnis vor dem Merge von #1354 als Evidenz werten · #1356 vor 2026-11-01 · keine Änderung von `holdout_days` ohne die #1357-Invariante.
+
+**Letzte Aktion vor dem Re-Run:** `python -m automation.optimizer.purge_stale_studies` (gemeinsamer Purge für den v9-Bump), danach `check_semantics_version_coherence` PASS.
+
+## Neue Pitfalls #483–#493 (Issue-Katalog #1354–#1371, GitHub-Issues #1251–#1268, verbatim aus Issue #1371)
+
+> Anschluss an #480; #481–#482 sind durch #1352–#1353 reserviert.
+
+### 🔴 Pitfall #483 — Ein Layout-Wechsel ist erst fertig, wenn der Leser der Engine ihn liest [Katalog #1354–#1371, Issue #1354]
+**Verbatim:** Seit #1331 schreibt der Katalog `<symbol>/OneHour/data.parquet`; NautilusTraders Katalog identifiziert Instrumente über den Elternordner und lädt daraus 0 Ticks. Alle Preflights lasen über `catalog_paths` und meldeten Daten, der einzige End-to-End-Test schrieb das alte flache Layout. Preflight und Engine rufen denselben Leser auf; ein Integrationstest läuft gegen die echte Bibliothek, mit dem Produktions-Schreiber.
+
+### 🔴 Pitfall #484 — Eine Config-Änderung an einer Geometriegrösse ist erst fertig, wenn kein Literal derselben Grösse mehr existiert [Issue #1357]
+**Verbatim:** `holdout_days` 45 → 60 in `backtest.json`, viermal `holdout_days=45` in `run_optimization.py`: 15 Tage (25 %) des Holdouts lagen im letzten Selektions-Fold. Selektion und Bestätigung brauchen eine Disjunktheits-Invariante, keine Konvention.
+
+### 🔴 Pitfall #485 — Session-Zugehörigkeit gehört der Kerze, nicht dem Tick — und nie über Float-Sekunden [Issue #1355]
+**Verbatim:** Mit vier Ticks je Kerze sank der Median-Tickabstand auf 900 s, der Snap auf das Stundenraster entfiel; der Punkt-Test schnitt Open und Low der ersten Kerze ab, und `ts_ns / 1e9` rundete den Close der letzten Kerze (`candle_end − 1 ns`) über die Sessiongrenze.
+
+### 🔴 Pitfall #486 — Eine UTC-Uhrzeit ist keine Börsenzeit [Issue #1356]
+**Verbatim:** `13:30–20:00 UTC` ist NYSE nur während EDT. Ab 2026-11-01 enthielte die Achse eine Pre-Market-Stunde und verlöre die Schlussstunde.
+
+### 🔴 Pitfall #487 — Der validierte Kandidat muss der gehandelte sein: dieselben Parameter, dieselbe Bar-Achse [Issues #1360, #1361]
+**Verbatim:** Das Deployment-Gate prüfte das Proposal, der Bot lud Defaults; der Backtest filterte auf RTH, der Bot aggregierte jeden Quote.
+
+### 🔴 Pitfall #488 — Ein Neustart darf weder Prozesse verdoppeln noch das Risikogedächtnis löschen [Issues #1358, #1362]
+**Verbatim:** Phase 5 schrieb die PID-Datei und las sie nie; der Drawdown-Hochwasserstand lebte im Prozess. Ein tägliches Cron-Deployment machte aus einem Bot n Bots und aus einem 10-%-Drawdown-Limit ein 10-%-Limit je Bot-Lebensdauer.
+
+### 🔴 Pitfall #489 — Ein Stop, der nur im Prozess existiert, schützt nicht vor dem Ausfall des Prozesses [Issue #1359]
+**Verbatim:** 13 von 14 aktiven Strategien eröffneten mit `IsNoStopLoss: True`.
+
+### 🔴 Pitfall #490 — Das Löschen von Daten, die die Quelle nicht zurückliefert, ist keine Reparatur [Issue #1364]
+**Verbatim:** `rebuild_catalog` entfernte per `rmtree` alle Auflösungen und Echt-Ticks und füllte aus einer API mit ≈ 92 Tagen Stundentiefe.
+
+### 🟠 Pitfall #491 — Eine Spanne aus Kalendermonaten ist eine Obergrenze, keine Messung [Issue #1365]
+**Verbatim:** `effective_span_days = 123.0` bei `raw_span_days = 92.04`; ein 397-Tage-Katalog passierte die 441-Tage-Schwelle.
+
+### 🟠 Pitfall #492 — Gegen einen Ausreisser bewiesene Erreichbarkeit ist Erreichbarkeit für Ausreisser [Issue #1367]
+**Verbatim:** `reference_sr = 0.11386` (SR_annual ≈ 4,8) liess den Preflight passieren; die ehrliche Grösse ist die Mindest-nachweisbare Sharpe des Holdouts — 4,0 bei T = 300.
+
+### 🟡 Pitfall #493 — „Erfolgreich" ohne Nachbedingung ist eine Behauptung; „mindestens eine" über null Elemente ist falsch [Issues #1363, #1369]
+**Verbatim:** „3/3 Symbol(e) nachgeladen" bei 0 Tagen Zugewinn; „mindestens eine Study trägt …" bei 0 Studies.

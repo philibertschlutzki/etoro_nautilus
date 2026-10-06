@@ -3,7 +3,9 @@ import json
 import hashlib
 from collections import Counter
 from pathlib import Path
-from automation.optimizer.trial_config import build_trial, config_dir, freeze_study_config, resolve_wf_settings
+from automation.optimizer.trial_config import (
+    build_trial, config_dir, confirm_trial_kwargs, freeze_study_config, resolve_wf_settings,
+)
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
@@ -224,7 +226,7 @@ def confirm_on_holdout(
     build_trial=build_trial
 ) -> dict:
     """
-    Trial mit holdout_days=0, n_folds=1 (Holdout = reguläres OOS).
+    Holdout-Trial (``trial_config.confirm_trial_kwargs``): ein Fold, dessen OOS-Fenster der Holdout ist.
     Liest risk_dd_cap aus tournament.json.
     passed = oos_evaluated & oos_eligible & oos_sortino>0 & oos_max_drawdown<=cap.
     Rückgabe: {'passed': bool, 'metrics': dict, 'trial_dir': str}.
@@ -243,33 +245,26 @@ def confirm_on_holdout(
             # Issue #533 — oos_sortino_fallback-Parität zu reward.py (Zero-Hardcoding).
             oos_sortino_fallback = opt_data.get("oos_sortino_fallback")
 
-    # Dynamisch Holdout-Tage auslesen (Zero-Hardcoding)
-    backtest_path = cfg_dir / "backtest.json"
-    holdout_days_cfg = 45
-    if backtest_path.exists():
-        with open(backtest_path, "r", encoding="utf-8") as f:
-            bt_data = json.load(f)
-            holdout_days_cfg = bt_data.get("walk_forward", {}).get("holdout_days", 45)
+    # Issue #1357 (GH #1253) — Holdout-Tage ausschliesslich aus der Config (resolve_holdout_days, kein
+    # Fallback-Default); die Fenster-Argumente des Holdout-Trials kommen aus EINER Stelle.
+    holdout_kwargs = confirm_trial_kwargs(cfg_dir)
 
     # Issue #796 — EINE eingefrorene Config fuer diesen Holdout-Trial statt einer Pro-Trial-Kopie
     # (der Holdout-Studyname ist eindeutig je Confirm-Aufruf, daher genuegt ein einmaliges Freeze).
     holdout_study_name = f"{study.study_name}_holdout"
-    holdout_wf_settings = resolve_wf_settings(
-        cfg_dir, holdout_days=0, n_folds=1, oos_window_days_override=holdout_days_cfg)
+    holdout_wf_settings = resolve_wf_settings(cfg_dir, **holdout_kwargs)
     holdout_cfg_dir = freeze_study_config(holdout_study_name, holdout_wf_settings, base_cfg=cfg_dir)
 
-    # Erzeuge Holdout-Trial mit holdout_days=0 und n_folds=1, aber OOS override auf Holdout-Länge
+    # Holdout-Trial: ein Fold, OOS-Fenster = Holdout-Länge, kein weiterer Holdout.
     trial_dir, manifest_path = build_trial(
         strategy_class=strategy,
         sampled=sampled,
         study_name=holdout_study_name,
         trial_number=best_trial.number,
         seed=seed,
-        holdout_days=0,
-        n_folds=1,
-        oos_window_days_override=holdout_days_cfg,
         copy_config=False,
         study_config_dir=holdout_cfg_dir,
+        **holdout_kwargs,
     )
 
     # Subprozess/Backtest ausführen
@@ -576,6 +571,11 @@ def _metrics_dict(m) -> dict:
             m, "oos_expectancy_capital_weighted_gross", None),
         "oos_expectancy_winsorized": getattr(m, "oos_expectancy_winsorized", None),
         "oos_expectancy_outlier_count": getattr(m, "oos_expectancy_outlier_count", 0),
+        # Issue #1362 (GH #1258) Fix Punkt 3 — Holdout-Round-Trip-Statistik (bps auf das Notional)
+        # des promovierten Kandidaten: Referenz des Live-Verteilungs-Auslösers B.
+        "oos_trade_return_bps_mean": getattr(m, "oos_trade_return_bps_mean", None),
+        "oos_trade_return_bps_std": getattr(m, "oos_trade_return_bps_std", None),
+        "oos_trade_return_bps_n": getattr(m, "oos_trade_return_bps_n", 0),
         "oos_expectancy_notional_degenerate_count": getattr(
             m, "oos_expectancy_notional_degenerate_count", 0),
         # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips, an der Round-Trip-QUELLE verworfen
@@ -626,6 +626,11 @@ def _metrics_dict(m) -> dict:
         # Issue #1266 (GH #1136) — siehe parsing.TournamentMetrics-Docstring; Rohmaterial fuer
         # invariants.check_cost_stress_discriminates.
         "oos_slippage_calibration_scope": getattr(m, "oos_slippage_calibration_scope", None),
+        # Issue #1366 (GH #1263) — Spread-Telemetrie fuer den Study-Record.
+        "oos_spread_bps_applied": getattr(m, "oos_spread_bps_applied", None),
+        "oos_spread_bps_measured_p50": getattr(m, "oos_spread_bps_measured_p50", None),
+        "oos_spread_bps_measured_p75": getattr(m, "oos_spread_bps_measured_p75", None),
+        "oos_spread_source": getattr(m, "oos_spread_source", None),
         # Issue #1268 (GH #1138), siebte Instanz von Pitfall #442 (Brücken-Fehlerklasse) — die
         # Exit-Telemetrie ist im HOLDOUT-Re-Evaluationspfad genau wie im regulären OOS-Pfad bereits
         # via ``m = parse_tournament(...)`` korrekt geparst (dieselbe Pipeline), erreichte aber
@@ -761,7 +766,7 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
                                 catalog_newest_ns: int | None = None):
     """Führt einen Holdout-Backtest für genau `symbol` mit `params` aus und parst die Metriken.
 
-    Wie confirm_on_holdout (holdout_days=0, n_folds=1, oos_window_days_override=holdout_days),
+    Wie confirm_on_holdout (``trial_config.confirm_trial_kwargs``: ein Fold, OOS = Holdout-Länge),
     aber single-symbol (instruments=[symbol]) und mit beliebigem Param-Vektor — so lassen sich
     der symbol-getunte und der globale Vektor auf demselben, nie-optimierten Holdout vergleichen.
     """
@@ -772,11 +777,8 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
         with open(optimizer_path, "r", encoding="utf-8") as f:
             seed = (json.load(f) or {}).get("seed", 42)
 
-    holdout_days_cfg = 45
-    backtest_path = cfg_dir / "backtest.json"
-    if backtest_path.exists():
-        with open(backtest_path, "r", encoding="utf-8") as f:
-            holdout_days_cfg = (json.load(f) or {}).get("walk_forward", {}).get("holdout_days", 45)
+    # Issue #1357 (GH #1253) — Holdout-Tage ausschliesslich aus der Config (kein Fallback-Default).
+    holdout_kwargs = confirm_trial_kwargs(cfg_dir)
 
     # Deterministischer Discriminator, damit symbol- und global-Lauf nicht in dasselbe trial_dir schreiben.
     tag = hashlib.sha1(json.dumps(params or {}, sort_keys=True, default=str).encode()).hexdigest()[:8]
@@ -784,8 +786,7 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
 
     # Issue #796 — EINE eingefrorene Config statt einer Pro-Trial-Kopie (der Studyname ist per
     # Param-Hash eindeutig, ein einmaliges Freeze genuegt).
-    holdout_wf_settings = resolve_wf_settings(
-        cfg_dir, holdout_days=0, n_folds=1, oos_window_days_override=holdout_days_cfg)
+    holdout_wf_settings = resolve_wf_settings(cfg_dir, **holdout_kwargs)
     holdout_cfg_dir = freeze_study_config(study_name, holdout_wf_settings, base_cfg=cfg_dir)
 
     trial_dir, manifest_path = build_trial(
@@ -794,9 +795,7 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
         study_name=study_name,
         trial_number=0,
         seed=seed,
-        holdout_days=0,
-        n_folds=1,
-        oos_window_days_override=holdout_days_cfg,
+        **holdout_kwargs,
         instruments=[symbol],
         catalog_newest_ns=catalog_newest_ns,
         copy_config=False,
@@ -938,6 +937,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     oos_window_days_cfg = wf_cfg["oos_window_days"]
     n_folds = wf_cfg["splits"]
     embargo_period_days = wf_cfg["embargo_period_days"]
+    # Issue #1357 (GH #1253) — Selektionsende = Holdout-Beginn − Holdout-Embargo.
+    from automation.optimizer.trial_config import HOLDOUT_EMBARGO_DAYS_DEFAULT
+    holdout_embargo_days = wf_cfg.get("holdout_embargo_days", HOLDOUT_EMBARGO_DAYS_DEFAULT)
 
     if catalog_newest_ns is not None:
         now = dt.datetime.now(dt.timezone.utc)
@@ -954,8 +956,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             n_folds=n_folds,
             embargo_period_days=embargo_period_days,
             catalog_newest_ns=catalog_newest_ns,
+            holdout_embargo_days=holdout_embargo_days,
         )
-        oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days + (n_folds * oos_window_days_cfg) + embargo_period_days)).timestamp() * 1_000_000_000)
+        # Holdout-Beginn = Selektionsende (``window_start + is + n·oos + embargo``) + Holdout-Embargo.
+        oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days + (n_folds * oos_window_days_cfg) + embargo_period_days + holdout_embargo_days)).timestamp() * 1_000_000_000)
         # verfügbar, sobald catalog_newest_ns >= holdout_oos_start_ns
         if catalog_newest_ns < oos_lo_ns:
             return {
@@ -2671,6 +2675,11 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # — jede Study derselben Symbol-Familie traegt DENSELBEN, bereits symbolweit summierten Wert.
         "deflation_n_family_frozen": (getattr(study, "user_attrs", None) or {}).get(
             "deflation_n_family_frozen"),
+        # Issue #1357 (GH #1253) — Selektions-/Holdout-Geometrie der Study (run_optimization stempelt sie
+        # beim Study-Start); Eingang der Deployment-Klausel ``holdout_disjoint`` (fehlt sie ⇒ fail-closed).
+        **{k: (getattr(study, "user_attrs", None) or {}).get(k)
+           for k in ("selection_end_utc", "holdout_start_utc", "holdout_embargo_days",
+                     "holdout_overlap_days")},
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],

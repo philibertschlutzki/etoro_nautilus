@@ -1,9 +1,12 @@
 """Issue #922 — OpeningRangeBreakoutStrategy verankerte den "Handelstag" ausschliesslich auf
 pd.Timestamp(bar.ts_init).day (Kalendertag-Wechsel um Mitternacht UTC), unabhaengig von der
-tatsaechlichen RTH-Session eines Equity-Instruments auf dem 24/7-Stundenraster. Fix: ein
-konfigurierbarer opening_range_session_anchor ('calendar_day' Default, bit-identisch |
-'session_open_hour', asset-class-aufgeloest ueber backtest_runner.
-resolve_opening_range_session_open_hour).
+tatsaechlichen RTH-Session eines Equity-Instruments auf dem 24/7-Stundenraster.
+
+Issue #1356 (GH #1252) — der #922-Anker 'session_open_hour' (UTC-Stunde 13 aus
+opening_range_session_open_hour_by_asset_class) war NYSE-Open nur in EDT und ist ersatzlos entfallen;
+der Default-Anker 'trading_day' folgt dem Session-Fenster in Börsen-Lokalzeit
+(test_issue_1356_session_windows_dst.py). Hier bleiben 'calendar_day' (bit-identisch), der Suchraum
+und die Verdrahtung des Session-Fensters durch alle Worker-Call-Sites.
 """
 import sys
 import types
@@ -59,52 +62,23 @@ def _ts_ns(iso: str) -> int:
 
 def test_calendar_day_anchor_is_bit_identical_to_the_old_behaviour():
     ts = _ts_ns("2026-03-01T05:00:00Z")
-    assert session_day_key(ts, anchor="calendar_day", session_open_hour=13) == 1
+    assert session_day_key(ts, anchor="calendar_day") == 1
 
 
-def test_calendar_day_anchor_ignores_session_open_hour():
-    ts = _ts_ns("2026-03-01T20:00:00Z")
-    assert (session_day_key(ts, anchor="calendar_day", session_open_hour=13)
-            == session_day_key(ts, anchor="calendar_day", session_open_hour=0))
+def test_calendar_day_anchor_ignores_the_session_window():
+    from automation.session_windows import parse_session_window
+
+    ts = _ts_ns("2026-03-02T20:00:00Z")
+    window = parse_session_window({"tz": "America/New_York", "open": "09:30", "close": "16:00"})
+    assert (session_day_key(ts, anchor="calendar_day", session_window=window, bar_interval_ns=_NS_PER_HOUR)
+            == session_day_key(ts, anchor="calendar_day") == 2)
 
 
-def test_session_open_hour_groups_bars_within_the_same_24h_window_together():
-    before_open = _ts_ns("2026-03-02T12:00:00Z")   # 1h vor 13 UTC-Open, gehoert noch zu Tag 1
-    at_open = _ts_ns("2026-03-02T13:00:00Z")        # Session-Start
-    later_same_session = _ts_ns("2026-03-02T23:00:00Z")
-    assert session_day_key(at_open, anchor="session_open_hour", session_open_hour=13) == (
-        session_day_key(later_same_session, anchor="session_open_hour", session_open_hour=13))
-    assert session_day_key(before_open, anchor="session_open_hour", session_open_hour=13) != (
-        session_day_key(at_open, anchor="session_open_hour", session_open_hour=13))
-
-
-def test_session_open_hour_rolls_over_at_the_configured_hour_not_midnight():
-    """Der Kern des #922-Fixes: 05:00 UTC gehoert unter 'calendar_day' zum NEUEN Tag, unter
-    'session_open_hour'=13 aber noch zur VORTAGES-Session (die erst um 13 UTC endet/beginnt)."""
-    just_after_midnight = _ts_ns("2026-03-02T05:00:00Z")
-    prev_day_late = _ts_ns("2026-03-01T20:00:00Z")
-    assert session_day_key(just_after_midnight, anchor="calendar_day", session_open_hour=13) != (
-        session_day_key(prev_day_late, anchor="calendar_day", session_open_hour=13))
-    assert session_day_key(
-        just_after_midnight, anchor="session_open_hour", session_open_hour=13) == (
-        session_day_key(prev_day_late, anchor="session_open_hour", session_open_hour=13))
-
-
-def test_resolve_opening_range_session_open_hour_falls_back_to_the_dataclass_default():
-    assert br.resolve_opening_range_session_open_hour("XOM.ETORO", None, "EQUITY") == 13
-    assert br.resolve_opening_range_session_open_hour("XOM.ETORO", {}, "EQUITY") == 13
-
-
-def test_resolve_opening_range_session_open_hour_resolves_per_asset_class():
-    table = {"EQUITY": 13, "CRYPTO": 0, "DEFAULT": 13}
-    assert br.resolve_opening_range_session_open_hour("XOM.ETORO", table, "EQUITY") == 13
-    assert br.resolve_opening_range_session_open_hour("BTC.ETORO", table, "CRYPTO") == 0
-
-
-def test_resolve_opening_range_session_open_hour_rejects_an_unmapped_asset_class_key():
-    table = {"EQUITY": 13, "DEFAULT": 13}
-    with pytest.raises(ValueError, match="opening_range_session_open_hour_by_asset_class"):
-        br.resolve_opening_range_session_open_hour("XAUUSD.ETORO", table, "COMMODITY")
+def test_session_open_hour_anchor_and_resolver_are_gone():
+    """Issue #1356 — die UTC-Stunden-Konstante ist entfallen (statt still weiterzuwirken)."""
+    with pytest.raises(ValueError, match="1356"):
+        session_day_key(_ts_ns("2026-03-02T13:00:00Z"), anchor="session_open_hour")
+    assert not hasattr(br, "resolve_opening_range_session_open_hour")
 
 
 def test_spaces_lowers_or_bars_and_cooldown_bars_minimums():
@@ -144,25 +118,26 @@ def test_spaces_search_space_overrides_are_wired_for_opening_range_breakout(monk
         study.tell(trial, 0.0)
 
 
-def test_backtest_json_carries_the_new_table():
+def test_backtest_json_no_longer_carries_the_utc_hour_table():
     import json
 
     from automation.optimizer.trial_config import config_dir
 
     with open(config_dir() / "backtest.json", "r", encoding="utf-8") as f:
         cfg = json.load(f)
-    table = cfg["opening_range_session_open_hour_by_asset_class"]
-    assert table["EQUITY"] > table["CRYPTO"]
+    assert "opening_range_session_open_hour_by_asset_class" not in cfg
+    assert cfg["session_hours_by_asset_class"]["EQUITY"]["tz"] == "America/New_York"
 
 
-def test_run_single_backtest_worker_accepts_the_new_param():
+def test_run_single_backtest_worker_takes_the_session_window_source_not_the_hour_table():
     import inspect
 
     sig = inspect.signature(br.run_single_backtest_worker)
-    assert "opening_range_session_open_hour_by_asset_class" in sig.parameters
+    assert "session_hours_by_asset_class" in sig.parameters
+    assert "opening_range_session_open_hour_by_asset_class" not in sig.parameters
 
 
-def test_every_call_site_of_run_single_backtest_worker_threads_the_session_hour_table():
+def test_every_call_site_of_run_single_backtest_worker_threads_the_session_window_source():
     import ast
     import inspect
 
@@ -178,8 +153,8 @@ def test_every_call_site_of_run_single_backtest_worker_threads_the_session_hour_
     assert call_sites
     for node in call_sites:
         kw_names = {kw.arg for kw in node.keywords}
-        assert "opening_range_session_open_hour_by_asset_class" in kw_names, (
-            f"Aufruf in Zeile {node.lineno} uebergibt opening_range_session_open_hour_by_asset_class "
-            "nicht -- Issue #922: die Session-Stunde wuerde an dieser Call-Site unbemerkt auf den "
-            "Dataclass-Default 13 zurueckfallen."
+        assert "session_hours_by_asset_class" in kw_names, (
+            f"Aufruf in Zeile {node.lineno} uebergibt session_hours_by_asset_class nicht -- Issue #1356: "
+            "Tick-Filter UND Opening-Range-Anker (HourlyStrategyConfig.session_window) fielen an dieser "
+            "Call-Site unbemerkt auf 'kein Fenster' zurueck."
         )

@@ -254,7 +254,7 @@ def _json_events(caplog):
 
 
 def test_disk_budget_callback_emits_passed_invariant_result_on_status_ok(monkeypatch, caplog):
-    monkeypatch.setattr(ro.disk_guard, "check_budget", lambda *a, **k: disk_guard.STATUS_OK)
+    monkeypatch.setattr(ro.disk_guard, "budget_status", lambda *a, **k: disk_guard.STATUS_OK)
     study = _FakeStudyForDisk()
     with caplog.at_level(logging.INFO, logger="optimizer"):
         ro.disk_budget_callback(study, _FakeTrialForDisk(199),
@@ -267,7 +267,7 @@ def test_disk_budget_callback_emits_passed_invariant_result_on_status_ok(monkeyp
 
 
 def test_disk_budget_callback_emits_failed_invariant_result_on_status_exceeded(monkeypatch, caplog):
-    monkeypatch.setattr(ro.disk_guard, "check_budget", lambda *a, **k: disk_guard.STATUS_EXCEEDED)
+    monkeypatch.setattr(ro.disk_guard, "budget_status", lambda *a, **k: disk_guard.STATUS_EXCEEDED)
     study = _FakeStudyForDisk()
     with caplog.at_level(logging.INFO, logger="optimizer"):
         ro.disk_budget_callback(study, _FakeTrialForDisk(399),
@@ -295,7 +295,7 @@ def test_coherence_rate_check_now_emits_invariant_result_on_pass(caplog):
     UND den Fix in einem Test."""
     study = _study_with_trials(64, n_violations=1)
     with caplog.at_level(logging.INFO, logger="optimizer"):
-        result = ro.check_study_coherence_violation_rate(
+        result = ro.enforce_study_coherence_violation_rate(
             study, {"max_coherence_violation_rate": 0.10})
     assert result is False
     results = [e for e in _json_events(caplog) if e.get("event_type") == "INVARIANT_STREAM_RESULT"
@@ -308,7 +308,7 @@ def test_coherence_rate_check_now_emits_invariant_result_on_pass(caplog):
 def test_coherence_rate_check_emits_invariant_result_on_fail_alongside_existing_events(caplog):
     study = _study_with_trials(64, n_violations=35)
     with caplog.at_level(logging.INFO, logger="optimizer"):
-        ro.check_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.10})
+        ro.enforce_study_coherence_violation_rate(study, {"max_coherence_violation_rate": 0.10})
     events = _json_events(caplog)
     results = [e for e in events if e.get("event_type") == "INVARIANT_STREAM_RESULT"
               and e.get("check") == "check_study_coherence_violation_rate"]
@@ -321,7 +321,7 @@ def test_coherence_rate_check_emits_invariant_result_on_fail_alongside_existing_
 def test_coherence_rate_check_emits_passed_result_when_not_configured(caplog):
     study = _study_with_trials(10, n_violations=0)
     with caplog.at_level(logging.INFO, logger="optimizer"):
-        result = ro.check_study_coherence_violation_rate(study, {})
+        result = ro.enforce_study_coherence_violation_rate(study, {})
     assert result is False
     results = [e for e in _json_events(caplog) if e.get("event_type") == "INVARIANT_STREAM_RESULT"
               and e.get("check") == "check_study_coherence_violation_rate"]
@@ -365,7 +365,8 @@ def test_sweep_emits_invariant_result_for_bar_quality_and_wallclock_budget():
     from automation.optimizer import sweep
     source = __import__("pathlib").Path(sweep.__file__).read_text("utf-8")
     assert '"name": "check_bar_quality"' in source
-    assert '"name": "check_wallclock_budget"' in source
+    # Issue #1370 (GH #1267) — das Urteil ist das InvariantResult des Wrappers (genau einmal je Lauf).
+    assert "wallclock_guard.check_wallclock_budget(" in source
     assert source.count('"source": "sweep"') >= 2
 
 

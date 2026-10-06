@@ -43,7 +43,7 @@ import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
 import pyarrow as pa
@@ -95,6 +95,70 @@ _INTRABAR_OFFSET_HIGH_FRAC = 0.50
 class CatalogSchemaVersionMismatch(RuntimeError):
     """Issue #1333 (GH #1227): _merge_and_save bricht LAUT ab, wenn die Zielversion von der
     Version der bestehenden Datei abweicht — kein stiller Merge über eine Schemagrenze hinweg."""
+
+
+class CatalogSchemaMigrationUnavailable(RuntimeError):
+    """Issue #1364 (GH #1260): zwischen ``from_v`` und ``to_v`` ist keine Migration registriert."""
+
+
+# Issue #1364 (GH #1260) Fix Punkt 4: Registry REINER Schema-/Metadaten-Migrationen
+# ``(from_version, to_version) -> Callable[[pa.Table], pa.Table]``. Eine Migration darf nur
+# Zeilen erzeugen, die im Zielschema dieselbe Bedeutung haben wie im Quellschema (Spalten
+# ergänzen, Metadaten umschreiben). v1 -> v2 ist bewusst NICHT registriert: eine v1-Kerze ist ein
+# Einzeltick auf dem Kerzenbeginn, kein O/L/H/C-Tickpfad (#1330/#1332) — die Semantik lässt sich
+# nicht aus den Zeilen rekonstruieren. Solche Zeilen bleiben im Archiv (siehe
+# ``historical_fetcher.rebuild_catalog``).
+SCHEMA_MIGRATIONS: dict[tuple[int, int], Callable[[pa.Table], pa.Table]] = {}
+
+
+def schema_migration_path(from_v: int, to_v: int) -> list[tuple[int, int]] | None:
+    """Kette registrierter Einzelschritte von ``from_v`` nach ``to_v`` (``[]`` bei Gleichheit,
+    ``None`` ohne Pfad). Breitensuche über ``SCHEMA_MIGRATIONS`` — reine Funktion."""
+    if from_v == to_v:
+        return []
+    frontier: list[tuple[int, list[tuple[int, int]]]] = [(from_v, [])]
+    seen = {from_v}
+    while frontier:
+        node, path = frontier.pop(0)
+        for (src, dst) in sorted(SCHEMA_MIGRATIONS):
+            if src != node or dst in seen:
+                continue
+            new_path = path + [(src, dst)]
+            if dst == to_v:
+                return new_path
+            seen.add(dst)
+            frontier.append((dst, new_path))
+    return None
+
+
+def has_schema_migration(from_v: int | None, to_v: int = 0) -> bool:
+    """True, wenn ein Katalog der Version ``from_v`` (``None`` = Legacy = 1) ohne Datenverlust auf
+    ``to_v`` (Default: ``CATALOG_SCHEMA_VERSION``) migriert werden kann."""
+    src = 1 if from_v is None else int(from_v)
+    return schema_migration_path(src, to_v or CATALOG_SCHEMA_VERSION) is not None
+
+
+def schema_mismatch_message(symbol: str, interval: str, existing_version: int | None) -> str:
+    """Fehlermeldung der ``CatalogSchemaVersionMismatch`` (Issue #1364 Fix Punkt 4): nennt ZUERST
+    die Migration (falls registriert), den Rebuild nur als letzten Ausweg mit Warnhinweis."""
+    head = (
+        f"[api_backfiller] {symbol}/{interval}: bestehender Katalog hat "
+        f"catalog_schema_version={existing_version!r}, Schreiber erwartet "
+        f"{CATALOG_SCHEMA_VERSION}. Kein stiller Merge über eine Schemagrenze hinweg — "
+    )
+    if has_schema_migration(existing_version):
+        return head + (
+            f"Migration verfügbar (verlustfrei): "
+            f"`python3 automation/historical_fetcher.py --migrate-catalog {symbol}`."
+        )
+    return head + (
+        f"für {existing_version!r} -> {CATALOG_SCHEMA_VERSION} ist KEINE verlustfreie Migration "
+        f"registriert (migrate_catalog_schema). Letzter Ausweg: "
+        f"`python3 automation/historical_fetcher.py --rebuild-catalog {symbol}` — WARNUNG: der "
+        f"Katalog wird nach data/nautilus/archive/ verschoben und aus der API neu aufgebaut; "
+        f"Historie jenseits der API-Tiefe, die im neuen Schema nicht darstellbar ist, bleibt nur im "
+        f"Archiv (der Rebuild bricht ohne --accept-history-loss ab, wenn er Verlust vorhersagt)."
+    )
 
 # ─── eToro API ────────────────────────────────────────────────────────────────
 _BASE_URL_MARKET = "https://public-api.etoro.com/api/v1/market-data"
@@ -654,11 +718,7 @@ def _merge_and_save(
         existing_version = _read_catalog_schema_version(dest_file)
         if existing_version != CATALOG_SCHEMA_VERSION:
             raise CatalogSchemaVersionMismatch(
-                f"[api_backfiller] {symbol}/{interval}: bestehender Katalog hat "
-                f"catalog_schema_version={existing_version!r}, Schreiber erwartet "
-                f"{CATALOG_SCHEMA_VERSION}. Kein stiller Merge über eine Schemagrenze hinweg — "
-                f"Katalog neu aufbauen: "
-                f"`python3 automation/historical_fetcher.py --rebuild-catalog {symbol}`."
+                schema_mismatch_message(symbol, interval, existing_version)
             )
         try:
             existing = pq.read_table(str(dest_file))
@@ -678,15 +738,7 @@ def _merge_and_save(
 
     # 3. Deduplizieren (letzte Zeile je (ts_event, bar_interval_ns) gewinnt) und sortieren
     rows_before = len(merged)
-    ts_list = merged.column("ts_event").to_pylist()
-    interval_list = merged.column("bar_interval_ns").to_pylist()
-
-    last_index_for_key: dict[tuple[int, int], int] = {}
-    for i, key in enumerate(zip(ts_list, interval_list)):
-        last_index_for_key[key] = i  # spätere Zeile überschreibt frühere (Issue #1333 Fix Punkt 4)
-
-    keep_indices = sorted(last_index_for_key.values(), key=lambda i: ts_list[i])
-    merged = merged.take(pa.array(keep_indices))
+    merged = _dedupe_sort_last_wins(merged)
     rows_after = len(merged)
 
     log_ctx.debug(
@@ -712,6 +764,153 @@ def _merge_and_save(
         log_ctx.error(f"[api_backfiller] Schreib-Fehler {symbol}: {e}")
         tmp.unlink(missing_ok=True)
         return False
+
+
+def _dedupe_sort_last_wins(merged: pa.Table) -> pa.Table:
+    """Dedup-Regel des Katalogs (Issue #1333 Fix Punkt 4): je ``(ts_event, bar_interval_ns)`` gewinnt
+    die LETZTE Zeile, Ergebnis nach ``ts_event`` sortiert. Einzige Implementierung — ``_merge_and_save``
+    und ``restore_archived_rows`` (Issue #1364) teilen sie, damit eine Rückführung aus dem Archiv
+    exakt dieselbe Regel anwendet wie ein regulärer Merge."""
+    ts_list = merged.column("ts_event").to_pylist()
+    interval_list = merged.column("bar_interval_ns").to_pylist()
+    last_index_for_key: dict[tuple[int, int], int] = {}
+    for i, key in enumerate(zip(ts_list, interval_list)):
+        last_index_for_key[key] = i  # spätere Zeile überschreibt frühere
+    keep_indices = sorted(last_index_for_key.values(), key=lambda i: ts_list[i])
+    return merged.take(pa.array(keep_indices, type=pa.int64()))
+
+
+def _with_bar_interval_column(table: pa.Table, interval_ns: int) -> pa.Table:
+    """Ergänzt die Spalte ``bar_interval_ns`` (konstant ``interval_ns``), falls sie fehlt — z. B. bei
+    einer flachen Echt-Tick-Datei des ``catalog_service`` (Issue #1364/#1366: ``RealTick`` trägt
+    ``bar_interval_ns = 0``)."""
+    if "bar_interval_ns" in table.column_names:
+        return table
+    return table.append_column(
+        "bar_interval_ns", pa.array([interval_ns] * len(table), type=pa.uint64())
+    )
+
+
+def restore_archived_rows(
+    log_ctx: logging.Logger,
+    archived_table: pa.Table,
+    symbol: str,
+    interval: str,
+    *,
+    price_prec: int,
+    size_prec: int,
+    interval_ns: int | None = None,
+    quote_tick_path: Path | None = None,
+) -> int:
+    """Issue #1364 (GH #1260) Fix Punkt 2 — führt Zeilen aus einem Rebuild-Archiv in den Katalog
+    zurück. Die archivierten Zeilen stehen in der Dedup-Reihenfolge UNTER der aktuellen Datei
+    (frisch aus der API gebaute Zeilen gewinnen, exakt die Regel von ``_merge_and_save``); es
+    kommen nur Zeilen hinzu, die der Neuaufbau nicht liefert. Schreibt atomar, schema-gate wie
+    ``_merge_and_save`` (``CatalogSchemaVersionMismatch`` bei fremder Version der aktuellen Datei).
+
+    Rückgabe: Anzahl tatsächlich hinzugekommener Zeilen (0, wenn der Neuaufbau alles abdeckt)."""
+    if interval_ns is None:
+        interval_ns = INTERVAL_TO_NS.get(interval, 0)
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    dest_dir = root / symbol / interval
+    dest_file = dest_dir / "data.parquet"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    archived_table = _with_bar_interval_column(archived_table, interval_ns)
+    arch_meta = archived_table.schema.metadata or {}
+    extra_meta = {
+        k: v for k, v in arch_meta.items() if k in (b"intrabar_path", b"volume_available")
+    }
+
+    live_rows = 0
+    tables: list[pa.Table] = [archived_table.replace_schema_metadata(None)]
+    if dest_file.exists():
+        live_version = _read_catalog_schema_version(dest_file)
+        if interval in INTERVAL_TO_NS and live_version != CATALOG_SCHEMA_VERSION:
+            raise CatalogSchemaVersionMismatch(
+                schema_mismatch_message(symbol, interval, live_version)
+            )
+        live = pq.read_table(str(dest_file))
+        live_meta = live.schema.metadata or {}
+        extra_meta.update({
+            k: v for k, v in live_meta.items() if k in (b"intrabar_path", b"volume_available")
+        })
+        live = _with_bar_interval_column(live, interval_ns)
+        live_rows = len(live)
+        tables.append(live.replace_schema_metadata(None))
+
+    merged = pa.concat_tables(
+        [t.select(tables[0].column_names) for t in tables], promote_options="default"
+    )
+    merged = _dedupe_sort_last_wins(merged)
+    meta = _build_arrow_meta(symbol, price_prec, size_prec, interval=interval, extra=extra_meta)
+    merged = merged.replace_schema_metadata(meta)
+
+    tmp = dest_file.with_suffix(".tmp.parquet")
+    try:
+        pq.write_table(merged, str(tmp), compression="snappy")
+        os.replace(tmp, dest_file)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    added = len(merged) - live_rows
+    log_ctx.info(
+        "[api_backfiller] %s/%s: %d Zeilen aus dem Archiv zurückgeführt (%d -> %d Zeilen).",
+        symbol, interval, added, live_rows, len(merged),
+    )
+    return added
+
+
+def migrate_catalog_schema(
+    from_v: int,
+    to_v: int = CATALOG_SCHEMA_VERSION,
+    *,
+    symbols: list[str] | None = None,
+    quote_tick_path: Path | None = None,
+) -> list[Path]:
+    """Issue #1364 (GH #1260) Fix Punkt 4 — verlustfreie Schema-Migration der Katalogdateien von
+    ``from_v`` nach ``to_v`` über die in ``SCHEMA_MIGRATIONS`` registrierten Schritte. Schreibt je
+    Datei atomar (tmp + ``os.replace``) und stempelt ``catalog_schema_version``.
+
+    Wirft ``CatalogSchemaMigrationUnavailable``, wenn kein Pfad registriert ist (heute für 1 -> 2:
+    die Semantik einer v1-Kerze ist nicht aus den Zeilen rekonstruierbar). Das Archiv wird nie
+    angefasst. Rückgabe: die tatsächlich umgeschriebenen Dateien."""
+    steps = schema_migration_path(int(from_v), int(to_v))
+    if steps is None:
+        raise CatalogSchemaMigrationUnavailable(
+            f"[api_backfiller] Keine Migration von catalog_schema_version {from_v} auf {to_v} "
+            f"registriert (SCHEMA_MIGRATIONS={sorted(SCHEMA_MIGRATIONS)})."
+        )
+    root = Path(quote_tick_path) if quote_tick_path is not None else QUOTE_TICK_PATH
+    migrated: list[Path] = []
+    if not root.is_dir():
+        return migrated
+    wanted = set(symbols) if symbols else None
+    for inst_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        if wanted is not None and inst_dir.name not in wanted:
+            continue
+        for interval in INTERVAL_TO_NS:
+            f = inst_dir / interval / "data.parquet"
+            if not f.exists():
+                continue
+            version = _read_catalog_schema_version(f)
+            if (1 if version is None else version) != int(from_v):
+                continue
+            table = pq.read_table(str(f))
+            meta = dict(table.schema.metadata or {})
+            for step in steps:
+                table = SCHEMA_MIGRATIONS[step](table)
+            meta[b"catalog_schema_version"] = str(int(to_v)).encode()
+            table = table.replace_schema_metadata(meta)
+            tmp = f.with_suffix(".tmp.parquet")
+            try:
+                pq.write_table(table, str(tmp), compression="snappy")
+                os.replace(tmp, f)
+            except Exception:
+                tmp.unlink(missing_ok=True)
+                raise
+            migrated.append(f)
+    return migrated
 
 
 # ─── Hauptlogik ───────────────────────────────────────────────────────────────
@@ -752,6 +951,7 @@ async def run_backfill(
                 continue
 
             dest_file = QUOTE_TICK_PATH / symbol / DEFAULT_INTERVAL / "data.parquet"
+            latest_ts = None
             if dest_file.exists():
                 latest_ts = _get_latest_ts(dest_file)
                 if latest_ts is not None:
@@ -770,14 +970,26 @@ async def run_backfill(
                 )
 
             try:
-                candles = await _fetch_candles(session, etoro_id, end_dt, api_key, user_key)
+                # Issue #1363 (GH #1259) Fix Punkt 1 — mit lokalem Bestand: Vorwärts-Schritt bis zur
+                # Überlappung mit dem jüngsten lokalen Tick (count aus der Lücke, paginiert) statt fix
+                # 168 Kerzen — eine längere Lücke blieb sonst als Loch im Katalog.
+                filter_start_dt = start_dt
+                if latest_ts is not None:
+                    from automation.historical_fetcher import fetch_forward_candles
+                    candles = await fetch_forward_candles(
+                        session, etoro_id, symbol, latest_ts, api_key=api_key, user_key=user_key,
+                        interval=DEFAULT_INTERVAL, now=end_dt)
+                    filter_start_dt = min(
+                        start_dt, datetime.fromtimestamp(latest_ts / 1e9, tz=timezone.utc) - timedelta(days=1))
+                else:
+                    candles = await _fetch_candles(session, etoro_id, end_dt, api_key, user_key)
                 if not candles:
                     log.debug(f"[api_backfiller] {symbol}: Keine Candles — überspringe.")
                     await asyncio.sleep(0.5)
                     continue
 
                 table = _candles_to_arrow_table(
-                    candles, symbol, price_prec, size_prec, start_dt, interval=DEFAULT_INTERVAL
+                    candles, symbol, price_prec, size_prec, filter_start_dt, interval=DEFAULT_INTERVAL
                 )
                 if table is None or len(table) == 0:
                     log.debug(f"[api_backfiller] {symbol}: Leere Table nach Konvertierung.")

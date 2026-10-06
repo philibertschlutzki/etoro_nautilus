@@ -27,7 +27,7 @@ def _flat_bars(n: int, price: float = 100.0) -> tuple[list, list, list]:
 
 def test_check_bar_quality_passes_on_healthy_coverage():
     highs, lows, closes = _flat_bars(50)
-    result = sd.check_bar_quality(highs, lows, closes, bar_coverage_ratio=0.95)
+    result = sd.bar_quality_profile(highs, lows, closes, bar_coverage_ratio=0.95)
     assert result["passed"] is True
 
 
@@ -35,7 +35,7 @@ def test_check_bar_quality_fails_on_low_bar_coverage_ratio():
     """Die #923-Root-Cause: eine grosse Datenspanne mit ueberwiegend Luecken im Bar-Raster bestand
     Gate 1 vorher unveraendert (1099 Tage Spanne, 30% Abdeckung)."""
     highs, lows, closes = _flat_bars(50)
-    result = sd.check_bar_quality(highs, lows, closes, bar_coverage_ratio=0.30)
+    result = sd.bar_quality_profile(highs, lows, closes, bar_coverage_ratio=0.30)
     assert result["passed"] is False
     assert "bar_coverage_ratio" in result["reason"]
 
@@ -44,16 +44,16 @@ def test_check_bar_quality_bar_coverage_none_is_not_checked():
     """Kein Preflight-Aufrufer liefert den Wert (z. B. Alt-Call-Site) ⇒ nicht pruefbar, kein Fail
     allein deswegen (rueckwaertskompatibel)."""
     highs, lows, closes = _flat_bars(50)
-    result = sd.check_bar_quality(highs, lows, closes, bar_coverage_ratio=None)
+    result = sd.bar_quality_profile(highs, lows, closes, bar_coverage_ratio=None)
     assert result["passed"] is True
 
 
 def test_check_bar_quality_respects_configured_threshold():
     highs, lows, closes = _flat_bars(50)
-    result = sd.check_bar_quality(highs, lows, closes, bar_coverage_ratio=0.55,
+    result = sd.bar_quality_profile(highs, lows, closes, bar_coverage_ratio=0.55,
                                   min_bar_coverage_ratio=0.5)
     assert result["passed"] is True
-    result2 = sd.check_bar_quality(highs, lows, closes, bar_coverage_ratio=0.45,
+    result2 = sd.bar_quality_profile(highs, lows, closes, bar_coverage_ratio=0.45,
                                    min_bar_coverage_ratio=0.5)
     assert result2["passed"] is False
 

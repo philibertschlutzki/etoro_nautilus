@@ -115,16 +115,25 @@ def resolve_asset_class(symbol: str, instrument_map: dict) -> str | None:
     return None
 
 
-def resolve_session_hours(asset_class: str | None, session_cfg: dict | None) -> tuple[str, str] | None:
+def resolve_session_hours(asset_class: str | None, session_cfg: dict | None) -> dict | None:
+    """Issue #1356 (GH #1252) — ``{"tz", "open", "close", "calendar"}`` in BÖRSEN-LOKALZEIT (neue Form
+    ``{"tz", "open", "close"[, "calendar"]}``); die alte UTC-Form ``{open_utc, close_utc}`` wird als
+    ``tz='UTC'`` gelesen. ``None`` = kein Fenster. Bewusst eigenständig (siehe Moduldocstring)."""
     if not asset_class or not session_cfg:
         return None
     entry = session_cfg.get(asset_class)
     if entry is None:
         return None
-    return entry["open_utc"], entry["close_utc"]
+    if "open_utc" in entry:
+        return {"tz": "UTC", "open": entry["open_utc"], "close": entry["close_utc"],
+                "calendar": entry.get("calendar")}
+    calendar = entry.get("calendar") or {"America/New_York": "NYSE"}.get(entry["tz"])
+    return {"tz": entry["tz"], "open": entry["open"], "close": entry["close"], "calendar": calendar}
 
 
 def snap_session_window(open_utc: str, close_utc: str, median_delta_t_s: float | None) -> tuple[str, str]:
+    """Snapt ``open`` abwärts, ``close`` aufwärts auf das Tick-Raster (#1300). Seit #1356 auf den LOKALEN
+    Uhrzeiten des Fensters (die Parameternamen bleiben aus Kompatibilität)."""
     if not median_delta_t_s or median_delta_t_s <= 0:
         return open_utc, close_utc
     grid_minutes = max(1, round(median_delta_t_s / 60.0))
@@ -137,13 +146,29 @@ def snap_session_window(open_utc: str, close_utc: str, median_delta_t_s: float |
             f"{snapped_close // 60:02d}:{snapped_close % 60:02d}")
 
 
-def is_within_session_hours(ts: pd.Timestamp, open_utc: str, close_utc: str, *, weekdays_only: bool = True) -> bool:
-    if weekdays_only and ts.weekday() >= 5:
+def is_within_session_hours(ts: pd.Timestamp, open_utc: str, close_utc: str, *, weekdays_only: bool = True,
+                            tz: str = "UTC", holidays: frozenset = frozenset()) -> bool:
+    """Punkt-Test in der Zeitzone ``tz`` (Issue #1356: Börsen-Lokalzeit; Default UTC = Alt-Verhalten).
+    ``weekdays_only`` schliesst Sa/So UND die Daten in ``holidays`` (lokale Kalenderdaten) aus."""
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert(tz)
+    if weekdays_only and (ts.weekday() >= 5 or ts.date() in holidays):
         return False
     oh, om = (int(x) for x in open_utc.split(":"))
     ch, cm = (int(x) for x in close_utc.split(":"))
     tod = ts.hour * 60 + ts.minute
     return (oh * 60 + om) <= tod < (ch * 60 + cm)
+
+
+def load_holidays(config_dir: Path) -> dict[str, frozenset]:
+    """``exchange_holidays.json`` (Issue #1356) → ``{calendar: frozenset[date]}`` — eigenständig gelesen."""
+    import datetime as _dt
+    try:
+        raw = json.loads((config_dir / "exchange_holidays.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {name: frozenset(_dt.date.fromisoformat(d) for d in days)
+            for name, days in (raw.get("calendars") or {}).items()}
 
 
 # --------------------------------------------------------------------------------------------
@@ -296,20 +321,26 @@ def bar_report(label: str, bars: pd.DataFrame, calendar_hours: float) -> dict:
     return metrics
 
 
-def filter_to_session(df: pd.DataFrame, open_utc: str, close_utc: str, median_delta_t_s: float | None) -> tuple[pd.DataFrame, str, str]:
+def filter_to_session(df: pd.DataFrame, open_utc: str, close_utc: str, median_delta_t_s: float | None,
+                      *, tz: str = "UTC", holidays: frozenset = frozenset()) -> tuple[pd.DataFrame, str, str]:
     open_snap, close_snap = snap_session_window(open_utc, close_utc, median_delta_t_s)
-    mask = [is_within_session_hours(ts, open_snap, close_snap) for ts in df.index]
+    mask = [is_within_session_hours(ts, open_snap, close_snap, tz=tz, holidays=holidays) for ts in df.index]
     return df[mask], open_snap, close_snap
 
 
-def session_calendar_hours(df_full: pd.DataFrame, open_utc: str, close_utc: str) -> float:
-    """RTH-Stunden im Gesamtfenster: Handelstage (Mo-Fr) im Fenster * Fensterlaenge in Stunden."""
+def session_calendar_hours(df_full: pd.DataFrame, open_utc: str, close_utc: str, *, tz: str = "UTC",
+                           holidays: frozenset = frozenset()) -> float:
+    """RTH-Stunden im Gesamtfenster: Handelstage (Mo-Fr ohne Feiertage, LOKALE Daten in ``tz``) im Fenster *
+    Fensterlaenge in Stunden."""
     oh, om = (int(x) for x in open_utc.split(":"))
     ch, cm = (int(x) for x in close_utc.split(":"))
     window_h = (ch * 60 + cm - (oh * 60 + om)) / 60.0
-    days = pd.date_range(df_full.index[0].normalize(), df_full.index[-1].normalize(), freq="D")
-    n_weekdays = int((days.weekday < 5).sum())
-    return max(1.0, n_weekdays * window_h)
+    first, last = df_full.index[0], df_full.index[-1]
+    if first.tzinfo is not None:
+        first, last = first.tz_convert(tz), last.tz_convert(tz)
+    days = pd.date_range(first.normalize().tz_localize(None), last.normalize().tz_localize(None), freq="D")
+    n_trading = int(sum(1 for d in days if d.weekday() < 5 and d.date() not in holidays))
+    return max(1.0, n_trading * window_h)
 
 
 # --------------------------------------------------------------------------------------------
@@ -317,7 +348,8 @@ def session_calendar_hours(df_full: pd.DataFrame, open_utc: str, close_utc: str)
 # --------------------------------------------------------------------------------------------
 
 def verify_symbol(symbol: str, catalog_path: Path, instrument_map: dict, session_cfg: dict,
-                   max_ticks: int | None, do_rth: bool, interval: str = "OneHour") -> dict:
+                   max_ticks: int | None, do_rth: bool, interval: str = "OneHour",
+                   holidays_by_calendar: dict | None = None) -> dict:
     print(f"\n{'=' * 70}\n{symbol}\n{'=' * 70}")
     df = read_raw_ticks(catalog_path, symbol, max_ticks, interval)
     if df is None:
@@ -344,14 +376,16 @@ def verify_symbol(symbol: str, catalog_path: Path, instrument_map: dict, session
         result["bars_rth"] = dict(b247, label="RTH-Session-Achse (= 24/7, kein Fenster)")
         return result
 
-    open_utc, close_utc = window
-    df_rth, open_snap, close_snap = filter_to_session(df, open_utc, close_utc, raw["median_delta_t_s"])
+    open_utc, close_utc, tz = window["open"], window["close"], window["tz"]
+    holidays = (holidays_by_calendar or {}).get(window.get("calendar") or "", frozenset())
+    df_rth, open_snap, close_snap = filter_to_session(
+        df, open_utc, close_utc, raw["median_delta_t_s"], tz=tz, holidays=holidays)
     if (open_snap, close_snap) != (open_utc, close_utc):
-        print(f"  [Hinweis] Session-Fenster {open_utc}-{close_utc} UTC auf Tick-Raster gesnapped "
-              f"zu {open_snap}-{close_snap} UTC (#1300).")
+        print(f"  [Hinweis] Session-Fenster {open_utc}-{close_utc} {tz} auf Tick-Raster gesnapped "
+              f"zu {open_snap}-{close_snap} {tz} (#1300).")
     n_session = len(df_rth)
     n_off_session = len(df) - n_session
-    print(f"  Asset-Klasse={asset_class}  Session-Fenster={open_snap}-{close_snap} UTC (Mo-Fr)  "
+    print(f"  Asset-Klasse={asset_class}  Session-Fenster={open_snap}-{close_snap} {tz} (Handelstage)  "
           f"Ticks in Session={n_session}/{len(df)} ({100.0 * n_session / max(1, len(df)):.1f} %)")
     result["asset_class"] = asset_class
     result["n_ticks_session"] = n_session
@@ -362,7 +396,7 @@ def verify_symbol(symbol: str, catalog_path: Path, instrument_map: dict, session
         result["bars_rth"] = {"label": "RTH-Session-Achse", "n_bars": 0}
         return result
 
-    rth_hours = session_calendar_hours(df, open_snap, close_snap)
+    rth_hours = session_calendar_hours(df, open_snap, close_snap, tz=tz, holidays=holidays)
     bars_rth = build_bars(df_rth)
     brth = bar_report("RTH-Session-Achse", bars_rth, rth_hours)
     result["bars_rth"] = brth
@@ -421,6 +455,7 @@ def main() -> int:
     backtest_cfg = load_json(config_dir / "backtest.json")
     instrument_map = load_json(config_dir / "instrument_map.json")
     session_cfg = backtest_cfg.get("session_hours_by_asset_class") or {}
+    holidays_by_calendar = load_holidays(config_dir)
 
     if args.catalog_path is not None:
         catalog_path = args.catalog_path.resolve()
@@ -451,7 +486,8 @@ def main() -> int:
         try:
             results.append(verify_symbol(symbol, catalog_path, instrument_map, session_cfg,
                                           args.max_ticks, do_rth=not args.no_rth,
-                                          interval=args.interval))
+                                          interval=args.interval,
+                                          holidays_by_calendar=holidays_by_calendar))
         except Exception as e:  # ein Symbol darf den Gesamtlauf nie abbrechen
             print(f"  [FEHLER] {symbol}: {type(e).__name__}: {e}", file=sys.stderr)
             results.append({"symbol": symbol, "status": "EXCEPTION", "error": str(e)})

@@ -48,6 +48,11 @@ _RUN_STATUS_LABELS_DE = {
     # gerechnet, der Lauf ist aber wegen mindestens einer blockierenden Invariante nicht
     # entscheidungsfähig (siehe sweep.py, Downgrade-Regel bei symbols_completed >= symbols_planned).
     "completed_invalid": "vollständig gerechnet, aber wegen blockierender Invarianten nicht entscheidungsfähig",
+    # Issue #1363 (GH #1259) — alle Symbole scheitern NUR an der Historien-Spanne: kein ungültiger Lauf,
+    # sondern einer, der auf Daten wartet (``eta_utc`` im Report).
+    "waiting_for_data": "wartet auf Daten (Historie kürzer als die Walk-Forward-Geometrie)",
+    # Issue #1369 (GH #1266) — alle angeforderten Symbole im Preflight abgewiesen: EIN Wurzelbefund.
+    "aborted_preflight_all_symbols_rejected": "abgebrochen (alle angeforderten Symbole im Preflight abgewiesen)",
 }
 
 def _run_status_label_de(report: dict) -> str:
@@ -91,7 +96,39 @@ def _fmt_profit_factor(r: dict, *, digits: int = 2) -> str:
 
 
 def _fmt_hours(seconds: float | None) -> str:
-    return f"{seconds / 3600.0:.2f} h" if seconds is not None else "k. A."
+    """Issue #1369 (GH #1266) — Laufzeiten unter einer Stunde in Sekunden bzw. Minuten ("0.00 h" bei 14 s
+    war keine Aussage)."""
+    if seconds is None:
+        return "k. A."
+    seconds = float(seconds)
+    if seconds < 60.0:
+        return f"{seconds:.0f} s"
+    if seconds < 3600.0:
+        minutes, rest = divmod(int(round(seconds)), 60)
+        return f"{minutes} min {rest:02d} s"
+    return f"{seconds / 3600.0:.2f} h"
+
+
+def _symbol_funnel_sentence(report: dict) -> str | None:
+    """Issue #1369 (GH #1266) — "0 von 3 Symbolen gerechnet (3 im Preflight abgewiesen: …)"; ``None`` ohne
+    Trichter-Felder (Report vor #1369) oder ohne abgewiesenes Symbol."""
+    requested = report.get("symbols_requested")
+    rejected_n = report.get("symbols_rejected_preflight")
+    if not requested or not rejected_n:
+        return None
+    completed = report.get("symbols_completed") or 0
+    parts = [
+        f"{r.get('symbol')} ({r.get('reason')}" + (f": {r.get('detail')}" if r.get("detail") else "") + ")"
+        for r in (report.get("symbols_rejected") or [])
+    ]
+    return (f"{completed} von {requested} Symbolen gerechnet ({rejected_n} im Preflight abgewiesen"
+            + (f": {'; '.join(parts)}" if parts else "") + ")")
+
+
+def _is_suppressed_upstream(check: dict) -> bool:
+    """Issue #1369 — Folge-Invarianten einer Totalabweisung (``SUPPRESSED_UPSTREAM_NO_SYMBOLS``)."""
+    from automation.optimizer.invariants import is_suppressed_upstream
+    return is_suppressed_upstream(check)
 
 
 def _fmt_hms_from_s(seconds: float | None) -> str:
@@ -171,7 +208,20 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
     # Issue #1037/#1186 — umbenannt von ``fail_fast_triggered`` (der alte Name behauptete
     # faelschlich einen Abbruch, siehe ``report._build_report``-Docstring).
     _blocking_invariant_triggered = report.get("blocking_invariant_triggered")
-    if _work_completed is False:
+    _funnel_sentence = _symbol_funnel_sentence(report)
+    if report.get("all_symbols_rejected_preflight") and run_status != "waiting_for_data":
+        # Issue #1369 (GH #1266) — EIN Wurzelbefund statt "Vollständig gerechnet (0/0 Symbole)".
+        status_note = f" **Hinweis:** {_funnel_sentence or 'alle angeforderten Symbole im Preflight abgewiesen'}."
+    elif run_status == "waiting_for_data":
+        # Issue #1363 (GH #1259) — terminaler Wartestatus mit Prognose statt "ungültig".
+        _eta = report.get("eta_utc")
+        status_note = (
+            " **Hinweis:** Der Lauf wartet auf Daten — die Historie ist kürzer als die Walk-Forward-Geometrie"
+            + (f"; bei täglichem Vorwärts-Abruf ausreichend ab **{_eta}** (eta_utc)." if _eta else
+               f"; keine Prognose möglich ({(report.get('data_depth_eta') or {}).get('reason')}).")
+            + (f" {_funnel_sentence}." if _funnel_sentence else "")
+        )
+    elif _work_completed is False:
         status_note = (
             f" **Hinweis:** dieser Lauf ist NICHT vollständig ({_RUN_STATUS_LABELS_DE.get(run_status, run_status)}"
             f"; {report.get('symbols_completed', '?')}/{report.get('symbols_planned', '?')} Symbole"
@@ -224,12 +274,20 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
                 f"({report.get('result_degenerate_reason') or 'result_degenerate'}) — kein Study "
                 "unterscheidet sich messbar von einem anderen (siehe `check_result_not_degenerate`)."
             )
-        sentence = (
-            f"{n_studies} Studies, {n_promotions_sweep} Sweep-Promotion(en), **0 deploybar** — "
-            "kein Kandidat hat sowohl die Holdout-Validierung als auch das Deployment-Gate "
-            "(``deployment_gate.evaluate_deployment_eligibility``) bestanden. Es gibt kein "
-            "deploybares Ergebnis aus diesem Lauf." + _degenerate_note
-        )
+        if n_studies == 0:
+            # Issue #1369 (GH #1266) — "kein Kandidat hat … bestanden" über null Kandidaten ist falsch.
+            _cause = _symbol_funnel_sentence(report) or "keine Study in diesem Lauf"
+            sentence = (
+                f"0 Studies, **0 deploybar** — Kein Kandidat evaluiert — Ursache: {_cause}. Es gibt kein "
+                "deploybares Ergebnis aus diesem Lauf." + _degenerate_note
+            )
+        else:
+            sentence = (
+                f"{n_studies} Studies, {n_promotions_sweep} Sweep-Promotion(en), **0 deploybar** — "
+                "kein Kandidat hat sowohl die Holdout-Validierung als auch das Deployment-Gate "
+                "(``deployment_gate.evaluate_deployment_eligibility``) bestanden. Es gibt kein "
+                "deploybares Ergebnis aus diesem Lauf." + _degenerate_note
+            )
     else:
         sentence = (
             f"{n_studies} Studies, {n_promotions_sweep} Sweep-Promotion(en), {n_deployable} "
@@ -257,7 +315,7 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
             continue
         if c.get("passed") is False:
             _blocking_fail_scopes.setdefault(_check_name(c), set()).add(c.get("scope") or "global")
-        elif c.get("passed") is None or c.get("evaluable") is False:
+        elif (c.get("passed") is None or c.get("evaluable") is False) and not _is_suppressed_upstream(c):
             _blocking_inconclusive_scopes.setdefault(
                 _check_name(c), set()).add(c.get("scope") or "global")
 
@@ -686,10 +744,13 @@ def _section_2_monetary_result(report: dict) -> str:
         "einen OOS-Wert tragen, aber NIE einen Holdout-Wert."
     )
     lines.append("")
+    # Issue #1367 (GH #1264) — die Holdout-Länge aus dem Report (Preflight-Rechnung), kein Literal.
+    _holdout_days_label = (report.get("detectability") or {}).get("holdout_days")
     lines.append(
         "Alle oben genannten Zahlen sind **simulierte Backtest-Ergebnisse** über das Holdout-"
-        "Fenster (45 Tage) unter dem im Lauf konfigurierten Kostenmodell (Spread + Kommission je "
-        "Asset-Klasse, #774/#775) — kein garantiertes zukünftiges Ergebnis."
+        f"Fenster ({_holdout_days_label if _holdout_days_label is not None else 'k. A.'} Tage) unter dem im "
+        "Lauf konfigurierten Kostenmodell (Spread + Kommission je Asset-Klasse, #774/#775) — kein "
+        "garantiertes zukünftiges Ergebnis."
     )
     # Issue #1010/#1162 (Katalog #1170, P0) — Akzeptanzkriterium 2: Abschnitt 2.4 nennt explizit
     # den methodischen Umfang, wenn financing_bps/slippage_bps ueberall 0.0 sind — die
@@ -947,7 +1008,10 @@ def _section_3_duration(report: dict) -> str:
                 f"{_fmt_pct(statistics.median(_warm_start_holdout_deltas)) if _warm_start_holdout_deltas else 'k. A.'}"
                 " (#1238)"
             )
-    if report.get("symbols_planned") is not None:
+    if _symbol_funnel_sentence(report):
+        # Issue #1369 (GH #1266) — angefordert statt "0 von 0" nach dem Preflight.
+        lines.append(f"- Symbole: {_symbol_funnel_sentence(report)}")
+    elif report.get("symbols_planned") is not None:
         lines.append(
             f"- Symbole: {report.get('symbols_completed', 'k. A.')} von {report.get('symbols_planned', 'k. A.')} abgeschlossen"
         )
@@ -1250,6 +1314,29 @@ def _section_4_longest_trades(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _section_detectability(report: dict) -> str | None:
+    """Issue #1367 (GH #1264) — Abschnitt "Nachweisbarkeit": welche Sharpe das Holdout-Fenster bei der
+    konfigurierten Konfidenz überhaupt zertifizieren kann (Mindest-nachweisbare Sharpe), das ökonomische Ziel
+    und der dafür nötige Holdout — aus DERSELBEN Preflight-Rechnung wie das Invarianten-Event."""
+    det = report.get("detectability")
+    if not det:
+        return None
+    lines = ["## Nachweisbarkeit", ""]
+    lines.append(
+        f"Holdout {det.get('holdout_days', 'k. A.')} Tage ⇒ T = {det.get('t_holdout', 'k. A.')} Bars; "
+        f"Konfidenz {det.get('promotion_confidence', 'k. A.')} ⇒ **Mindest-nachweisbare Sharpe "
+        f"{_fmt_num(det.get('mds_annual'), digits=2)} p. a.** ({_fmt_num(det.get('mds_bar'), digits=4)} je Bar).")
+    lines.append("")
+    lines.append(
+        f"Ziel-Sharpe {det.get('promotion_target_annual_sharpe', 'k. A.')} p. a. braucht T = "
+        f"{det.get('required_t_for_target', 'k. A.')} Bars ≈ {det.get('required_holdout_days_for_target', 'k. A.')} "
+        "Kalendertage Holdout — "
+        + ("erreichbar." if det.get("passed") else
+           "mit dem aktuellen Holdout **nicht** erreichbar: nur Kandidaten mit Holdout-Sharpe ≥ "
+           f"{_fmt_num(det.get('mds_annual'), digits=2)} sind promovierbar (Auflösung über Forward-Evidenz, #1368)."))
+    return "\n".join(lines)
+
+
 def _section_5_anomalies(report: dict) -> str:
     studies = _studies(report)
     lines = ["## 5. Auffälligkeiten", ""]
@@ -1262,9 +1349,12 @@ def _section_5_anomalies(report: dict) -> str:
     # defekten Mechanismus nicht mehr unterscheidbar. Beide Zustaende werden deshalb getrennt
     # gezaehlt und in getrennten Tabellen gefuehrt.
     failing_checks = [c for c in all_checks if c.get("passed") is False]
+    # Issue #1369 (GH #1266) — Folge-Invarianten einer Totalabweisung (SUPPRESSED_UPSTREAM_NO_SYMBOLS)
+    # erscheinen nicht als eigene "nicht auswertbar"-Befunde, nur gezählt (ein Wurzelbefund).
+    suppressed_checks = [c for c in all_checks if _is_suppressed_upstream(c)]
     inconclusive_checks = [
         c for c in all_checks
-        if c.get("passed") is None or c.get("evaluable") is False]
+        if (c.get("passed") is None or c.get("evaluable") is False) and not _is_suppressed_upstream(c)]
 
     # Issue #849 — Root-Cause der 519-Zeilen-Sektion: JEDER einzelne FAIL war eine gleichrangige
     # Zeile (304× check_reward_term_variance neben 1× check_holding_time_cap, dem eigentlich
@@ -1316,6 +1406,11 @@ def _section_5_anomalies(report: dict) -> str:
     )
     lines.append(f"### 5.1b Nicht auswertbar ({len(inconclusive_checks)} Checks)")
     lines.append("")
+    if suppressed_checks:
+        lines.append(
+            f"{len({_check_name(c) for c in suppressed_checks})} weitere Checks ohne Verdikt sind Folge der "
+            "Totalabweisung im Preflight (`SUPPRESSED_UPSTREAM_NO_SYMBOLS`, #1369) — kein eigenständiger Befund.")
+        lines.append("")
     if not inconclusive_names:
         lines.append("Keine.")
     else:
@@ -1475,6 +1570,9 @@ def generate_german_summary(report: dict, *, report_sha256: str | None = None) -
         _section_4_longest_trades(report),
         _section_5_anomalies(report),
     ]
+    _det = _section_detectability(report)
+    if _det:
+        sections.insert(1, _det)
     return header + "\n\n" + "\n\n".join(sections) + "\n"
 
 

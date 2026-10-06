@@ -54,13 +54,18 @@ def required_span_days(walk_forward_dict: dict) -> int:
     Symbol mit 405–425 d Historie passierte den Guard, obwohl ``start`` vor den Datenanfang fiel und
     das IS-Fenster still verkürzt wurde (genau die No-Clamping-Verletzung, die #531 ausschliessen
     sollte). Bewusst OHNE ``gate1_buffer_days`` (der Puffer ist die Backfill-Schwelle, nicht der
-    Fail-Loud-Floor)."""
+    Fail-Loud-Floor).
+
+    Issue #1357 (GH #1253) — ``holdout_embargo_days`` (Abstand Selektionsende → Holdout-Beginn) gehört
+    ebenfalls in die Spanne (``compute_walk_forward_window`` zieht ihn vom Fensterende ab). Fehlt der Key
+    im Dict ⇒ 0 (bit-identisch für Alt-Dicts)."""
     wf = walk_forward_dict or {}
     return int(
         wf.get("is_window_days", 0)
         + wf.get("embargo_period_days", 0)
         + wf.get("splits", 0) * wf.get("oos_window_days", 0)
         + wf.get("holdout_days", 0)
+        + wf.get("holdout_embargo_days", 0)
     )
 
 
@@ -84,15 +89,16 @@ def assert_walk_forward_geometry(*, actual_span_days: float, walk_forward_dict: 
 
 def required_bars(*, is_window_days: int, oos_window_days: int, splits: int,
                   holdout_days: int, buffer_days: int, bars_per_day: int = 24,
-                  embargo_period_days: int = 0) -> int:
+                  embargo_period_days: int = 0, holdout_embargo_days: int = 0) -> int:
     """Minimum bar count for the entire window on 1h bars:
     ``(is + embargo + splits*oos + holdout + buffer) * bars_per_day``.
 
     Issue #596 — konsistent zu ``required_span_days`` um ``embargo_period_days`` erweitert (der
     Embargo/Purge-Gap gehört in die geforderte Spanne; vgl. ``compute_walk_forward_window``/#548).
-    Fehlt der Parameter (Default 0) ⇒ bit-identisch zum Alt-Verhalten."""
+    Fehlt der Parameter (Default 0) ⇒ bit-identisch zum Alt-Verhalten. Issue #1357 — ebenso
+    ``holdout_embargo_days`` (konsistent zu ``required_span_days``)."""
     return int((is_window_days + embargo_period_days + splits * oos_window_days
-                + holdout_days + buffer_days) * bars_per_day)
+                + holdout_days + holdout_embargo_days + buffer_days) * bars_per_day)
 
 
 def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
@@ -120,6 +126,7 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
         buffer_days=config["gate1_buffer_days"],
         bars_per_day=bars_per_day,
         embargo_period_days=wf.get("embargo_period_days", 0),
+        holdout_embargo_days=wf.get("holdout_embargo_days", 0),
     )
     if available_bars < need:
         return (False, "INSUFFICIENT_HISTORY")

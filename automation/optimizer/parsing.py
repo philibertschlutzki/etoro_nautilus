@@ -57,6 +57,12 @@ class TournamentMetrics:
     oos_expectancy_winsorized: float | None = None
     oos_expectancy_outlier_count: int = 0
     oos_expectancy_notional_degenerate_count: int = 0
+    # Issue #1362 (GH #1258) — Round-Trip-Renditen (bps auf das Positions-Notional) dieser Ebene:
+    # Mittel/Std/Anzahl, Rohmaterial der Whitelist-Felder ``holdout_trade_return_bps_*`` (Live-
+    # Verteilungs-Auslöser B). ``None``/0 ohne Round-Trips bzw. Legacy-JSONs (rückwärtskompatibel).
+    oos_trade_return_bps_mean: float | None = None
+    oos_trade_return_bps_std: float | None = None
+    oos_trade_return_bps_n: int = 0
     # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips (Notional < 5% des Median-Notionals),
     # jetzt AN DER QUELLE verworfen (``backtest_runner._filter_dust_round_trips``, VOR jeder
     # IS/OOS-Aufteilung), statt nur an der Expectancy-Konsumstelle (die vormalige ``oos_expectancy_
@@ -309,6 +315,12 @@ class TournamentMetrics:
     # (``'strategy_symbol'``/``'symbol'``/``'asset_class'``) die p50-Kostenstress-Basis dieser
     # Study tatsaechlich aufgeloest hat (siehe backtest_runner.resolve_slippage_calibration_scope).
     oos_slippage_calibration_scope: str | None = None
+    # Issue #1366 (GH #1263) — angewandter Spread (bps), gemessene Referenz aus den Echt-Ticks (Median/P75)
+    # und Quelle (``config``/``symbol_override``/``realtick``), siehe backtest_runner.resolve_spread_bps.
+    oos_spread_bps_applied: float | None = None
+    oos_spread_bps_measured_p50: float | None = None
+    oos_spread_bps_measured_p75: float | None = None
+    oos_spread_source: str | None = None
     # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (Bars) und Slippage (bps), NUR ueber nachweisliche
     # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe backtest_runner.
     # _aggregate_exit_telemetry-Docstring).
@@ -569,6 +581,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_applied_slippage_bps = oos_metrics.get("applied_slippage_bps")
     # Issue #1266 (GH #1136) — siehe TournamentMetrics-Docstring.
     oos_slippage_calibration_scope = oos_metrics.get("slippage_calibration_scope")
+    # Issue #1366 (GH #1263) — siehe TournamentMetrics-Docstring.
+    oos_spread_bps_applied = oos_metrics.get("spread_bps_applied")
+    oos_spread_bps_measured_p50 = oos_metrics.get("spread_bps_measured_p50")
+    oos_spread_bps_measured_p75 = oos_metrics.get("spread_bps_measured_p75")
+    oos_spread_source = oos_metrics.get("spread_source")
     # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
     oos_stop_exit_fill_lag_bars_median = oos_metrics.get("stop_exit_fill_lag_bars_median")
     oos_stop_exit_slippage_bps_median = oos_metrics.get("stop_exit_slippage_bps_median")
@@ -638,6 +655,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_alpha_n_in_market = oos_metrics.get("oos_alpha_n_in_market")
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
+    oos_trade_return_bps_mean = oos_metrics.get("trade_return_bps_mean")
+    oos_trade_return_bps_std = oos_metrics.get("trade_return_bps_std")
+    oos_trade_return_bps_n = oos_metrics.get("trade_return_bps_n")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
     # Issue #946/#1112 (Katalog #960) — siehe TournamentMetrics-Docstring.
     oos_dust_round_trips_filtered_count = oos_metrics.get("dust_round_trips_filtered_count")
@@ -747,6 +767,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
             float(oos_expectancy_winsorized) if oos_expectancy_winsorized is not None else None),
         oos_expectancy_outlier_count=(
             int(oos_expectancy_outlier_count) if oos_expectancy_outlier_count is not None else 0),
+        oos_trade_return_bps_mean=(
+            float(oos_trade_return_bps_mean) if oos_trade_return_bps_mean is not None else None),
+        oos_trade_return_bps_std=(
+            float(oos_trade_return_bps_std) if oos_trade_return_bps_std is not None else None),
+        oos_trade_return_bps_n=int(oos_trade_return_bps_n) if oos_trade_return_bps_n is not None else 0,
         oos_expectancy_notional_degenerate_count=(
             int(oos_expectancy_notional_degenerate_count)
             if oos_expectancy_notional_degenerate_count is not None else 0),
@@ -910,6 +935,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_slippage_calibration_scope=(
             str(oos_slippage_calibration_scope)
             if oos_slippage_calibration_scope is not None else None),
+        # Issue #1366 (GH #1263) — siehe TournamentMetrics-Docstring.
+        oos_spread_bps_applied=float(oos_spread_bps_applied) if oos_spread_bps_applied is not None else None,
+        oos_spread_bps_measured_p50=(
+            float(oos_spread_bps_measured_p50) if oos_spread_bps_measured_p50 is not None else None),
+        oos_spread_bps_measured_p75=(
+            float(oos_spread_bps_measured_p75) if oos_spread_bps_measured_p75 is not None else None),
+        oos_spread_source=str(oos_spread_source) if oos_spread_source is not None else None,
         # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
         oos_stop_exit_fill_lag_bars_median=(
             float(oos_stop_exit_fill_lag_bars_median)

@@ -21,7 +21,7 @@ import math
 import statistics
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 from automation.optimizer._contracts import BAR_SECONDS_DEFAULT as _BAR_SECONDS_DEFAULT
@@ -632,6 +632,56 @@ def check_exit_reason_coverage(study_records: list[dict]) -> InvariantResult:
                 f"{len(offenders)} Study/Studies mit einer Lücke zwischen Exit-Reason-Histogramm "
                 f"und Round-Trip-Zahl: {offenders} — mindestens ein Exit-Pfad setzt keinen "
                 "Order-Tag (Issue #919)."),
+    )
+
+
+# Issue #1359 (GH #1255) Fix Punkt 4 — Obergrenze des DISASTER_STOP-Anteils an den Exits einer Study.
+DISASTER_STOP_MAX_EXIT_SHARE = 0.01
+
+
+@invariant_scope("study")
+def check_disaster_stop_non_binding(
+    study_records: list[dict], *, max_share: float = DISASTER_STOP_MAX_EXIT_SHARE,
+) -> InvariantResult:
+    """Issue #1359 (GH #1255, P0) Fix Punkt 4 — der Katastrophen-Stop darf im Normalbetrieb NIE
+    binden: der Anteil der ``DISASTER_STOP``-Exits am ``exit_reason_histogram`` jeder Study muss
+    ``<= max_share`` (Default 1 %) sein. Häufigere Treffer heissen, ``k_disaster`` (bzw. die
+    Klemmen ``disaster_stop_min_pct``/``disaster_stop_max_pct``) verändert die Strategie statt sie
+    nur gegen Ausfälle zu schützen — der Stop wäre dann Teil der Handelslogik und gehörte in den
+    Suchraum, nicht in die Sicherheitsparameter.
+
+    Studies ohne Exit-Histogramm tragen nichts bei. Liefert keine Study ein Histogramm, ist der
+    Check nicht auswertbar (``inconclusive``, ``passed=True`` — kein Abbruch ohne Evidenz, Pitfall #404)."""
+    offenders: dict[str, dict] = {}
+    n_measured = 0
+    for r in study_records:
+        histogram = r.get("exit_reason_histogram") or {}
+        total = sum(histogram.values())
+        if not histogram or total <= 0:
+            continue
+        n_measured += 1
+        n_disaster = int(histogram.get("DISASTER_STOP", 0))
+        share = n_disaster / total
+        if share > max_share + 1e-12:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "disaster_stop_exits": n_disaster, "exits": total, "share": round(share, 6)}
+    passed = not offenders
+    inconclusive = n_measured == 0
+    return InvariantResult(
+        name="check_disaster_stop_non_binding",
+        passed=passed,
+        expected=f"Anteil DISASTER_STOP-Exits <= {max_share:.2%} je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        inconclusive=inconclusive,
+        evaluability={"evaluable": not inconclusive,
+                      "inconclusive_reason": "no_study_with_exit_histogram" if inconclusive else None,
+                      "n_studies_measured": n_measured},
+        detail=("Kein Exit-Histogramm vorhanden — nicht auswertbar." if inconclusive else
+                "OK" if passed else
+                f"{len(offenders)} Study/Studies mit DISASTER_STOP-Anteil > {max_share:.2%}: "
+                f"{offenders} — der Katastrophen-Stop bindet im Normalbetrieb, k_disaster verändert "
+                "die Strategie (Issue #1359)."),
     )
 
 
@@ -9094,7 +9144,8 @@ def check_cost_model_realism_admissible(
     ``report._compute_decision_admissible``) — Studies/Diagnostik laufen unverändert weiter (der
     Lauf bleibt als Suchraum-Erkundung wertvoll), aber der Deployment-Pfad ist geschlossen.
 
-    ``calibrated_cache``/``mixed`` (die EFFEKTIVE Kostenbasis ist nicht null, siehe
+    ``calibrated_cache``/``mixed``/``config_nonzero`` (#1369: Fallback ohne Study, von Null verschiedene
+    Config) (die EFFEKTIVE Kostenbasis ist nicht null, siehe
     ``report._cost_model_realism_from_applied``-Docstring) PASSen unbedingt — nur ``config_zero``
     ist betroffen; die Unterscheidung selbst ist NICHT Teil dieses Checks (sie bleibt bei
     ``_cost_model_realism_from_applied``, siehe dortiger Docstring: "die Unterscheidung ... bleibt
@@ -9143,22 +9194,135 @@ def check_cost_model_realism_admissible(
 
 
 @invariant_scope("run")
+def check_selection_holdout_disjoint(geometries) -> InvariantResult:
+    """Issue #1357 (GH #1253, P0) — der Confirm-Holdout darf KEINE Selektionsdaten enthalten:
+    ``selection_end_ns + holdout_embargo_days · 1 d <= holdout_start_ns`` (``selection_end`` = Ende des
+    letzten Selektions-OOS-Folds, ``trial_config.selection_holdout_geometry``). Vorher lief die Selektion
+    mit einem Literal (45) gegen einen 60-Tage-Holdout aus der Config: 15 Holdout-Tage (25 %) waren
+    Selektionsdaten, PSR/DSR/Bootstrap-CI/R-Edge des Holdouts aufwärts verzerrt.
+
+    ``geometries`` — EINE Geometrie (Run-Ebene: Preflight aus der Config, ``sweep.py``) oder eine Liste von
+    Study-Records mit denselben Feldern (Study-Ebene: ``report.py``; Studies ohne die Felder zählen als
+    nicht gemessen). Nichts gemessen ⇒ INCONCLUSIVE (``passed=None``)."""
+    expected = "selection_end + holdout_embargo_days <= holdout_start (holdout_overlap_days == 0)"
+    items = [geometries] if isinstance(geometries, dict) else list(geometries or [])
+    measured, violations = 0, {}
+    for i, g in enumerate(items):
+        sel, hold, emb = g.get("selection_end_ns"), g.get("holdout_start_ns"), g.get("holdout_embargo_days")
+        if sel is None or hold is None or emb is None:
+            continue
+        measured += 1
+        if int(sel) + int(emb) * 86_400_000_000_000 > int(hold):
+            label = f"{g.get('strategy')}/{g.get('symbol')}" if g.get("strategy") else f"geometry_{i}"
+            violations[label] = {
+                "selection_end_utc": g.get("selection_end_utc"), "holdout_start_utc": g.get("holdout_start_utc"),
+                "holdout_embargo_days": emb, "holdout_overlap_days": g.get("holdout_overlap_days"),
+            }
+    if measured == 0:
+        # Ohne Geometrie keine Evidenz für einen Verstoss: INCONCLUSIVE ohne Abbruch (wie
+        # check_disaster_stop_non_binding, Pitfall #404) — ein Lauf ohne Studies wird dadurch nicht herabgestuft.
+        return InvariantResult(
+            name="check_selection_holdout_disjoint", passed=True, expected=expected, actual=None,
+            severity="blocking", inconclusive=True,
+            evaluability={"evaluable": False, "inconclusive_reason": "NO_SELECTION_HOLDOUT_GEOMETRY",
+                          "n_studies_measured": 0},
+            detail="Keine Selektions-/Holdout-Geometrie gestempelt — nicht auswertbar.")
+    passed = not violations
+    provenance = {
+        label: {"numerator": v["selection_end_utc"], "denominator": v["holdout_start_utc"],
+                "numerator_definition": "selection_end_utc + holdout_embargo_days",
+                "source_field": "selection_end_utc/holdout_start_utc/holdout_embargo_days"}
+        for label, v in violations.items()} or None
+    return InvariantResult(
+        name="check_selection_holdout_disjoint", passed=passed, expected=expected,
+        actual=violations or {"n_measured": measured}, severity="blocking", provenance=provenance,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": measured},
+        detail=("OK" if passed else
+                f"Selektion und Confirm-Holdout überlappen bzw. unterschreiten das Holdout-Embargo: "
+                f"{violations} — der Holdout bestätigt Selektionsdaten (Issue #1357)."),
+    )
+
+
+@invariant_scope("promotion")
+def check_modeled_spread_not_below_measured(study_records: list[dict]) -> InvariantResult:
+    """Issue #1366 (GH #1263) — PROMOTIONS-BLOCKIEREND: je promoviertem Symbol muss der im Backtest angewandte
+    Spread (``spread_bps_applied``) mindestens der gemessene Median-Spread der eToro-Echt-Ticks
+    (``spread_bps_measured_p50``, ``calibration.calibrate_spread_from_realtick``) sein. Ein unterschätzter
+    Spread überschätzt die Rendite je Round-Trip um die Differenz (5 bps × 252 Round-Trips ≈ 12,6
+    Prozentpunkte p. a.). Ohne promoviertes Symbol mit Messung ⇒ INCONCLUSIVE ohne Abbruch."""
+    offenders: dict[str, dict] = {}
+    measured = 0
+    for r in study_records:
+        if r.get("promotion_outcome") not in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT"):
+            continue
+        p50, applied = r.get("spread_bps_measured_p50"), r.get("spread_bps_applied")
+        if p50 is None:
+            continue
+        measured += 1
+        if applied is None or float(applied) + 1e-9 < float(p50):
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "spread_bps_applied": applied, "spread_bps_measured_p50": p50,
+                "spread_source": r.get("spread_source")}
+    if measured == 0:
+        return InvariantResult(
+            name="check_modeled_spread_not_below_measured", passed=True,
+            expected="spread_bps_applied >= spread_bps_measured_p50 je promoviertem Symbol",
+            actual=None, severity="blocking", inconclusive=True,
+            evaluability={"evaluable": False, "inconclusive_reason": "NO_PROMOTED_SYMBOL_WITH_MEASURED_SPREAD",
+                          "n_studies_measured": 0},
+            detail="Kein promoviertes Symbol mit gemessenem Spread — nicht auswertbar.")
+    passed = not offenders
+    return InvariantResult(
+        name="check_modeled_spread_not_below_measured", passed=passed,
+        expected="spread_bps_applied >= spread_bps_measured_p50 je promoviertem Symbol",
+        actual=offenders or {"n_measured": measured}, severity="blocking",
+        provenance={k: {"numerator": v["spread_bps_applied"], "denominator": v["spread_bps_measured_p50"],
+                        "numerator_definition": "spread_bps_applied",
+                        "source_field": "spread_bps_applied/spread_bps_measured_p50"}
+                    for k, v in offenders.items()} or None,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": measured},
+        detail=("OK" if passed else
+                f"Modellierter Spread unter dem gemessenen Median: {offenders} — die Rendite je Round-Trip "
+                "ist um die Differenz überschätzt (Issue #1366)."),
+    )
+
+
+PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT = 1.5
+
+
+@invariant_scope("run")
 def check_promotion_confidence_reachability(
     t_holdout: int | None, promotion_confidence: float | None, *,
+    target_annual_sharpe: float | None = PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT,
+    bars_per_trading_day: int | None = None,
     reference_sr: float = 0.11386,
 ) -> InvariantResult:
-    """Issue #1340 (GH #1234) — der grösste Ertragshebel des #1246-Katalogs: ein achsenbewusster
-    Reachability-Preflight VOR Phase 1. Der ``[#624]``-Preflight protokollierte die
-    Unerreichbarkeit bislang nur als INFO-Zeile ("Promotionsschwelle DSR/PSR wird EXPLIZIT und
-    dokumentiert getragen") — ein dokumentiertes Tragen ist keine Lösung, sondern die Beschreibung
-    eines Deadlocks: kein Kandidat, auch kein perfekter, kann promoviert werden, solange
-    ``max_attainable_psr(t_holdout) < promotion_confidence`` gilt. Ein Lauf, dessen Deployment-Pfad
-    strukturell geschlossen ist, darf nicht als entscheidungsfähig starten.
+    """Issue #1340 (GH #1234) / Issue #1367 (GH #1264) — achsenbewusster Erreichbarkeits-Preflight VOR Phase 1.
 
-    ``t_holdout``/``promotion_confidence`` fehlend (``None``) ⇒ INCONCLUSIVE (kein FAIL — die
-    Geometrie/Konfidenz konnte nicht aufgelöst werden, z. B. weil die Bar-Achse selbst noch nicht
-    bekannt ist, siehe ``sweep.compute_holdout_bar_count``)."""
-    expected = f"max_attainable_psr(t_holdout) >= promotion_confidence (reference_sr={reference_sr})"
+    #1367: der Preflight prüfte gegen einen AUSREISSER-Kandidaten (``reference_sr = 0.11386`` je Bar ≈
+    Sharpe 4,6-4,8 p. a., ein einzelner Juli-Kandidat auf einer seither korrigierten Achse) und meldete
+    "erreichbar", obwohl ein 60-Tage-Holdout (T = 300) bei 0,95 nur Sharpe ≥ 4,0 p. a. zertifizieren kann;
+    ``required_t`` war ein Echo von ``t_holdout``. Jetzt die ehrliche Frage: die Mindest-nachweisbare
+    Sharpe ``mds_bar(T, conf)`` (``deflation.min_detectable_sharpe``), annualisiert mit
+    ``√(252 · BARS_PER_TRADING_DAY)``, gegen das ökonomisch begründete Ziel
+    ``tournament.json['promotion_target_annual_sharpe']`` (Default 1,5): ``passed = mds_annual <= Ziel``.
+    Dazu ``required_t_for_target``/``required_holdout_days_for_target`` (Kalendertage, 5/7 Handelstage) —
+    der Holdout, den das Ziel braucht. ``reference_sr`` bleibt als Telemetrie
+    (``reference_sr_historical_outlier``, ``required_t`` = dessen echtes Minimum, 212).
+
+    ``t_holdout``/``promotion_confidence`` fehlend ⇒ INCONCLUSIVE (kein FAIL)."""
+    import math
+
+    from automation.optimizer.deflation import min_detectable_sharpe, required_periods_for_sharpe
+
+    if bars_per_trading_day is None:
+        from automation.optimizer._contracts import BARS_PER_TRADING_DAY
+        bars_per_trading_day = BARS_PER_TRADING_DAY
+    annualization = math.sqrt(252.0 * float(bars_per_trading_day))
+    target = float(target_annual_sharpe if target_annual_sharpe is not None
+                   else PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT)
+    expected = (f"mds_annual(t_holdout, promotion_confidence) <= promotion_target_annual_sharpe ({target}) "
+                f"— der Holdout muss eine realistische Edge zertifizieren können")
     if t_holdout is None or promotion_confidence is None:
         return InvariantResult(
             name="check_promotion_confidence_reachability",
@@ -9173,8 +9337,8 @@ def check_promotion_confidence_reachability(
                          "n_studies_measured": 0},
             detail="t_holdout oder promotion_confidence nicht aufloesbar — nicht auswertbar.",
         )
-    max_attainable = max_attainable_psr(t_holdout, reference_sr=reference_sr)
-    if max_attainable is None:
+    mds_bar = min_detectable_sharpe(t_holdout, promotion_confidence)
+    if mds_bar is None:
         return InvariantResult(
             name="check_promotion_confidence_reachability",
             passed=None,
@@ -9185,25 +9349,37 @@ def check_promotion_confidence_reachability(
             evaluable=False,
             evaluability={"evaluable": False, "inconclusive_reason": "PSR_DEGENERATE",
                          "n_studies_measured": 0},
-            detail=f"max_attainable_psr({t_holdout}) numerisch nicht auswertbar (T < 2 oder "
-                   f"nicht-positiver Varianz-Term).",
+            detail=f"mds_bar({t_holdout}) numerisch nicht auswertbar (T < 2 oder degenerierter PSR).",
         )
-    passed = max_attainable >= promotion_confidence
+    mds_annual = mds_bar * annualization
+    required_t_for_target = required_periods_for_sharpe(target / annualization, promotion_confidence)
+    required_holdout_days = (None if required_t_for_target is None else
+                             round(required_t_for_target / float(bars_per_trading_day) * 7.0 / 5.0, 1))
+    max_attainable = max_attainable_psr(t_holdout, reference_sr=reference_sr)
+    passed = mds_annual <= target + 1e-12
     return InvariantResult(
         name="check_promotion_confidence_reachability",
         passed=passed,
         expected=expected,
         actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence,
-               "max_attainable_psr": round(max_attainable, 4), "reference_sr": reference_sr,
-               "required_t": t_holdout},
+                "mds_bar": round(mds_bar, 6), "mds_annual": round(mds_annual, 4),
+                "promotion_target_annual_sharpe": target,
+                "annualization_factor": round(annualization, 4),
+                "required_t_for_target": required_t_for_target,
+                "required_holdout_days_for_target": required_holdout_days,
+                # Telemetrie (früher die Entscheidungsgrösse): der historische Ausreisser-Kandidat.
+                "reference_sr_historical_outlier": reference_sr,
+                "max_attainable_psr": round(max_attainable, 4) if max_attainable is not None else None,
+                "required_t": required_periods_for_sharpe(reference_sr, promotion_confidence)},
         severity="blocking",
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
         detail=("OK" if passed else
-                f"max_attainable_psr({t_holdout})={max_attainable:.4f} < "
-                f"promotion_confidence={promotion_confidence} — die Promotionsschwelle ist mit "
-                f"diesem Holdout-Fenster fuer JEDEN Kandidaten unerreichbar, unabhaengig von "
-                f"dessen Qualitaet (#1340/GH #1234)."),
+                f"Mit T={t_holdout} Holdout-Bars und Konfidenz {promotion_confidence} ist die Mindest-"
+                f"nachweisbare Sharpe {mds_annual:.2f} p. a. > Ziel {target} — nur Kandidaten mit Holdout-"
+                f"Sharpe >= {mds_annual:.2f} sind promovierbar (vorwiegend Glückstreffer). Das Ziel braucht "
+                f"T={required_t_for_target} Bars ≈ {required_holdout_days} Kalendertage Holdout "
+                f"(#1367/GH #1264; Auflösung über Evidenz-Akkumulation, #1368)."),
     )
 
 
@@ -9363,6 +9539,44 @@ def _bar_axis_supports_stop_verdict(study_records: list[dict]) -> bool:
         bq.get("intrabar_path") for bq in _bar_quality_dicts
     )
     return has_positive_intrabar_range and has_stamped_intrabar_path
+
+
+# Issue #1369 (GH #1266) — eine Totalabweisung im Preflight (alle angeforderten Symbole abgewiesen) ist EIN
+# Wurzelbefund. Jede davon abhängige Invariante, die mangels Symbol/Study kein Verdikt fällen kann
+# (``passed is None``), trägt diesen Grund (analog ``SUPPRESSED_UPSTREAM_BAR_AXIS``) und zählt weder als
+# FAIL noch als blockierend-INCONCLUSIVE (``_compute_decision_admissible``, ``sweep._downgrade_run_status_
+# for_blocking_invariants``, ``check_fail_fast_inconclusive_budget``, Zusammenfassung Abschnitt 1/5.1b).
+SUPPRESSED_UPSTREAM_NO_SYMBOLS = "SUPPRESSED_UPSTREAM_NO_SYMBOLS"
+
+
+def is_suppressed_upstream(check: Mapping[str, Any]) -> bool:
+    """``True`` für ein Invarianten-Dict, das wegen eines vorgelagerten Wurzelbefunds unterdrückt ist."""
+    evaluability = check.get("evaluability") if isinstance(check, Mapping) else None
+    return (isinstance(check, Mapping) and check.get("suppressed_upstream") == SUPPRESSED_UPSTREAM_NO_SYMBOLS) or (
+        isinstance(evaluability, Mapping)
+        and evaluability.get("inconclusive_reason") == SUPPRESSED_UPSTREAM_NO_SYMBOLS)
+
+
+def all_requested_symbols_rejected(symbols_requested: int | None, symbols_planned: int | None) -> bool:
+    """Issue #1369 — die Totalabweisung: mindestens ein Symbol angefordert, keines nach dem Preflight geplant."""
+    return bool(symbols_requested) and symbols_planned == 0
+
+
+def suppress_inconclusive_for_no_symbols(checks: list[dict]) -> list[dict]:
+    """Stempelt jedes ``passed is None``-Dict (INCONCLUSIVE) mit ``SUPPRESSED_UPSTREAM_NO_SYMBOLS`` (in
+    place, Rückgabe dieselbe Liste). ``passed`` True/False bleibt unverändert — der Wurzelbefund selbst
+    (z. B. ``check_catalog_resolution_homogeneity`` FAIL je Symbol) wird nie unterdrückt."""
+    for check in checks:
+        if not isinstance(check, dict) or check.get("passed") is not None or is_suppressed_upstream(check):
+            continue
+        evaluability = dict(check.get("evaluability") or {})
+        evaluability.update({"evaluable": False, "inconclusive_reason": SUPPRESSED_UPSTREAM_NO_SYMBOLS})
+        check["evaluability"] = evaluability
+        check["suppressed_upstream"] = SUPPRESSED_UPSTREAM_NO_SYMBOLS
+        check["detail"] = (f"{SUPPRESSED_UPSTREAM_NO_SYMBOLS} (#1369): alle angeforderten Symbole wurden im "
+                           f"Preflight abgewiesen — kein eigenständiger Befund. Ursprünglich: "
+                           f"{check.get('detail')}")
+    return checks
 
 
 def suppress_stop_verdict_if_bar_axis_degenerate(
@@ -10262,6 +10476,7 @@ def check_fail_fast_invariants_are_blocking(invariant_checks: list[dict], *,
 @invariant_scope("run")
 def check_fail_fast_inconclusive_budget(
     invariant_checks: list[dict], *, fail_fast_invariants: list[str] | None = None,
+    no_symbols_upstream: bool = False,
 ) -> InvariantResult:
     """Issue #1310 (GH #1187, P1) — vierter Meta-Wächter derselben Familie (nach ``check_fail_fast_
     invariants_wired``/``_actual_convention``/``_are_blocking``): SELBST wenn jeder fail-fast-Check
@@ -10278,7 +10493,12 @@ def check_fail_fast_inconclusive_budget(
     "fehlt der Check komplett" zustaendig, DIESER Wächter fragt nur "wie viele UEBERHAUPT ein
     Verdikt gefaellt haben", unabhaengig vom Grund). Bei einer Mehrfachnennung desselben Namens im
     Strom zaehlt das ERSTE Vorkommen (dieselbe Konvention wie ``check_fail_fast_invariants_are_
-    blocking``). ``fail_fast_invariants`` leer/fehlend ⇒ nicht anwendbar (PASS)."""
+    blocking``). ``fail_fast_invariants`` leer/fehlend ⇒ nicht anwendbar (PASS).
+
+    Issue #1369 (GH #1266) — ``no_symbols_upstream=True`` (alle angeforderten Symbole im Preflight
+    abgewiesen): die fehlenden Verdikte sind FOLGE des Wurzelbefunds, nicht Ursache —
+    ``SUPPRESSED_UPSTREAM_NO_SYMBOLS``, sie zählen nicht gegen das Budget (ebenso jedes bereits als
+    unterdrückt gestempelte Dict)."""
     configured = sorted(set(fail_fast_invariants or []))
     if not configured:
         return InvariantResult(
@@ -10296,6 +10516,11 @@ def check_fail_fast_inconclusive_budget(
     passed_by_name = _first_non_none_by_name(
         invariant_checks, value_field="passed", restrict_to=set(configured))
     inconclusive = sorted(n for n in configured if passed_by_name.get(n) is None)
+    suppressed_names = {
+        (c.get("name") or c.get("check")) for c in invariant_checks
+        if isinstance(c, Mapping) and is_suppressed_upstream(c)}
+    suppressed = sorted(n for n in inconclusive if no_symbols_upstream or n in suppressed_names)
+    inconclusive = [n for n in inconclusive if n not in suppressed]
     n_configured = len(configured)
     n_inconclusive = len(inconclusive)
     passed = n_inconclusive <= n_configured / 2.0
@@ -10303,7 +10528,9 @@ def check_fail_fast_inconclusive_budget(
         name="check_fail_fast_inconclusive_budget",
         passed=passed,
         expected="<= 50% der konfigurierten fail_fast_invariants tragen passed=None (kein Verdikt)",
-        actual={"inconclusive": inconclusive, "n_configured": n_configured} if not passed else None,
+        actual=({"inconclusive": inconclusive, "n_configured": n_configured} if not passed else
+                ({"suppressed_upstream": suppressed, "reason": SUPPRESSED_UPSTREAM_NO_SYMBOLS}
+                 if suppressed else None)),
         severity="blocking",
         detail=("OK" if passed else
                 f"{n_inconclusive}/{n_configured} konfigurierte fail_fast_invariants tragen kein "

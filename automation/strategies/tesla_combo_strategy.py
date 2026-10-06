@@ -189,6 +189,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
             order_side=OrderSide.BUY,
             quantity=qty,
             time_in_force=TimeInForce.GTC,
+            tags=self._entry_order_tags(bar),
         )
         self.submit_order(order)
 
@@ -214,6 +215,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
             order_side=OrderSide.SELL,
             quantity=qty,
             time_in_force=TimeInForce.GTC,
+            tags=self._entry_order_tags(bar),
         )
         self.submit_order(order)
 

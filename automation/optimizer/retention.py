@@ -25,7 +25,18 @@ from pathlib import Path
 
 import optuna
 
+from automation.catalog_paths import is_catalog_archive_path
 from automation.optimizer.manifest import WORK
+
+
+def _refuse_catalog_archive(path: Path, logger: logging.Logger) -> bool:
+    """Issue #1364 (GH #1260) Fix Punkt 5: ``data/nautilus/archive/`` ist von JEDER automatischen
+    Bereinigung ausgeschlossen (dort liegt Historie, die die API nicht zurückliefert). True ⇒ der
+    Aufrufer löscht NICHT."""
+    if is_catalog_archive_path(Path(path).resolve()):
+        logger.error("[#1364] Verweigere Löschung im Katalog-Archiv: %s", path)
+        return True
+    return False
 
 
 def _read_json(path: Path) -> dict | None:
@@ -101,6 +112,8 @@ def prune_completed_trial_dirs(
             continue
         if trial_dir.resolve() in keep_resolved:
             continue
+        if _refuse_catalog_archive(trial_dir, logger):
+            continue
         if dry_run:
             logger.info(
                 "[DRY-RUN] Würde Trial-Verzeichnis %s entfernen (Study '%s' abgeschlossen).",
@@ -132,6 +145,8 @@ def release_trial_dir(trial_dir: Path, *, keep: bool, logger: logging.Logger | N
     logger = logger or logging.getLogger("optimizer")
     trial_dir = Path(trial_dir)
     if keep or not trial_dir.exists():
+        return False
+    if _refuse_catalog_archive(trial_dir, logger):
         return False
     try:
         shutil.rmtree(trial_dir)

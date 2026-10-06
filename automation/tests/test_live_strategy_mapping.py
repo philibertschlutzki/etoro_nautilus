@@ -38,11 +38,27 @@ def test_build_bots_config():
         ]
     }
 
+    # Issue #1360 — Zulassung ueber die Deployment-Grenze; der Whitelist-Eintrag traegt den
+    # Fingerabdruck der aufgeloesten Live-Parameter + das promovierte Override (siehe unten).
+    from automation.live_params import live_params_sha256, resolve_live_params
+    _defaults_for_sha = {"MeanReversionStrategy": {"keltner_period": 10, "trade_amount_usd": 1500.0}}
+    _raw_for_sha = [{"strategy_class": "MeanReversionStrategy",
+                     "params": {"keltner_period": 20, "max_open_positions": 2}}]
+    _aapl_sha = live_params_sha256(
+        resolve_live_params("MeanReversionStrategy", "AAPL.ETORO", _defaults_for_sha, _raw_for_sha))
+
+    def _gate(**extra):
+        return {"deployment_gate": {"admitted": True}, **extra}
+
     tournament_data = {
         "per_symbol_winners": {
-            "AAPL.ETORO": {"strategy": "MeanReversionStrategy", "oos_evaluated": True, "oos_eligible": True},
-            "TSLA.ETORO": {"strategy": "UnknownStrategy", "oos_evaluated": True, "oos_eligible": True},
-            "INVALID.ETORO": {"strategy": "MeanReversionStrategy", "oos_evaluated": True, "oos_eligible": True}
+            "AAPL.ETORO": {"strategy": "MeanReversionStrategy", "oos_evaluated": True, "oos_eligible": True,
+                           **_gate(proposed_instrument_override={"keltner_period": 20},
+                                   live_params_sha256=_aapl_sha)},
+            "TSLA.ETORO": {"strategy": "UnknownStrategy", "oos_evaluated": True, "oos_eligible": True,
+                           **_gate(proposed_instrument_override={}, live_params_sha256="x")},
+            "INVALID.ETORO": {"strategy": "MeanReversionStrategy", "oos_evaluated": True, "oos_eligible": True,
+                              **_gate(proposed_instrument_override={}, live_params_sha256="x")}
         }
     }
 

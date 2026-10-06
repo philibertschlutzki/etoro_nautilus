@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from automation.optimizer.parsing import parse_tournament
-from automation.optimizer.reward import check_any_arm_reachability_live, resolve_any_arm_policy
+from automation.optimizer.reward import any_arm_reachability_live_violations, resolve_any_arm_policy  # #1370
 from automation.optimizer.invariants import check_metric_sentinel_absence
 
 
@@ -109,7 +109,7 @@ def test_zero_evaluated_trials_suppresses_reachability_check_entirely():
     vorlägen."""
     tcfg = {"eligible_requires_any": ["min_win_rate"], "oos_min_win_rate": 0.15}
     many_low_samples = [0.01] * 20
-    result = check_any_arm_reachability_live(tcfg, {"min_win_rate": many_low_samples}, n_evaluated=0)
+    result = any_arm_reachability_live_violations(tcfg, {"min_win_rate": many_low_samples}, n_evaluated=0)
     assert result == []
 
 

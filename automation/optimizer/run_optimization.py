@@ -26,10 +26,10 @@ from automation.optimizer.trial_config import build_trial, config_dir, freeze_st
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import (
-    compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
-    check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
+    compute_reward, assert_penalty_scale_calibrated, any_arm_reachability_violations,
+    any_arm_reachability_live_violations, resolve_any_arm_policy, assert_gate_collinearity_guard,
     gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
-    check_mandatory_gate_reachability_live, _normalize_clause as _reward_normalize_clause,
+    mandatory_gate_reachability_live_violations, _normalize_clause as _reward_normalize_clause,
     resolve_alpha_tstat_gate_threshold,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
@@ -80,6 +80,12 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_expectancy_capital_weighted_gross": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_capital_weighted_gross, #1257)",
     "oos_expectancy_winsorized": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_winsorized)",
     "oos_expectancy_outlier_count": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_outlier_count)",
+    # Issue #1362 (GH #1258) — nur am promovierten Holdout-Kandidaten gebraucht (Whitelist-Felder
+    # holdout_trade_return_bps_mean/std/n, deployment_gate.build_promotion_record_from_proposal), nicht
+    # je Sweep-Trial.
+    "oos_trade_return_bps_mean": "holdout-only (confirm.py-Re-Evaluation, siehe deployment_gate holdout_trade_return_bps_mean, #1362)",
+    "oos_trade_return_bps_std": "holdout-only (confirm.py-Re-Evaluation, siehe deployment_gate holdout_trade_return_bps_std, #1362)",
+    "oos_trade_return_bps_n": "holdout-only (confirm.py-Re-Evaluation, siehe deployment_gate holdout_trade_return_bps_n, #1362)",
     "oos_expectancy_cost_stress_1_5x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_1_5x)",
     "oos_expectancy_cost_stress_2x": "holdout-only (confirm.py-Re-Evaluation, siehe report.py holdout_expectancy_cost_stress_2x)",
     "oos_expectancy_cost_stress_full_realism": "holdout-only (confirm.py-Re-Evaluation, siehe #1162/Issue 1010)",
@@ -130,6 +136,12 @@ _INTENTIONALLY_UNSTAMPED_METRIC_FIELDS: dict[str, str] = {
     "oos_applied_financing_bps_per_day": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_financing_bps_per_day, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_applied_slippage_bps": "holdout-only (confirm.py-Re-Evaluation, siehe report.py applied_slippage_bps, #1075/#1223 check_applied_cost_components_resolved)",
     "oos_slippage_calibration_scope": "holdout-only (confirm.py-Re-Evaluation, siehe report.py slippage_calibration_scope, #1266/GH #1136 check_cost_stress_discriminates)",
+    # Issue #1366 (GH #1263) — Spread-Telemetrie (angewandt/gemessen/Quelle) erreicht den Study-Record
+    # ueber den Holdout (confirm.py), Eingang von check_modeled_spread_not_below_measured.
+    "oos_spread_bps_applied": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_bps_applied, #1366/GH #1263 check_modeled_spread_not_below_measured)",
+    "oos_spread_bps_measured_p50": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_bps_measured_p50, #1366/GH #1263)",
+    "oos_spread_bps_measured_p75": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_bps_measured_p75, #1366/GH #1263)",
+    "oos_spread_source": "holdout-only (confirm.py-Re-Evaluation, siehe report.py spread_source, #1366/GH #1263)",
     "oos_selection_cost_basis": "holdout-only (confirm.py-Re-Evaluation, siehe report.py selection_cost_basis, #1078/#1226 check_selection_cost_basis_contract)",
     # Issue #1023/#1172 — ENTFERNT (vormals hier als "holdout-only" allowlisted): das Feld wird
     # tatsaechlich per Sweep-Trial gestempelt (siehe Stempelstelle oben, neben den beiden
@@ -1333,7 +1345,7 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
     try:
         budget_gb = float(opt_data.get("disk_budget_gb") or 200)
         reserve_gb = float(opt_data.get("disk_reserve_gb") or 50)
-        status = disk_guard.check_budget(WORK, budget_gb=budget_gb, reserve_gb=reserve_gb)
+        status = disk_guard.budget_status(WORK, budget_gb=budget_gb, reserve_gb=reserve_gb)
         # Issue #1015/#1167 (Katalog #1170) — vorher nur bei STATUS_PRESSURE/STATUS_EXCEEDED ein
         # Event, STATUS_OK spurlos: ein Lauf, in dem das Budget nie eng wurde, und einer, in dem
         # diese Pruefung nie ausgefuehrt wurde, waren im Report ununterscheidbar. Symmetrisch (PASS
@@ -1346,7 +1358,7 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
                        f">= reserve_gb={reserve_gb}.",
             "actual": {"status": status, "budget_gb": budget_gb, "reserve_gb": reserve_gb,
                       "trial_number": trial.number} if status != disk_guard.STATUS_OK else None,
-            "detail": f"disk_guard.check_budget ⇒ {status}.",
+            "detail": f"disk_guard.budget_status ⇒ {status}.",
             "severity": "high" if status == disk_guard.STATUS_EXCEEDED else "medium",
         }, level=logging.INFO if status == disk_guard.STATUS_OK else logging.WARNING)
         if status == disk_guard.STATUS_PRESSURE:
@@ -1374,10 +1386,44 @@ def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
         log.warning("[#795] Disk-Budget-Callback fehlgeschlagen (non-fatal).", exc_info=True)
 
 
+def _coherence_violation_stats(study, opt_data: dict) -> tuple:
+    """``(max_rate, n_evaluated, n_violations, rate)`` über die ``oos_evaluated``-Trials einer Study."""
+    max_rate = (opt_data or {}).get("max_coherence_violation_rate")
+    trials = [t for t in getattr(study, "trials", None) or []
+              if getattr(t, "user_attrs", {}).get("oos_evaluated") is True]
+    n_evaluated = len(trials)
+    violations = sum(1 for t in trials if t.user_attrs.get("oos_coherence_violation") is True)
+    return max_rate, n_evaluated, violations, (violations / n_evaluated if n_evaluated else None)
+
+
 @_inv.invariant_scope("study")
-def check_study_coherence_violation_rate(study, opt_data: dict, *,
-                                         logger: logging.Logger | None = None) -> bool:
-    """Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,
+def check_study_coherence_violation_rate(study, opt_data: dict) -> "_inv.InvariantResult":
+    """Issue #1370 (GH #1267) — das reine ``InvariantResult`` (ohne Seiteneffekte) zu
+    ``enforce_study_coherence_violation_rate``: PASS ohne konfigurierte Schwelle/ohne ausgewertete Trials
+    oder bei ``rate <= max_coherence_violation_rate``."""
+    max_rate, n_evaluated, violations, rate = _coherence_violation_stats(study, opt_data)
+    passed = max_rate is None or not n_evaluated or rate <= float(max_rate)
+    return _inv.InvariantResult(
+        name="check_study_coherence_violation_rate",
+        passed=passed,
+        expected=(f"oos_coherence_violation-Rate <= max_coherence_violation_rate={max_rate}."
+                  if max_rate is not None else
+                  "kein max_coherence_violation_rate konfiguriert (Check inaktiv, Default-PASS)."),
+        actual=None if passed else {"rate": rate, "n_evaluated": n_evaluated, "n_violations": violations},
+        severity="high",
+        detail=("OK" if passed else
+                f"{violations}/{n_evaluated} Trials mit oos_coherence_violation (#756-Identitaet verletzt) "
+                f"> max_coherence_violation_rate={max_rate}."),
+    )
+
+
+def enforce_study_coherence_violation_rate(study, opt_data: dict, *,
+                                           logger: logging.Logger | None = None) -> bool:
+    """Issue #1370 (GH #1267) — umbenannt von ``check_study_coherence_violation_rate`` (``bool`` mit
+    Seiteneffekten statt ``InvariantResult``); meldet sein Urteil weiterhin unter
+    ``check_study_coherence_violation_rate`` in den Strom.
+
+    Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,
     wenn der Anteil ``oos_coherence_violation``-markierter Trials (#589/#620/#756/#771) ueber
     ``optimizer.json.max_coherence_violation_rate`` liegt.
 
@@ -1490,7 +1536,7 @@ def coherence_violation_early_abort_callback(study, trial, *, opt_data: dict | N
     if check_interval_trials <= 0 or (trial.number + 1) % check_interval_trials != 0:
         return
     try:
-        if check_study_coherence_violation_rate(study, opt_data, logger=log):
+        if enforce_study_coherence_violation_rate(study, opt_data, logger=log):
             _stop_study_safely(study, log)
     except Exception:
         log.warning("[#803] Kohaerenz-Fruehabbruch-Callback fehlgeschlagen (non-fatal).", exc_info=True)
@@ -1680,7 +1726,8 @@ def make_objective(
             trial_number=trial.number,
             seed=seed,
             n_folds=4,
-            holdout_days=45,
+            # Issue #1357 (GH #1253) — KEIN holdout_days-Argument: build_trial liest es (und das
+            # Holdout-Embargo) aus der Config, dieselbe Quelle wie confirm.py.
             copy_config=study_config_dir is None,
             study_config_dir=study_config_dir,
         )
@@ -1921,7 +1968,7 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     tournament_path_check = cfg_dir / "tournament.json"
     if tournament_path_check.exists():
         with open(tournament_path_check, "r", encoding="utf-8") as f:
-            _any_arm_unreachable = check_any_arm_reachability(json.load(f) or {})
+            _any_arm_unreachable = any_arm_reachability_violations(json.load(f) or {})
         _emit_any_arm_reachability_result(
             logging.getLogger("optimizer"), _any_arm_unreachable,
             check_name="check_any_arm_reachability", scope=strategy)
@@ -1990,12 +2037,12 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True)
-    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
-    # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
-    # build_trial uebergibt (siehe make_objective) — muessen hier identisch sein, sonst wuerde
-    # jeder Trial gegen das FALSCHE eingefrorene walk_forward laufen.
+    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4 und die
+    # Holdout-Tage aus der Config (Issue #1357: kein Literal) sind exakt die Werte, die die Objective-
+    # Closure unten pro Trial an build_trial uebergibt (siehe make_objective) — muessen hier identisch
+    # sein, sonst wuerde jeder Trial gegen das FALSCHE eingefrorene walk_forward laufen.
     study_config_dir = freeze_study_config(
-        study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
+        study_name, resolve_wf_settings(cfg_dir, n_folds=4), base_cfg=cfg_dir)
     disk_guard_cb = partial(disk_budget_callback, opt_data=opt_data)
     # Issue #803 — periodischer Fruehabbruch bei systematischer Kohaerenz-Verletzung (statt erst
     # nach dem vollen Budget zu urteilen).
@@ -3193,7 +3240,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             _tcfg_arm = json.loads(opt_path_arm.read_text("utf-8")) or {}
             # Issue #759 — n_evaluated durchreichen: eine Reachability-Aussage ohne einen einzigen
             # ausgewerteten Trial ist inhaltsleer (siehe check_any_arm_reachability_live-Docstring).
-            any_arm_live_unreachable = check_any_arm_reachability_live(
+            any_arm_live_unreachable = any_arm_reachability_live_violations(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
             any_arm_policy_decision = resolve_any_arm_policy(
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
@@ -3211,7 +3258,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             # tragen, unabhängig davon, ob tournament.json['eligible_requires_all'] die Klausel
             # mit oder ohne 'oos_'-Präfix listet (Pitfall #448): reward._normalize_clause ist die
             # EINE Stelle, die diese Form definiert.
-            mandatory_gate_live_unreachable = check_mandatory_gate_reachability_live(
+            mandatory_gate_live_unreachable = mandatory_gate_reachability_live_violations(
                 _tcfg_arm,
                 {_reward_normalize_clause("oos_min_alpha_tstat"): live_alpha_tstats},
                 n_evaluated=evaluable)
@@ -3568,6 +3615,25 @@ def _resolve_family_median_n_periods(trial: "optuna.trial.Trial") -> float | Non
     return float(statistics.median(values))
 
 
+def _stamp_selection_holdout_geometry(study, cfg_dir: Path, *, catalog_newest_ns: int | None,
+                                     n_folds: int | None = None, now: "dt.datetime | None" = None) -> dict:
+    """Issue #1357 (GH #1253) — stempelt die Selektions-/Holdout-Geometrie in ``study.user_attrs`` (siehe
+    ``trial_config.selection_holdout_geometry``) und liefert sie zurück."""
+    import datetime as dt
+
+    from automation.optimizer.trial_config import selection_holdout_geometry
+
+    with open(Path(cfg_dir) / "backtest.json", "r", encoding="utf-8") as f:
+        bt_data = json.load(f) or {}
+    geometry = selection_holdout_geometry(
+        bt_data, now=now or dt.datetime.now(dt.timezone.utc), catalog_newest_ns=catalog_newest_ns,
+        n_folds=n_folds)
+    for key in ("selection_end_utc", "holdout_start_utc", "selection_end_ns", "holdout_start_ns",
+                "holdout_embargo_days", "holdout_overlap_days"):
+        study.set_user_attr(key, geometry[key])
+    return geometry
+
+
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial,
                           catalog_newest_ns: int | None = None,
@@ -3620,7 +3686,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial_number=trial.number,
             seed=seed,
             n_folds=4,
-            holdout_days=45,
+            # Issue #1357 (GH #1253) — holdout_days/holdout_embargo_days aus der Config (build_trial).
             instruments=[symbol],
             catalog_newest_ns=catalog_newest_ns,
             catalog_span_days=catalog_span_days,
@@ -4208,7 +4274,7 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     tournament_path_check = cfg_dir / "tournament.json"
     if tournament_path_check.exists():
         with open(tournament_path_check, "r", encoding="utf-8") as f:
-            _any_arm_unreachable = check_any_arm_reachability(json.load(f) or {})
+            _any_arm_unreachable = any_arm_reachability_violations(json.load(f) or {})
         _emit_any_arm_reachability_result(
             logging.getLogger("optimizer"), _any_arm_unreachable,
             check_name="check_any_arm_reachability", scope=strategy)
@@ -4428,11 +4494,22 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # ist fuer denselben Zweck nicht besser als ein WARNING-Logeintrag in einem 6-MB-Log.
     study.set_user_attr("budget_degradation_factor", round(_degrade_factor, 4))
 
-    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
-    # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
-    # build_trial uebergibt (siehe make_symbol_objective) — muessen hier identisch sein.
+    # Issue #1357 (GH #1253) — Selektions-/Holdout-Geometrie dieser Study stempeln (dieselbe Fenster-
+    # Funktion und dieselben Settings wie build_trial/confirm.py): selection_end_utc, holdout_start_utc,
+    # holdout_overlap_days — Eingang von check_selection_holdout_disjoint (report.py) und der
+    # Deployment-Klausel ``holdout_disjoint`` (über das Proposal).
+    try:
+        _stamp_selection_holdout_geometry(study, cfg_dir, catalog_newest_ns=catalog_newest_ns, n_folds=4)
+    except Exception:
+        logging.getLogger("optimizer").warning(
+            "[#1357] Selektions-/Holdout-Geometrie nicht stempelbar — die Deployment-Klausel "
+            "holdout_disjoint bleibt fail-closed.", exc_info=True)
+
+    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4 und die
+    # Holdout-Tage aus der Config (Issue #1357: kein Literal) sind exakt die Werte, die die Objective-
+    # Closure unten pro Trial an build_trial uebergibt (siehe make_symbol_objective).
     study_config_dir = freeze_study_config(
-        study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
+        study_name, resolve_wf_settings(cfg_dir, n_folds=4), base_cfg=cfg_dir)
     objective = make_symbol_objective(
         strategy, symbol, global_best,
         run_backtest=run_backtest, build_trial=build_trial,
@@ -4484,7 +4561,7 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         # Study bereits als ueberschritten markiert, wuerde diese erneute Pruefung dasselbe
         # STUDY_ABORTED_ON_INVARIANT-Ereignis ein zweites Mal emittieren — daher uebersprungen.
         if not (getattr(study, "user_attrs", None) or {}).get("coherence_violation_rate_exceeded"):
-            check_study_coherence_violation_rate(study, opt_data)
+            enforce_study_coherence_violation_rate(study, opt_data)
     finally:
         # Issue #851 — im finally-Block (analog #833s Abbruchresilienz): auch eine vorzeitig
         # abgebrochene Study (Disk-/Wallclock-Guard, Kohaerenz-Abbruch, Exception) traegt eine

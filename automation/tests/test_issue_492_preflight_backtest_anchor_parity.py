@@ -3,6 +3,8 @@ from automation.optimizer.sweep import compute_oos_window_start_ns
 from automation.optimizer.trial_config import compute_walk_forward_window
 
 
+from automation.optimizer.trial_config import HOLDOUT_EMBARGO_DAYS_DEFAULT
+
 _GATE_CFG = {
     "walk_forward": {
         "is_window_days": 365,
@@ -38,7 +40,9 @@ def test_preflight_backtest_boundary_parity_stale_catalog():
         is_window_days=_GATE_CFG["walk_forward"]["is_window_days"],
         oos_window_days=_GATE_CFG["walk_forward"]["oos_window_days"],
         n_folds=_GATE_CFG["walk_forward"]["splits"],
-        catalog_newest_ns=stale_catalog_ns
+        catalog_newest_ns=stale_catalog_ns,
+        # Issue #1357 — build_trial zieht das Holdout-Embargo ab (Default 3 ohne Config-Key).
+        holdout_embargo_days=HOLDOUT_EMBARGO_DAYS_DEFAULT,
     )
 
     trial_start_ns = int(trial_start.timestamp() * 1_000_000_000)
@@ -72,7 +76,9 @@ def test_preflight_backtest_boundary_parity_fresh_catalog():
         is_window_days=_GATE_CFG["walk_forward"]["is_window_days"],
         oos_window_days=_GATE_CFG["walk_forward"]["oos_window_days"],
         n_folds=_GATE_CFG["walk_forward"]["splits"],
-        catalog_newest_ns=fresh_catalog_ns
+        catalog_newest_ns=fresh_catalog_ns,
+        # Issue #1357 — build_trial zieht das Holdout-Embargo ab (Default 3 ohne Config-Key).
+        holdout_embargo_days=HOLDOUT_EMBARGO_DAYS_DEFAULT,
     )
 
     trial_start_ns = int(trial_start.timestamp() * 1_000_000_000)

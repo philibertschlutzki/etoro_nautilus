@@ -38,7 +38,23 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 from automation.utils import _fallback_precisions
+from automation.disaster_stop import DISASTER_STOP_MODE_SIMULATED, resolve_disaster_stop_params
+# Issue #1332 (GH #1226) / #1356 (GH #1252) — Handelszeit-Fenster: kanonische Implementierung in
+# ``automation.session_windows`` (Börsen-Lokalzeit, frei von nautilus_trader/pandas). Re-Export von
+# ``is_within_session_hours``/``interval_overlaps_session_hours`` hält Bestandstests funktionsfähig.
+from automation.session_windows import (
+    SessionMask,
+    SessionWindow,
+    interval_overlaps_session,
+    interval_overlaps_session_hours,
+    is_within_session_hours,
+    resolve_session_window,
+    session_window_to_param,
+    snap_window_to_grid,
+)
 from automation.catalog_paths import (
+    EngineCatalogViewError,
+    engine_catalog_view,
     resolve_quote_tick_files, resolve_quote_tick_columns, decode_fsb16_price,
 )
 import importlib
@@ -171,7 +187,12 @@ def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> boo
     if not inst_dir.exists():
         return False
 
-    parquet_files = sorted(inst_dir.rglob("*.parquet"))
+    # Issue #1354 (GH #1251) — NUR die Dateien, die die Engine liest (``resolve_quote_tick_files``,
+    # Auflösung ``OneHour``), nicht ``rglob("*.parquet")`` über ALLE Unterordner: ein Katalog mit
+    # ``OneHour/``/``OneDay/``/``RealTick/`` trägt je Auflösung bewusst abweichende Metadaten
+    # (``catalog_interval``, ``bar_interval_ns``-Semantik); das Angleichen auf die zuletzt
+    # sortierte Datei überschrieb die deklarierte Auflösung der anderen Segmente (Pitfall #483).
+    parquet_files = list(resolve_quote_tick_files(catalog_path, instrument_id_str, interval="OneHour"))
     if len(parquet_files) <= 1:
         return False
 
@@ -1209,7 +1230,8 @@ def resolve_spread_bps(inst_id_str: str,
                        spread_bps_by_asset_class: dict | None,
                        spread_bps_by_symbol: dict | None,
                        asset_class_key: str = "DEFAULT",
-                       *, tick_floor_bps: float = 0.0) -> float:
+                       *, tick_floor_bps: float = 0.0,
+                       measured_spread_bps: float | None = None) -> float:
     """Issue #566 — Single Source of Truth für die Spread-Auflösung (bps).
 
     Auflösungsreihenfolge (strikt): Symbol-Override (``spread_bps_by_symbol[inst_id]``) →
@@ -1229,18 +1251,30 @@ def resolve_spread_bps(inst_id_str: str,
     jeden Aufrufer, der ihn nicht setzt) ist eine physikalische UNTERGRENZE
     (``tick_floor_spread_bps``): das Ergebnis ist NIE kleiner als dieser Wert, unabhängig davon,
     ob die Config-Konstante (Symbol-Override oder Asset-Class) darunter liegt. ``max(...)`` ist
-    Absicht — bei Kostenschätzung ist die konservativere (höhere) Zahl die sicherere."""
+    Absicht — bei Kostenschätzung ist die konservativere (höhere) Zahl die sicherere.
+
+    Issue #1366 (GH #1263) — ``measured_spread_bps`` (Median des gemessenen eToro-Spreads aus den Echt-Ticks,
+    ``calibration.calibrate_spread_from_realtick``) ist eine weitere Untergrenze: ``max(Config, gemessen)``,
+    sobald kalibriert. ``None`` ⇒ bit-identisch."""
+    floor = max(tick_floor_bps, float(measured_spread_bps) if measured_spread_bps is not None else 0.0)
     if spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol:
-        return max(float(spread_bps_by_symbol[inst_id_str]), tick_floor_bps)
+        return max(float(spread_bps_by_symbol[inst_id_str]), floor)
     if not spread_bps_by_asset_class:
-        return tick_floor_bps
+        return floor
     if asset_class_key not in spread_bps_by_asset_class:
         raise ValueError(
             f"resolve_spread_bps: asset_class_key='{asset_class_key}' ({inst_id_str}) ist nicht in "
             f"spread_bps_by_asset_class ({sorted(spread_bps_by_asset_class)}) — stiller Rückfall auf "
             f"DEFAULT ist seit Issue #898 verboten (Konfigurationsfehler, kein unbekanntes Symbol)."
         )
-    return max(float(spread_bps_by_asset_class[asset_class_key]), tick_floor_bps)
+    return max(float(spread_bps_by_asset_class[asset_class_key]), floor)
+
+
+def _measured_spread_p50(inst_id_str: str, calibrated_spread_by_symbol: dict | None) -> float | None:
+    """Issue #1366 — gemessener Median-Spread (bps) des Symbols aus dem Kalibrierungs-Cache (oder ``None``)."""
+    entry = (calibrated_spread_by_symbol or {}).get(inst_id_str) or {}
+    value = entry.get("p50")
+    return float(value) if value is not None else None
 
 
 def resolve_atr_floor_bps(inst_id_str: str,
@@ -1538,63 +1572,21 @@ def cost_coupled_atr_floor_bps(base_floor_bps: float, *, atr_trailing_multiplier
 # unterschreitet 3x Round-Trip-Kosten) unabhängig von Fix Punkt 2/3.
 
 
-def resolve_opening_range_session_open_hour(inst_id_str: str,
-                                            session_open_hour_by_asset_class: dict | None,
-                                            asset_class_key: str = "DEFAULT") -> int:
-    """Issue #922 — asset-class-aufgelöste UTC-Stunde des Handelstag-Beginns für
-    ``OpeningRangeBreakoutStrategy.opening_range_session_open_hour`` (nur wirksam unter
-    ``opening_range_session_anchor='session_open_hour'``), Single Source of Truth analog
-    ``resolve_spread_bps``/``resolve_atr_floor_bps``.
-
-    Fehlt ``session_open_hour_by_asset_class`` ⇒ 13 (der Dataclass-Default, ≈ NYSE-Open,
-    rückwärtskompatibel). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch in der Map
-    vorhanden ist, ist — wie bei ``resolve_spread_bps``/``resolve_atr_floor_bps`` — ein
-    KONFIGURATIONSFEHLER und wirft, statt still zurückzufallen."""
-    if not session_open_hour_by_asset_class:
-        return 13
-    if asset_class_key not in session_open_hour_by_asset_class:
-        raise ValueError(
-            f"resolve_opening_range_session_open_hour: asset_class_key='{asset_class_key}' "
-            f"({inst_id_str}) ist nicht in opening_range_session_open_hour_by_asset_class "
-            f"({sorted(session_open_hour_by_asset_class)}) — Issue #922, analog #898."
-        )
-    return int(session_open_hour_by_asset_class[asset_class_key])
-
-
 def resolve_session_hours_by_asset_class(
     asset_class_key: str, session_hours_by_asset_class: dict | None,
-) -> tuple[str, str] | None:
-    """Issue #1260 (GH #1130) Fix Punkt 1 — löst je Asset-Class das UTC-Handelszeit-Fenster auf
-    (``backtest.json['session_hours_by_asset_class']``, Single Source of Truth analog
-    ``resolve_opening_range_session_open_hour``). Rückgabe ``(open_utc, close_utc)`` (Strings
-    ``'HH:MM'``) oder ``None`` — ``None`` bedeutet "kein Fenster", entweder weil der Key fehlt
+) -> SessionWindow | None:
+    """Issue #1260 (GH #1130) Fix Punkt 1 / Issue #1356 (GH #1252) — löst je Asset-Class das Handelszeit-
+    Fenster auf (``backtest.json['session_hours_by_asset_class']``). Rückgabe ``SessionWindow`` in BÖRSEN-
+    LOKALZEIT (``{"tz": "America/New_York", "open": "09:30", "close": "16:00"}``; die alte UTC-Form
+    ``{open_utc, close_utc}`` wird mit WARNING ``SESSION_WINDOW_UTC_LEGACY`` als ``tz='UTC'`` gelesen, nie
+    still umgedeutet) oder ``None`` — ``None`` bedeutet "kein Fenster", entweder weil der Key fehlt
     (rückwärtskompatibel: kein Fenster konfiguriert ⇒ keine Maske) oder weil der Asset-Class-Eintrag
-    explizit ``null`` ist (ein echter 24/7-Markt wie FOREX/CRYPTO — die Abwesenheit einer Maske ist
-    hier eine bewusste Aussage, kein fehlender Wert).
+    explizit ``null`` ist (ein echter 24/7-Markt wie FOREX/CRYPTO — die Abwesenheit einer Maske ist hier
+    eine bewusste Aussage, kein fehlender Wert).
 
-    BEWUSSTER SCOPE (siehe ``backtest.json``-Schema-Dokumentation für ``session_hours_by_asset_
-    class``): diese Funktion ist eine reine, unit-testbare Konfigurationsauflösung — sie wird
-    aktuell an KEINER Call-Site aufgerufen, die den Tick-Lade-/Bar-Aufbau-Pfad tatsächlich
-    beeinflusst (``load_ticks_from_catalog``/``engine.add_data(ticks)`` bleiben unverändert). Die
-    Verdrahtung braucht einen echten Marktdaten-Katalog zur End-to-End-Verifikation, die in dieser
-    Sandbox nicht möglich ist."""
-    if not session_hours_by_asset_class:
-        return None
-    entry = session_hours_by_asset_class.get(asset_class_key)
-    if entry is None:
-        return None
-    return entry["open_utc"], entry["close_utc"]
-
-
-# Issue #1332 (GH #1226) — kanonische Implementierung nach ``automation.session_windows``
-# verschoben (Single Source of Truth, importierbar auch von ``optimizer/sweep.py`` ohne dessen
-# schwere ``nautilus_trader``-Importkette). Re-Export hier hält jede bestehende Call-Site
-# (``is_within_session_hours(...)`` innerhalb dieses Moduls) UND jeden Test, der
-# ``backtest_runner.is_within_session_hours`` referenziert, unverändert funktionsfähig.
-from automation.session_windows import (  # noqa: E402
-    interval_overlaps_session_hours,
-    is_within_session_hours,
-)
+    Single Source: ``session_windows.resolve_session_window`` — dieselbe Funktion nutzen die Sweep-Preflights
+    (``optimizer.sweep``) und der Live-Bot (Issue #1361), nie eine zweite Auflösung (Pitfall #435)."""
+    return resolve_session_window(asset_class_key, session_hours_by_asset_class)
 
 
 def _median_tick_delta_t_s(ticks: list) -> float | None:
@@ -1614,26 +1606,12 @@ def _median_tick_delta_t_s(ticks: list) -> float | None:
 def _snap_session_window_to_tick_grid(
     open_utc: str, close_utc: str, median_delta_t_s: float | None,
 ) -> tuple[str, str]:
-    """Issue #1300 (GH #1177, P0) Fix Punkt 1 — snapt ``open_utc`` ABWAERTS und ``close_utc``
-    AUFWAERTS auf das naechste Vielfache des beobachteten Tick-Rasters (``median_delta_t_s``, auf
-    volle Minuten gerundet, Untergrenze 1). Root-Cause: eine Fenstergrenze darf nie feiner
-    aufgeloest sein als das Raster der Daten, auf die sie angewandt wird (Pitfall #463 in
-    AGENTS.md) — ``13:30`` gegen ein Stundenraster verwirft sonst systematisch die erste
-    Session-Bar (13:00-Tick faellt unter ``open_minutes=810``), ohne dass irgendetwas fehlschlaegt.
-
-    ``median_delta_t_s`` fehlend/<=0 (kein Raster ermittelbar) ⇒ ``open_utc``/``close_utc``
-    UNVERAENDERT (fail-open, bit-identisches Alt-Verhalten)."""
-    if not median_delta_t_s or median_delta_t_s <= 0:
-        return open_utc, close_utc
-    grid_minutes = max(1, round(median_delta_t_s / 60.0))
-    open_h, open_m = (int(x) for x in open_utc.split(":"))
-    close_h, close_m = (int(x) for x in close_utc.split(":"))
-    open_total = open_h * 60 + open_m
-    close_total = close_h * 60 + close_m
-    snapped_open_total = (open_total // grid_minutes) * grid_minutes
-    snapped_close_total = min(24 * 60, -(-close_total // grid_minutes) * grid_minutes)
-    return (f"{snapped_open_total // 60:02d}:{snapped_open_total % 60:02d}",
-            f"{snapped_close_total // 60:02d}:{snapped_close_total % 60:02d}")
+    """Issue #1300 (GH #1177, P0) Fix Punkt 1 — Alt-API (``HH:MM``-UTC-Strings) über
+    ``session_windows.snap_window_to_grid`` (die kanonische Implementierung, seit #1356 in BÖRSEN-
+    LOKALZEIT; hier ein ``tz='UTC'``-Fenster ⇒ bit-identisches Alt-Verhalten). ``open`` snapt ABWAERTS,
+    ``close`` AUFWAERTS auf das Tick-Raster (Pitfall #463); kein Raster ⇒ unveraendert."""
+    snapped = snap_window_to_grid(SessionWindow("UTC", open_utc, close_utc), median_delta_t_s)
+    return snapped.open, snapped.close
 
 
 def _filter_ticks_to_session_hours(
@@ -1655,6 +1633,11 @@ def _filter_ticks_to_session_hours(
     Docstring), und ein harter Wächter wirft ``SessionFilterEmptyError`` STATT eines stillen ``[]``,
     wenn der Filter die GESAMTE (nicht-leere) Eingabemenge verwirft.
 
+    Issue #1356 (GH #1252, P0) — das Fenster ist ein ``SessionWindow`` in BÖRSEN-LOKALZEIT: der Filter
+    behält im Sommer (EDT) die Kerzen 13:00-19:00 UTC, im Winter (EST) 14:00-20:00 UTC (je 7), statt eines
+    fixen UTC-Fensters, das nach dem DST-Ende die 13:00-Pre-Market-Kerze aufnahm und die Schlussstunde
+    verwarf. Feiertage (``config/exchange_holidays.json``) sind Nicht-Handelstage.
+
     ``None`` (kein Fenster konfiguriert ODER ``asset_class_key`` fehlt/``None``, z. B. FOREX/CRYPTO,
     siehe ``resolve_session_hours_by_asset_class``-Docstring) ⇒ ``ticks`` UNVERAENDERT (bit-
     identisches Alt-Verhalten, dieselbe Fail-open-Konvention)."""
@@ -1663,46 +1646,45 @@ def _filter_ticks_to_session_hours(
     window = resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
     if window is None:
         return ticks
-    open_utc, close_utc = window
     n_before = len(ticks)
     median_delta_t_s = _median_tick_delta_t_s(ticks)
-    snapped_open_utc, snapped_close_utc = _snap_session_window_to_tick_grid(
-        open_utc, close_utc, median_delta_t_s)
+    snapped = snap_window_to_grid(window, median_delta_t_s)
     if out is not None:
         # Issue #1298 (GH #1175) — dieselbe Telemetrie-Konvention wie load_ticks_from_catalogs
-        # eigenes out-Dict: session_window_snapped erscheint in derselben Struktur.
-        out["session_window_snapped"] = (snapped_open_utc, snapped_close_utc)
-    filtered = [
-        t for t in ticks
-        if is_within_session_hours(int(t.ts_event), snapped_open_utc, snapped_close_utc)
-    ]
+        # eigenes out-Dict: session_window_snapped erscheint in derselben Struktur. Issue #1356: die
+        # Uhrzeiten sind BÖRSEN-LOKALZEIT — ``session_window_tz`` nennt die Zeitzone.
+        out["session_window_snapped"] = (snapped.open, snapped.close)
+        out["session_window_tz"] = snapped.tz
+    # Issue #1356 (GH #1252) — der Handelstag/Tagesbeginn ist LOKAL (Börsenzeit, Feiertage = Nicht-
+    # Handelstage); ``SessionMask`` cached die Tagesgrenzen, ein Tick kostet zwei Integer-Vergleiche.
+    mask = SessionMask(snapped)
+    filtered = [t for t in ticks if mask(int(t.ts_event))]
     # Issue #1300 (GH #1177, P0) Fix Punkt 2 — harter Wächter: ein leeres Ergebnis aus einer
     # nicht-leeren Eingabe ist von "kein Fenster konfiguriert" nur hier unterscheidbar; der
     # Aufrufer (backtest_runner.load_ticks_from_catalog) darf diesen Unterschied nicht verlieren.
     #
-    # Bewusst NUR, wenn mindestens ein Eingabe-Tick ueberhaupt auf einen HANDELSTAG (Mo-Fr) faellt:
-    # ``is_within_session_hours`` schliesst Wochenend-Ticks UNBEDINGT aus (``weekdays_only=True``),
-    # unabhaengig vom (gesnappten) Tagesfenster — eine Eingabemenge, die AUSSCHLIESSLICH aus
-    # Wochenend-Ticks besteht (z. B. ein schmales Abfragefenster, das zufaellig nur ein Wochenende
-    # ueberdeckt), liefert deshalb IMMER ein leeres Ergebnis, VOELLIG unabhaengig davon, ob das
-    # Tagesfenster/Snapping korrekt ist — das ist kein degeneriertes Fenster, sondern die korrekte,
-    # erwartete Wochenend-Ausschluss-Antwort (Root-Cause einer sonst zu breiten Eskalation: der
-    # urspruengliche Waechter warf hier faelschlich, obwohl kein einziger Handelstag-Tick je eine
-    # Chance auf Aufnahme hatte).
+    # Bewusst NUR, wenn die Zeitspanne der Eingabe ueberhaupt eine Session eines HANDELSTAGS schneidet
+    # (Issue #1356: lokale Handelstage, Feiertage ausgenommen): eine Eingabemenge, die AUSSCHLIESSLICH
+    # ausserhalb jeder Session liegt (z. B. ein schmales Abfragefenster ueber ein Wochenende oder einen
+    # Feiertag), liefert IMMER ein leeres Ergebnis, VOELLIG unabhaengig davon, ob das Tagesfenster/
+    # Snapping korrekt ist — das ist kein degeneriertes Fenster, sondern die korrekte, erwartete
+    # Ausschluss-Antwort (Root-Cause einer sonst zu breiten Eskalation: der urspruengliche Waechter warf
+    # hier faelschlich, obwohl kein einziger Tick je eine Chance auf Aufnahme hatte). Vor #1356 war das
+    # Kriterium "ein Tick an einem UTC-Wochentag" — mit lokalen Handelstagen gehoerten die UTC-Samstag-
+    # Ticks 00:00-04:59 (Freitagabend ET) sonst zu einem Handelstag, ohne je in einer Session zu liegen.
     from datetime import datetime, timezone
-    _any_weekday_tick = any(
-        datetime.fromtimestamp(int(t.ts_event) / 1_000_000_000, tz=timezone.utc).weekday() < 5
-        for t in ticks
-    )
-    if not filtered and n_before > 0 and _any_weekday_tick:
+    _ts_values = [int(t.ts_event) for t in ticks]
+    _input_spans_a_session = bool(_ts_values) and interval_overlaps_session(
+        min(_ts_values), max(_ts_values) + 1, snapped)
+    if not filtered and n_before > 0 and _input_spans_a_session:
         histogram: dict[int, int] = {}
         for t in ticks:
-            hour = datetime.fromtimestamp(int(t.ts_event) / 1_000_000_000, tz=timezone.utc).hour
+            hour = datetime.fromtimestamp(int(t.ts_event) // 1_000_000_000, tz=timezone.utc).hour
             histogram[hour] = histogram.get(hour, 0) + 1
         raise SessionFilterEmptyError(
             f"Session-Filter verwarf alle {n_before} Ticks. "
-            f"session_window=({open_utc}, {close_utc}) "
-            f"session_window_snapped=({snapped_open_utc}, {snapped_close_utc}) "
+            f"session_window=({window.open}, {window.close}) tz={window.tz} "
+            f"session_window_snapped=({snapped.open}, {snapped.close}) "
             f"n_before={n_before} "
             f"time_of_day_histogram_utc_hour={dict(sorted(histogram.items()))}"
         )
@@ -1720,8 +1702,9 @@ def _filter_ticks_to_session_hours(
                         "n_before": n_before, "n_after": len(filtered),
                         "discard_fraction": round(discard_fraction, 4),
                         "expected_discard_fraction_equity": round(1.0 - 7.0 / 24.0 * 5.0 / 7.0, 4),
-                        "session_window": [open_utc, close_utc],
-                        "session_window_snapped": [snapped_open_utc, snapped_close_utc],
+                        "session_window": [window.open, window.close],
+                        "session_window_snapped": [snapped.open, snapped.close],
+                        "session_window_tz": window.tz,
                     }, level=_logging_session_filter.WARNING)
             except Exception:
                 pass
@@ -1752,10 +1735,10 @@ def load_ticks_from_catalog(
         if out is not None:
             out["n_ticks_raw"] = len(ticks) if ticks else 0
             out["asset_class_key"] = asset_class_key
-            out["session_window"] = (
-                resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
-                if asset_class_key else None
-            )
+            _sw = (resolve_session_hours_by_asset_class(asset_class_key, session_hours_by_asset_class)
+                   if asset_class_key else None)
+            out["session_window"] = (_sw.open, _sw.close) if _sw is not None else None
+            out["session_window_tz"] = _sw.tz if _sw is not None else None
         if not ticks:
             if out is not None:
                 out["n_ticks_after_session_filter"] = 0
@@ -2820,8 +2803,13 @@ def _read_default_round_trip_cost_bps(inst_id_str: str | None = None) -> float:
                 has_symbol_override = bool(inst_id_str in spread_by_symbol)
                 if spread_by_asset_class and not has_symbol_override:
                     asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
+                # Issue #1366 — derselbe gemessene Spread-Floor wie im Worker (Kalibrierungs-Cache).
+                from automation.optimizer.calibration import read_calibrated_spread_cache
+                from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT
                 spread_resolved = resolve_spread_bps(
-                    inst_id_str, spread_by_asset_class, spread_by_symbol, asset_class_key)
+                    inst_id_str, spread_by_asset_class, spread_by_symbol, asset_class_key,
+                    measured_spread_bps=_measured_spread_p50(
+                        inst_id_str, read_calibrated_spread_cache(PERSISTENT_CACHE_ROOT)))
             else:
                 spread_resolved = float(spread_by_asset_class.get("DEFAULT", 4.0))
             val = commission_bps + spread_resolved
@@ -3444,9 +3432,9 @@ def _get_annualization_factor_with_source(mtm_series=None, *, symbol: str | None
     return 1.0, "neutral_fallback"
 
 # Issue #1011/#1163 (Katalog #1170, P1) — Referenz-Session-Fenster fuer ``session_coverage_
-# fraction``: ``backtest.json``'s ``opening_range_session_open_hour_by_asset_class`` traegt
-# EQUITY/COMMODITY/DEFAULT durchgehend 13 (UTC, NYSE-Open-Naeherung, #922) — dieser Wert wird HIER
-# als fixer, dokumentierter Kompromiss verwendet, statt die Asset-Klasse (nicht Teil von
+# fraction``: 13 UTC (NYSE-Open-Naeherung der frueheren, mit Issue #1356 entfallenen Tabelle
+# ``opening_range_session_open_hour_by_asset_class``; das 8-Stunden-Fenster 13-21 UTC umfasst die
+# RTH in EDT UND EST) — dieser Wert wird HIER als fixer, dokumentierter Kompromiss verwendet, statt die Asset-Klasse (nicht Teil von
 # ``_calculate_stats``'s Signatur, keine Aenderung an einer derart zentral verwendeten Funktion
 # fuer eine reine Zusatz-Telemetrie) durch die volle Aufrufkette zu fädeln. Ein konventionelles
 # 8-Stunden-Fenster (grosszuegiger als die reale NYSE-Session ≈ 6,5h) haelt die Metrik als GROBE
@@ -4934,7 +4922,13 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     # richtige Serie.
     f_realized_values: list[float] = []
     f_realized_peak_values: list[float] = []
+    # Issue #1362 (GH #1258) Fix Punkt 3 — die sizing-invariante Skala des Live-Verteilungs-
+    # Ausloesers B: Netto-Rendite je Round-Trip in bps auf das Positions-Notional (``pnl_bps``,
+    # siehe _finalize_round_trip), UNBEDINGT ueber ALLE Round-Trips (auch Gewinne und Null).
+    trade_return_bps: list[float] = []
     for m in meta_list or []:
+        if m.get("pnl_bps") is not None:
+            trade_return_bps.append(float(m["pnl_bps"]))
         # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
         # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
         # damit die Summe des Histogramms exakt der Round-Trip-Zahl der Ebene entspricht.
@@ -5022,6 +5016,13 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     _rt_notionals_sorted = sorted(rt_notionals)
     return {
         "exit_reason_histogram": histogram,
+        # Issue #1362 — Mittel/Standardabweichung (Stichprobe, ddof=1)/Anzahl der Round-Trip-Renditen
+        # (bps auf das Notional) DIESER Ebene; Rohmaterial der Whitelist-Felder
+        # ``holdout_trade_return_bps_mean/std/n`` (Live-Verteilungs-Auslöser B, ``live_risk``).
+        "trade_return_bps_mean": statistics.mean(trade_return_bps) if trade_return_bps else None,
+        "trade_return_bps_std": (
+            statistics.stdev(trade_return_bps) if len(trade_return_bps) >= 2 else None),
+        "trade_return_bps_n": len(trade_return_bps),
         "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
         # Issue #1024/#1173 (Katalog #866-2, Pitfall #423) — robustes Gegenstueck zu
         # gross_loss_mean_bps (ALLE Verlust-Round-Trips, nicht nur TRAILING_STOP), Nenner fuer
@@ -5559,7 +5560,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day_long: float = 0.0, financing_bps_per_day_short: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class") -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day_long: float = 0.0, financing_bps_per_day_short: float = 0.0, slippage_bps: float = 0.0, slippage_bps_p50: float = 0.0, slippage_calibration_scope: str = "asset_class", spread_telemetry: dict | None = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -6533,6 +6534,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Study von der feineren, diskriminierenden Kalibrierung profitiert oder auf den
             # Asset-Class-Fallback zurueckfiel.
             _level_metrics["slippage_calibration_scope"] = slippage_calibration_scope
+            # Issue #1366 (GH #1263) — angewandter Spread, gemessene Referenz (Echt-Ticks) und Quelle;
+            # Rohmaterial fuer invariants.check_modeled_spread_not_below_measured.
+            for _k, _v in (spread_telemetry or {}).items():
+                _level_metrics[_k] = _v
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -7395,49 +7400,23 @@ def print_tournament_table(
 # Worker-Prozess
 # ---------------------------------------------------------------------------
 
-def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str) -> str | None:
-    """
-    Reads a Parquet file for an instrument, normalizes size_precision > 0 else 8,
-    and returns a path to a temporary catalog directory if modifications were needed.
-    """
-    original_path = Path(original_catalog_path) / "data" / "quote_tick" / instrument_id
-    if not original_path.exists():
-        return None
-
-    parquet_files = list(original_path.glob("*.parquet"))
-    if not parquet_files:
-        return None
-
-    first_file = parquet_files[0]
-    table = pq.read_table(str(first_file))
-    meta = table.schema.metadata or {}
-
-    # Extract existing precision from bytes
+def _normalize_view_size_precision(view, instrument_id: str) -> bool:
+    """Issue #1354 (GH #1251) Fix Punkt 2 — normalisiert ``size_precision`` (> 0, sonst Fallback) der
+    ENGINE-SICHT in place. Schreibt AUSSCHLIESSLICH in die Sicht (``EngineCatalogView.
+    replace_data_file`` löst vorher den Hardlink, sonst würde das Original mitverändert), nie in den
+    Originalkatalog. ``True``, wenn die Datei neu geschrieben wurde."""
+    data_file = view.data_file
+    table = pq.read_table(str(data_file))
+    meta = dict(table.schema.metadata or {})
     val = meta.get(b"size_precision", b"0")
     sp_parquet = int(val.decode("utf-8") if isinstance(val, bytes) else val)
-
-    # Apply the exact same normalization logic
     normalized_sp = _normalize_size_precision(sp_parquet, instrument_id)
-
-    # If it matches, no I/O needed; return None
     if normalized_sp == sp_parquet:
-        return None
-
-    # Inject the normalized precision back into the schema
+        return False
     meta[b"size_precision"] = str(normalized_sp).encode("utf-8")
-
-    # Write to a temporary catalog directory
-    temp_catalog = tempfile.mkdtemp(prefix="nautilus_temp_catalog_")
-    target_path = Path(temp_catalog) / "data" / "quote_tick" / instrument_id
-    target_path.mkdir(parents=True, exist_ok=True)
-
-    for p_file in parquet_files:
-        t = pq.read_table(str(p_file))
-        t = t.replace_schema_metadata(meta)
-        pq.write_table(t, str(target_path / p_file.name))
-
-    return temp_catalog
-
+    patched = table.replace_schema_metadata(meta)
+    view.replace_data_file(lambda target: pq.write_table(patched, str(target), compression="snappy"))
+    return True
 
 
 def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float = 100000.0,
@@ -7510,7 +7489,6 @@ def run_single_backtest_worker(
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
-    opening_range_session_open_hour_by_asset_class: dict | None = None,
     # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) — asset-class-aufgelöste
     # Finanzierungs-/Slippage-Kostensätze (resolve_financing_bps_per_day/resolve_slippage_bps),
     # dieselbe EINMAL-im-Elternprozess-geladen-Konvention wie atr_floor_bps_by_asset_class oben.
@@ -7533,6 +7511,10 @@ def run_single_backtest_worker(
     # RTH-Fenster (resolve_session_hours_by_asset_class/is_within_session_hours, #1260/GH #1130),
     # dieselbe EINMAL-im-Elternprozess-geladen-Konvention wie atr_floor_bps_by_asset_class oben.
     session_hours_by_asset_class: dict | None = None,
+    # Issue #1366 (GH #1263) — gemessener eToro-Spread je Symbol (``calibrated_spread.json``,
+    # ``calibration.calibrate_spread_from_realtick``), im Elternprozess EINMAL geladen; der angewandte Spread
+    # ist ``max(Config, gemessener Median)``.
+    calibrated_spread_by_symbol: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -7559,7 +7541,7 @@ def run_single_backtest_worker(
 
     wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
-    temp_catalog_dir = None
+    engine_view = None
     # Issue #1298 (GH #1175, P0) Fix Punkt 2 — VOR beiden try-Bloecken deklariert: jeder
     # Fehlerpfad (auch einer VOR dem load_ticks_from_catalog-Aufruf) muss dieses Dict referenzieren
     # koennen, ohne einen NameError zu riskieren. Bleibt {} (kein Zaehler gestempelt), solange der
@@ -7568,8 +7550,24 @@ def run_single_backtest_worker(
     try:
         # --- Ticks laden (mit Schema Injection falls nötig) ---
         try:
-            temp_catalog_dir = _get_normalized_catalog_path(catalog_path, inst_id_str)
-            effective_catalog_path = temp_catalog_dir if temp_catalog_dir else catalog_path
+            # Issue #1354 (GH #1251, P0) — die Engine liest AUSSCHLIESSLICH die Sicht (die Parquet-Datei
+            # direkt unter ``quote_tick/<symbol>/`` als Link auf die OneHour-Datei, catalog_paths.
+            # engine_catalog_view): NautilusTraders Katalog identifiziert Instrumente über den
+            # Elternordner und lädt aus dem ``<symbol>/OneHour/``-Layout 0 Ticks. Kein ``ParquetDataCatalog`` mehr auf
+            # dem Original-``catalog_path`` für Quote-Ticks; Precision-Normalisierung schreibt in die
+            # Sicht, nie ins Original.
+            try:
+                engine_view = engine_catalog_view(catalog_path, inst_id_str)
+            except EngineCatalogViewError as exc:
+                # Keine Quote-Tick-Datei für das Symbol (weder ``OneHour/`` noch flach): es gibt nichts
+                # zu verlinken. Fail-open wie vor #1354 — der Katalog auf ``catalog_path`` liefert 0
+                # Ticks, und der benannte "keine Ticks"-Pfad unten entscheidet (kein generisches
+                # "tick_load_failed" für einen fehlenden Datenbestand).
+                wlog(f"   ℹ️  Keine Engine-Sicht für {inst_id_str}: {exc}")
+                effective_catalog_path = str(catalog_path)
+            else:
+                _normalize_view_size_precision(engine_view, inst_id_str)
+                effective_catalog_path = str(engine_view.root)
 
             catalog = ParquetDataCatalog(effective_catalog_path)
 
@@ -7582,7 +7580,7 @@ def run_single_backtest_worker(
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
             # Issue #924/#922/#987 (Katalog #986) — die Asset-Class wird auch dann aufgelöst, wenn
-            # NUR atr_floor_bps_by_asset_class/opening_range_session_open_hour_by_asset_class/
+            # NUR atr_floor_bps_by_asset_class/session_hours_by_asset_class/
             # overnight_financing_bps_per_day_by_asset_class/slippage_bps_by_asset_class
             # konfiguriert ist (ein Spread-Symbol-Override allein entbindet diese Auflösungen
             # nicht — dafür gibt es keinen Symbol-Override).
@@ -7602,7 +7600,7 @@ def run_single_backtest_worker(
             # konfiguriert ist (inkl. der zuvor hier fehlenden ``slippage_bps_p50_by_asset_class``,
             # #1055/#1204 — dieselbe Luecke, eine Instanz mehr).
             if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class
-                    or opening_range_session_open_hour_by_asset_class
+                    or session_hours_by_asset_class
                     or overnight_financing_bps_per_day_by_asset_class
                     or slippage_bps_by_asset_class or slippage_bps_p50_by_asset_class):
                 asset_class_key = _resolve_asset_class_for_symbol(
@@ -7622,9 +7620,17 @@ def run_single_backtest_worker(
                 _tick_floor_bps = tick_floor_spread_bps(
                     _median_price_sample, 10.0 ** -_price_precision)
 
-            spread_bps = resolve_spread_bps(
+            _spread_bps_config = resolve_spread_bps(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key,
                 tick_floor_bps=_tick_floor_bps)
+            # Issue #1366 (GH #1263) — gemessener Spread als weitere Untergrenze (max(Config, Median)).
+            _measured_spread = (calibrated_spread_by_symbol or {}).get(inst_id_str) or {}
+            spread_bps = resolve_spread_bps(
+                inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key,
+                tick_floor_bps=_tick_floor_bps,
+                measured_spread_bps=_measured_spread_p50(inst_id_str, calibrated_spread_by_symbol))
+            _spread_source = ("realtick" if spread_bps > _spread_bps_config + 1e-12
+                              else ("symbol_override" if has_symbol_override else "config"))
             atr_floor_bps_resolved = resolve_atr_floor_bps(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
             # Issue #987/#1141 (Katalog #986) — dieselbe Asset-Class-Auflösung wie oben, fail-open
@@ -7679,8 +7685,10 @@ def run_single_backtest_worker(
                 atr_trailing_multiplier=(strat.get("params") or {}).get("atr_trailing_multiplier"),
                 round_trip_cost_bps=float(spread_bps) + float(commission_bps),
                 min_stop_to_cost_ratio=float(min_stop_to_cost_ratio))
-            opening_range_session_open_hour_resolved = resolve_opening_range_session_open_hour(
-                inst_id_str, opening_range_session_open_hour_by_asset_class, asset_class_key)
+            # Issue #1356 (GH #1252) — das Session-Fenster (Börsen-Lokalzeit) dieser Asset-Class: Quelle
+            # des Tick-Filters UND (als Strategie-Config-Feld) des Opening-Range-Ankers.
+            session_window_resolved = resolve_session_hours_by_asset_class(
+                asset_class_key, session_hours_by_asset_class)
 
             if spread_bps > 0.0:
                 src = "Symbol-Override" if has_symbol_override else f"Asset-Class {asset_class_key}"
@@ -7703,6 +7711,11 @@ def run_single_backtest_worker(
                 "source": _cost_source,
                 "tick_floor_bps": round(_tick_floor_bps, 4),
                 "atr_floor_bps": atr_floor_bps_resolved,
+                # Issue #1366 (GH #1263) — Herkunft und gemessene Referenz des angewandten Spreads.
+                "spread_source": _spread_source,
+                "spread_bps_config": _spread_bps_config,
+                "spread_bps_measured_p50": _measured_spread.get("p50"),
+                "spread_bps_measured_p75": _measured_spread.get("p75"),
             })
 
             # Issue #1298 (GH #1175, P0) Fix Punkt 2 — Tick-/Fenster-Zähler dieses Aufrufs, ins
@@ -7866,11 +7879,17 @@ def run_single_backtest_worker(
             # ein vom Suchraum gesampelter Wert (atr_floor_bps ist kein Optuna-Parameter) —
             # überschreibt daher bewusst jeden gleichnamigen Eintrag aus strat["params"].
             params["atr_floor_bps"] = atr_floor_bps_resolved
-            # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde (oben
-            # resolve_opening_range_session_open_hour). Nur OpeningRangeBreakoutConfig kennt
-            # dieses Feld — der valid_keys-Filter unten verwirft es folgenlos für jede andere
-            # Strategie.
-            params["opening_range_session_open_hour"] = opening_range_session_open_hour_resolved
+            # Issue #1356 (GH #1252) — asset-class-aufgelöstes Session-Fenster (Börsen-Lokalzeit) als
+            # ``HourlyStrategyConfig.session_window``: Single Source mit dem Tick-Filter oben (dieselbe
+            # Auflösung, Pitfall #435); ORB verankert Handelstag/Range-Start daran.
+            params["session_window"] = session_window_to_param(session_window_resolved)
+            # Issue #1359 (GH #1255, P0) — Katastrophen-Stop im Backtest als SIMULIERTE Order
+            # (``stop_market(reduce_only=True)`` beim Positions-Fill, Storno beim Positions-Close,
+            # Exit-Tag ``EXIT_REASON:DISASTER_STOP``); die Parameter kommen aus derselben Quelle wie
+            # im Live-Bot (``strategy_defaults.json['_disaster_stop']``) — NIE aus dem Suchraum und
+            # daher bewusst überschreibend wie ``atr_floor_bps`` oben.
+            params.update(resolve_disaster_stop_params(config_dir()))
+            params["disaster_stop_mode"] = DISASTER_STOP_MODE_SIMULATED
 
             # Härtung: Defensives Parsing der Parameter
             if hasattr(ConfigCls, "__struct_fields__"):
@@ -7930,7 +7949,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day_long=financing_bps_per_day_long, financing_bps_per_day_short=financing_bps_per_day_short, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day_long=financing_bps_per_day_long, financing_bps_per_day_short=financing_bps_per_day_short, slippage_bps=slippage_bps_resolved, slippage_bps_p50=slippage_bps_p50_resolved, slippage_calibration_scope=slippage_calibration_scope_resolved, spread_telemetry={"spread_bps_applied": spread_bps, "spread_bps_measured_p50": _measured_spread.get("p50"), "spread_bps_measured_p75": _measured_spread.get("p75"), "spread_source": _spread_source})
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -8103,9 +8122,8 @@ def run_single_backtest_worker(
             result["fill_matches"] = fill_matches
         return result
     finally:
-        if temp_catalog_dir and os.path.exists(temp_catalog_dir):
-            import shutil
-            shutil.rmtree(temp_catalog_dir)
+        if engine_view is not None:
+            engine_view.close()
         import gc
         gc.collect()
 
@@ -8207,13 +8225,23 @@ def run_backtest() -> None:
                 {}, _calibrated, percentile="p50")
     except Exception:
         pass
-    # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde für OpeningRangeBreakoutStrategy
-    # (resolve_opening_range_session_open_hour).
-    opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
-        "opening_range_session_open_hour_by_asset_class", {})
+    # Issue #1356 (GH #1252) — ``opening_range_session_open_hour_by_asset_class`` (UTC-Stunden-Konstante,
+    # NYSE-Open nur in EDT) ist ersatzlos entfallen; der Handelstag-Anker der OpeningRangeBreakout-
+    # Strategie folgt dem ``session_window`` unten (Börsen-Lokalzeit).
+    if backtest_global_cfg.get("opening_range_session_open_hour_by_asset_class") is not None:
+        print("⚠️  backtest.json: 'opening_range_session_open_hour_by_asset_class' ist entfallen und wird "
+              "ignoriert (Issue #1356) — der Opening-Range-Anker folgt session_hours_by_asset_class.")
     # Issue #1275 (GH #1148, Katalog #1272-1297, P0) Fix Punkt 2 — schliesst die #1260/GH #1130-
     # Verdrahtungsluecke (siehe load_ticks_from_catalog/_filter_ticks_to_session_hours-Docstrings).
     session_hours_by_asset_class = backtest_global_cfg.get("session_hours_by_asset_class", {})
+    # Issue #1366 (GH #1263) — gemessener eToro-Spread je Symbol (Kalibrierungs-Cache), EINMAL geladen.
+    calibrated_spread_by_symbol: dict = {}
+    try:
+        from automation.optimizer.calibration import read_calibrated_spread_cache
+        from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT as _PCR_SPREAD
+        calibrated_spread_by_symbol = read_calibrated_spread_cache(_PCR_SPREAD)
+    except Exception:
+        calibrated_spread_by_symbol = {}
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -8559,8 +8587,6 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-                        opening_range_session_open_hour_by_asset_class=(
-                            opening_range_session_open_hour_by_asset_class),
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
@@ -8568,6 +8594,7 @@ def run_backtest() -> None:
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                         session_hours_by_asset_class=session_hours_by_asset_class,
+                        calibrated_spread_by_symbol=calibrated_spread_by_symbol,
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -8578,8 +8605,6 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-                        opening_range_session_open_hour_by_asset_class=(
-                            opening_range_session_open_hour_by_asset_class),
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
@@ -8587,6 +8612,7 @@ def run_backtest() -> None:
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                         session_hours_by_asset_class=session_hours_by_asset_class,
+                        calibrated_spread_by_symbol=calibrated_spread_by_symbol,
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -8622,8 +8648,6 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-                        opening_range_session_open_hour_by_asset_class=(
-                            opening_range_session_open_hour_by_asset_class),
                         overnight_financing_bps_per_day_by_asset_class=(
                             overnight_financing_bps_per_day_by_asset_class),
                         slippage_bps_by_asset_class=slippage_bps_by_asset_class,
@@ -8631,6 +8655,7 @@ def run_backtest() -> None:
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                         session_hours_by_asset_class=session_hours_by_asset_class,
+                        calibrated_spread_by_symbol=calibrated_spread_by_symbol,
                     )
                     break
                 except Exception as e:
@@ -8717,7 +8742,6 @@ def _run_remaining_sequentially(
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
-    opening_range_session_open_hour_by_asset_class: dict | None = None,
     # Issue #987/#1141 (Katalog #986) — siehe run_single_backtest_worker-Docstring.
     overnight_financing_bps_per_day_by_asset_class: dict | None = None,
     slippage_bps_by_asset_class: dict | None = None,
@@ -8727,6 +8751,8 @@ def _run_remaining_sequentially(
     min_stop_to_cost_ratio: float = 3.0,
     # Issue #1275 (GH #1148, Katalog #1272-1297, P0) — siehe run_single_backtest_worker-Docstring.
     session_hours_by_asset_class: dict | None = None,
+    # Issue #1366 (GH #1263) — siehe run_single_backtest_worker-Docstring.
+    calibrated_spread_by_symbol: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -8745,14 +8771,13 @@ def _run_remaining_sequentially(
             span_tolerance_days, commission_bps, spread_bps_by_asset_class,
             spread_bps_by_symbol,
             atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
-            opening_range_session_open_hour_by_asset_class=(
-                opening_range_session_open_hour_by_asset_class),
             overnight_financing_bps_per_day_by_asset_class=(
                 overnight_financing_bps_per_day_by_asset_class),
             slippage_bps_by_asset_class=slippage_bps_by_asset_class,
             slippage_bps_p50_by_asset_class=slippage_bps_p50_by_asset_class,
             min_stop_to_cost_ratio=min_stop_to_cost_ratio,
             session_hours_by_asset_class=session_hours_by_asset_class,
+            calibrated_spread_by_symbol=calibrated_spread_by_symbol,
         )
         _flush_worker_log(rem_log)
         done_count += 1

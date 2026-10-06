@@ -114,7 +114,10 @@ def test_confirm_per_symbol_promotion_property_sweep(monkeypatch, tmp_path):
         oos_window_days=30,
         n_folds=1,
     )
-    oos_lo_ns = int((window_start + dt.timedelta(days=120 + 30 + 0)).timestamp() * 1_000_000_000) # is_window_days + (n_folds * oos_window_days) + embargo_period_days
+    # is_window_days + (n_folds * oos_window_days) + embargo_period_days — plus seit Issue #1357 (GH #1253)
+    # das Holdout-Embargo (Default 3 ohne Config-Key): Holdout-Beginn = Selektionsende + Holdout-Embargo.
+    from automation.optimizer.trial_config import HOLDOUT_EMBARGO_DAYS_DEFAULT
+    oos_lo_ns = int((window_start + dt.timedelta(days=120 + 30 + 0 + HOLDOUT_EMBARGO_DAYS_DEFAULT)).timestamp() * 1_000_000_000)
 
     class DummyTrial:
         def __init__(self):

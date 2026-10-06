@@ -16,37 +16,29 @@ from __future__ import annotations
 
 import math
 
-from automation.session_windows import interval_overlaps_session_hours
+from automation.session_windows import SessionWindow, bars_per_trading_day
 
-# Issue #1343 (GH #1237) — die EQUITY/COMMODITY-RTH-Session (dieselbe wie backtest.json
-# ['session_hours_by_asset_class']['EQUITY']) als Referenzachse fuer die Zeitbox-Ableitung unten.
-# Dieses Modul bleibt config-unabhaengig (kein Datei-I/O, siehe Moduldocstring) — die Fenstergrenzen
-# sind hier dupliziert, NICHT aus backtest.json gelesen (dieselbe bewusste Duplizierung wie
-# ``optimizer.sweep._resolve_session_window_utc``).
-_EQUITY_SESSION_OPEN_UTC = "13:30"
-_EQUITY_SESSION_CLOSE_UTC = "20:00"
+# Issue #1343 (GH #1237) / Issue #1356 (GH #1252) — die EQUITY/COMMODITY-RTH-Session in BÖRSEN-LOKALZEIT
+# (dieselbe wie backtest.json['session_hours_by_asset_class']['EQUITY']: NYSE 09:30-16:00 ET) als
+# Referenzachse fuer die Zeitbox-Ableitung unten. Dieses Modul bleibt config-unabhaengig (kein Datei-I/O,
+# siehe Moduldocstring) — das Fenster ist hier dupliziert, NICHT aus backtest.json gelesen
+# (``tests/test_issue_1356_session_windows_dst.py`` haelt beide synchron). Seit #1356 KEINE UTC-
+# Konstante mehr: 13:30-20:00 UTC ist NYSE-RTH nur in EDT.
+_EQUITY_SESSION_WINDOW = SessionWindow("America/New_York", "09:30", "16:00", calendar="NYSE")
 _HOURLY_BAR_INTERVAL_NS = 3_600_000_000_000
 
 
 def _bars_per_trading_day(
-    open_utc: str = _EQUITY_SESSION_OPEN_UTC, close_utc: str = _EQUITY_SESSION_CLOSE_UTC,
+    window: SessionWindow = _EQUITY_SESSION_WINDOW,
     bar_interval_ns: int = _HOURLY_BAR_INTERVAL_NS,
 ) -> int:
-    """Issue #1343 (GH #1237) Fix Punkt 2 — DIE Ableitungsfunktion, die sowohl die Modul-Konstanten
-    unten als auch (ueber ``resolve_effective_bar_cap``/den Bar-Zaehler-Exit) ``HourlyStrategyBase``
-    konsumiert, statt zwei parallele Konstanten unabhaengig zu pflegen. Anzahl 1h-Bar-Intervalle je
-    Handelstag, deren Intervall das Session-Fenster SCHNEIDET (dieselbe Ueberlappungs-Konvention wie
-    ``session_windows.interval_overlaps_session_hours``/#1332 — 7 fuer EQUITY bei 13:30-20:00, nicht
-    die alte, aus einer gemessenen ``session_coverage_fraction`` geschaetzte 5,76)."""
-    n_bins_per_day = 86_400_000_000_000 // bar_interval_ns
-    count = 0
-    for i in range(int(n_bins_per_day)):
-        start = i * bar_interval_ns
-        if interval_overlaps_session_hours(
-            start, start + bar_interval_ns, open_utc, close_utc, weekdays_only=False,
-        ):
-            count += 1
-    return count
+    """Issue #1343 (GH #1237) Fix Punkt 2 / Issue #1356 (GH #1252) — DIE Ableitungsfunktion, die sowohl die
+    Modul-Konstanten unten als auch (ueber ``resolve_effective_bar_cap``/den Bar-Zaehler-Exit)
+    ``HourlyStrategyBase`` konsumiert. Anzahl 1h-Bar-Intervalle je Handelstag, deren Intervall das Session-
+    Fenster SCHNEIDET (``session_windows.bars_per_trading_day``, dieselbe Ueberlappungs-Konvention wie
+    #1332): 7 fuer NYSE 09:30-16:00 ET — in EDT (13:00-19:00-UTC-Kerzen) UND in EST (14:00-20:00-UTC-Kerzen);
+    eine DST-abhaengige Achse wirft ``SessionWindowConfigError`` statt EINER Zahl."""
+    return bars_per_trading_day(window, bar_interval_ns)
 
 
 # Issue #1343 (GH #1237) Fix Punkt 1 — mechanisch aus der Bar-Achse abgeleitet (7 fuer EQUITY/

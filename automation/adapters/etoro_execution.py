@@ -763,6 +763,19 @@ class EToroExecutionClient(LiveExecutionClient):
 
         return payload, url
 
+    @staticmethod
+    def _entry_stop_requested_but_missing(order, payload: dict) -> bool:
+        """Issue #1359 — True ⇔ die Order trägt einen ``SL:<pct>``-Tag mit pct > 0, der Payload aber
+        ``IsNoStopLoss`` nicht auf False gesetzt hat (Stop nicht darstellbar)."""
+        for tag in (getattr(order, "tags", None) or []):
+            if isinstance(tag, str) and tag.startswith("SL:"):
+                try:
+                    if float(tag[3:]) > 0:
+                        return payload.get("IsNoStopLoss", True) is not False
+                except ValueError:
+                    continue
+        return False
+
     def _build_close_payload(self, etoro_id: int) -> dict:
         return {
             "InstrumentID": etoro_id,
@@ -811,6 +824,23 @@ class EToroExecutionClient(LiveExecutionClient):
             url = f"{self._rest_base}/limit-orders"
         else:
             payload, url = self._build_market_open_payload(order, etoro_id)
+            # Issue #1359 (GH #1255, P0) — fail-closed: verlangt die Entry-Order einen Broker-Stop
+            # (``SL:<pct>``-Tag), der Payload kann ihn aber nicht tragen (kein Quote-Tick/Instrument
+            # im Cache ⇒ ``_build_market_open_payload`` überspringt ``StopLossRate`` mit WARNING),
+            # darf KEINE ungeschützte Position eröffnet werden.
+            if self._entry_stop_requested_but_missing(order, payload):
+                self._log.error(
+                    f"[{order.instrument_id}] Entry abgelehnt: SL-Tag gesetzt, aber kein "
+                    f"StopLossRate im Payload (kein Quote/Instrument) — kein Entry ohne "
+                    f"Broker-Stop (Issue #1359).", LogColor.RED)
+                self.generate_order_rejected(
+                    strategy_id=order.strategy_id,
+                    instrument_id=order.instrument_id,
+                    client_order_id=order.client_order_id,
+                    reason="disaster_stop_unavailable",
+                    ts_event=ts,
+                )
+                return
 
         req_id = self._order_req_id(order.client_order_id.value)
         await self._state.set(

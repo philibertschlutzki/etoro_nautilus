@@ -8,13 +8,15 @@ Bars eines neuen Kalendertags (erkannt über `pd.Timestamp(bar.ts_init).day`, id
 Basisklasse) definieren eine Range (Hoch/Tief). Bricht der Kurs danach über das Range-Hoch
 (+ATR-Puffer), ist das ein Long-Signal; unter das Range-Tief analog Short.
 
-24/7-Bars-Hinweis (Issue #922): per Default (`opening_range_session_anchor='calendar_day'`,
-bit-identisches Alt-Verhalten) ist ein "Tag" ein Kalendertag (24 Bars, Wechsel um Mitternacht
-UTC), nicht die US-RTH-Session — die ersten `or_bars` Bars können in ruhige Nacht-Ticks fallen.
-`opening_range_session_anchor='session_open_hour'` verankert den Tageswechsel stattdessen auf
-`opening_range_session_open_hour` (UTC-Stunde, von `backtest_runner.
-resolve_opening_range_session_open_hour` asset-class-aufgelöst gesetzt — RTH-Instrumente
-bekommen die NYSE-Open-Näherung, 24/7-Asset-Classes bleiben effektiv unverändert).
+Handelstag-Anker (Issue #922, ersetzt durch Issue #1356 / GH #1252): ``opening_range_session_anchor=
+'trading_day'`` (Default) bestimmt den Handelstag in BÖRSEN-LOKALZEIT aus dem Config-Feld
+``session_window`` (``{"tz": "America/New_York", "open": "09:30", "close": "16:00"}``, vom Backtest-Runner
+bzw. Live-Bot aus ``backtest.json`` aufgelöst): die Range-Startkerze ist je Handelstag die Kerze, die den
+lokalen Open überlappt (EDT: 13:00-UTC-Kerze, EST: 14:00-UTC-Kerze), Kerzen ausserhalb der Session
+(Pre-/Post-Market, Wochenende, Feiertag) bilden keine Range. Die frühere UTC-Stunden-Konstante
+(``opening_range_session_open_hour``, 13) war NYSE-Open nur in EDT — im Winter bildete die Range sich aus
+08:00-11:00 ET — und entfällt ersatzlos. Ohne ``session_window`` (24/7-Märkte) ist der Handelstag der
+UTC-Kalendertag (identisch zu ``'calendar_day'``, dem bit-identischen Alt-Anker).
 
 Exit-Logik (via HourlyStrategyBase): ATR-Trailing-Stop + Zeit-Exit (~1 Handelstag).
 """
@@ -27,25 +29,36 @@ from nautilus_trader.indicators import AverageTrueRange
 
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig, ExitReason
 from automation.momentum_ls_allocator import MomentumLSAllocator
+from automation.session_windows import (
+    SessionWindow,
+    session_window_from_param,
+    trading_day_of_candle,
+)
 
 
-def session_day_key(ts_init: int, *, anchor: str, session_open_hour: int):
-    """Issue #922 — reine Funktion, damit die Session-Boundary-Logik ohne NautilusTrader-Objekte
-    (Bar/Strategy) testbar ist. Zwei Bars gehören zur selben "Opening Range", wenn diese Funktion
-    für beide denselben Wert liefert.
+def session_day_key(ts_ns: int, *, anchor: str, session_window: SessionWindow | None = None,
+                    bar_interval_ns: int = 0):
+    """Reine Funktion (ohne NautilusTrader-Objekte testbar): zwei Bars gehören zur selben "Opening Range",
+    wenn sie denselben Schlüssel liefern. ``ts_ns`` ist der ZEITSTEMPEL des Bar-ENDES (NautilusTrader-Zeitbars
+    tragen ``ts_event`` = Kerzenschluss); die Kerze ist ``[ts_ns − bar_interval_ns, ts_ns)``.
 
-    ``anchor == 'calendar_day'`` (Default) — bit-identisch zum Alt-Verhalten:
-    ``pd.Timestamp(ts_init).day`` (Wechsel um Mitternacht UTC, EIN Kalendermonat wiederholt sich
-    alle ~28-31 Tage — für die Bar-lokale Vergleichslogik unschädlich, siehe Basisklasse).
+    ``anchor == 'calendar_day'`` — bit-identisches Alt-Verhalten: ``pd.Timestamp(ts_ns).day`` (Wechsel um
+    Mitternacht UTC, unabhängig von jeder Handelszeit).
 
-    ``anchor == 'session_open_hour'`` — der Zeitstempel wird um ``session_open_hour`` Stunden
-    zurückgeschoben und auf Mitternacht normiert: eine 24h-Session, die um ``session_open_hour``
-    UTC beginnt, fällt dadurch auf EINEN Kalendertag des verschobenen Zeitstempels (Standard-Trick
-    für Session-Boundaries abseits Mitternacht)."""
-    ts = pd.Timestamp(ts_init)
+    ``anchor == 'trading_day'`` (Issue #1356) — mit ``session_window``: das LOKALE Datum des Handelstags, dessen
+    Session die Kerze schneidet; ``None``, wenn die Kerze keine Session schneidet (der Aufrufer bildet dann
+    keine Range). Ohne ``session_window`` ⇒ wie ``'calendar_day'``.
+
+    ``'session_open_hour'`` (UTC-Stunden-Konstante, DST-blind) entfällt ⇒ ``ValueError``."""
     if anchor == "session_open_hour":
-        return (ts - pd.Timedelta(hours=session_open_hour)).normalize()
-    return ts.day
+        raise ValueError(
+            "opening_range_session_anchor='session_open_hour' entfällt (Issue #1356): eine UTC-Stunde ist "
+            "NYSE-Open nur in EDT — 'trading_day' mit session_window (Börsen-Lokalzeit) verwenden.")
+    if anchor not in ("calendar_day", "trading_day"):
+        raise ValueError(f"opening_range_session_anchor={anchor!r} unbekannt (calendar_day|trading_day).")
+    if anchor == "trading_day" and session_window is not None:
+        return trading_day_of_candle(ts_ns - bar_interval_ns, ts_ns, session_window)
+    return pd.Timestamp(ts_ns).day
 
 
 class OpeningRangeBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
@@ -58,17 +71,11 @@ class OpeningRangeBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True
     max_bars_in_trade: int = 24
     max_daily_trades: int | None = 2
     trade_amount_pct: float = 15.0
-    # Issue #922 — 'calendar_day' (Default, bit-identisches Alt-Verhalten) verankert den
-    # Tageswechsel auf pd.Timestamp(bar.ts_init).day (Wechsel um Mitternacht UTC), unabhängig von
-    # der tatsächlichen Handelszeit des Instruments. Auf dem 24/7-Stundenraster fallen die ersten
-    # or_bars damit für ein RTH-Instrument (Equity) oft in ruhige Nacht-Ticks — die "Opening
-    # Range" ist dann keine. 'session_open_hour' verankert stattdessen auf
-    # opening_range_session_open_hour (UTC-Stunde, backtest_runner asset-class-aufgelöst gesetzt).
-    opening_range_session_anchor: str = "calendar_day"
-    # Issue #922 — UTC-Stunde des Session-Starts unter 'session_open_hour'; nur wirksam, wenn
-    # opening_range_session_anchor das auch ist. Default 13 ≈ NYSE-Open (9:30 ET, DST-Näherung,
-    # siehe backtest_runner.resolve_opening_range_session_open_hour für die asset-class-Auflösung).
-    opening_range_session_open_hour: int = 13
+    # Issue #1356 (GH #1252) — 'trading_day' (Default): Handelstag in Börsen-Lokalzeit aus dem Basis-Feld
+    # ``session_window`` (Range-Startkerze = Kerze, die den lokalen Open überlappt; ohne Fenster ⇒ UTC-
+    # Kalendertag). 'calendar_day' = bit-identisches Alt-Verhalten (``pd.Timestamp(ts).day``). Die
+    # UTC-Stunden-Konstante ``opening_range_session_open_hour`` (+ Anker 'session_open_hour') entfällt.
+    opening_range_session_anchor: str = "trading_day"
 
 
 class OpeningRangeBreakoutStrategy(HourlyStrategyBase):
@@ -83,7 +90,7 @@ class OpeningRangeBreakoutStrategy(HourlyStrategyBase):
         self.atr = AverageTrueRange(config.atr_period)
         self.current_signal: str | None = None
         self.bars_since_last_signal: int = 9999
-        self._or_day: int | None = None
+        self._or_day = None   # Schlüssel von ``session_day_key`` (int | date)
         self._or_bar_count: int = 0
         self._or_high: float | None = None
         self._or_low: float | None = None
@@ -101,8 +108,12 @@ class OpeningRangeBreakoutStrategy(HourlyStrategyBase):
             return
 
         day = session_day_key(
-            bar.ts_init, anchor=self.config.opening_range_session_anchor,
-            session_open_hour=self.config.opening_range_session_open_hour)
+            bar.ts_event, anchor=self.config.opening_range_session_anchor,
+            session_window=self._session_window, bar_interval_ns=self._bar_interval_ns)
+        if day is None:
+            # Issue #1356 — die Kerze schneidet keine Session (Pre-/Post-Market, Wochenende, Feiertag):
+            # sie bildet weder Range noch Signal.
+            return
         if day != self._or_day:
             self._or_day = day
             self._or_bar_count = 0
@@ -161,6 +172,7 @@ class OpeningRangeBreakoutStrategy(HourlyStrategyBase):
         order = self.order_factory.market(
             instrument_id=self.instrument_id, order_side=OrderSide.BUY,
             quantity=qty, time_in_force=TimeInForce.GTC,
+            tags=self._entry_order_tags(bar),
         )
         self.submit_order(order)
 
@@ -185,6 +197,7 @@ class OpeningRangeBreakoutStrategy(HourlyStrategyBase):
         order = self.order_factory.market(
             instrument_id=self.instrument_id, order_side=OrderSide.SELL,
             quantity=qty, time_in_force=TimeInForce.GTC,
+            tags=self._entry_order_tags(bar),
         )
         self.submit_order(order)
 

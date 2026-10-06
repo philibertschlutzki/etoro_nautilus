@@ -54,13 +54,20 @@ class MomentumLSAllocator:
         max_symbol_exposure_fraction: float = _DEFAULT_MAX_SYMBOL_EXPOSURE_FRACTION,
         dd_halt_fraction: float = _DEFAULT_DD_HALT_FRACTION,
         psi_min: float = _DEFAULT_PSI_MIN,
+        symbol_capital_fractions: dict[str, float] | None = None,
     ):
         """
         Initialize the allocator with the full list of universe symbols.
+
+        ``symbol_capital_fractions`` — Issue #1368 (GH #1265): Anteil der regulären Symbol-Allokation je
+        Symbol (``LIVE_SMALL`` ⇒ ``incubation.capital_fraction_small``); fehlende Symbole 1,0, ``None``
+        (Default) ⇒ bit-identisch zum Verhalten vor #1368.
         """
         self._universe = [InstrumentId.from_str(sym) for sym in universe]
         self._max_total_exposure_fraction = float(max_total_exposure_fraction)
         self._max_symbol_exposure_fraction = float(max_symbol_exposure_fraction)
+        self._symbol_capital_fractions = {
+            str(k): min(1.0, max(0.0, float(v))) for k, v in (symbol_capital_fractions or {}).items()}
         self._dd_halt_fraction = float(dd_halt_fraction)
         self._psi_min = float(psi_min)
 
@@ -147,7 +154,8 @@ class MomentumLSAllocator:
         })
 
         remaining_fraction = max(0.0, self._max_total_exposure_fraction - open_exposure_fraction)
-        w_new = min(self._max_symbol_exposure_fraction, remaining_fraction)
+        w_symbol = self._max_symbol_exposure_fraction * self._symbol_capital_fractions.get(str(instrument_id), 1.0)
+        w_new = min(w_symbol, remaining_fraction)
         if w_new <= 0.0:
             return 0.0
 

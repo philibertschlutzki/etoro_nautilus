@@ -95,6 +95,17 @@ TOURNAMENT_CFG        = config_dir() / "tournament.json"
 BACKTEST_CFG          = config_dir() / "backtest.json"
 INSTRUMENT_MAP_PATH   = config_dir() / "instrument_map.json"
 
+# ─── Live-Parameter (Issue #1360 / GH #1256) ──────────────────────────────────
+from automation.live_params import live_params_sha256, load_live_param_sources, resolve_live_params
+
+# ─── Live-Bot-Sperre (Issue #1358 / GH #1254) ─────────────────────────────────
+from automation.live_bot_lock import (
+    DEFAULT_STOP_TIMEOUT_S as _LIVE_BOT_STOP_TIMEOUT_DEFAULT_S,
+    LOCK_PATH as LIVE_BOT_LOCK_PATH,
+    compute_whitelist_sha256,
+    reconcile_live_bot,
+)
+
 # ─── Logging-Konfiguration ────────────────────────────────────────────────────
 LOG_MAX_BYTES   = 1 * 1024 * 1024   # 1 MB max pro Log-Datei
 LOG_BACKUP_CNT  = 5
@@ -307,91 +318,10 @@ def _load_universe_file(log: logging.Logger) -> dict:
 # PHASE 2: Datenbeschaffung
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def phase2_data_acquisition(
-    log: logging.Logger,
-    universe_result: dict,
-    api_key: str,
-    user_key: str,
-    skip_api_fetch: bool = False,
-) -> dict:
-    """
-    Phase 2: Datenbeschaffung (Multi-ZIP-Import, Merge, API-Backfill).
-
-    v2.0-Änderungen gegenüber v1.x:
-      - Multi-ZIP: Verarbeitet ALLE *.zip in data/import/ (nicht nur eine).
-      - Einfacher Merge: pa.concat_tables + ts_event-Dedup (kein _cast_to_schema).
-      - Kein migrate_catalog_to_fixed_binary: Quellen liefern bereits FSB(16).
-      - API-Backfill via automation.api_backfiller (Modul-Import, Standalone).
-    """
-    log.info("═" * 60)
-    log.info("PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)")
-    log.info("═" * 60)
-
-    result = {
-        "imported_instruments": [],
-        "merged_count":         0,
-        "api_filled":           [],
-        "zips_deleted":         0,
-    }
-
-    # 2a. Alle ZIPs einlesen
-    zip_files = _find_all_zip_files(log)
-    if zip_files:
-        log.info(f"[Phase 2a] {len(zip_files)} ZIP-Datei(en) gefunden: {[z.name for z in zip_files]}")
-        merge_result = _import_and_merge_all_zips(log, zip_files)
-        result["imported_instruments"] = merge_result["instruments"]
-        result["merged_count"]         = merge_result["merged"]
-
-        # 2b. ZIPs nach erfolgreichem Merge löschen
-        if merge_result["success"]:
-            deleted = 0
-            for zf in zip_files:
-                try:
-                    os.remove(str(zf))
-                    deleted += 1
-                    log.info(f"[Phase 2b] ZIP gelöscht: {zf.name}")
-                except OSError as e:
-                    log.error(f"[Phase 2b] Konnte ZIP nicht löschen {zf.name}: {e}")
-            result["zips_deleted"] = deleted
-            emit_json_event(log, "ZIPS_DELETED", {"count": deleted, "paths": [str(z) for z in zip_files]})
-        else:
-            log.warning("[Phase 2b] ZIPs NICHT gelöscht — Import hat Fehler gemeldet.")
-    else:
-        log.info("[Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.")
-
-    # 2c. API-Backfill via api_backfiller.py
-    if not skip_api_fetch:
-        etoro_id_map = _load_etoro_id_map(UNIVERSE_PATH)
-        if etoro_id_map:
-            specific = {
-                item["symbol"]
-                for item in universe_result.get("universe", [])
-                if item.get("symbol")
-            } or None
-
-            log.info(
-                f"[Phase 2c] API-Backfill für {len(specific) if specific else len(etoro_id_map)} Symbole …"
-            )
-            try:
-                api_filled = asyncio.run(
-                    run_backfill(
-                        api_key=api_key,
-                        user_key=user_key,
-                        etoro_id_to_symbol=etoro_id_map,
-                        days=7,
-                        specific_symbols=specific,
-                    )
-                )
-                result["api_filled"] = api_filled
-                log.info(f"[Phase 2c] API-Backfill: {len(api_filled)} Symbole befüllt.")
-            except Exception as e:
-                log.error(f"[Phase 2c] API-Backfill Fehler: {e}\n{traceback.format_exc()}")
-        else:
-            log.warning("[Phase 2c] Keine Instrumente im Universe — API-Backfill übersprungen.")
-    else:
-        log.info("[Phase 2c] API-Backfill übersprungen (--skip-api-fetch).")
-
-    # 2d. Historical Fetcher für Symbole ohne ausreichende Daten
+def _phase2d_depth_fetch(log: logging.Logger, universe_result: dict, api_key: str, user_key: str,
+                         result: dict) -> None:
+    """Phase 2d — Tiefen-Abruf (``historical_fetcher.run_historical_fetch``) für Symbole ohne ausreichende
+    Historie; schreibt ``result['hist_filled']``. Fehler werden geloggt, nie geworfen."""
     try:
         from automation.historical_fetcher import run_historical_fetch, is_backtest_range_covered
         from automation.api_backfiller import _load_etoro_id_map as _load_id_map_2d
@@ -448,6 +378,106 @@ def phase2_data_acquisition(
     except Exception as e:
         log.error(f"[Phase 2d] Historical Fetcher Modul-Fehler: {e}\n{traceback.format_exc()}")
         result["hist_filled"] = []
+
+
+def phase2_data_acquisition(
+    log: logging.Logger,
+    universe_result: dict,
+    api_key: str,
+    user_key: str,
+    skip_api_fetch: bool = False,
+    offline: bool = False,
+) -> dict:
+    """
+    Phase 2: Datenbeschaffung (Multi-ZIP-Import, Merge, API-Backfill).
+
+    Issue #1363 (GH #1259): der Vorwärts-Schritt (2c, neue Kerzen seit dem jüngsten lokalen Tick) läuft
+    UNABHÄNGIG von ``--skip-api-fetch`` — das Flag überspringt nur den Tiefen-Abruf (2d). Vorher übersprang
+    der dokumentierte Tagesbetrieb (``--skip-api-fetch``) genau 2c: der ``OneHour``-Katalog erhielt keine
+    neuen Kerzen, die Spanne wuchs nicht, der jüngste Stundenwert alterte. ``--offline`` verzichtet auf
+    JEDEN Netzabruf.
+
+    v2.0-Änderungen gegenüber v1.x:
+      - Multi-ZIP: Verarbeitet ALLE *.zip in data/import/ (nicht nur eine).
+      - Einfacher Merge: pa.concat_tables + ts_event-Dedup (kein _cast_to_schema).
+      - Kein migrate_catalog_to_fixed_binary: Quellen liefern bereits FSB(16).
+      - API-Backfill via automation.api_backfiller (Modul-Import, Standalone).
+    """
+    log.info("═" * 60)
+    log.info("PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)")
+    log.info("═" * 60)
+
+    result = {
+        "imported_instruments": [],
+        "merged_count":         0,
+        "api_filled":           [],
+        "zips_deleted":         0,
+    }
+
+    # 2a. Alle ZIPs einlesen
+    zip_files = _find_all_zip_files(log)
+    if zip_files:
+        log.info(f"[Phase 2a] {len(zip_files)} ZIP-Datei(en) gefunden: {[z.name for z in zip_files]}")
+        merge_result = _import_and_merge_all_zips(log, zip_files)
+        result["imported_instruments"] = merge_result["instruments"]
+        result["merged_count"]         = merge_result["merged"]
+
+        # 2b. ZIPs nach erfolgreichem Merge löschen
+        if merge_result["success"]:
+            deleted = 0
+            for zf in zip_files:
+                try:
+                    os.remove(str(zf))
+                    deleted += 1
+                    log.info(f"[Phase 2b] ZIP gelöscht: {zf.name}")
+                except OSError as e:
+                    log.error(f"[Phase 2b] Konnte ZIP nicht löschen {zf.name}: {e}")
+            result["zips_deleted"] = deleted
+            emit_json_event(log, "ZIPS_DELETED", {"count": deleted, "paths": [str(z) for z in zip_files]})
+        else:
+            log.warning("[Phase 2b] ZIPs NICHT gelöscht — Import hat Fehler gemeldet.")
+    else:
+        log.info("[Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.")
+
+    # 2c. API-Backfill (Vorwärts-Schritt) via api_backfiller.py — Issue #1363: nur --offline überspringt ihn.
+    if not offline:
+        etoro_id_map = _load_etoro_id_map(UNIVERSE_PATH)
+        if etoro_id_map:
+            specific = {
+                item["symbol"]
+                for item in universe_result.get("universe", [])
+                if item.get("symbol")
+            } or None
+
+            log.info(
+                f"[Phase 2c] API-Backfill für {len(specific) if specific else len(etoro_id_map)} Symbole …"
+            )
+            try:
+                api_filled = asyncio.run(
+                    run_backfill(
+                        api_key=api_key,
+                        user_key=user_key,
+                        etoro_id_to_symbol=etoro_id_map,
+                        days=7,
+                        specific_symbols=specific,
+                    )
+                )
+                result["api_filled"] = api_filled
+                log.info(f"[Phase 2c] API-Backfill: {len(api_filled)} Symbole befüllt.")
+            except Exception as e:
+                log.error(f"[Phase 2c] API-Backfill Fehler: {e}\n{traceback.format_exc()}")
+        else:
+            log.warning("[Phase 2c] Keine Instrumente im Universe — API-Backfill übersprungen.")
+    else:
+        log.info("[Phase 2c] API-Backfill übersprungen (--offline).")
+
+    # 2d. Historical Fetcher (Tiefen-Abruf) für Symbole ohne ausreichende Daten — Issue #1363: übersprungen
+    # mit --skip-api-fetch ODER --offline (der Vorwärts-Schritt 2c ist davon unabhängig).
+    if skip_api_fetch or offline:
+        log.info(f"[Phase 2d] Tiefen-Abruf übersprungen ({'--offline' if offline else '--skip-api-fetch'}).")
+        result["hist_filled"] = []
+    else:
+        _phase2d_depth_fetch(log, universe_result, api_key, user_key, result)
 
     emit_json_event(log, "PHASE2_COMPLETE", {
         "merged_instruments": result["merged_count"],
@@ -572,14 +602,42 @@ def _merge_symbol(
       4. Metadaten sicherstellen
       5. Atomar als data.parquet speichern
     """
-    dest_dir  = QUOTE_TICK_PATH / symbol
+    # Issue #1354 (GH #1251) Fix Punkt 3 / Issue #1366 (GH #1263) — die Echt-Ticks des 24/7-Collectors
+    # gehören NICHT mehr ins flache ``<symbol>/data.parquet``: das war exakt die eine Datei, die die
+    # NautilusTrader-Engine sah (der Elternordner identifiziert das Instrument) — die Echt-Ticks
+    # verfälschten den Backtest oder waren (neben den OneHour-Kerzen) unsichtbar; ausserdem lasen
+    # alle Optimizer-Preflights einen anderen Datenstrom (Pitfall #483). Ziel ist jetzt
+    # ``<symbol>/RealTick/data.parquet`` (``bar_interval_ns = 0``, ``catalog_interval = "RealTick"``).
+    from automation.catalog_paths import REALTICK_INTERVAL
+    from automation.api_backfiller import _with_bar_interval_column
+    inst_dir  = QUOTE_TICK_PATH / symbol
+    dest_dir  = inst_dir / REALTICK_INTERVAL
     dest_file = dest_dir / "data.parquet"
+    legacy_flat = inst_dir / "data.parquet"
     dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Migration: ein vorhandenes flaches data.parquet wird beim ersten Lauf nach RealTick/ VERSCHOBEN
+    # (os.replace, nie gelöscht). Existiert dort bereits eine Datei, fliessen die Zeilen des flachen
+    # Files in den Merge ein und es wird danach unter einem Nicht-*.parquet-Namen aufbewahrt.
+    legacy_tables: list[pa.Table] = []
+    legacy_to_preserve: Path | None = None
+    if legacy_flat.exists():
+        if not dest_file.exists():
+            os.replace(legacy_flat, dest_file)
+            log.info(f"[Phase 2b] {symbol}: flaches data.parquet nach {REALTICK_INTERVAL}/ verschoben (#1354).")
+        else:
+            try:
+                legacy = pq.read_table(str(legacy_flat))
+                if len(legacy) > 0:
+                    legacy_tables.append(legacy)
+            except Exception as e:
+                log.warning(f"[Phase 2b] {symbol}: flaches data.parquet nicht lesbar: {e}")
+            legacy_to_preserve = legacy_flat
 
     all_tables: list[pa.Table] = []
     best_meta: dict = zip_meta or {}
 
-    # 1. Bestehende data.parquet einlesen
+    # 1. Bestehende RealTick/data.parquet einlesen
     if dest_file.exists():
         try:
             existing = pq.read_table(str(dest_file))
@@ -591,7 +649,9 @@ def _merge_symbol(
         except Exception as e:
             log.warning(f"[Phase 2b] {symbol}: Bestehende Datei nicht lesbar: {e}")
 
+    all_tables.extend(legacy_tables)
     all_tables.extend(new_tables)
+    all_tables = [_with_bar_interval_column(t, 0) for t in all_tables]
     total_new = sum(len(t) for t in new_tables)
 
     if not all_tables:
@@ -627,8 +687,10 @@ def _merge_symbol(
         f"(-{rows_before - rows_after} Duplikate)"
     )
 
-    # 4. Metadaten sicherstellen
+    # 4. Metadaten sicherstellen (+ Auflösungs-Deklaration der Echt-Ticks, Issue #1354/#1366)
     final_meta = _ensure_metadata(best_meta, symbol)
+    final_meta[b"catalog_interval"] = REALTICK_INTERVAL.encode()
+    final_meta.pop(b"catalog_schema_version", None)   # RealTick ist nicht Kerzen-versioniert
     merged = merged.replace_schema_metadata(final_meta)
 
     # 5. Atomar speichern
@@ -641,6 +703,14 @@ def _merge_symbol(
         log.error(f"[Phase 2b] Schreib-Fehler {symbol}: {e}")
         tmp.unlink(missing_ok=True)
         return False
+
+    # Die Zeilen eines (zusätzlich zu RealTick/data.parquet) vorgefundenen flachen data.parquet sind
+    # nun im Merge enthalten — die Datei wird AUFBEWAHRT (nie gelöscht), unter einem Namen, den kein
+    # ``*.parquet``-Glob trifft.
+    if legacy_to_preserve is not None and legacy_to_preserve.exists():
+        kept = dest_dir / f"legacy_flat_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.parquet.migrated"
+        os.replace(legacy_to_preserve, kept)
+        log.info(f"[Phase 2b] {symbol}: flaches data.parquet aufbewahrt als {kept.name}.")
 
     # Alte Timestamp-Dateien löschen (Single-File-Katalog)
     deleted = 0
@@ -787,7 +857,8 @@ def phase3_4_backtest_and_tournament(
     return {"tournament_path": str(TOURNAMENT_PATH)}
 
 
-def _build_backtest_config(start: datetime, end: datetime, start_capital: float | None = None) -> dict:
+def _build_backtest_config(start: datetime, end: datetime, start_capital: float | None = None,
+                           walk_forward_override: dict | None = None) -> dict:
     from datetime import timedelta
 
     """Baut die dynamische Backtest-Config aus automation/config/*.json.
@@ -809,7 +880,14 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
         start_capital = 10000.0
 
     wf_cfg = bt_cfg.get("walk_forward")
-    if wf_cfg:
+    if walk_forward_override:
+        # Issue #1368 (GH #1265) — Inkubations-Selektion: kürzere Geometrie (tournament.json["incubation"]
+        # ["walk_forward"], IS + Embargo + Folds × OOS ≤ heutige Stundentiefe), sonst dieselbe Config.
+        wf_cfg = {**(wf_cfg or {}), **walk_forward_override}
+        total_days = (wf_cfg.get("is_window_days", 120) + wf_cfg.get("embargo_period_days", 0)
+                      + wf_cfg.get("splits", 1) * wf_cfg.get("oos_window_days", 30))
+        start = end - timedelta(days=total_days)
+    elif wf_cfg:
         total_days = wf_cfg.get("is_window_days", 120) + wf_cfg.get("splits", 1) * wf_cfg.get("oos_window_days", 30)
         start = end - timedelta(days=total_days)
 
@@ -842,7 +920,7 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
             "start_time":    start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_time":      end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "start_capital": start_capital,
-            "walk_forward":  bt_cfg.get("walk_forward"),
+            "walk_forward":  wf_cfg if walk_forward_override else bt_cfg.get("walk_forward"),
             "_note": (
                 f"Dynamisch generiert — Fenster: {start.date()} bis {end.date()} "
                 "(Midnight UTC). Config-Root: automation/config/. "
@@ -885,6 +963,54 @@ def _tail_log(log: logging.Logger, log_path: Path, tail: int = 50) -> None:
 # PHASE 5: Live Deployment
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _load_live_param_sources() -> tuple[dict, list]:
+    """``(strategy_defaults, strategies_raw)`` für ``resolve_live_params`` (Issue #1360): zuerst das
+    aktive ``config_dir()``, sonst das Repo-Config-Verzeichnis neben diesem Modul (robust gegen ein
+    in Tests umgebogenes ``PROJECT_ROOT``)."""
+    try:
+        return load_live_param_sources(config_dir())
+    except OSError:
+        return load_live_param_sources(Path(__file__).resolve().parent / "config")
+
+
+def _live_bot_stop_timeout_s() -> float:
+    """``backtest.json["live_risk"]["live_bot_stop_timeout_s"]`` (Default 120)."""
+    try:
+        with open(BACKTEST_CFG, "r", encoding="utf-8") as f:
+            return float(((json.load(f) or {}).get("live_risk") or {}).get(
+                "live_bot_stop_timeout_s", _LIVE_BOT_STOP_TIMEOUT_DEFAULT_S))
+    except (OSError, ValueError, TypeError):
+        return float(_LIVE_BOT_STOP_TIMEOUT_DEFAULT_S)
+
+
+def _stop_running_bot_on_demotion(log: logging.Logger, reason: str, *, no_deploy: bool = False) -> str:
+    """Issue #1358 (GH #1254) Fix Punkt 4 — JEDER Phase-5-Pfad, der keinen neuen Bot startet, stoppt
+    einen laufenden Bot (``LIVE_BOT_STOPPED_ON_DEMOTION``): was heute nicht zugelassen ist, handelt
+    heute nicht. Vor dem Fix beendeten 0 zulässige Paare / OOS nicht auswertbar / OOS-Gate verfehlt /
+    leere Whitelist nur den Orchestrator und liessen den Bot von gestern weiterhandeln.
+
+    ``--no-deploy`` fasst Phase 5 nicht an (der Schalter unterbindet ausschliesslich Phase 5). Wirft
+    nie. Rückgabe: die ``ReconcileResult.action`` (oder ``"skipped_no_deploy"``/``"error"``)."""
+    if no_deploy:
+        return "skipped_no_deploy"
+    try:
+        result = reconcile_live_bot(
+            LIVE_BOT_LOCK_PATH, None, stop_timeout_s=_live_bot_stop_timeout_s(), reason=reason)
+        for event_type, payload in result.events:
+            emit_json_event(log, event_type, payload)
+        if result.action == "stopped_on_demotion":
+            log.warning(f"[Phase 5] Laufender Bot (PID {result.holder_pid}) wegen '{reason}' gestoppt.")
+        elif result.action == "stop_timeout":
+            log.error(
+                f"[Phase 5] Laufender Bot (PID {result.holder_pid}) hat die Sperre nach SIGTERM nicht "
+                f"innerhalb des Timeouts freigegeben (Grund des Stopps: '{reason}')."
+            )
+        return result.action
+    except Exception as exc:  # defensiv: ein Stopp-Fehler darf Phase 5 nie crashen
+        log.error(f"[Phase 5] Stopp des laufenden Bots (Grund '{reason}') fehlgeschlagen: {exc}")
+        return "error"
+
+
 def phase5_live_deployment(
     log: logging.Logger,
     universe_result: dict,
@@ -925,11 +1051,13 @@ def phase5_live_deployment(
                 "oos_not_evaluable_pairs": oos_not_evaluable_pairs,
                 "oos_failed_pairs": oos_failed_pairs
             })
+            _stop_running_bot_on_demotion(log, "zero_fully_eligible_pairs", no_deploy=no_deploy)
             return 1
 
         agg = t_data.get("aggregate_winner")
         if not agg:
             log.error("[Phase 5] Kein Aggregat-Sieger im Tournament. Abbruch.")
+            _stop_running_bot_on_demotion(log, "no_aggregate_winner", no_deploy=no_deploy)
             return 1
         oos_evaluated = bool(agg.get("oos_evaluated", False))
         oos_eligible  = bool(agg.get("oos_eligible", False))
@@ -951,6 +1079,7 @@ def phase5_live_deployment(
                 "aggregate_oos_max_drawdown": agg_oos_dd,
                 "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
+            _stop_running_bot_on_demotion(log, "oos_gate_not_evaluable", no_deploy=no_deploy)
             return 0
 
         if not oos_eligible:
@@ -977,6 +1106,7 @@ def phase5_live_deployment(
                     "aggregate_oos_max_drawdown": agg_oos_dd,
                     "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
                 })
+                _stop_running_bot_on_demotion(log, "oos_gate_failed", no_deploy=no_deploy)
                 return 0
             else:
                 log.info(
@@ -1006,14 +1136,54 @@ def phase5_live_deployment(
         pairs = [(winner.get("strategy"), symbol) for symbol, winner in winners.items()]
         promotion_records = load_promotion_records(pairs, work_dir=PROJECT_ROOT / "data" / "optimizer")
 
+        # Issue #1360 (GH #1256) — die Live-Parameter-Quellen EINMAL laden: dieselben Dateien, aus
+        # denen der Bot seine Parameter baut (resolve_live_params, einzige Quelle für Bot und Gate).
+        live_param_sources = _load_live_param_sources()
+
+        # Issue #1368 (GH #1265) — mit aktivierter Inkubation ist die Deployment-Grenze notwendig, aber
+        # nicht hinreichend: Kapital nur für Paare in LIVE_SMALL/LIVE_FULL (Forward-Evidenz erreicht), mit
+        # unveränderten Parametern (Fingerabdruck der Stufe == Live-Fingerabdruck), LIVE_SMALL skaliert.
+        from automation import incubation as _inc
+        _inc_cfg = _inc.incubation_config(tournament_cfg)
+        _stages = _inc.DeploymentStages(_incubation_paths()["stages"]) if _inc_cfg.get("enabled") else None
+        _fractions = _inc.stage_capital_fractions(_stages, tournament_cfg) if _stages is not None else {}
+
         whitelisted_winners: dict = {}
         rejected_by_clause: dict[str, int] = {}
         for symbol, winner in winners.items():
             strategy = winner.get("strategy")
-            decision = evaluate_deployment_eligibility((strategy, symbol), promotion_records, tournament_cfg)
+            decision = evaluate_deployment_eligibility(
+                (strategy, symbol), promotion_records, tournament_cfg,
+                live_param_sources=live_param_sources)
             if decision.admitted:
                 entry = dict(winner)
                 entry["deployment_gate"] = decision.to_dict()
+                # Issue #1360 Fix Punkt 4 — der Whitelist-Eintrag trägt den Fingerabdruck der
+                # tatsächlich aufgelösten Live-Parameter UND das promovierte Override; der Bot prüft
+                # beides je Paar vor add_strategy (LIVE_PARAMS_MISMATCH ⇒ Paar übersprungen).
+                entry["live_params_sha256"] = live_params_sha256(
+                    resolve_live_params(strategy, symbol, *live_param_sources))
+                if _stages is not None:
+                    _stage = _stages.stage(strategy, symbol)
+                    _stage_reason = (
+                        "stage_not_live" if _stage not in _inc.LIVE_STAGES else
+                        "stage_params_changed"
+                        if _stages.entry(strategy, symbol).get("params_sha256") != entry["live_params_sha256"]
+                        else None)
+                    if _stage_reason is not None:
+                        rejected_by_clause[_stage_reason] = rejected_by_clause.get(_stage_reason, 0) + 1
+                        log.info(f"[Phase 5] STAGE-REJECT: {symbol} ({strategy}) — Stufe {_stage}: {_stage_reason}.")
+                        continue
+                    entry["stage"] = _stage
+                    entry["capital_fraction"] = _fractions.get(symbol, 1.0)
+                _record = promotion_records.get((strategy, symbol)) or {}
+                entry["proposed_instrument_override"] = _record.get("proposed_instrument_override")
+                # Issue #1362 (GH #1258) Fix Punkt 3 — Holdout-Round-Trip-Statistik des promovierten
+                # Trials für den Live-Verteilungs-Auslöser B (live_risk); fehlt sie, bleibt das Feld
+                # None und der Bot nennt den Grund im Start-Event (kein stiller toter Pfad).
+                for _field in ("holdout_trade_return_bps_mean", "holdout_trade_return_bps_std",
+                               "holdout_trade_return_bps_n"):
+                    entry[_field] = _record.get(_field)
                 whitelisted_winners[symbol] = entry
             else:
                 rejected_by_clause[decision.blocking_clause] = rejected_by_clause.get(decision.blocking_clause, 0) + 1
@@ -1054,6 +1224,7 @@ def phase5_live_deployment(
                 "expected": completeness_check.expected, "actual": completeness_check.actual,
                 "detail": completeness_check.detail,
             })
+            _stop_running_bot_on_demotion(log, "deployment_gate_completeness_failed", no_deploy=no_deploy)
             return 1
 
         emit_json_event(log, "DEPLOYMENT_WHITELIST_GENERATED", {
@@ -1065,6 +1236,7 @@ def phase5_live_deployment(
 
         if len(whitelisted_winners) == 0:
             log.warning("[Phase 5] Whitelist ist leer (kein Paar besteht die vollstaendige Deployment-Grenze aus acht Klauseln, Issue #993). Live-Deploy abgebrochen.")
+            _stop_running_bot_on_demotion(log, "whitelist_empty", no_deploy=no_deploy)
             return 0
 
         tournament_path = str(whitelist_path)
@@ -1110,6 +1282,29 @@ def phase5_live_deployment(
         })
         return 0
 
+    # Issue #1358 (GH #1254) Fix Punkt 3 — vor JEDEM Start die Sperrdatei lesen: gleicher
+    # whitelist_sha256 ⇒ kein Neustart; abweichend ⇒ SIGTERM + Warten auf die Freigabe der Sperre,
+    # dann Start; Timeout ⇒ Abbruch OHNE zweiten Start. (Vorher: jeder tägliche Lauf = ein weiterer
+    # Bot gegen dasselbe Konto, n · 0,6 kumulierte Ziel-Exposure.)
+    whitelist_sha256 = compute_whitelist_sha256(whitelisted_winners)
+    reconcile = reconcile_live_bot(
+        LIVE_BOT_LOCK_PATH, whitelist_sha256, stop_timeout_s=_live_bot_stop_timeout_s(),
+        reason="whitelist_changed")
+    for event_type, payload in reconcile.events:
+        emit_json_event(log, event_type, payload)
+    if not reconcile.start_new:
+        if reconcile.action == "unchanged":
+            log.info(
+                f"[Phase 5] Whitelist unverändert (sha256={whitelist_sha256[:12]}…) — Bot "
+                f"PID {reconcile.holder_pid} läuft weiter, kein Neustart (LIVE_BOT_UNCHANGED)."
+            )
+            return 0
+        log.error(
+            f"[Phase 5] Laufender Bot (PID {reconcile.holder_pid}) gab die Sperre nach SIGTERM nicht "
+            f"innerhalb von {_live_bot_stop_timeout_s():.0f}s frei — Abbruch ohne zweiten Start."
+        )
+        return 1
+
     try:
         bot_log_handle = open(str(bot_log), "a", encoding="utf-8")
         proc = subprocess.Popen(
@@ -1121,11 +1316,13 @@ def phase5_live_deployment(
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
         log.info(f"[Phase 5] Trading-Bot gestartet (PID: {proc.pid}).")
-        emit_json_event(log, "BOT_STARTED", {"pid": proc.pid, "log_file": str(bot_log)})
-
-        pid_file = logs_dir() / "live_bot.pid"
-        pid_file.write_text(str(proc.pid), encoding="utf-8")
-        log.info(f"[Phase 5] PID gespeichert: {pid_file}")
+        emit_json_event(log, "BOT_STARTED", {
+            "pid": proc.pid, "log_file": str(bot_log), "lock_file": str(LIVE_BOT_LOCK_PATH),
+            "whitelist_sha256": whitelist_sha256,
+        })
+        # Die PID-Datei (logs/live_bot.pid) wurde nie gelesen und ist entfallen: die Wahrheit über
+        # den laufenden Bot ist die flock-gehaltene Sperrdatei data/state/live_bot.lock, die der Bot
+        # selbst schreibt (pid, started_utc, environment, whitelist_sha256).
 
     except Exception as e:
         log.error(f"[Phase 5] Fehler beim Starten des Bot-Subprozesses: {e}\n{traceback.format_exc()}")
@@ -1140,6 +1337,145 @@ def phase5_live_deployment(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 5b: Demo-Inkubation (Issue #1368 / GH #1265)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _load_tournament_cfg() -> dict:
+    try:
+        with open(TOURNAMENT_CFG, "r", encoding="utf-8") as cf:
+            return json.load(cf) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _incubation_paths() -> dict[str, Path]:
+    """Alle Zustandspfade relativ zu ``PROJECT_ROOT`` (in Tests umbiegbar)."""
+    state = PROJECT_ROOT / "data" / "state"
+    return {"stages": state / "deployment_stages.json", "dir": state / "incubation",
+            "live_dir": state / "incubation" / "live", "whitelist": state / "incubation_whitelist.json",
+            "lock": state / "incubation_bot.lock", "tournament": state / "incubation_tournament.json",
+            "trips": state / "incubation" / "distribution_trips.json"}
+
+
+def _run_incubation_selection(log: logging.Logger, inc_cfg: dict, output_path: Path) -> Path | None:
+    """Turnierlauf mit der Inkubations-Geometrie (dieselben Eligibility-Gates wie Phase 4, ohne Holdout-/
+    DSR-Promotion). Rückgabe: der Ergebnis-Pfad oder ``None``."""
+    today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    if today_midnight.weekday() == 6:
+        today_midnight -= timedelta(days=1)
+    cfg = _build_backtest_config(today_midnight - timedelta(days=30), today_midnight,
+                                 walk_forward_override=dict(inc_cfg["walk_forward"]))
+    cfg_path = logs_dir() / "backtest_incubation_config.json"
+    logs_dir().mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, str(_THIS_DIR / "backtest_runner.py"), "--momentum",
+           "--catalog-path", str(CATALOG_PATH), "--config", str(cfg_path), "--output", str(output_path)]
+    bt_log_path = logs_dir() / f"backtest_incubation_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
+    log.info(f"[Phase 5b] Inkubations-Selektion: {' '.join(cmd)}")
+    with open(bt_log_path, "w", encoding="utf-8") as bt_log_f:
+        proc = subprocess.run(cmd, stdout=bt_log_f, stderr=subprocess.STDOUT, cwd=str(PROJECT_ROOT),
+                              timeout=3600, check=False)
+    log.info(f"[Phase 5b] Inkubations-Selektion beendet (Exit-Code: {proc.returncode}).")
+    return output_path if output_path.exists() else None
+
+
+def phase5b_incubation(
+    log: logging.Logger,
+    *,
+    no_deploy: bool = False,
+    skip_selection: bool = False,
+    now: datetime | None = None,
+    selection_fn=None,
+    popen=subprocess.Popen,
+) -> dict:
+    """Phase 5b: Zustandsmaschine ``CANDIDATE → INCUBATING (Demo) → LIVE_SMALL → LIVE_FULL`` (``RETIRED``).
+
+    Nur mit ``tournament.json["incubation"]["enabled"] == true`` (Default aus). Ablauf: (1) Inkubations-
+    Selektion (eigener Turnierlauf, kürzere Geometrie), (2) ``incubation.run_incubation_cycle`` — Promotion
+    ``INCUBATING → LIVE_SMALL`` und ``LIVE_SMALL → LIVE_FULL`` NUR mit ``evaluate_deployment_eligibility(...).
+    admitted is True`` (alle Klauseln), (3) Demo-Bot (``momentum_ls_run --incubation``) mit eigener Sperre und
+    ``ETORO_ENV=demo`` — INCUBATING startet nie im ``real``-Environment. Wirft nie (Phase 5 läuft danach)."""
+    from automation import incubation as inc
+
+    log.info("═" * 60)
+    log.info("PHASE 5b: Demo-Inkubation (Forward-Evidenz, Issue #1368)")
+    log.info("═" * 60)
+    tournament_cfg = _load_tournament_cfg()
+    inc_cfg = inc.incubation_config(tournament_cfg)
+    if not inc_cfg.get("enabled"):
+        log.info("[Phase 5b] Inkubation deaktiviert (tournament.json incubation.enabled = false).")
+        emit_json_event(log, "INCUBATION_SKIPPED", {"reason": "disabled"})
+        return {"status": "disabled"}
+    paths = _incubation_paths()
+    try:
+        if skip_selection:
+            selection_path = paths["tournament"] if paths["tournament"].exists() else None
+        else:
+            selection_path = (selection_fn or _run_incubation_selection)(log, inc_cfg, paths["tournament"])
+        winners: dict = {}
+        if selection_path is not None:
+            with open(selection_path, "r", encoding="utf-8") as f:
+                winners = (json.load(f) or {}).get("per_symbol_winners", {}) or {}
+
+        from automation.optimizer.deployment_gate import (
+            evaluate_deployment_eligibility, load_promotion_records,
+        )
+        live_param_sources = _load_live_param_sources()
+
+        def _gate(strategy: str, symbol: str) -> dict:
+            records = load_promotion_records([(strategy, symbol)], work_dir=PROJECT_ROOT / "data" / "optimizer")
+            return evaluate_deployment_eligibility(
+                (strategy, symbol), records, tournament_cfg, live_param_sources=live_param_sources).to_dict()
+
+        stages = inc.DeploymentStages(paths["stages"])
+        cycle = inc.run_incubation_cycle(
+            stages, winners=winners, tournament_cfg=tournament_cfg,
+            resolve_params=lambda strategy, symbol: resolve_live_params(strategy, symbol, *live_param_sources),
+            deployment_decision_fn=_gate, now=now, ledger_dir=paths["dir"], live_ledger_dir=paths["live_dir"],
+            distribution_trips=inc.read_distribution_trips(paths["trips"]))
+        emit_json_event(log, "INCUBATION_CYCLE", {
+            **cycle.to_dict(), "threshold": inc.bonferroni_threshold_for(inc_cfg),
+            "stages": {k: v.get("stage") for k, v in stages.data.items()}})
+        payload = inc.write_incubation_whitelist(stages, directory=paths["dir"], path=paths["whitelist"], now=now)
+    except Exception as exc:  # defensiv: die Inkubation darf Phase 5 nie verhindern
+        log.error(f"[Phase 5b] Inkubations-Zyklus fehlgeschlagen: {exc}\n{traceback.format_exc()}")
+        emit_json_event(log, "INCUBATION_ERROR", {"error": str(exc)})
+        return {"status": "error", "error": str(exc)}
+
+    pairs = payload.get("per_symbol_winners", {})
+    if no_deploy:
+        log.info("[Phase 5b] --no-deploy: Demo-Bot wird nicht angefasst.")
+        return {"status": "no_deploy", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+    desired_sha = compute_whitelist_sha256(pairs) if pairs else None
+    reconcile = reconcile_live_bot(paths["lock"], desired_sha, stop_timeout_s=_live_bot_stop_timeout_s(),
+                                   reason="incubation_whitelist_changed" if pairs else "no_incubating_pairs")
+    for event_type, payload_ev in reconcile.events:
+        emit_json_event(log, event_type, {**payload_ev, "instance": "incubation"})
+    if not reconcile.start_new:
+        return {"status": reconcile.action, "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+    cmd = [sys.executable, str(PROJECT_ROOT / "automation" / "momentum_ls_run.py"), "--incubation",
+           "--universe", str(UNIVERSE_PATH), "--tournament", str(paths["whitelist"])]
+    # INCUBATING läuft ausschliesslich im Demo-Konto: das Environment wird hier gesetzt UND vom Bot geprüft.
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "ETORO_ENV": "demo"}
+    inc.assert_stage_environment(inc.INCUBATING, env["ETORO_ENV"])
+    bot_log = logs_dir() / f"incubation_bot_{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
+    try:
+        logs_dir().mkdir(parents=True, exist_ok=True)
+        with open(bot_log, "a", encoding="utf-8") as handle:
+            proc = popen(cmd, stdout=handle, stderr=subprocess.STDOUT, cwd=str(PROJECT_ROOT),
+                         start_new_session=True, env=env)
+    except Exception as exc:
+        log.error(f"[Phase 5b] Demo-Bot-Start fehlgeschlagen: {exc}")
+        return {"status": "start_failed", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+    emit_json_event(log, "INCUBATION_BOT_STARTED", {
+        "pid": getattr(proc, "pid", None), "environment": "demo", "pairs": sorted(pairs),
+        "whitelist_sha256": desired_sha, "lock_file": str(paths["lock"])})
+    return {"status": "started", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # HAUPT-EINSTIEGSPUNKT
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1149,10 +1485,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="eToro Nautilus — Täglicher End-to-End-Orchestrator v2.0"
     )
     parser.add_argument("--no-deploy",      action="store_true", help="Führt Phase 1–4 vollständig aus (echter Backtest), unterbindet ausschließlich Phase 5 (Live-Deploy).")
-    parser.add_argument("--skip-api-fetch", action="store_true", help="API-Backfill überspringen.")
+    parser.add_argument("--skip-api-fetch", action="store_true",
+        help="Tiefen-Abruf (Phase 2d) überspringen; der Vorwärts-Schritt (Phase 2c, neue Kerzen) läuft "
+             "weiter (Issue #1363).")
+    parser.add_argument("--offline", action="store_true",
+        help="Kein Netzabruf in Phase 2 (weder Vorwärts-Schritt 2c noch Tiefen-Abruf 2d; Issue #1363).")
     parser.add_argument("--skip-backtest",  action="store_true", help="Phase 3+4 Matrix-Backtesting überspringen.")
     parser.add_argument("--reset-catalog", action="store_true",
-        help="Löscht data/nautilus/data/quote_tick/ vollständig vor Phase 2 (einmalig).")
+        help="Archiviert data/nautilus/data/quote_tick/ nach data/nautilus/archive/<UTC-ts>/ vor Phase 2 "
+             "(einmalig; Issue #1364 — es wird nichts mehr gelöscht).")
     return parser
 
 def main() -> int:
@@ -1173,10 +1514,16 @@ def main() -> int:
 
     # ── Catalog-Reset (einmalig) ────────────────────────────────────────────
     if args.reset_catalog:
-        import shutil
+        # Issue #1364 (GH #1260) / Pitfall #490: kein rmtree — Historie, die die API nicht
+        # zurückliefert (akkumulierte Vorwärts-Kerzen, Echt-Ticks), wäre unwiederbringlich verloren.
+        # Der Katalog wird je Instrument nach data/nautilus/archive/<UTC-ts>/<symbol>/ VERSCHOBEN.
+        from automation.catalog_paths import catalog_archive_root
+        from automation.historical_fetcher import archive_all_instrument_catalogs, _utc_ts_label
         if QUOTE_TICK_PATH.exists():
-            shutil.rmtree(str(QUOTE_TICK_PATH))
-            log.info(f"[RESET] Catalog geleert: {QUOTE_TICK_PATH}")
+            archived = archive_all_instrument_catalogs(
+                QUOTE_TICK_PATH, catalog_archive_root(QUOTE_TICK_PATH.parent.parent) / _utc_ts_label())
+            log.info(f"[RESET] Catalog archiviert (nicht gelöscht): {len(archived)} Instrument(e) "
+                     f"aus {QUOTE_TICK_PATH}")
         QUOTE_TICK_PATH.mkdir(parents=True, exist_ok=True)
 
     log.info("╔" + "═" * 60 + "╗")
@@ -1189,6 +1536,7 @@ def main() -> int:
     emit_json_event(log, "ORCHESTRATOR_START", {
         "no_deploy":      args.no_deploy,
         "skip_api_fetch": args.skip_api_fetch,
+        "offline":        args.offline,
         "version":        "2.0",
         "python":         sys.version,
     })
@@ -1204,12 +1552,16 @@ def main() -> int:
         data_result       = phase2_data_acquisition(
             log, universe_result, api_key, user_key,
             skip_api_fetch=args.skip_api_fetch,
+            offline=args.offline,
         )
         if args.skip_backtest:
             log.info("[Phase 3+4] --skip-backtest: Matrix-Backtesting übersprungen — lade bestehendes Tournament.")
             tournament_result = {"tournament_path": str(TOURNAMENT_PATH), "exit_code": 0}
         else:
             tournament_result = phase3_4_backtest_and_tournament(log)
+        # Issue #1368 — Phase 5b VOR Phase 5: eine heutige Promotion (LIVE_SMALL) ist im selben Lauf
+        # whitelist-wirksam. Default aus (tournament.json incubation.enabled = false).
+        phase5b_incubation(log, no_deploy=args.no_deploy, skip_selection=args.skip_backtest)
         exit_code         = phase5_live_deployment(
             log, universe_result, tournament_result, no_deploy=args.no_deploy
         )

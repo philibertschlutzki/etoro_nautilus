@@ -7,7 +7,7 @@ import ast
 import re
 from pathlib import Path
 
-from automation.optimizer.sweep_diagnostics import check_bar_quality
+from automation.optimizer.sweep_diagnostics import bar_quality_profile
 
 
 def _bar_quality_profile_dict_source() -> str:
@@ -38,7 +38,7 @@ def test_profile_event_also_carries_expected_bins_denominator():
 def test_check_bar_quality_return_dict_is_a_superset_of_profile_fields():
     """Direkter funktionaler Nachweis: alle im Profil referenzierten Felder existieren tatsaechlich
     im Rueckgabewert von check_bar_quality (kein totes Feld im Event-Literal)."""
-    result = check_bar_quality(
+    result = bar_quality_profile(
         [101.0, 102.0, 103.0] * 5, [99.0, 100.0, 101.0] * 5, [100.0, 101.0, 102.0] * 5,
         min_distinct_closes=1)
     for field in ("frac_high_eq_low", "n_distinct_closes", "frac_identical_consecutive_closes",

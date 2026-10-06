@@ -324,3 +324,84 @@ def calibrate_gate_consolidation_false_positive_rate(
         "fp_rate_conjunction_with_expectancy": fp_conjunction / n_reps,
         "fp_rate_psr_only": fp_psr_only / n_reps,
     }
+
+
+# ─── Issue #1366 (GH #1263) — gemessener eToro-Spread aus den Echt-Ticks ───────────────────────────
+#
+# Der 24/7-Collector (catalog_service → daily_orchestrator._merge_symbol) schreibt echte Bid/Ask-Ticks seit
+# #1354/#1366 nach ``quote_tick/<symbol>/RealTick/`` (``bar_interval_ns = 0``, nie Teil der Engine-Sicht).
+# Das Kostenmodell nutzte trotzdem nur konfigurierte Spreads (EQUITY 3,0 bps) — ein unterschätzter Spread
+# überschätzt die Rendite je Round-Trip um die Differenz (5 bps × 252 Round-Trips ≈ 12,6 Prozentpunkte p. a.).
+
+CALIBRATED_SPREAD_FILENAME = "calibrated_spread.json"
+SPREAD_CALIBRATION_N_MIN_DEFAULT = 200
+
+
+def calibrate_spread_from_realtick(
+    symbol: str, catalog_path, *, window_days: float = 30.0,
+    n_min: int = SPREAD_CALIBRATION_N_MIN_DEFAULT, session_window=None,
+) -> dict | None:
+    """Median und P75 von ``(ask − bid) / mid`` in bps über die Echt-Ticks der letzten ``window_days`` (relativ
+    zum jüngsten Echt-Tick), AUSSCHLIESSLICH in der Session (``session_window``, #1356; ``None`` = durchgehend).
+    ``None`` ohne ``RealTick/``-Datei oder mit weniger als ``n_min`` gültigen Ticks (nicht kalibriert —
+    das Kostenmodell bleibt dann bei der Config)."""
+    import pyarrow.parquet as pq
+
+    from automation.catalog_paths import REALTICK_INTERVAL, decode_fsb16_price, resolve_quote_tick_files
+    from automation.session_windows import SessionMask
+
+    files = [f for f in resolve_quote_tick_files(catalog_path, symbol, interval=REALTICK_INTERVAL)
+             if f.parent.name == REALTICK_INTERVAL]
+    if not files:
+        return None
+    rows: list[tuple[int, bytes, bytes]] = []
+    for f in files:
+        t = pq.read_table(str(f), columns=["ts_event", "bid_price", "ask_price"])
+        rows.extend(zip(t.column("ts_event").to_pylist(), t.column("bid_price").to_pylist(),
+                        t.column("ask_price").to_pylist()))
+    if not rows:
+        return None
+    newest = max(int(r[0]) for r in rows)
+    lo = newest - int(window_days * 86_400_000_000_000)
+    mask = SessionMask(session_window) if session_window is not None else None
+    spreads: list[float] = []
+    for ts, bid_raw, ask_raw in rows:
+        ts = int(ts)
+        if ts < lo or (mask is not None and not mask(ts)):
+            continue
+        bid, ask = decode_fsb16_price(bid_raw), decode_fsb16_price(ask_raw)
+        mid = (bid + ask) / 2.0
+        if bid <= 0 or ask < bid or mid <= 0:
+            continue
+        spreads.append((ask - bid) / mid * 10_000.0)
+    if len(spreads) < n_min:
+        return None
+    spreads.sort()
+
+    def _pct(q: float) -> float:
+        return float(np.percentile(np.asarray(spreads), q))
+
+    return {"p50": round(_pct(50), 4), "p75": round(_pct(75), 4), "n_ticks": len(spreads),
+            "window_days": window_days, "source": "realtick"}
+
+
+def write_calibrated_spread_cache(work_dir, by_symbol: dict[str, dict]) -> None:
+    """Persistiert ``{symbol: {p50, p75, n_ticks, window_days, source}}`` atomar im Kalibrierungs-Cache
+    (``PERSISTENT_CACHE_ROOT``, neben ``calibrated_slippage.json``)."""
+    from pathlib import Path
+
+    from automation.optimizer.manifest import write_json_atomic
+    write_json_atomic(Path(work_dir) / CALIBRATED_SPREAD_FILENAME, by_symbol)
+
+
+def read_calibrated_spread_cache(work_dir) -> dict[str, dict]:
+    """Gegenstück zu ``write_calibrated_spread_cache``; fehlende/defekte Datei ⇒ ``{}`` (Config-Spreads)."""
+    import json
+    from pathlib import Path
+
+    path = Path(work_dir) / CALIBRATED_SPREAD_FILENAME
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}

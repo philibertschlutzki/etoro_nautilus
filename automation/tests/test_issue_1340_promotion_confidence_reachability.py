@@ -1,6 +1,6 @@
-"""Issue #1340 (GH #1234) — achsenbewusster Reachability-Preflight: kein Kandidat kann promoviert
-werden, solange ``max_attainable_psr(T_holdout) < promotion_confidence`` gilt. Grösster
-Ertragshebel des #1246-Katalogs.
+"""Issue #1340 (GH #1234) — achsenbewusster Reachability-Preflight. Seit Issue #1367 (GH #1264) prüft er nicht
+mehr gegen den Ausreisser-Kandidaten ``reference_sr`` (``max_attainable_psr``, bleibt Telemetrie), sondern die
+Mindest-nachweisbare Sharpe gegen ``promotion_target_annual_sharpe`` (test_issue_1367_mds_reachability.py).
 """
 import pytest
 
@@ -30,7 +30,7 @@ def test_max_attainable_psr_none_below_two_periods():
     assert max_attainable_psr(1) is None
 
 
-# --- check_promotion_confidence_reachability: T=202 FAIL, T=258 PASS gegen Konfidenz 0.95 -------
+# --- check_promotion_confidence_reachability (seit #1367: MDS gegen Ziel-Sharpe) ------------------
 
 def test_t_202_fails_against_confidence_0_95():
     result = check_promotion_confidence_reachability(202, 0.95)
@@ -38,9 +38,13 @@ def test_t_202_fails_against_confidence_0_95():
     assert result.severity == "blocking"
 
 
-def test_t_258_passes_against_confidence_0_95():
+def test_t_258_no_longer_passes_because_it_only_certifies_sharpe_above_4():
+    """Vorher PASS (Ausreisser-Referenz 0.11386 ⇒ PSR 0.9656); die Mindest-nachweisbare Sharpe bei T=258 liegt
+    bei ≈ 4,3 p. a. — weit über dem Ziel 1,5 (Issue #1367)."""
     result = check_promotion_confidence_reachability(258, 0.95)
-    assert result.passed is True
+    assert result.passed is False
+    assert result.actual["mds_annual"] > 4.0
+    assert check_promotion_confidence_reachability(2124, 0.95).passed is True
 
 
 def test_missing_inputs_are_inconclusive_not_fail():
@@ -57,14 +61,19 @@ def test_actual_field_carries_the_full_computation_for_provenance():
     assert result.actual["t_holdout"] == 258
     assert result.actual["promotion_confidence"] == 0.95
     assert "max_attainable_psr" in result.actual
+    assert result.actual["required_t"] == 212            # echtes Minimum für reference_sr, kein Echo
 
 
 # --- compute_holdout_bar_count: T_holdout aus der tatsaechlichen Bar-Achse ----------------------
 
 def test_compute_holdout_bar_count_equity_uses_seven_bins_per_trading_day():
     session = {"EQUITY": {"open_utc": "13:30", "close_utc": "20:00"}}
+    # Alt-Form (UTC, ohne Kalender): 5/7 Handelstage.
     t = compute_holdout_bar_count(60, session, "EQUITY")
     assert t == round(60 * (5.0 / 7.0) * 7)
+    # Issue #1367 — mit NYSE-Kalender (Börsenzeit-Fenster) die Feiertage abgezogen (≈ 251/365 statt 5/7).
+    ny = {"EQUITY": {"tz": "America/New_York", "open": "09:30", "close": "16:00"}}
+    assert compute_holdout_bar_count(60, ny, "EQUITY") == 288
 
 
 def test_compute_holdout_bar_count_crypto_uses_24_bars_per_calendar_day():
@@ -72,10 +81,9 @@ def test_compute_holdout_bar_count_crypto_uses_24_bars_per_calendar_day():
     assert t == 60 * 24
 
 
-def test_current_backtest_json_holdout_days_reaches_the_confidence_threshold():
-    """Regressionsschutz: die #1340-Konfigentscheidung (holdout_days=60) muss tatsaechlich
-    max_attainable_psr >= deflation_confidence liefern — sonst waere die Config-Aenderung
-    wirkungslos."""
+def test_current_backtest_json_holdout_days_is_an_honest_fail():
+    """Issue #1367 — mit der heutigen Config (60 Holdout-Tage, 0,95, Ziel 1,5) ist der Preflight ein ehrlicher
+    FAIL: erwartetes Ergebnis, kein Regressionsfehler (vorher maskierte die Ausreisser-Referenz das)."""
     import json
     from pathlib import Path
 
@@ -86,8 +94,7 @@ def test_current_backtest_json_holdout_days_reaches_the_confidence_threshold():
     session = backtest_cfg.get("session_hours_by_asset_class")
 
     t_holdout = compute_holdout_bar_count(holdout_days, session, "EQUITY")
-    result = check_promotion_confidence_reachability(t_holdout, confidence)
-    assert result.passed is True, (
-        f"backtest.json['walk_forward']['holdout_days']={holdout_days} liefert T={t_holdout}, "
-        f"max_attainable_psr < deflation_confidence={confidence} — die #1340-Resolution ist "
-        f"nicht (mehr) wirksam.")
+    result = check_promotion_confidence_reachability(
+        t_holdout, confidence, target_annual_sharpe=tournament_cfg["promotion_target_annual_sharpe"])
+    assert result.passed is False
+    assert result.actual["max_attainable_psr"] >= confidence      # die alte Prüfung hätte PASS gemeldet

@@ -107,15 +107,19 @@ def test_resolve_session_hours_resolves_equity_and_commodity_windows():
         "CRYPTO": None,
         "DEFAULT": None,
     }
-    assert br.resolve_session_hours_by_asset_class("EQUITY", table) == ("13:30", "20:00")
-    assert br.resolve_session_hours_by_asset_class("COMMODITY", table) == ("13:30", "20:00")
+    # Issue #1356 (GH #1252) — die Alt-Form wird als UTC-Fenster gelesen (WARNING), nie umgedeutet.
+    for ac in ("EQUITY", "COMMODITY"):
+        w = br.resolve_session_hours_by_asset_class(ac, table)
+        assert (w.tz, w.open, w.close, w.legacy_utc) == ("UTC", "13:30", "20:00", True)
 
 
 def test_resolve_session_hours_matches_the_shipped_backtest_json_config():
+    """Issue #1356 (GH #1252) — die ausgelieferte Config ist Börsen-Lokalzeit (NYSE 09:30-16:00 ET)."""
     cfg = json.loads(_BACKTEST_JSON_PATH.read_text())
     table = cfg["session_hours_by_asset_class"]
-    assert br.resolve_session_hours_by_asset_class("EQUITY", table) == ("13:30", "20:00")
-    assert br.resolve_session_hours_by_asset_class("COMMODITY", table) == ("13:30", "20:00")
+    for ac in ("EQUITY", "COMMODITY"):
+        w = br.resolve_session_hours_by_asset_class(ac, table)
+        assert (w.tz, w.open, w.close, w.calendar) == ("America/New_York", "09:30", "16:00", "NYSE")
     assert br.resolve_session_hours_by_asset_class("FOREX", table) is None
     assert br.resolve_session_hours_by_asset_class("CRYPTO", table) is None
     assert br.resolve_session_hours_by_asset_class("DEFAULT", table) is None
@@ -177,8 +181,9 @@ def test_is_within_session_hours_friday_evening_is_still_in_window():
 def test_backtest_json_declares_session_hours_by_asset_class_with_expected_shape():
     cfg = json.loads(_BACKTEST_JSON_PATH.read_text())
     table = cfg["session_hours_by_asset_class"]
-    assert table["EQUITY"] == {"open_utc": "13:30", "close_utc": "20:00"}
-    assert table["COMMODITY"] == {"open_utc": "13:30", "close_utc": "20:00"}
+    # Issue #1356 (GH #1252) — Börsen-Lokalzeit statt der DST-blinden UTC-Konstante 13:30-20:00.
+    assert table["EQUITY"] == {"tz": "America/New_York", "open": "09:30", "close": "16:00"}
+    assert table["COMMODITY"] == {"tz": "America/New_York", "open": "09:30", "close": "16:00"}
     assert table["FOREX"] is None
     assert table["CRYPTO"] is None
     assert table["DEFAULT"] is None

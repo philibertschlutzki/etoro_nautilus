@@ -24,7 +24,9 @@ def _need(cfg, bars_per_day=24):
         is_window_days=wf["is_window_days"], oos_window_days=wf["oos_window_days"],
         splits=wf["splits"], holdout_days=wf["holdout_days"],
         buffer_days=cfg["gate1_buffer_days"], bars_per_day=bars_per_day,
-        embargo_period_days=wf.get("embargo_period_days", 0))
+        embargo_period_days=wf.get("embargo_period_days", 0),
+        # Issue #1357 (GH #1253) — inkl. Holdout-Embargo (Selektionsende → Holdout-Beginn).
+        holdout_embargo_days=wf.get("holdout_embargo_days", 0))
 
 
 def test_required_bars_formula():

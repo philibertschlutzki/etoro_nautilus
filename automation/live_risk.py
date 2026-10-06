@@ -18,6 +18,17 @@ Zwei unabhaengige, ODER-verknuepfte Ausloeser (Issue #999 Symptom 2):
       ``mu_backtest``/``sigma_backtest`` MUESSEN auf derselben Periodenskala wie ``R_live`` geschaetzt
       sein (dieselbe Kommensurabilitaets-Anforderung wie Issue #996, hier auf der Live-Seite).
 
+Issue #1362 (GH #1258) — drei Änderungen am Auslöser-Satz:
+
+  * A (Drawdown) rechnet gegen einen PERSISTENTEN Hochwasserstand (``live_equity_state``,
+    ``data/state/live_equity_hwm.json``): ein Bot-Neustart löscht das Drawdown-Gedächtnis nicht mehr.
+  * C (Tagesverlust): ``1 − E/E_session_start >= daily_loss_halt_fraction`` (Default 0.03), die Basis ist
+    die persistierte Equity zum Beginn des Handelstags in Börsen-Lokalzeit.
+  * B (Verteilung) je Paar auf der sizing-invarianten Skala: Netto-Rendite je Round-Trip in bps auf das
+    Positions-Notional, getestet gegen ``holdout_trade_return_bps_mean/std`` des promovierten Trials;
+    auswertbar ab ``circuit_breaker_n_min_round_trips`` (Default 30). Vorher: 30-Sekunden-Equity-Renditen
+    ohne Referenz (``momentum_ls_run`` übergab nie ``backtest_mu``/``backtest_sigma`` ⇒ toter Code).
+
 Rein & deterministisch (kein I/O, kein globaler State) — ``LiveCircuitBreakerWatchdog`` (unten) ist
 die einzige IO-/Thread-tragende Klasse und bleibt bewusst von dieser reinen Entscheidungslogik
 getrennt, damit ``evaluate_circuit_breaker``/``drawdown_damper`` ohne einen laufenden
@@ -27,9 +38,10 @@ from __future__ import annotations
 
 import logging
 import math
+import signal
 import threading
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +49,32 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CircuitBreakerDecision:
     tripped: bool
-    trigger: str | None  # "drawdown" | "distribution" | None
+    trigger: str | None  # "drawdown" | "daily_loss" | "distribution" | None
     dd_live: float | None
     z_live: float | None
     n_live: int
+    # Issue #1362 — Tagesverlust (Auslöser C) und das Paar, dessen Round-Trip-Verteilung den Auslöser B
+    # ausgelöst hat; Defaults rückwärtskompatibel.
+    daily_loss: float | None = None
+    distribution_pair: str | None = None
+
+
+def evaluate_distribution_trigger(
+    live_returns: Sequence[float], backtest_mu: float | None, backtest_sigma: float | None, *,
+    z_halt: float = 2.5, n_min_periods: int = 30,
+) -> tuple[bool, float | None, int]:
+    """Auslöser B (Issue #999, in #1362 herausgelöst): Standardfehler-skalierter Ein-Stichproben-z-Test
+    ``z = (mean(R) − μ_ref) / (σ_ref / √n) < −z_halt``, FAIL-OPEN bis ``n >= n_min_periods`` oder ohne
+    Referenz. ``(tripped, z, n)``. ``μ_ref``/``σ_ref`` MÜSSEN auf derselben Skala wie ``live_returns``
+    liegen (#1362: bps je Round-Trip auf das Notional)."""
+    n_live = len(live_returns)
+    if (n_live >= n_min_periods and backtest_mu is not None
+            and backtest_sigma is not None and backtest_sigma > 0):
+        standard_error = backtest_sigma / math.sqrt(n_live)
+        if standard_error > 0:
+            z_live = (sum(live_returns) / n_live - backtest_mu) / standard_error
+            return z_live < -z_halt, z_live, n_live
+    return False, None, n_live
 
 
 def evaluate_circuit_breaker(
@@ -53,10 +87,13 @@ def evaluate_circuit_breaker(
     backtest_sigma: float | None = None,
     z_halt: float = 2.5,
     n_min_periods: int = 30,
+    equity_day_start: float | None = None,
+    daily_loss_halt_fraction: float | None = None,
 ) -> CircuitBreakerDecision:
-    """Reine Entscheidungsfunktion — EIN Aufruf, EIN atomares Urteil (kein Fruehausstieg: beide
+    """Reine Entscheidungsfunktion — EIN Aufruf, EIN atomares Urteil (kein Fruehausstieg: alle
     Ausloeser werden unabhaengig ausgewertet, ``trigger`` traegt den ERSTEN, der zutrifft, in fester
-    Reihenfolge A vor B, falls beide gleichzeitig zutreffen)."""
+    Reihenfolge A (Drawdown) vor C (Tagesverlust, #1362) vor B (Verteilung), falls mehrere
+    gleichzeitig zutreffen)."""
     if equity_peak is None or equity_peak <= 0:
         dd_live = None
     else:
@@ -66,19 +103,21 @@ def evaluate_circuit_breaker(
     # check_live_exposure_budget-Invariante (``Σ w_i <= W_max + 1e-9``).
     triggered_a = dd_live is not None and dd_live >= dd_halt_fraction - 1e-9
 
-    n_live = len(live_returns)
-    z_live = None
-    triggered_b = False
-    if (n_live >= n_min_periods and backtest_mu is not None
-            and backtest_sigma is not None and backtest_sigma > 0):
-        r_live_mean = sum(live_returns) / n_live
-        standard_error = backtest_sigma / math.sqrt(n_live)
-        if standard_error > 0:
-            z_live = (r_live_mean - backtest_mu) / standard_error
-            triggered_b = z_live < -z_halt
+    # Issue #1362 Fix Punkt 2 — Auslöser C: Tagesverlust gegen die Equity zum Session-Beginn.
+    daily_loss = None
+    triggered_c = False
+    if equity_day_start is not None and equity_day_start > 0:
+        daily_loss = max(0.0, 1.0 - (float(equity_now) / float(equity_day_start)))
+        triggered_c = (daily_loss_halt_fraction is not None
+                       and daily_loss >= daily_loss_halt_fraction - 1e-9)
+
+    triggered_b, z_live, n_live = evaluate_distribution_trigger(
+        live_returns, backtest_mu, backtest_sigma, z_halt=z_halt, n_min_periods=n_min_periods)
 
     if triggered_a:
         trigger = "drawdown"
+    elif triggered_c:
+        trigger = "daily_loss"
     elif triggered_b:
         trigger = "distribution"
     else:
@@ -86,6 +125,7 @@ def evaluate_circuit_breaker(
 
     return CircuitBreakerDecision(
         tripped=trigger is not None, trigger=trigger, dd_live=dd_live, z_live=z_live, n_live=n_live,
+        daily_loss=daily_loss,
     )
 
 
@@ -144,6 +184,164 @@ def drawdown_damper(dd_current: float | None, *, dd_halt_fraction: float = 0.10,
     return max(psi_min, 1.0 - (dd_current / dd_halt_fraction))
 
 
+
+# ─── Issue #1358 (GH #1254) — geordnetes Herunterfahren bei SIGTERM/SIGINT ──────────────────────
+
+SHUTDOWN_POLICY_KEEP = "keep"
+SHUTDOWN_POLICY_FLATTEN = "flatten"
+
+
+def _has_broker_stop_tag(tags) -> bool:
+    for tag in (tags or []):
+        if isinstance(tag, str) and tag.startswith("SL:"):
+            try:
+                if float(tag[3:]) > 0:
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def open_positions_missing_broker_stop(cache) -> list[str]:
+    """Issue #1358 Fix Punkt 2 / #1359 — IDs offener Positionen OHNE Broker-Stop. Eine Position trägt
+    einen Broker-Stop, wenn ihre Eröffnungs-Order einen ``SL:<pct>``-Tag mit pct > 0 hatte (der
+    eToro-Adapter setzt daraus ``StopLossRate``/``IsNoStopLoss = False``). Eine Position, deren
+    Eröffnungs-Order nicht im Cache steht (z. B. nach einem Neustart per Reconciliation übernommen),
+    gilt FAIL-CLOSED als ungeschützt."""
+    missing: list[str] = []
+    try:
+        positions = list(cache.positions_open())
+    except Exception:
+        logger.exception("[LiveShutdown] Konnte offene Positionen nicht lesen — fail-closed: unbekannt.")
+        return ["<positions_unreadable>"]
+    for pos in positions:
+        try:
+            order = cache.order(pos.opening_order_id)
+        except Exception:
+            order = None
+        if order is None or not _has_broker_stop_tag(getattr(order, "tags", None)):
+            missing.append(str(getattr(pos, "id", pos)))
+    return missing
+
+
+def effective_shutdown_policy(configured: str | None, positions_without_broker_stop: Sequence[str]) -> str:
+    """Wirksame Policy beim Herunterfahren: ``keep`` (Default) ist nur zulässig, wenn JEDE offene
+    Position einen Broker-Stop trägt — sonst automatisch ``flatten`` (eine ungeschützte Position ohne
+    laufenden Bot wäre unverwaltet). Unbekannte Werte werden wie ``keep`` behandelt (Default)."""
+    policy = (configured or SHUTDOWN_POLICY_KEEP).strip().lower()
+    if policy == SHUTDOWN_POLICY_FLATTEN:
+        return SHUTDOWN_POLICY_FLATTEN
+    return SHUTDOWN_POLICY_FLATTEN if positions_without_broker_stop else SHUTDOWN_POLICY_KEEP
+
+
+class LiveShutdownCoordinator:
+    """Issue #1358 Fix Punkt 2 — ``SIGTERM``/``SIGINT`` ⇒ (1) Entry-Sperre setzen, (2) ``node.stop()``
+    über ``loop.call_soon_threadsafe`` (der Signal-Handler läuft im Hauptthread unter dem laufenden
+    Event-Loop), (3) Policy ``live_risk.on_shutdown`` (``keep`` | ``flatten``, siehe
+    ``effective_shutdown_policy``), (4) Event ``LIVE_BOT_SHUTDOWN`` mit offenen Positionen und der
+    gewählten Policy. Idempotent: ein zweites Signal löst nichts erneut aus.
+
+    Duck-typed gegen ``node`` (``.cache``, ``.trader``, ``.stop()``, ``.get_event_loop()``) und
+    testbar ohne laufenden ``TradingNode``."""
+
+    def __init__(
+        self,
+        node,
+        *,
+        policy: str = SHUTDOWN_POLICY_KEEP,
+        block_entries: Callable[[], None] | None = None,
+        emit: Callable[[str, dict], None] | None = None,
+    ) -> None:
+        self._node = node
+        self._policy = policy
+        self._block_entries = block_entries
+        self._emit = emit
+        self.requested = threading.Event()
+        self.shutdown_payload: dict | None = None
+        self._previous_handlers: dict[int, object] = {}
+        self._loop = None
+
+    def install(self, signals: Sequence[int] = (signal.SIGTERM, signal.SIGINT), *, loop=None) -> None:
+        """Registriert die Handler. Mit ``loop`` (der Event-Loop des Nodes) über
+        ``loop.add_signal_handler`` — das ersetzt die Handler, die der NautilusTrader-Kernel selbst
+        für SIGTERM/SIGINT/SIGABRT registriert (sie würden nur ``node.stop()`` aufrufen, ohne Policy
+        und Event). Ohne ``loop`` über ``signal.signal`` (Hauptthread)."""
+        self._loop = loop
+        for signum in signals:
+            if loop is not None:
+                loop.add_signal_handler(signum, self.request_shutdown, signum)
+                self._previous_handlers[signum] = None
+            else:
+                self._previous_handlers[signum] = signal.signal(signum, self._handle_signal)
+
+    def uninstall(self) -> None:
+        for signum, previous in self._previous_handlers.items():
+            try:
+                if getattr(self, "_loop", None) is not None:
+                    self._loop.remove_signal_handler(signum)
+                else:
+                    signal.signal(signum, previous)  # type: ignore[arg-type]
+            except (ValueError, TypeError, RuntimeError):
+                pass
+        self._previous_handlers.clear()
+
+    def _handle_signal(self, signum, _frame) -> None:
+        self.request_shutdown(signum)
+
+    def request_shutdown(self, signum: int | None = None) -> bool:
+        """True ⇔ dieser Aufruf hat das Herunterfahren ausgelöst (False: bereits angefordert)."""
+        if self.requested.is_set():
+            return False
+        self.requested.set()
+        if self._block_entries is not None:
+            try:
+                self._block_entries()
+            except Exception:
+                logger.exception("[LiveShutdown] Entry-Sperre konnte nicht gesetzt werden.")
+        try:
+            loop = self._node.get_event_loop()
+            loop.call_soon_threadsafe(self._shutdown_on_loop, signum)
+        except Exception:
+            logger.exception("[LiveShutdown] Kein Event-Loop erreichbar — direkter Shutdown-Versuch.")
+            self._shutdown_on_loop(signum)
+        return True
+
+    def _shutdown_on_loop(self, signum: int | None) -> None:
+        cache = getattr(self._node, "cache", None)
+        try:
+            open_ids = [str(getattr(p, "id", p)) for p in cache.positions_open()] if cache else []
+        except Exception:
+            logger.exception("[LiveShutdown] Konnte offene Positionen nicht lesen.")
+            open_ids = []
+        missing = open_positions_missing_broker_stop(cache) if (cache is not None and open_ids) else []
+        effective = effective_shutdown_policy(self._policy, missing)
+        self.shutdown_payload = {
+            "signal": int(signum) if signum is not None else None,
+            "open_positions": open_ids,
+            "positions_without_broker_stop": missing,
+            "policy_configured": self._policy,
+            "policy": effective,
+        }
+        if self._emit is not None:
+            try:
+                self._emit("LIVE_BOT_SHUTDOWN", self.shutdown_payload)
+            except Exception:
+                logger.exception("[LiveShutdown] Event-Emission fehlgeschlagen.")
+        if effective == SHUTDOWN_POLICY_FLATTEN:
+            try:
+                for strategy_id in list(self._node.trader.strategy_ids):
+                    try:
+                        self._node.trader.market_exit_strategy(strategy_id)
+                    except Exception:
+                        logger.exception(f"[LiveShutdown] market_exit_strategy({strategy_id}) fehlgeschlagen.")
+            except Exception:
+                logger.exception("[LiveShutdown] Konnte strategy_ids nicht lesen — Flatten übersprungen.")
+        try:
+            self._node.stop()
+        except Exception:
+            logger.exception("[LiveShutdown] node.stop() fehlgeschlagen.")
+
+
 class LiveCircuitBreakerWatchdog:
     """Issue #999 Fix Punkt 2 — periodischer Wächter-Thread fuer eine laufende NautilusTrader-
     ``TradingNode``. Getrennt von ``evaluate_circuit_breaker`` (siehe Moduldocstring): diese Klasse
@@ -169,6 +367,14 @@ class LiveCircuitBreakerWatchdog:
         n_min_periods: int = 30,
         on_trip: Callable[[CircuitBreakerDecision], None] | None = None,
         on_update: Callable[[CircuitBreakerDecision], None] | None = None,
+        # Issue #1362 (GH #1258) — persistentes Drawdown-Gedächtnis, Tagesverlust-Auslöser C und
+        # Verteilungs-Auslöser B je Paar (alle optional, Default = bit-identisches Alt-Verhalten).
+        equity_state=None,
+        daily_loss_halt_fraction: float | None = None,
+        day_key_fn: Callable[[Any], str] | None = None,
+        distribution_refs: dict[str, dict] | None = None,
+        n_min_round_trips: int = 30,
+        now_fn: Callable[[], Any] | None = None,
     ) -> None:
         self._node = node
         self._venue = venue
@@ -184,7 +390,18 @@ class LiveCircuitBreakerWatchdog:
         # den ψ(DD)-Daempfer kontinuierlich aktuell haelt, statt nur binaer "getrippt/nicht".
         self._on_update = on_update
 
-        self._equity_peak: float | None = None
+        self._equity_state = equity_state
+        self._daily_loss_halt_fraction = daily_loss_halt_fraction
+        self._day_key_fn = day_key_fn
+        self._distribution_refs = distribution_refs
+        self._n_min_round_trips = int(n_min_round_trips)
+        self._now_fn = now_fn
+        self._round_trips = None  # RoundTripReturnCollector, lazy (nur mit distribution_refs)
+        self._memory_day_key: str | None = None
+        self._memory_day_start: float | None = None
+        # Issue #1362 — der Start startet NICHT bei ``None``, sondern beim persistierten Hochwasserstand.
+        self._equity_peak: float | None = (
+            equity_state.hwm if equity_state is not None else None)
         self._live_returns: list[float] = []
         self._last_equity: float | None = None
         self.tripped_event = threading.Event()
@@ -219,8 +436,23 @@ class LiveCircuitBreakerWatchdog:
             return
         equity_now = self._read_equity()
         if equity_now is not None:
-            if self._equity_peak is None or equity_now > self._equity_peak:
-                self._equity_peak = equity_now
+            day_start: float | None = None
+            if self._equity_state is not None or self._daily_loss_halt_fraction is not None:
+                from datetime import datetime, timezone
+                now = self._now_fn() if self._now_fn is not None else datetime.now(timezone.utc)
+                day_key = self._day_key_fn(now) if self._day_key_fn is not None else None
+            if self._equity_state is not None:
+                # Persistenter Hochwasserstand + Tagesbasis (Neustart-fest, Issue #1362 Fix Punkt 1/2).
+                state = self._equity_state.observe(equity_now, now_utc=now, day_key=day_key)
+                self._equity_peak = float(state["hwm"])
+                day_start = state.get("day_start_equity")
+            else:
+                if self._equity_peak is None or equity_now > self._equity_peak:
+                    self._equity_peak = equity_now
+                if self._daily_loss_halt_fraction is not None and day_key is not None:
+                    if self._memory_day_key != day_key:
+                        self._memory_day_key, self._memory_day_start = day_key, equity_now
+                    day_start = self._memory_day_start
             if self._last_equity is not None and self._last_equity > 0:
                 self._live_returns.append((equity_now - self._last_equity) / self._last_equity)
             self._last_equity = equity_now
@@ -230,7 +462,11 @@ class LiveCircuitBreakerWatchdog:
                 dd_halt_fraction=self._dd_halt_fraction,
                 backtest_mu=self._backtest_mu, backtest_sigma=self._backtest_sigma,
                 z_halt=self._z_halt, n_min_periods=self._n_min_periods,
+                equity_day_start=day_start,
+                daily_loss_halt_fraction=self._daily_loss_halt_fraction,
             )
+            if self._distribution_refs is not None:
+                decision = self._with_distribution_verdict(decision)
             self.last_decision = decision
             if self._on_update is not None:
                 try:
@@ -240,7 +476,9 @@ class LiveCircuitBreakerWatchdog:
             if decision.tripped and not self.tripped_event.is_set():
                 logger.critical(
                     f"[LiveCircuitBreaker] LIVE_CIRCUIT_BREAKER_TRIPPED trigger={decision.trigger} "
-                    f"dd_live={decision.dd_live} z_live={decision.z_live} n_live={decision.n_live}"
+                    f"dd_live={decision.dd_live} daily_loss={decision.daily_loss} "
+                    f"z_live={decision.z_live} n_live={decision.n_live} "
+                    f"pair={decision.distribution_pair}"
                 )
                 self.tripped_event.set()
                 self._flatten_and_stop(decision)
@@ -250,6 +488,36 @@ class LiveCircuitBreakerWatchdog:
             self._timer = threading.Timer(self._poll_interval_s, self._tick)
             self._timer.daemon = True
             self._timer.start()
+
+    def _with_distribution_verdict(self, decision: CircuitBreakerDecision) -> CircuitBreakerDecision:
+        """Issue #1362 Fix Punkt 3 — Auslöser B JE PAAR auf der sizing-invarianten Skala: die
+        Round-Trip-Renditen (bps auf das Notional) jedes Instruments gegen ``holdout_trade_return_bps_
+        mean/std`` des promovierten Trials. Ersetzt die 30-Sekunden-Equity-Renditen (``_live_returns``,
+        nur noch diagnostisch), die nie eine vergleichbare Referenz hatten. A und C behalten Vorrang."""
+        from automation.live_equity_state import RoundTripReturnCollector
+
+        if self._round_trips is None:
+            self._round_trips = RoundTripReturnCollector()
+        try:
+            self._round_trips.update(self._node.cache.positions_closed())
+        except Exception:
+            logger.exception("[LiveCircuitBreaker] positions_closed() fehlgeschlagen — B übersprungen.")
+            return decision
+        if decision.tripped:
+            return decision
+        for instrument_id, returns in self._round_trips.returns_by_instrument.items():
+            symbol = str(instrument_id)
+            ref = self._distribution_refs.get(symbol)
+            if not ref:
+                continue
+            tripped, z, n = evaluate_distribution_trigger(
+                returns, ref["mean"], ref["std"], z_halt=self._z_halt,
+                n_min_periods=self._n_min_round_trips)
+            if tripped:
+                return CircuitBreakerDecision(
+                    tripped=True, trigger="distribution", dd_live=decision.dd_live, z_live=z,
+                    n_live=n, daily_loss=decision.daily_loss, distribution_pair=symbol)
+        return decision
 
     def _flatten_and_stop(self, decision: CircuitBreakerDecision) -> None:
         # Issue #999 — dieser Wächter laeuft in einem eigenen Python-Thread (threading.Timer), nicht

@@ -54,6 +54,13 @@ def _passing_record(**overrides) -> dict:
         # Expectancy bleibt positiv UND vorzeichengleich zur rohen Expectancy.
         "holdout_expectancy_notional_weighted": 0.05,
         "holdout_expectancy_winsorized": 0.04,
+        # Issue #1360 (GH #1256) — zwoelfte Klausel ``live_params_match_promotion``: ein leeres
+        # promoviertes Override verlangt nichts und besteht trivial (fehlendes Feld waere fail-closed).
+        "proposed_instrument_override": {},
+        # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
+        # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
+        "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
         "run_id": "run_abc123",
     }
     record.update(overrides)
@@ -217,6 +224,12 @@ _CLAUSE_VARIANTS = {
         "fail": {"holdout_expectancy_notional_weighted": 0.05, "holdout_expectancy_winsorized": -0.01},
         "none": {"holdout_expectancy_notional_weighted": None, "holdout_expectancy_winsorized": None},
     },
+    # Issue #1357 (GH #1253) — dreizehnte Klausel.
+    "holdout_disjoint": {
+        "pass": {"holdout_overlap_days": 0},
+        "fail": {"holdout_overlap_days": 15},
+        "none": {"holdout_overlap_days": None},
+    },
 }
 
 
@@ -282,6 +295,12 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
         "R_global": 0.3,
         "promotion_margin": 0.05,
         "data_snapshot_sha256": _SNAPSHOT,
+        # Issue #1360 (GH #1256) — das promovierte Override (leer ⇒ verlangt nichts).
+        "proposed_instrument_override": {},
+        # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
+        # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
+        "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
         "holdout": {
             "symbol": {
                 "deflated_dsr": 0.96,

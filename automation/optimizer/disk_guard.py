@@ -25,7 +25,8 @@ import threading
 import time
 from pathlib import Path
 
-from automation.optimizer.invariants import invariant_scope
+from automation.catalog_paths import is_catalog_archive_path
+from automation.optimizer.invariants import InvariantResult, invariant_scope
 
 # Issue #795 — einfache String-Konstanten statt enum.Enum: Konvention dieses Repos (event_type,
 # rejection_reason, seed_source, ... sind ebenfalls Strings, siehe reward.py/parsing.py).
@@ -62,7 +63,11 @@ def measure_usage(work_dir: Path, *, use_cache: bool = True) -> int:
             return cached_val
     total = 0
     if Path(work_dir).exists():
-        for dirpath, _dirnames, filenames in os.walk(work_dir):
+        for dirpath, dirnames, filenames in os.walk(work_dir):
+            # Issue #1364 (GH #1260) Fix Punkt 5: das Katalog-Archiv (data/nautilus/archive/) zählt
+            # nicht zum Optimizer-Budget und ist von jeder automatischen Bereinigung ausgenommen.
+            dirnames[:] = [d for d in dirnames
+                           if not is_catalog_archive_path(Path(dirpath) / d)]
             for name in filenames:
                 fp = os.path.join(dirpath, name)
                 try:
@@ -78,15 +83,17 @@ def free_bytes(work_dir: Path) -> int:
     return shutil.disk_usage(work_dir).free
 
 
-@invariant_scope("run")
-def check_budget(work_dir: Path, *, budget_gb: float, reserve_gb: float,
-                 use_cache: bool = True) -> str:
+def budget_status(work_dir: Path, *, budget_gb: float, reserve_gb: float,
+                  use_cache: bool = True) -> str:
     """Liefert ``STATUS_OK``/``STATUS_PRESSURE``/``STATUS_EXCEEDED`` aus dem aktuellen Verbrauch
     (``measure_usage``) UND dem freien Platz (``free_bytes``):
 
       * ``EXCEEDED`` ⇔ ``used >= budget_gb·2³⁰`` ODER ``free < reserve_gb·2³⁰``.
       * ``PRESSURE`` ⇔ ``used >= 0.8·budget_gb·2³⁰`` ODER ``free < 2·reserve_gb·2³⁰``.
       * sonst ``OK``.
+
+    Issue #1370 (GH #1267) — umbenannt von ``check_budget`` (ein Status-String ist kein
+    ``InvariantResult``); das Urteil trägt ``check_budget`` unten.
     """
     budget_bytes = budget_gb * GIB
     reserve_bytes = reserve_gb * GIB
@@ -100,6 +107,24 @@ def check_budget(work_dir: Path, *, budget_gb: float, reserve_gb: float,
     return STATUS_OK
 
 
+@invariant_scope("run")
+def check_budget(work_dir: Path, *, budget_gb: float, reserve_gb: float,
+                 use_cache: bool = True) -> InvariantResult:
+    """Issue #1370 (GH #1267) — das ``InvariantResult`` zu ``budget_status``: PASS nur bei ``STATUS_OK``
+    (``severity='high'`` bei ``EXCEEDED``, sonst ``'medium'`` — dieselbe Abstufung wie die Strom-Meldung im
+    Disk-Budget-Callback)."""
+    status = budget_status(work_dir, budget_gb=budget_gb, reserve_gb=reserve_gb, use_cache=use_cache)
+    return InvariantResult(
+        name="check_budget",
+        passed=status == STATUS_OK,
+        expected=f"data/optimizer-Verbrauch <= budget_gb={budget_gb} UND freie Reserve >= reserve_gb={reserve_gb}.",
+        actual={"status": status, "budget_gb": budget_gb, "reserve_gb": reserve_gb}
+        if status != STATUS_OK else None,
+        severity="high" if status == STATUS_EXCEEDED else "medium",
+        detail=f"disk_guard.budget_status ⇒ {status}.",
+    )
+
+
 def estimate_expected_bytes(n_trials: int, bytes_per_trial_estimate: float) -> int:
     """Reine Schätzfunktion für den Preflight: ``n_trials · bytes_per_trial_estimate``."""
     return int(n_trials * bytes_per_trial_estimate)
@@ -110,7 +135,7 @@ def assert_preflight_budget(work_dir: Path, *, expected_bytes: int, budget_gb: f
     """Issue #795 — Preflight VOR dem ersten Trial: wirft ``DiskBudgetExceededError``, wenn der
     GEPLANTE Lauf (``expected_bytes``, aus ``estimate_expected_bytes``) das Budget übersteigt ODER
     den freien Platz unter die Reserve drücken würde. Fragt bewusst "passt der geplante Lauf?",
-    nicht "wie voll ist es gerade?" (das ist ``check_budget``, laufend während des Sweeps)."""
+    nicht "wie voll ist es gerade?" (das ist ``budget_status``, laufend während des Sweeps)."""
     budget_bytes = budget_gb * GIB
     reserve_bytes = reserve_gb * GIB
     free = free_bytes(work_dir)

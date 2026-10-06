@@ -26,17 +26,18 @@ def test_load_and_save_inception_bounds(clean_cache):
     # Ensure cache starts empty
     assert _load_inception_bounds() == {}
 
-    # Save a bound
-    _save_inception_bound("TSLA.ETORO", 123456789)
+    # Save a bound — Issue #1363 (GH #1259): je Intervall, mit observed_utc.
+    now = datetime(2026, 10, 4, tzinfo=timezone.utc)
+    _save_inception_bound("TSLA.ETORO", 123456789, now=now)
     bounds = _load_inception_bounds()
-    assert bounds == {"TSLA.ETORO": 123456789}
+    assert bounds == {"TSLA.ETORO": {"OneHour": 123456789, "observed_utc": "2026-10-04T00:00:00Z"}}
 
     # Save another bound and overwrite existing
-    _save_inception_bound("TSLA.ETORO", 999999999)
-    _save_inception_bound("AAPL.ETORO", 111111111)
+    _save_inception_bound("TSLA.ETORO", 999999999, now=now)
+    _save_inception_bound("AAPL.ETORO", 111111111, now=now)
 
     bounds2 = _load_inception_bounds()
-    assert bounds2 == {"TSLA.ETORO": 999999999, "AAPL.ETORO": 111111111}
+    assert {s: b["OneHour"] for s, b in bounds2.items()} == {"TSLA.ETORO": 999999999, "AAPL.ETORO": 111111111}
 
 def test_is_backtest_range_covered_with_cache(clean_cache, tmp_path):
     """Test that is_backtest_range_covered bypasses start_ns check if old enough compared to cache."""
