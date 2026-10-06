@@ -69,7 +69,8 @@ def test_real_shipped_instrument_map_has_twelve_crypto_symbols():
     data = json.loads((config_dir() / "instrument_map.json").read_text("utf-8"))
     counts = Counter(v.get("asset_class") for v in data["instruments"].values())
     assert counts["crypto"] == 12
-    assert counts["equity"] == 130
+    # 130 + die 24 in Katalog #1352 (GH #1270) bereinigten, vorher asset_class=null-Einträge
+    assert counts["equity"] == 154
     assert counts["commodity"] == 2
     assert counts["forex"] == 2
 

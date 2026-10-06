@@ -7060,6 +7060,23 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 ### 🟡 Pitfall #480 — Eine Meta-Invariante über Vollständigkeit braucht einen Erreichbarkeitsbegriff [Katalog #1330–#1351, GitHub-Issue #1240]
 **Verbatim (Issue #1246):** `check_invariant_coverage` meldete auf einem 0-Study-Lauf 29 fehlende Checks und maskierte damit den Fall, für den sie gebaut wurde. „Fehlt" und „konnte in diesem Lauf-Skope nicht erscheinen" sind zwei Aussagen.
 
+## Issue-Katalog #1352–#1353 — Schreibstelle von `instrument_map.json`, Layout-Parität des Verifikationswerkzeugs (GitHub-Issues #1270–#1272, Erstfassung #1248/#1249)
+
+**Änderungsprotokoll.** Die beiden Befunde sind unabhängig voneinander; kein Versions-Bump (weder `reward_semantics_version` noch `simulation_semantics_version` noch `catalog_schema_version` — beide Fixes ändern Validierungs-/Werkzeug-Logik, kein Reward-/Simulationsverhalten). Der Erst-Fix (PR #1250) lieferte die Normalisierung, `asset_class: null` statt `"Unknown"`, die Post-Write-Kohärenzprüfung und die Interval-Suche in `verify_symbol_data.py`. Der Folge-Fix (GH #1270–#1272) schliesst, was der Produktionslauf vom 2026-10-04 zeigte: 24 von 24 neu aufgelösten IDs blieben `asset_class: null`, weil nur das Feld `AssetClass` gelesen wurde.
+
+| Katalog-Nr. (GH) | Kernänderung | Dateien |
+|---|---|---|
+| **#1352** (#1270, Erstfassung #1249) | Klassifikation zusätzlich über eToros `InstrumentTypeID` (1 Currencies → `forex`, 2 Commodities → `commodity`, 5 Stocks/6 ETF → `equity`, 10 Crypto → `crypto`; 4 Indices bleibt `null`); klassenkonsistente Precision-Defaults (crypto 2/8, forex/commodity 5/5) für Symbole, die die symbolbasierte Tabelle nicht kennt; Bestandseinträge ohne kanonische Klasse (`null`, `"Unknown"`, Rohwert) werden an der Schreibstelle nachklassifiziert, manuelle Klassen nie angefasst; verbleibende `null`-Einträge meldet `run_fetch()` auf ERROR. Datenbereinigung: die 24 `null`-Einträge (MRK, INTC, ORCL, PDD, GRAB, SU, …) als `equity` klassifiziert — alle US-gelistete Aktien. Pitfall #481. | `universe_fetcher.py`, `config/instrument_map.json` |
+| **#1353** (#1271, Erstfassung #1248) | Abnahme bestätigt: `logs/summary_new.csv` meldet 174/174 Symbole `OK`. Neu: Paritätstest `verify_symbol_data.resolve_quote_tick_files` ↔ `catalog_paths.resolve_quote_tick_files` über alle bekannten Layouts (Interval, flach, `RealTick/`, `part-*.parquet`) plus Importfreiheit des Werkzeugs. Pitfall #482. | `tests/verify_symbol_data.py`, `tests/test_issue_1353_1271_verify_symbol_data_layout_parity.py` |
+
+## Neue Pitfalls #481–#482 (Issue-Katalog #1352–#1353, verbatim aus GitHub-Issue #1272)
+
+### 🔴 Pitfall #481 — Eine Fail-loud-Prüfung an der Lesestelle verhindert Korruption an der einzigen Schreibstelle nicht, sie meldet sie nur verspätet [Katalog #1352, GitHub-Issue #1270]
+**Verbatim (Issue #1272):** Wenn genau eine Stelle im System eine Konfigurationsdatei schreibt und die dazugehörige Integritätsprüfung ausschliesslich an einer entfernten Lesestelle sitzt (hier: Optimizer-Sweep-Preflight, Stunden nach dem täglichen Universe-Fetch), verhindert der Wächter die Korruption nicht — er entdeckt sie erst, nachdem sie bereits jeden Verbraucher blockiert. Eine Validierung, die an einer wiederverwendbaren Stelle existiert, gehört direkt hinter jede Schreiboperation, nicht nur an den bequemsten Lesepunkt.
+
+### 🟠 Pitfall #482 — Eine bewusst unabhängige Zweitimplementierung braucht eine eigene Nachzieh-Pflicht bei jeder Layout-Änderung der Erstimplementierung [Katalog #1353, GitHub-Issue #1271]
+**Verbatim (Issue #1272):** Ein Verifikationswerkzeug, das absichtlich keine Pipeline-Module importiert (um nicht denselben Bug zu teilen), teilt stattdessen das Risiko, bei der nächsten Layout-/Schema-Änderung der Pipeline lautlos zu veralten — es gibt keinen Import-Fehler, der die Divergenz anzeigt, nur ein plötzliches 100-%-Fehlschlagen ohne erkennbare Ursache. Jede PR, die ein von mehreren Stellen konsumiertes Datei-/Verzeichnislayout ändert (hier: #1331), muss explizit nach bewusst entkoppelten Zweitimplementierungen desselben Pfads suchen, nicht nur nach den über `catalog_paths.py` verdrahteten Konsumenten.
+
 ## Issue-Katalog #1354–#1371 — Engine-Datenpfad, Börsen-Lokalzeit, Holdout-Disjunktheit, Live-Lebenszyklus, Forward-Evidenz (GitHub-Issues #1251–#1268, Sitzung 2026-10-04)
 
 **Änderungsprotokoll.** Umgesetzt in der Merge-Reihenfolge aus #1371 (Stufe 0 Schutz → 1 Engine-Datenpfad → 2 Selektion → 3 Daten → 4 Nachweisbarkeit/Ertrag → 5 Bericht → 6 Bump). GH #1262 ist ein Duplikat von GH #1261 (#1365); #1355 (erste/letzte RTH-Kerze vollständig) war nicht Teil dieses Auftrags: die Kerzen-Überlappung (Intervall statt Punkt-Test, ganzzahlige ns) ist mit #1356 umgesetzt, die Telemetrie `session_partial_candle_count` (Abnahmeprotokoll Punkt 2) **nicht** — offen.
@@ -7090,7 +7107,7 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 
 ## Neue Pitfalls #483–#493 (Issue-Katalog #1354–#1371, GitHub-Issues #1251–#1268, verbatim aus Issue #1371)
 
-> Anschluss an #480; #481–#482 sind durch #1352–#1353 reserviert.
+> Anschluss an #480; #481–#482 stehen im Abschnitt zum Issue-Katalog #1352–#1353 oben.
 
 ### 🔴 Pitfall #483 — Ein Layout-Wechsel ist erst fertig, wenn der Leser der Engine ihn liest [Katalog #1354–#1371, Issue #1354]
 **Verbatim:** Seit #1331 schreibt der Katalog `<symbol>/OneHour/data.parquet`; NautilusTraders Katalog identifiziert Instrumente über den Elternordner und lädt daraus 0 Ticks. Alle Preflights lasen über `catalog_paths` und meldeten Daten, der einzige End-to-End-Test schrieb das alte flache Layout. Preflight und Engine rufen denselben Leser auf; ein Integrationstest läuft gegen die echte Bibliothek, mit dem Produktions-Schreiber.
