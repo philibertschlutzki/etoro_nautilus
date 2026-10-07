@@ -4329,7 +4329,7 @@ def diagnosis_writeback_admissible(run_report: dict) -> tuple[bool, str]:
     return True, "admissible"
 
 
-def _compute_decision_admissible(invariant_checks: list[dict]) -> bool:
+def _compute_decision_admissible(invariant_checks: list[dict], *, any_symbol_survived: bool = False) -> bool:
     """Issue #942/#1108 (Katalog #960) — eine der drei orthogonalen Achsen, die den vorher
     ueberladenen ``run_status``-String ersetzen (siehe ``_build_report``-Docstring): ``False``
     sobald mindestens eine ``severity='blocking'``-Invariante in ``invariant_checks`` FAILt.
@@ -4346,6 +4346,9 @@ def _compute_decision_admissible(invariant_checks: list[dict]) -> bool:
         c.get("severity") == "blocking" and not c.get("passed", True)
         # Issue #1369 — unterdrückte Folge-Invarianten zählen nicht als blockierend-INCONCLUSIVE.
         and not _inv.is_suppressed_upstream(c)
+        # Issue #1380 (Pitfall #501) — eine per-Symbol-Preflight-Ablehnung ist kein run-weiter Blocker, solange
+        # ein anderes Symbol überlebt hat: dieselbe Funktion wie ``sweep._downgrade_run_status_...``.
+        and not _inv.is_scoped_preflight_rejection(c, any_symbol_survived=any_symbol_survived)
         for c in invariant_checks)
 
 
@@ -6280,7 +6283,8 @@ def _build_report(
     # angeforderten Symbole im Preflight abgewiesen wurden, trägt SUPPRESSED_UPSTREAM_NO_SYMBOLS.
     if _no_symbols_upstream:
         _inv.suppress_inconclusive_for_no_symbols(invariant_checks)
-    _decision_admissible = _compute_decision_admissible(invariant_checks)
+    _decision_admissible = _compute_decision_admissible(
+        invariant_checks, any_symbol_survived=bool(symbols_planned))
 
     # Issue #1305 (GH #1182, P1) Fix Punkt 1/2 — Rückschrieb-Zulässigkeit dieses Laufs, EINMAL aus
     # dem FINALEN invariant_checks-Stand berechnet (Pitfall #467 in AGENTS.md: ein Snapshot VOR dem

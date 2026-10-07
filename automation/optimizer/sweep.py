@@ -6503,17 +6503,12 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
         # Herabstufung ausgenommen, wenn ``symbols_planned`` (== 0) zeigt, dass am Ende KEIN Symbol
         # ueberlebt hat — dann bleibt 'completed_invalid' korrekt (Akzeptanzkriterium: "Ein Lauf,
         # in dem alle Symbole abgewiesen werden, liefert weiterhin completed_invalid").
-        _per_symbol_preflight_checks = {"check_tick_population", "check_bar_quality",
-                                        # Issue #1363 — Symbol-Ablehnung REJECT_DATA_STALE.
-                                        "check_catalog_freshness"}
+        # Issue #1380 (Pitfall #501) — die Ausnahme ist EINE Funktion mit Registry in ``invariants`` (dieselbe,
+        # die ``report._compute_decision_admissible`` nutzt), kein hier kopiertes Set.
         _any_symbol_survived = bool(written_report.get("symbols_planned"))
 
         def _is_scoped_preflight_rejection(c: dict) -> bool:
-            return (
-                _any_symbol_survived
-                and (c.get("name") or c.get("check")) in _per_symbol_preflight_checks
-                and c.get("scope") is not None
-            )
+            return invariants.is_scoped_preflight_rejection(c, any_symbol_survived=_any_symbol_survived)
 
         blocking_fails = [
             c for c in (written_report.get("invariant_checks") or [])

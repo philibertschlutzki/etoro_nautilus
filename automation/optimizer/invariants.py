@@ -9328,6 +9328,34 @@ def check_history_floor_coherence(walk_forward: dict | None, *, resolution_floor
 PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT = 1.5
 
 
+# Issue #1380 (GH #1282, Pitfall #501) — die EINE Registry der per-Symbol-Preflight-Ablehnungen: Check ⇒
+# Ablehnungscodes. Eine Ausnahme ist eine Funktion mit Registry, kein kopiertes Set an zwei Ableitungsstellen
+# (``sweep._downgrade_run_status_for_blocking_invariants`` UND ``report._compute_decision_admissible``). Jeder
+# in ``sweep.py`` an ``_symbols_rejected`` angehängte ``REJECT_*``-Code MUSS hier stehen (Quelltext-Test).
+PER_SYMBOL_PREFLIGHT_REJECTIONS: dict[str, tuple[str, ...]] = {
+    "check_catalog_freshness": ("REJECT_DATA_STALE", "REJECT_FUTURE_TICK"),     # #1363, #1373
+    "check_catalog_resolution_homogeneity": ("REJECT_RESOLUTION_HETEROGENEOUS",),   # #1334
+    "check_engine_reader_parity": ("REJECT_ENGINE_READER_MISMATCH",),           # #1354
+    "check_tick_population": ("REJECT_DATA_UNAVAILABLE",),                      # #1298
+    "check_bar_quality": ("REJECT_DATA_DEGENERATE",),                           # #807
+}
+PER_SYMBOL_REJECTION_CODES: frozenset[str] = frozenset(
+    code for codes in PER_SYMBOL_PREFLIGHT_REJECTIONS.values() for code in codes)
+
+
+def is_scoped_preflight_rejection(check: dict, *, any_symbol_survived: bool) -> bool:
+    """Issue #1380 — ``True``, wenn ``check`` (ein ``invariant_checks``-Eintrag) die Ablehnung GENAU EINES
+    Symbols ist (Check steht in ``PER_SYMBOL_PREFLIGHT_REJECTIONS``, ``scope`` ist das Symbol) UND mindestens
+    ein anderes Symbol überlebt hat: der Lauf selbst bleibt dann für die übrigen Symbole gültig und wird weder
+    auf ``completed_invalid`` herabgestuft noch ``decision_admissible=false``. Werden ALLE Symbole abgewiesen
+    (``any_symbol_survived=False``), bleibt die Ablehnung ein run-weiter Blocker (#1344, #1363).
+    Die EINZIGE Implementierung dieser Ausnahme."""
+    return bool(
+        any_symbol_survived
+        and (check.get("name") or check.get("check")) in PER_SYMBOL_PREFLIGHT_REJECTIONS
+        and check.get("scope") is not None)
+
+
 DETECTABILITY_UNATTAINABLE = "unattainable"
 DETECTABILITY_UNDERPOWERED = "underpowered"
 DETECTABILITY_CERTIFIABLE = "certifiable"
