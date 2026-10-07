@@ -413,11 +413,21 @@ async def probe_pagination(session, etoro_id: str, symbol: str, interval: str, *
 
 # ─── Vorwärts-Schritt (Issue #1363) ──────────────────────────────────────────
 
-def forward_fill_count(gap_hours: float) -> int:
+def forward_fill_count(gap_hours: float, interval: str = "OneHour") -> int:
     """``count = min(1000, ceil(gap_h) + 24)`` — die Lücke seit dem jüngsten lokalen Tick plus ein Tag
-    Überlappung (Issue #1363; vorher fix 168 Kerzen: eine längere Lücke blieb als Loch)."""
+    Überlappung (Issue #1363; vorher fix 168 Kerzen: eine längere Lücke blieb als Loch).
+
+    Issue #1276 (GH #1149, Katalog #1374): für ``OneDay`` wird intervallgerecht gezählt —
+    ``count = min(1000, ceil(gap_d) + 2)`` (die Stundenformel lieferte 24 Kerzen Überlappung = 24 Tage)."""
     import math
+    if interval == "OneDay":
+        return int(min(1000, math.ceil(max(0.0, gap_hours) / 24.0) + 2))
     return int(min(1000, math.ceil(max(0.0, gap_hours)) + 24))
+
+
+def _forward_min_gap_h(interval: str) -> float:
+    """Kleinste Lücke (h), ab der ein Vorwärts-Schritt lohnt: eine fertige Kerze des Intervalls (≥ 1 h bzw. 24 h)."""
+    return 24.0 if interval == "OneDay" else 1.0
 
 
 async def fetch_forward_candles(
@@ -438,17 +448,17 @@ async def fetch_forward_candles(
     now = now or datetime.now(timezone.utc)
     mode = mode or pagination_mode(symbol, interval)
     gap_h = (now.timestamp() - latest_local_ns / 1e9) / 3600.0
-    if gap_h < 1.0:
+    if gap_h < _forward_min_gap_h(interval):
         return []
     if mode == PAGINATION_COUNT_ONLY:
         check_forward_gap_horizon(symbol, interval, latest_local_ns, now=now)
         out = await fetch(session, etoro_id, None, api_key, user_key, interval,
-                          count=forward_fill_count(gap_h)) or []
+                          count=forward_fill_count(gap_h, interval)) or []
         log.info(f"[{symbol}] Vorwärts-Schritt {interval}: {len(out)} Kerzen (Lücke {gap_h:.1f} h, count_only).")
         return out
     out = []
     end_time, last_oldest = now, None
-    count = forward_fill_count(gap_h)
+    count = forward_fill_count(gap_h, interval)
     for _ in range(max_pages):
         chunk = await fetch(session, etoro_id, end_time, api_key, user_key, interval, count=count)
         if not chunk:
@@ -459,7 +469,7 @@ async def fetch_forward_candles(
             break
         last_oldest = oldest
         end_time = datetime.fromtimestamp(oldest / 1e9, tz=timezone.utc) - timedelta(seconds=1)
-        count = forward_fill_count((end_time.timestamp() - latest_local_ns / 1e9) / 3600.0)
+        count = forward_fill_count((end_time.timestamp() - latest_local_ns / 1e9) / 3600.0, interval)
     log.info(f"[{symbol}] Vorwärts-Schritt {interval}: {len(out)} Kerzen (Lücke {gap_h:.1f} h).")
     return out
 
@@ -1337,6 +1347,94 @@ def migrate_catalog(target: str, etoro_id_to_symbol: dict[str, str] | None = Non
     return migrated
 
 
+# ─── OneDay-Vollfenster (Issue #1276) ────────────────────────────────────────
+
+ONEDAY = "OneDay"
+
+
+def oneday_span_days(symbol: str, quote_tick_path: Path | None = None) -> dict:
+    """``{oneday_n_candles, oneday_oldest_utc, oneday_effective_span_days}`` aus ``<symbol>/OneDay/data.parquet``
+    (read-only). Je Tageskerze liegen bis zu vier O/L/H/C-Ticks; gezählt wird nach ``ts_event``-Tagen."""
+    path = Path(quote_tick_path or QUOTE_TICK_PATH) / symbol / ONEDAY / "data.parquet"
+    empty = {"oneday_n_candles": 0, "oneday_oldest_utc": None, "oneday_effective_span_days": None}
+    if not path.exists():
+        return empty
+    try:
+        ts = pq.read_table(str(path), columns=["ts_event"]).column("ts_event").to_pylist()
+    except Exception:
+        return empty
+    if not ts:
+        return empty
+    # O/L/H-Ticks liegen ab candle_start, der Close-Tick bei candle_end − 1 ns: alle Ticks einer Tageskerze
+    # (fromDate = UTC-Mitternacht) fallen in denselben UTC-Tag. Welche Bezugszeit eToro tatsächlich liefert,
+    # klärt der Messlauf aus #1277 (oneday_definition).
+    days = {int(t // 86_400_000_000_000) for t in ts}
+    oldest_day = min(days)
+    oldest = datetime.fromtimestamp(oldest_day * 86400, tz=timezone.utc)
+    newest = datetime.fromtimestamp(max(days) * 86400, tz=timezone.utc)
+    return {"oneday_n_candles": len(days), "oneday_oldest_utc": oldest.strftime("%Y-%m-%d"),
+            "oneday_effective_span_days": float((newest - oldest).days + 1)}
+
+
+async def fetch_oneday_full_window(
+    session, etoro_id: str, symbol: str, price_prec: int, size_prec: int, *, api_key: str, user_key: str,
+    now: datetime | None = None, fetch_chunk=None,
+) -> dict | None:
+    """Issue #1276 (GH #1149, Katalog #1374) Fix Punkt 1 — EIN Abruf (``candlesCount=1000``, #1372) und
+    Speichern OHNE ``target_start``-Schnitt nach ``<symbol>/OneDay/data.parquet``
+    (``_merge_and_save(..., interval="OneDay")``). ``OneHour/data.parquet`` wird nie angefasst. Gibt die
+    Messgrössen (Anzahl, ältester Tag) zurück, ``None`` bei leerer Antwort/Tabelle."""
+    from automation.api_backfiller import _candles_to_arrow_table, _merge_and_save
+    fetch = fetch_chunk or _fetch_candle_chunk
+    now = now or datetime.now(timezone.utc)
+    chunk = await fetch(session, etoro_id, None, api_key, user_key, ONEDAY, count=_WINDOW_COUNT)
+    if not chunk:
+        log.info(f"[{symbol}] Keine Candles für {ONEDAY}.")
+        return None
+    _save_api_window(symbol, ONEDAY, chunk)
+    table = _candles_to_arrow_table(
+        chunk, symbol, price_prec, size_prec, datetime.fromtimestamp(0, tz=timezone.utc), interval=ONEDAY,
+        asof_ns=int(now.timestamp() * 1e9),                              # Issue #1373: nur fertige Tageskerzen
+    )
+    if table is None or len(table) == 0:
+        log.warning(f"[{symbol}] {ONEDAY}: Leere Arrow-Table nach Konvertierung.")
+        return None
+    _merge_and_save(log, table, symbol, price_prec, size_prec, interval=ONEDAY)
+    info = oneday_span_days(symbol)
+    log.info(f"[{symbol}] ONEDAY_FULL_WINDOW_SAVED n_candles={info['oneday_n_candles']} "
+             f"oldest={info['oneday_oldest_utc']} span_d={info['oneday_effective_span_days']}")
+    try:
+        from automation.log_manager import emit_execution_event
+        emit_execution_event(log, "ONEDAY_FULL_WINDOW_SAVED", {"symbol": symbol, **info})
+    except Exception:  # pragma: no cover - Telemetrie darf den Abruf nie stoppen
+        pass
+    return info
+
+
+async def run_oneday_full_window(
+    api_key: str, user_key: str, etoro_id_to_symbol: dict[str, str], symbols: list[str],
+) -> dict[str, dict]:
+    """``--interval OneDay --full-window --symbols …`` — ``{symbol: {oneday_n_candles, …}}`` je Symbol."""
+    wanted = {x.strip().upper().removesuffix(".ETORO") for x in symbols if x.strip()}
+    targets = {eid: sym for eid, sym in etoro_id_to_symbol.items()
+               if sym.upper().removesuffix(".ETORO") in wanted}
+    result: dict[str, dict] = {}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+        try:
+            precisions = await fetch_precisions_from_api(session, list(targets), api_key, user_key)
+        except Exception as exc:
+            log.warning(f"[historical_fetcher] Precision-Fetch Fehler: {exc} — nutze Fallback.")
+            precisions = {}
+        for eid, sym in sorted(targets.items(), key=lambda x: x[1]):
+            price_prec, size_prec = precisions.get(eid) or _fallback_precisions(sym)
+            info = await fetch_oneday_full_window(
+                session, eid, sym, price_prec, size_prec, api_key=api_key, user_key=user_key)
+            if info is not None:
+                result[sym] = info
+            await asyncio.sleep(1.1)
+    return result
+
+
 # ─── CLI Entry-Point ──────────────────────────────────────────────────────────
 
 async def run_pagination_probe(
@@ -1392,6 +1490,11 @@ def main() -> int:
     )
     parser.add_argument("--interval", type=str, default=None, choices=list(_FETCH_INTERVALS),
                         help="Nur mit --probe-pagination: nur dieses Intervall (Default: beide).")
+    parser.add_argument("--full-window", action="store_true",
+                        help="Issue #1276: mit --interval OneDay --symbol/--symbols: ein Abruf (candlesCount=1000) "
+                             "und Speichern OHNE target_start-Schnitt nach <symbol>/OneDay/data.parquet.")
+    parser.add_argument("--symbols", type=str, default=None, metavar="SYMBOL[,…]",
+                        help="Symbolliste für --full-window (mit oder ohne .ETORO-Suffix).")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1414,6 +1517,15 @@ def main() -> int:
     if not etoro_id_map:
         log.error("[historical_fetcher] Keine Instrumente im Universe — Abbruch.")
         return 1
+
+    if args.full_window:
+        if args.interval != ONEDAY or not (args.symbols or args.symbol):
+            log.error("[historical_fetcher] --full-window braucht --interval OneDay und --symbols.")
+            return 1
+        out = asyncio.run(run_oneday_full_window(
+            api_key, user_key, etoro_id_map, (args.symbols or args.symbol).split(",")))
+        print(json.dumps(out, indent=2))
+        return 0 if out else 1
 
     if args.probe_pagination:
         modes = asyncio.run(run_pagination_probe(

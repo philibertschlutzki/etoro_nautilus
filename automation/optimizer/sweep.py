@@ -838,16 +838,23 @@ def probe_symbol_tick_population(symbol: str, catalog_path: Path | None = None, 
 
 
 MAX_CATALOG_STALENESS_H_DEFAULT = 96.0
+MAX_CATALOG_STALENESS_D_ONEDAY_DEFAULT = 4.0   # Issue #1276 (GH #1149): Tageskerzen — Wochenende + Feiertag
 
 
 def check_catalog_freshness(newest_ns: int | None, *, max_staleness_h: float = MAX_CATALOG_STALENESS_H_DEFAULT,
-                            now: dt.datetime | None = None) -> dict:
+                            now: dt.datetime | None = None, interval: str = "OneHour",
+                            max_staleness_d_oneday: float = MAX_CATALOG_STALENESS_D_ONEDAY_DEFAULT) -> dict:
     """Issue #1363 (GH #1259) Fix Punkt 4 — BLOCKIERENDER Preflight je Symbol: das Alter des jüngsten
     ``OneHour``-Ticks darf ``max_staleness_h`` (Default 96 h: Wochenende + Feiertag) nicht übersteigen, sonst
     ``REJECT_DATA_STALE``. Vorher wurde ein veralteter Katalog still validiert: das Walk-Forward-Ende ist
     ``min(now, catalog_end)`` — Selektion und Holdout rutschten mit dem Katalogende in die Vergangenheit.
-    ``newest_ns=None`` (kein lesbarer Tick) ⇒ nicht auswertbar (``passed=None``)."""
+    ``newest_ns=None`` (kein lesbarer Tick) ⇒ nicht auswertbar (``passed=None``).
+
+    Issue #1276 (GH #1149, Katalog #1374): ``interval="OneDay"`` prüft gegen ``max_staleness_d_oneday`` TAGE
+    (Default 4) statt gegen ``max_staleness_h``; der Report-Wert ``max_staleness_h`` ist dann ``d · 24``."""
     now = now or dt.datetime.now(dt.timezone.utc)
+    if interval == "OneDay":
+        max_staleness_h = float(max_staleness_d_oneday) * 24.0
     if newest_ns is None:
         return {"passed": None, "age_h": None, "max_staleness_h": max_staleness_h, "severity": "blocking",
                 "reason": "NEWEST_TICK_UNKNOWN"}
@@ -859,13 +866,13 @@ def check_catalog_freshness(newest_ns: int | None, *, max_staleness_h: float = M
         return {"passed": False, "age_h": round(age_h, 2), "max_staleness_h": max_staleness_h,
                 "severity": "blocking", "newest_utc": newest_utc, "reason_code": "FUTURE_TICK",
                 "rejection_code": "REJECT_FUTURE_TICK",
-                "reason": f"REJECT_FUTURE_TICK: jüngster OneHour-Tick liegt {-age_h:.2f} h in der Zukunft "
+                "reason": f"REJECT_FUTURE_TICK: jüngster {interval}-Tick liegt {-age_h:.2f} h in der Zukunft "
                           f"(unfertige Kerze, FUTURE_TICK)"}
     passed = age_h <= max_staleness_h
     return {"passed": passed, "age_h": round(age_h, 2), "max_staleness_h": max_staleness_h,
             "severity": "blocking", "newest_utc": newest_utc,
             "reason": None if passed else
-            f"REJECT_DATA_STALE: jüngster OneHour-Tick {age_h:.1f} h alt > {max_staleness_h:.0f} h"}
+            f"REJECT_DATA_STALE: jüngster {interval}-Tick {age_h:.1f} h alt > {max_staleness_h:.0f} h"}
 
 
 def check_data_depth_eta(effective_span_days: float | None, required_span_days: float, *,
@@ -2876,6 +2883,18 @@ def _measurement_run_report_path(work_dir: Path, run_id: str) -> Path:
     return Path(work_dir) / "reports" / f"measurement_run_{run_id}.json"
 
 
+def _oneday_measurement(symbol: str) -> dict:
+    """Issue #1276 (GH #1149, Katalog #1374) Fix Punkt 4 — ``oneday_n_candles``/``oneday_oldest_utc``/
+    ``oneday_effective_span_days`` aus ``<symbol>/OneDay`` (read-only). Die Segmentierung folgt #1365 mit
+    ``target_interval="OneDay"``; ``max_contiguity_gap_days`` (4) lässt Wochenende und Feiertag das Segment
+    nicht brechen. ``None``-Felder, wenn keine OneDay-Datei existiert."""
+    from automation.historical_fetcher import oneday_span_days
+    info = oneday_span_days(symbol)
+    seg = check_catalog_resolution_homogeneity(symbol, target_interval="OneDay")
+    return {"oneday_n_candles": info["oneday_n_candles"], "oneday_oldest_utc": info["oneday_oldest_utc"],
+            "oneday_effective_span_days": seg.get("effective_span_days")}
+
+
 def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None = None) -> dict:
     """Issue #1342 (GH #1236, P1) Fix-Punkt 2/3 — der reine MESSLAUF, den der #1236-Sperrvermerk
     verlangt, bevor irgendeine der vier ATR-abgeleiteten Kalibrierungen (``atr_floor_bps_by_
@@ -2910,6 +2929,7 @@ def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None
                 "stop_distance_bps_measured": None,
                 "note": "keine Bar-Qualitaets-Stichprobe verfuegbar (siehe "
                        "BAR_QUALITY_SAMPLE_UNAVAILABLE im Log).",
+                **_oneday_measurement(_sym),
             }
             continue
         _quality = bar_quality_profile(
@@ -2927,6 +2947,7 @@ def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None
             "window_start": _sample.get("window_start"), "window_end": _sample.get("window_end"),
             "sample_span_days": _sample.get("sample_span_days"),
             "intrabar_path": _sample.get("intrabar_path"),
+            **_oneday_measurement(_sym),
         }
     report = {
         "run_id": _run_id, "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),

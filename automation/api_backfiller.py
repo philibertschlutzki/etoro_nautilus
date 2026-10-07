@@ -945,8 +945,13 @@ async def run_backfill(
     days: int = 7,
     dry_run: bool = False,
     specific_symbols: set[str] | None = None,
+    with_oneday: bool = False,
 ) -> list[str]:
-    """Backfill-Hauptlogik."""
+    """Backfill-Hauptlogik.
+
+    Issue #1276 (GH #1149, Katalog #1374): mit ``with_oneday=True`` folgt auf den Stunden-Vorwärts-Schritt ein
+    ``OneDay``-Vorwärts-Schritt (``count = min(1000, ceil(gap_d) + 2)``, nur fertige Tageskerzen) in die EIGENE
+    Datei ``<symbol>/OneDay/data.parquet`` — ``OneHour`` bleibt unberührt."""
     if not api_key or not user_key:
         log.warning("[api_backfiller] API-Keys fehlen — Backfill übersprungen.")
         return []
@@ -1046,8 +1051,49 @@ async def run_backfill(
                 )
                 await asyncio.sleep(2)
 
+        if with_oneday:
+            await _oneday_forward_steps(session, etoro_id_to_symbol, api_precisions, specific_symbols,
+                                        api_key, user_key, end_dt, dry_run)
+
     log.info(f"[api_backfiller] Backfill abgeschlossen: {len(filled)} Symbole befüllt.")
     return filled
+
+
+async def _oneday_forward_steps(session, etoro_id_to_symbol, api_precisions, specific_symbols,
+                                api_key, user_key, end_dt, dry_run) -> list[str]:
+    """Issue #1276 — OneDay-Vorwärts-Schritt je Symbol mit vorhandener ``OneDay``-Datei (die Datei entsteht per
+    ``historical_fetcher --interval OneDay --full-window``). Gibt die fortgeschriebenen Symbole zurück."""
+    from automation.historical_fetcher import fetch_forward_candles
+    done: list[str] = []
+    for etoro_id, symbol in sorted(etoro_id_to_symbol.items(), key=lambda x: x[1]):
+        if specific_symbols and symbol not in specific_symbols:
+            continue
+        dest = QUOTE_TICK_PATH / symbol / "OneDay" / "data.parquet"
+        if not dest.exists():
+            continue
+        latest = _get_latest_ts(dest)
+        if latest is None:
+            continue
+        price_prec, size_prec = api_precisions.get(etoro_id) or _fallback_precisions(symbol or "")
+        try:
+            candles = await fetch_forward_candles(
+                session, etoro_id, symbol, latest, api_key=api_key, user_key=user_key,
+                interval="OneDay", now=end_dt)
+            if not candles:
+                continue
+            table = _candles_to_arrow_table(
+                candles, symbol, price_prec, size_prec,
+                datetime.fromtimestamp(latest / 1e9, tz=timezone.utc) - timedelta(days=3),
+                interval="OneDay", asof_ns=int(end_dt.timestamp() * 1e9))
+            if table is None or len(table) == 0:
+                continue
+            if not dry_run:
+                _merge_and_save(log, table, symbol, price_prec, size_prec, interval="OneDay")
+            done.append(symbol)
+            await asyncio.sleep(1.1)
+        except Exception as exc:
+            log.warning(f"[api_backfiller] OneDay-Vorwärts-Schritt {symbol}: {exc}")
+    return done
 
 
 # ─── Universe Loader (Standalone, kein adapters-Import) ──────────────────────
