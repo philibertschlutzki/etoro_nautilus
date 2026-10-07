@@ -2037,6 +2037,13 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True)
+    # Issue #1379 (GH #1281) — Nachweisbarkeit (holdout_mds_annual, detectability_class) für den Promotion-Record.
+    try:
+        _stamp_detectability(study, cfg_dir, symbol, catalog_newest_ns=catalog_newest_ns)
+    except Exception:
+        logging.getLogger("optimizer").debug("[#1379] Nachweisbarkeit nicht stempelbar (non-fatal).",
+                                             exc_info=True)
+
     # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4 und die
     # Holdout-Tage aus der Config (Issue #1357: kein Literal) sind exakt die Werte, die die Objective-
     # Closure unten pro Trial an build_trial uebergibt (siehe make_objective) — muessen hier identisch
@@ -3632,6 +3639,34 @@ def _stamp_selection_holdout_geometry(study, cfg_dir: Path, *, catalog_newest_ns
                 "holdout_embargo_days", "holdout_overlap_days"):
         study.set_user_attr(key, geometry[key])
     return geometry
+
+
+def _stamp_detectability(study, cfg_dir: Path, symbol: str, *, catalog_newest_ns: int | None) -> dict:
+    """Issue #1379 (GH #1281) — stempelt ``holdout_mds_annual`` und ``detectability_class`` (Transparenz im
+    Promotion-Record; KEINE neue Deployment-Klausel) in ``study.user_attrs``: dieselbe Rechnung wie der
+    Preflight ``check_promotion_confidence_reachability`` (Holdout-Bars aus dem Session-Kalender)."""
+    from automation.optimizer import invariants
+    from automation.session_windows import expected_bars_between, load_session_window_for_symbol
+
+    cfg_dir = Path(cfg_dir)
+    bt = json.loads((cfg_dir / "backtest.json").read_text("utf-8")) or {}
+    tournament = json.loads((cfg_dir / "tournament.json").read_text("utf-8")) or {}
+    holdout_days = float((bt.get("walk_forward") or {})["holdout_days"])
+    window = load_session_window_for_symbol(symbol, cfg_dir)
+    if window is not None and catalog_newest_ns is not None:
+        t_holdout = expected_bars_between(
+            int(catalog_newest_ns - holdout_days * 86_400_000_000_000), int(catalog_newest_ns), window)
+    else:
+        t_holdout = int(round(holdout_days * 24))
+    res = invariants.check_promotion_confidence_reachability(
+        t_holdout, tournament.get("deflation_confidence"),
+        target_annual_sharpe=tournament.get("promotion_target_annual_sharpe",
+                                            invariants.PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT))
+    stamp = {"holdout_mds_annual": (res.actual or {}).get("mds_annual"),
+             "detectability_class": (res.actual or {}).get("detectability_class")}
+    for key, value in stamp.items():
+        study.set_user_attr(key, value)
+    return stamp
 
 
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,

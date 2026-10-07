@@ -434,6 +434,9 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "holdout_start_utc": proposal.get("holdout_start_utc"),
         "holdout_embargo_days": proposal.get("holdout_embargo_days"),
         "holdout_overlap_days": proposal.get("holdout_overlap_days"),
+        # Issue #1379 (GH #1281) — Nachweisbarkeit zur Transparenz (KEINE Klausel).
+        "holdout_mds_annual": proposal.get("holdout_mds_annual"),
+        "detectability_class": proposal.get("detectability_class"),
         # Issue #1042 (Katalog #866, E-1) — siehe _clause_cost_stress-Docstring.
         "expectancy_cost_stress_2x": holdout_symbol.get("oos_expectancy_cost_stress_2x"),
         # Issue #1073 (Katalog #866-2) — siehe _clause_expectancy_outlier_robust-Docstring. Issue

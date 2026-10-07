@@ -1322,6 +1322,13 @@ def _section_detectability(report: dict) -> str | None:
     if not det:
         return None
     lines = ["## Nachweisbarkeit", ""]
+    # Issue #1379 — die erste Zeile nennt die Klasse; `underpowered` ist ein Hinweis, kein blockierender Befund.
+    _klass = det.get("detectability_class", "k. A.")
+    lines.append(f"**detectability_class: {_klass}**"
+                 + (" — Hinweis, der Lauf bleibt gültig (nur Kandidaten oberhalb der Mindest-nachweisbaren Sharpe "
+                    "sind promovierbar)." if _klass == "underpowered" else
+                    " — blockierend: kein Kandidat kann je promovieren." if _klass == "unattainable" else "."))
+    lines.append("")
     lines.append(
         f"Holdout {det.get('holdout_days', 'k. A.')} Tage ⇒ T = {det.get('t_holdout', 'k. A.')} Bars; "
         f"Konfidenz {det.get('promotion_confidence', 'k. A.')} ⇒ **Mindest-nachweisbare Sharpe "

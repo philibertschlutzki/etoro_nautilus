@@ -9328,25 +9328,37 @@ def check_history_floor_coherence(walk_forward: dict | None, *, resolution_floor
 PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT = 1.5
 
 
+DETECTABILITY_UNATTAINABLE = "unattainable"
+DETECTABILITY_UNDERPOWERED = "underpowered"
+DETECTABILITY_CERTIFIABLE = "certifiable"
+
+
 @invariant_scope("run")
 def check_promotion_confidence_reachability(
     t_holdout: int | None, promotion_confidence: float | None, *,
     target_annual_sharpe: float | None = PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT,
     bars_per_trading_day: int | None = None,
     reference_sr: float = 0.11386,
+    session_window=None, end_ns: int | None = None, bar_interval_ns: int | None = None,
 ) -> InvariantResult:
-    """Issue #1340 (GH #1234) / Issue #1367 (GH #1264) — achsenbewusster Erreichbarkeits-Preflight VOR Phase 1.
+    """Issue #1340 (GH #1234) / Issue #1367 (GH #1264) / Issue #1379 (GH #1281) — achsenbewusster
+    Erreichbarkeits-Preflight VOR Phase 1.
 
-    #1367: der Preflight prüfte gegen einen AUSREISSER-Kandidaten (``reference_sr = 0.11386`` je Bar ≈
-    Sharpe 4,6-4,8 p. a., ein einzelner Juli-Kandidat auf einer seither korrigierten Achse) und meldete
-    "erreichbar", obwohl ein 60-Tage-Holdout (T = 300) bei 0,95 nur Sharpe ≥ 4,0 p. a. zertifizieren kann;
-    ``required_t`` war ein Echo von ``t_holdout``. Jetzt die ehrliche Frage: die Mindest-nachweisbare
-    Sharpe ``mds_bar(T, conf)`` (``deflation.min_detectable_sharpe``), annualisiert mit
-    ``√(252 · BARS_PER_TRADING_DAY)``, gegen das ökonomisch begründete Ziel
-    ``tournament.json['promotion_target_annual_sharpe']`` (Default 1,5): ``passed = mds_annual <= Ziel``.
-    Dazu ``required_t_for_target``/``required_holdout_days_for_target`` (Kalendertage, 5/7 Handelstage) —
-    der Holdout, den das Ziel braucht. ``reference_sr`` bleibt als Telemetrie
-    (``reference_sr_historical_outlier``, ``required_t`` = dessen echtes Minimum, 212).
+    #1367: die ehrliche Frage ist die Mindest-nachweisbare Sharpe ``mds_bar(T, conf)``
+    (``deflation.min_detectable_sharpe``), annualisiert mit ``√(252 · BARS_PER_TRADING_DAY)``, gegen das
+    ökonomisch begründete Ziel ``tournament.json['promotion_target_annual_sharpe']`` (Default 1,5).
+
+    #1379 (Pitfall #500): ein Befund, der allein aus der Konfiguration folgt, unterscheidet keine Läufe — und
+    "trennschwach" ist nicht "unerreichbar". Daher ``detectability_class``:
+
+    * ``unattainable`` — ``mds_bar is None`` oder ``max_attainable_psr(T, reference_sr) < confidence`` (die
+      #1340-Bedingung: KEIN Kandidat kann je promovieren) ⇒ ``passed=False``, ``severity='blocking'``.
+    * ``underpowered`` — erreichbar, aber ``mds_annual > Ziel`` (nur Kandidaten mit Holdout-Sharpe ≥ MDS sind
+      promovierbar) ⇒ ``passed=False``, ``severity='high'``: wird berichtet, blockiert den Lauf nicht.
+    * ``certifiable`` ⇒ ``passed=True``.
+
+    ``required_holdout_days_for_target`` kommt mit ``session_window`` aus dem Session-Kalender (rückwärts ab
+    ``end_ns``; NYSE 2026-10-06: ≈ 440 d statt pauschal 7/5 ⇒ 424,8 d); ohne Fenster bleibt die 7/5-Näherung.
 
     ``t_holdout``/``promotion_confidence`` fehlend ⇒ INCONCLUSIVE (kein FAIL)."""
     import math
@@ -9379,27 +9391,53 @@ def check_promotion_confidence_reachability(
     if mds_bar is None:
         return InvariantResult(
             name="check_promotion_confidence_reachability",
-            passed=None,
+            passed=False,
             expected=expected,
-            actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence},
+            actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence,
+                    "detectability_class": DETECTABILITY_UNATTAINABLE, "mds_bar": None, "mds_annual": None},
             severity="blocking",
-            inconclusive=True,
-            evaluable=False,
-            evaluability={"evaluable": False, "inconclusive_reason": "PSR_DEGENERATE",
-                         "n_studies_measured": 0},
-            detail=f"mds_bar({t_holdout}) numerisch nicht auswertbar (T < 2 oder degenerierter PSR).",
+            evaluable=True,
+            evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+            detail=f"unattainable: mds_bar({t_holdout}) numerisch nicht auswertbar (T < 2 oder degenerierter "
+                   f"PSR) — kein Kandidat kann je promovieren (#1379).",
         )
     mds_annual = mds_bar * annualization
     required_t_for_target = required_periods_for_sharpe(target / annualization, promotion_confidence)
-    required_holdout_days = (None if required_t_for_target is None else
-                             round(required_t_for_target / float(bars_per_trading_day) * 7.0 / 5.0, 1))
+    if required_t_for_target is None:
+        required_holdout_days = None
+    elif session_window is not None and end_ns is not None:
+        from automation.session_windows import NS_PER_HOUR, calendar_days_for_session_bars
+        required_holdout_days = calendar_days_for_session_bars(
+            required_t_for_target, session_window, int(bar_interval_ns or NS_PER_HOUR), int(end_ns))
+    else:
+        required_holdout_days = round(required_t_for_target / float(bars_per_trading_day) * 7.0 / 5.0, 1)
     max_attainable = max_attainable_psr(t_holdout, reference_sr=reference_sr)
-    passed = mds_annual <= target + 1e-12
+    if max_attainable is not None and max_attainable < promotion_confidence:
+        detectability_class, severity = DETECTABILITY_UNATTAINABLE, "blocking"
+    elif mds_annual > target + 1e-12:
+        detectability_class, severity = DETECTABILITY_UNDERPOWERED, "high"
+    else:
+        detectability_class, severity = DETECTABILITY_CERTIFIABLE, "blocking"
+    passed = detectability_class == DETECTABILITY_CERTIFIABLE
+    if passed:
+        detail = "OK"
+    elif detectability_class == DETECTABILITY_UNATTAINABLE:
+        detail = (f"unattainable: mit T={t_holdout} Holdout-Bars ist die Promotionskonfidenz {promotion_confidence} "
+                  f"selbst für den Referenzkandidaten nicht erreichbar (max_attainable_psr="
+                  f"{round(max_attainable, 4) if max_attainable is not None else None}) — kein Kandidat kann je "
+                  f"promovieren (Pitfall #478).")
+    else:
+        detail = (f"underpowered: mit T={t_holdout} Holdout-Bars und Konfidenz {promotion_confidence} ist die "
+                  f"Mindest-nachweisbare Sharpe {mds_annual:.2f} p. a. > Ziel {target} — nur Kandidaten mit Holdout-"
+                  f"Sharpe >= {mds_annual:.2f} sind promovierbar (vorwiegend Glückstreffer). Das Ziel braucht "
+                  f"T={required_t_for_target} Bars ≈ {required_holdout_days} Kalendertage Holdout "
+                  f"(#1367/GH #1264, #1379; Auflösung über Evidenz-Akkumulation, #1368).")
     return InvariantResult(
         name="check_promotion_confidence_reachability",
         passed=passed,
         expected=expected,
         actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence,
+                "detectability_class": detectability_class,
                 "mds_bar": round(mds_bar, 6), "mds_annual": round(mds_annual, 4),
                 "promotion_target_annual_sharpe": target,
                 "annualization_factor": round(annualization, 4),
@@ -9409,15 +9447,10 @@ def check_promotion_confidence_reachability(
                 "reference_sr_historical_outlier": reference_sr,
                 "max_attainable_psr": round(max_attainable, 4) if max_attainable is not None else None,
                 "required_t": required_periods_for_sharpe(reference_sr, promotion_confidence)},
-        severity="blocking",
+        severity=severity,
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
-        detail=("OK" if passed else
-                f"Mit T={t_holdout} Holdout-Bars und Konfidenz {promotion_confidence} ist die Mindest-"
-                f"nachweisbare Sharpe {mds_annual:.2f} p. a. > Ziel {target} — nur Kandidaten mit Holdout-"
-                f"Sharpe >= {mds_annual:.2f} sind promovierbar (vorwiegend Glückstreffer). Das Ziel braucht "
-                f"T={required_t_for_target} Bars ≈ {required_holdout_days} Kalendertage Holdout "
-                f"(#1367/GH #1264; Auflösung über Evidenz-Akkumulation, #1368)."),
+        detail=detail,
     )
 
 

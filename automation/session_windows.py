@@ -452,6 +452,22 @@ def expected_bars_between(
     return total
 
 
+def calendar_days_for_session_bars(n_bars: float, window: SessionWindow, bar_interval_ns: int, end_ns: int) -> int:
+    """Issue #1379 (GH #1281) — Kalendertage, die rückwärts ab ``end_ns`` nötig sind, damit das Fenster
+    mindestens ``n_bars`` erwartete Session-Bars enthält (lokale Handelstage, Feiertage und Wochenenden
+    zählen als Kalendertage ohne Bars). Gegenstück zu ``expected_bars_between`` (dort: Tage ⇒ Bars)."""
+    total = 0
+    n_days = 0
+    ordinal = local_day(int(end_ns), window).toordinal()
+    while total < n_bars and n_days < 366 * 20:
+        day = date.fromordinal(ordinal)
+        if is_trading_day(day, window):
+            total += bars_in_session_on_day(day, window, bar_interval_ns)
+        n_days += 1
+        ordinal -= 1
+    return n_days
+
+
 @lru_cache(maxsize=512)
 def min_bars_in_calendar_window(window: SessionWindow, calendar_days: int,
                                 bar_interval_ns: int = NS_PER_HOUR) -> int:

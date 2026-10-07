@@ -3529,10 +3529,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             _t_holdout = compute_holdout_bar_count(
                 _holdout_days, _session_hours_for_holdout, _first_asset_class,
                 end_ns=global_catalog_newest_ns)
+        _holdout_window = (_resolve_session_window(_resolve_asset_class_key_for_symbol_lightweight(syms[0]),
+                                                   _session_hours_for_holdout) if syms else None)
         _reachability = invariants.check_promotion_confidence_reachability(
             _t_holdout, _promotion_confidence,
             target_annual_sharpe=_tournament_cfg.get(
-                "promotion_target_annual_sharpe", invariants.PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT))
+                "promotion_target_annual_sharpe", invariants.PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT),
+            session_window=_holdout_window, end_ns=global_catalog_newest_ns)
         global _LAST_DETECTABILITY
         _LAST_DETECTABILITY = {"run_id": run_id, "passed": _reachability.passed,
                                "holdout_days": _holdout_days, **(_reachability.actual or {})}
@@ -3542,10 +3545,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             "passed": _reachability.passed, "source": "sweep", "scope": None,
             "expected": _reachability.expected, "actual": _reachability.actual,
             "detail": _reachability.detail, "severity": _reachability.severity,
-        }, level=logging.INFO if _reachability.passed is not False else logging.ERROR)
+        }, level=(logging.INFO if _reachability.passed is not False else
+                  logging.ERROR if _reachability.severity == "blocking" else logging.WARNING))
         if _reachability.passed is False:
-            logging.getLogger("optimizer").error(
-                "[#1340] Promotionsschwelle strukturell unerreichbar: %s", _reachability.detail)
+            # Issue #1379 — nur `unattainable` ist strukturell unerreichbar (ERROR); `underpowered` ist ein
+            # Hinweis (WARNING), der den Lauf nicht blockiert.
+            _det_class = (_reachability.actual or {}).get("detectability_class")
+            logging.getLogger("optimizer").log(
+                logging.ERROR if _det_class == invariants.DETECTABILITY_UNATTAINABLE else logging.WARNING,
+                "[#1340/#1379] Nachweisbarkeit %s: %s", _det_class, _reachability.detail)
         _act = _reachability.actual or {}
         logging.getLogger("optimizer").info(
             "[#624] Holdout-Geometrie: required_span_days=%s (is=%s + embargo=%s + %s×oos=%s + holdout=%s + "

@@ -2680,6 +2680,9 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         **{k: (getattr(study, "user_attrs", None) or {}).get(k)
            for k in ("selection_end_utc", "holdout_start_utc", "holdout_embargo_days",
                      "holdout_overlap_days")},
+        # Issue #1379 (GH #1281) — Transparenz im Promotion-Record (keine Deployment-Klausel).
+        **{k: (getattr(study, "user_attrs", None) or {}).get(k)
+           for k in ("holdout_mds_annual", "detectability_class")},
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],
