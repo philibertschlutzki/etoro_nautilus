@@ -125,20 +125,54 @@ def required_bars(*, is_window_days: int, oos_window_days: int, splits: int,
                 + holdout_days + holdout_embargo_days + buffer_days) * bars_per_day)
 
 
+_LEGACY_GATE1_KEYS = ("min_bars_per_param", "min_oos_bars_per_fold")
+
+
+def validate_gate1_config(config: dict) -> None:
+    """Issue #1377 (Pitfall #498) — die Einheit gehört in den Namen der Schwelle: die alten Schlüssel
+    ``min_bars_per_param``/``min_oos_bars_per_fold`` zählten Kalenderstunden als "Bars" und entfallen.
+    Startup-Validierung: sind sie noch gesetzt, wird laut abgebrochen (kein stilles Weiterrechnen)."""
+    stale = [k for k in _LEGACY_GATE1_KEYS if k in config]
+    if stale:
+        raise ValueError(
+            f"Gate-1-Schlüssel {stale} sind entfallen (Issue #1377): sie zählten Kalenderstunden. Ersetze sie "
+            f"durch min_session_bars_per_param (Default 40) und min_oos_session_bars_per_fold (Default 91).")
+
+
+def oos_session_bars_per_fold(oos_window_days: int, session_window=None, *,
+                              bar_interval_ns: int = 3_600 * 1_000_000_000, bars_per_day: int = 24) -> int:
+    """Issue #1377 — Session-Bars eines OOS-Folds aus dem Session-Kalender (Untergrenze über die Lage des
+    Fold-Fensters, ``session_windows.min_bars_in_calendar_window``) statt ``oos_window_days × 24``.
+    Ohne Session-Fenster (24/7-Achse) ``oos_window_days × bars_per_day``."""
+    if session_window is None:
+        return int(oos_window_days * bars_per_day)
+    from automation.session_windows import min_bars_in_calendar_window
+    return int(min_bars_in_calendar_window(session_window, int(oos_window_days), int(bar_interval_ns)))
+
+
 def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
-                      config: dict, bars_per_day: int = 24) -> tuple[bool, str]:
+                      config: dict, bars_per_day: int = 24,
+                      available_session_bars: int | None = None,
+                      session_window=None, bar_interval_ns: int = 3_600 * 1_000_000_000) -> tuple[bool, str]:
     """Decide whether ``symbol`` has enough data to be safely tuned.
 
     Returns ``(ok, reason)`` where ``ok`` is True only if ALL of:
       (a) ``available_bars >= required_bars(... config['walk_forward'])`` — der Floor ist
-          ``history_floor_days`` (Issue #1376: OHNE ``gate1_buffer_days``, der nur Backfill-Auslöser ist)
-      (b) ``available_bars / max(1, n_params) >= config['min_bars_per_param']``
-      (c) ``oos_window_days * bars_per_day >= config['min_oos_bars_per_fold']``
+          ``history_floor_days`` (Issue #1376: OHNE ``gate1_buffer_days``, der nur Backfill-Auslöser ist);
+          ``available_bars`` ist hier die KALENDER-Spanne (Stunden bzw. ``bars_per_day`` je Tag)
+      (b) ``available_session_bars / max(1, n_params) >= config['min_session_bars_per_param']``
+      (c) Session-Bars je OOS-Fold (``oos_session_bars_per_fold``) ``>= config['min_oos_session_bars_per_fold']``
+
+    Issue #1377 (Pitfall #498): (b) und (c) zählen SESSION-Bars (RTH-Achse: 7 je Handelstag), nicht
+    Kalenderstunden. ``available_session_bars=None`` ⇒ ``available_bars`` (24/7-Achse, Alt-Aufrufer);
+    ``bar_interval_ns`` kommt aus der Bar-Achse (Default 1 h) — dieselben Funktionen rechnen auf einer
+    Tagesachse ohne Code-Kopie.
 
     ``reason`` ∈ {'OK', 'INSUFFICIENT_HISTORY', 'PARAM_DATA_RATIO_TOO_LOW',
     'OOS_FOLD_TOO_SHORT'}. Thresholds come from ``config`` (zero-hardcoding, HI-6).
     ``available_bars`` is injected by the caller — this function performs NO I/O.
     """
+    validate_gate1_config(config)
     wf = config["walk_forward"]
 
     # (a) absolute history coverage of the full walk-forward corridor.
@@ -157,12 +191,14 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
     if available_bars < need:
         return (False, "INSUFFICIENT_HISTORY")
 
-    # (b) enough data per tuned parameter (anti-overfit ratio)
-    if available_bars / max(1, n_params) < config["min_bars_per_param"]:
+    # (b) enough SESSION bars per tuned parameter (anti-overfit ratio)
+    session_bars = available_bars if available_session_bars is None else available_session_bars
+    if session_bars / max(1, n_params) < config["min_session_bars_per_param"]:
         return (False, "PARAM_DATA_RATIO_TOO_LOW")
 
-    # (c) each OOS fold must itself be statistically meaningful
-    if wf["oos_window_days"] * bars_per_day < config["min_oos_bars_per_fold"]:
+    # (c) each OOS fold must itself be statistically meaningful (Session-Bars des Fold-Fensters)
+    if oos_session_bars_per_fold(wf["oos_window_days"], session_window, bar_interval_ns=bar_interval_ns,
+                                 bars_per_day=bars_per_day) < config["min_oos_session_bars_per_fold"]:
         return (False, "OOS_FOLD_TOO_SHORT")
 
     return (True, "OK")

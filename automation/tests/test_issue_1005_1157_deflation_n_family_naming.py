@@ -150,7 +150,7 @@ def _capture_sweep_completed_event(monkeypatch, tmp_path, pairs, family_n_by_sym
                     pass
 
     _GATE_CFG = {"walk_forward": {}, "gate1_buffer_days": 30,
-                 "min_bars_per_param": 200, "min_oos_bars_per_fold": 500}
+                 "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91}
     monkeypatch.setattr(sweep, "WORK", tmp_path)
     monkeypatch.setattr(sweep, "enumerate_tunable_pairs", lambda *a, **k: pairs)
     monkeypatch.setattr(sweep, "count_available_bars", lambda *a, **k: {})

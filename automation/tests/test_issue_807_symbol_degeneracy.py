@@ -150,7 +150,7 @@ def test_empty_diagnoses_list_is_not_degenerate():
 
 _GATE_CFG = {
     "walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4, "holdout_days": 45},
-    "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
+    "gate1_buffer_days": 30, "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91,
 }
 
 

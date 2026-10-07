@@ -602,6 +602,66 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
     return out
 
 
+def _symbol_session_window(symbol: str):
+    """``SessionWindow`` (Börsen-Lokalzeit) des Symbols aus ``backtest.json`` oder ``None`` (24/7-Achse)."""
+    try:
+        cfg = (json.loads((config_dir() / "backtest.json").read_text("utf-8")) or {}).get(
+            "session_hours_by_asset_class")
+        return _resolve_session_window(_resolve_asset_class_key_for_symbol_lightweight(symbol), cfg)
+    except Exception:
+        return None
+
+
+def count_available_session_bars(symbols, *, catalog_path: Path | None = None,
+                                 bar_interval_ns: int = 3_600 * 1_000_000_000,
+                                 segments_by_symbol: dict[str, tuple[int, int]] | None = None) -> dict[str, int]:
+    """Issue #1377 (GH #1279, Pitfall #498) — verfügbare SESSION-Bars je Symbol:
+    ``session_windows.expected_bars_between(first_ts, last_ts, window, bar_interval_ns)`` über das effektive
+    Segment (``segments_by_symbol[sym] = (start_ns, end_ns)``, #1365; sonst die Parquet-Statistik wie
+    ``count_available_bars``). ``bar_interval_ns`` kommt aus der Bar-Achse (Default 1 h). Ohne Session-Fenster
+    (24/7-Achse) ``Spanne / bar_interval_ns``. 0 bei fehlender Datei/Fehler."""
+    from automation.session_windows import expected_bars_between
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                raw = (json.loads(bt.read_text("utf-8")) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+    out: dict[str, int] = {}
+    for sym in symbols:
+        bounds = (segments_by_symbol or {}).get(sym)
+        if bounds is None:
+            oldest = newest = None
+            try:
+                import pyarrow.parquet as pq
+                for pq_file in resolve_quote_tick_files(catalog_path, sym):
+                    pf = pq.ParquetFile(str(pq_file))
+                    if "ts_event" not in pf.schema.names:
+                        continue
+                    idx = pf.schema.names.index("ts_event")
+                    for rg in range(pf.metadata.num_row_groups):
+                        st = pf.metadata.row_group(rg).column(idx).statistics
+                        lo, hi = int(st.min), int(st.max)
+                        oldest = lo if oldest is None else min(oldest, lo)
+                        newest = hi if newest is None else max(newest, hi)
+            except Exception:
+                oldest = newest = None
+            bounds = (oldest, newest) if oldest is not None and newest is not None else None
+        if bounds is None:
+            out[sym] = 0
+            continue
+        window = _symbol_session_window(sym)
+        if window is None:
+            out[sym] = max(0, int((bounds[1] - bounds[0]) / bar_interval_ns))
+        else:
+            out[sym] = expected_bars_between(int(bounds[0]), int(bounds[1]), window, bar_interval_ns)
+    return out
+
+
 def _resolve_asset_class_key_for_symbol_lightweight(symbol: str) -> str | None:
     """Issue #1298 (GH #1175, P0) Fix Punkt 5 — bewusst VEREINFACHTE Variante von
     ``backtest_runner._resolve_asset_class_for_symbol`` (kein ``UNKNOWN``-Policy-Fail-Loud, siehe
@@ -1855,6 +1915,7 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                             logger: logging.Logger | None = None,
                             gate1_rejected_symbols: set[str] | None = None,
                             stale_symbols: set[str] | None = None,
+                            available_session_bars: dict[str, int] | None = None,
                             ) -> list[tuple[str, str, str]]:
     """Enumeriert (strategy, symbol, 'OK')-Tripel.
 
@@ -2030,8 +2091,13 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                         strategy, symbol, auto_rec.get("binding_cause"),
                     )
                     continue
+            # Issue #1377 — (b)/(c) zählen SESSION-Bars (Segment #1365, Session-Kalender #1356); (a) bleibt die
+            # Kalender-Spanne (history_floor_days, #1376). Ohne Session-Bars (Alt-Aufrufer) ⇒ available_bars.
             ok, _reason = is_symbol_tunable(
-                symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
+                symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config,
+                available_session_bars=(None if available_session_bars is None
+                                        else available_session_bars.get(symbol, 0)),
+                session_window=(None if available_session_bars is None else _symbol_session_window(symbol)))
             if not ok:
                 # Issue #531 — Diskrepanz SICHTBAR machen: unzureichende Historie darf nicht still
                 # übersprungen (und der letzte OOS-Fold/Holdout still geklemmt) werden. Bei
@@ -2105,8 +2171,12 @@ def _load_gate_config() -> dict:
     base = config_dir()
     bt = json.loads((base / "backtest.json").read_text("utf-8"))
     opt = json.loads((base / "optimizer.json").read_text("utf-8"))
+    # Issue #1377 — die alten Kalenderstunden-Schlüssel entfallen; sind sie noch gesetzt, bricht der Start ab.
+    from automation.optimizer.gate import validate_gate1_config
+    validate_gate1_config(opt)
     return {"walk_forward": bt["walk_forward"],
-            **{k: opt[k] for k in ("gate1_buffer_days", "min_bars_per_param", "min_oos_bars_per_fold")}}
+            **{k: opt[k] for k in ("gate1_buffer_days", "min_session_bars_per_param",
+                                   "min_oos_session_bars_per_fold")}}
 
 
 def _load_optimizer_config() -> dict:
@@ -4171,8 +4241,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             _pre_coverage_ledger, syms, max_age_runs=_stale_max_age_runs)["stale_symbols"].keys())
     except Exception:
         _stale_symbols = set()
+    # Issue #1377 — Session-Bars über das effektive Segment (#1365) für Gate 1 (b)/(c).
+    _segments_for_gate1: dict[str, tuple[int, int]] = {}
+    for _sym_g1, _res_g1 in (locals().get("_res_homogeneity_by_symbol") or {}).items():
+        _segs = (_res_g1 or {}).get("resolution_segments") or []
+        if _segs:
+            _best = max(_segs, key=lambda x: x["days"])
+            _segments_for_gate1[_sym_g1] = tuple(
+                int(dt.datetime.strptime(_best[k], "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=dt.timezone.utc).timestamp() * 1e9) for k in ("start_utc", "end_utc"))
+    available_session_bars = count_available_session_bars(syms, segments_by_symbol=_segments_for_gate1)
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
+                                    available_session_bars=available_session_bars,
                                     latest_ts=latest_ts, start_ns=start_ns,
                                     holdout_window_reach_target_ns=holdout_window_reach_target_ns,
                                     gate1_rejected_symbols=_gate1_rejected_symbols,

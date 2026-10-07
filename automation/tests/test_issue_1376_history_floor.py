@@ -13,8 +13,8 @@ _UTC = dt.timezone.utc
 
 
 def _gate1_cfg(buffer_days=30):
-    return {"walk_forward": _WF, "gate1_buffer_days": buffer_days, "min_bars_per_param": 1,
-            "min_oos_bars_per_fold": 1}
+    return {"walk_forward": _WF, "gate1_buffer_days": buffer_days, "min_session_bars_per_param": 1,
+            "min_oos_session_bars_per_fold": 1}
 
 
 def test_production_floor_is_444_not_474():

@@ -14,7 +14,7 @@ def _cfg():
     bt = json.loads(Path("automation/config/backtest.json").read_text("utf-8"))
     opt = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
     return {"walk_forward": bt["walk_forward"],
-            **{k: opt[k] for k in ("gate1_buffer_days", "min_bars_per_param", "min_oos_bars_per_fold")}}
+            **{k: opt[k] for k in ("gate1_buffer_days", "min_session_bars_per_param", "min_oos_session_bars_per_fold")}}
 
 
 def _need(cfg, bars_per_day=24):
@@ -69,15 +69,15 @@ def test_buffer_days_does_not_shift_history_threshold():
 # --- Gate 1b: bars-per-param ratio ------------------------------------------
 def test_param_data_ratio():
     cfg = _cfg()
-    cfg["min_bars_per_param"] = 100_000  # force the ratio to fail
+    cfg["min_session_bars_per_param"] = 100_000  # force the ratio to fail
     ok, why = gate.is_symbol_tunable("A.ETORO", n_params=8, available_bars=_need(cfg) + 1000, config=cfg)
     assert not ok and why == "PARAM_DATA_RATIO_TOO_LOW"
 
 
 def test_param_ratio_boundary():
-    """available_bars / n_params == min_bars_per_param passes; one more param fails (boundary)."""
+    """available_bars / n_params == min_session_bars_per_param passes; one more param fails (boundary)."""
     cfg = _cfg()
-    mbp = cfg["min_bars_per_param"]
+    mbp = cfg["min_session_bars_per_param"]
     # exact multiple of mbp that also clears the history gate
     avail = mbp * (_need(cfg) // mbp + 5)
     n_ok = avail // mbp                       # avail / n_ok == mbp exactly -> passes (>=)
@@ -90,7 +90,7 @@ def test_param_ratio_boundary():
 # --- Gate 1c: OOS fold length -----------------------------------------------
 def test_oos_fold_too_short():
     cfg = _cfg()
-    cfg["min_oos_bars_per_fold"] = 10 ** 9  # force the OOS-fold check to fail
+    cfg["min_oos_session_bars_per_fold"] = 10 ** 9  # force the OOS-fold check to fail
     # huge history so (a) and (b) pass, isolating the OOS-fold rejection
     ok, why = gate.is_symbol_tunable("A.ETORO", n_params=1, available_bars=10 ** 9, config=cfg)
     assert not ok and why == "OOS_FOLD_TOO_SHORT"
