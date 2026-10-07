@@ -4251,6 +4251,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 int(dt.datetime.strptime(_best[k], "%Y-%m-%dT%H:%M:%SZ").replace(
                     tzinfo=dt.timezone.utc).timestamp() * 1e9) for k in ("start_utc", "end_utc"))
     available_session_bars = count_available_session_bars(syms, segments_by_symbol=_segments_for_gate1)
+    # Ohne lesbaren Katalog (injizierte ``count_available_bars``-Fakes, HI-7) gibt es keine Session-Zählung ⇒
+    # die Kalender-Zählung gilt (bei echten Katalogen sind beide 0, wenn die Datei fehlt).
+    available_session_bars = {s: (v if v > 0 else available_bars.get(s, 0))
+                              for s, v in available_session_bars.items()}
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
                                     available_session_bars=available_session_bars,
