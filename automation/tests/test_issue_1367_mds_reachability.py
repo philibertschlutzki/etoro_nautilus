@@ -23,7 +23,9 @@ _A = math.sqrt(252 * 7)
 def test_t300_mds_is_four_and_fails_the_target():
     res = invariants.check_promotion_confidence_reachability(300, 0.95, target_annual_sharpe=1.5)
     assert 3.99 <= res.actual["mds_annual"] <= 4.01
-    assert res.passed is False and res.severity == "blocking"
+    # Issue #1379: T=300 ist erreichbar, aber trennschwach ⇒ underpowered/high (kein blockierender FAIL).
+    assert res.passed is False and res.severity == "high"
+    assert res.actual["detectability_class"] == "underpowered"
     assert res.actual["required_t"] == 212
     assert res.actual["reference_sr_historical_outlier"] == pytest.approx(0.11386)
     assert res.actual["required_t_for_target"] == 2124

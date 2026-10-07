@@ -9287,7 +9287,119 @@ def check_modeled_spread_not_below_measured(study_records: list[dict]) -> Invari
     )
 
 
+@invariant_scope("run")
+def check_history_floor_coherence(walk_forward: dict | None, *, resolution_floor_days: float | None = None,
+                                  eta_floor_days: float | None = None,
+                                  gate1_floor_days: float | None = None) -> InvariantResult:
+    """Issue #1376 (GH #1278, Pitfall #497) — blockierende, laufweite Invariante: Auflösungs-Check, Daten-
+    Tiefen-ETA und Gate 1 (a) liefern für DIESELBE Geometrie denselben Historien-Floor
+    (``gate.history_floor_days``). Vorher rechneten Auflösungs-Check/ETA mit 444 d, Gate 1 mit 474 d
+    (``gate1_buffer_days``): die ETA meldete "ausreichend" 30 Tage vor dem ersten möglichen Gate-1-PASS.
+
+    Nicht übergebene Floors werden aus der Geometrie abgeleitet (Gate 1 über ``gate1_history_floor_days``)."""
+    from automation.optimizer.gate import gate1_history_floor_days, history_floor_days
+
+    expected = "resolution_floor == eta_floor == gate1_floor == history_floor_days(walk_forward)"
+    if not walk_forward:
+        return InvariantResult(
+            name="check_history_floor_coherence", passed=None, expected=expected, actual={},
+            severity="blocking", inconclusive=True, evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "WALK_FORWARD_UNRESOLVED",
+                         "n_studies_measured": 0},
+            detail="walk_forward nicht aufloesbar — nicht auswertbar.")
+    floor = float(history_floor_days(walk_forward))
+    floors = {
+        "history_floor_days": floor,
+        "resolution_floor_days": float(floor if resolution_floor_days is None else resolution_floor_days),
+        "eta_floor_days": float(floor if eta_floor_days is None else eta_floor_days),
+        "gate1_floor_days": float(gate1_history_floor_days(walk_forward) if gate1_floor_days is None
+                                  else gate1_floor_days),
+    }
+    offenders = {k: v for k, v in floors.items() if abs(v - floor) > 1e-9}
+    passed = not offenders
+    return InvariantResult(
+        name="check_history_floor_coherence", passed=passed, expected=expected, actual=floors,
+        severity="blocking", evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+        detail=("OK" if passed else
+                f"Zwei Schwellen für dieselbe Frage (Pitfall #497): {offenders} != history_floor_days={floor}."))
+
+
+@invariant_scope("run")
+def check_oneday_ticks_within_session(ts_events, window, *, scope: str | None = None) -> InvariantResult:
+    """Issue #1382 (GH #1284, Pitfall #503) Akzeptanzkriterium 3 — blockierend je Symbol auf der Tagesachse: JEDER
+    Tick der ``OneDay``-Datei liegt innerhalb der Session eines HANDELSTAGS (``[open, close)`` in Börsen-
+    Lokalzeit, Wochenenden/Feiertage ausgeschlossen), und je Handelstag liegt genau EINE Kerze (≤ 4 O/L/H/C-
+    Ticks, kein zweites Tick-Quartett). Ticks auf UTC-Tagesbruchteilen (Alt-Expansion vor #1382) oder an
+    Nicht-Handelstagen sind ein Befund — der Tagesbar-Aggregator würde sonst die Kerze am falschen Tag bilden.
+
+    ``ts_events`` = ``ts_event`` (ns) der OneDay-Datei; ``window`` = ``SessionWindow`` (``None`` ⇒ nicht auswertbar,
+    24/7-Markt)."""
+    expected = "alle OneDay-Ticks in der Session eines Handelstags, je Handelstag genau eine Kerze"
+    ts = [int(t) for t in (ts_events or [])]
+    if window is None or not ts:
+        reason = "NO_SESSION_WINDOW" if window is None else "NO_ONEDAY_TICKS"
+        return InvariantResult(
+            name="check_oneday_ticks_within_session", passed=None, expected=expected, actual={},
+            severity="blocking", inconclusive=True, evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": reason, "n_studies_measured": 0},
+            detail=f"nicht auswertbar ({reason}).", cohort=scope)
+    from automation.session_windows import is_within_session, local_day
+    outside = 0
+    per_day: dict = {}
+    for t in ts:
+        if not is_within_session(t, window):
+            outside += 1
+        d = local_day(t, window)
+        per_day[d] = per_day.get(d, 0) + 1
+    multi = sorted(d.isoformat() for d, n in per_day.items() if n > 4)
+    passed = outside == 0 and not multi
+    actual = {"n_ticks": len(ts), "n_outside_session": outside, "n_trading_days": len(per_day),
+              "days_with_more_than_one_candle": multi[:10]}
+    return InvariantResult(
+        name="check_oneday_ticks_within_session", passed=passed, expected=expected, actual=actual,
+        severity="blocking", evaluable=True, cohort=scope,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+        detail=("OK" if passed else
+                f"{outside} Tick(s) ausserhalb der Session bzw. an Nicht-Handelstagen, "
+                f"{len(multi)} Tag(e) mit mehr als einer Kerze (#1382)."))
+
+
 PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT = 1.5
+
+
+# Issue #1380 (GH #1282, Pitfall #501) — die EINE Registry der per-Symbol-Preflight-Ablehnungen: Check ⇒
+# Ablehnungscodes. Eine Ausnahme ist eine Funktion mit Registry, kein kopiertes Set an zwei Ableitungsstellen
+# (``sweep._downgrade_run_status_for_blocking_invariants`` UND ``report._compute_decision_admissible``). Jeder
+# in ``sweep.py`` an ``_symbols_rejected`` angehängte ``REJECT_*``-Code MUSS hier stehen (Quelltext-Test).
+PER_SYMBOL_PREFLIGHT_REJECTIONS: dict[str, tuple[str, ...]] = {
+    "check_catalog_freshness": ("REJECT_DATA_STALE", "REJECT_FUTURE_TICK"),     # #1363, #1373
+    "check_catalog_resolution_homogeneity": ("REJECT_RESOLUTION_HETEROGENEOUS",),   # #1334
+    "check_engine_reader_parity": ("REJECT_ENGINE_READER_MISMATCH",),           # #1354
+    "check_tick_population": ("REJECT_DATA_UNAVAILABLE",),                      # #1298
+    "check_bar_quality": ("REJECT_DATA_DEGENERATE",),                           # #807
+    "check_oneday_ticks_within_session": ("REJECT_ONEDAY_TICKS_OUTSIDE_SESSION",),   # #1382
+}
+PER_SYMBOL_REJECTION_CODES: frozenset[str] = frozenset(
+    code for codes in PER_SYMBOL_PREFLIGHT_REJECTIONS.values() for code in codes)
+
+
+def is_scoped_preflight_rejection(check: dict, *, any_symbol_survived: bool) -> bool:
+    """Issue #1380 — ``True``, wenn ``check`` (ein ``invariant_checks``-Eintrag) die Ablehnung GENAU EINES
+    Symbols ist (Check steht in ``PER_SYMBOL_PREFLIGHT_REJECTIONS``, ``scope`` ist das Symbol) UND mindestens
+    ein anderes Symbol überlebt hat: der Lauf selbst bleibt dann für die übrigen Symbole gültig und wird weder
+    auf ``completed_invalid`` herabgestuft noch ``decision_admissible=false``. Werden ALLE Symbole abgewiesen
+    (``any_symbol_survived=False``), bleibt die Ablehnung ein run-weiter Blocker (#1344, #1363).
+    Die EINZIGE Implementierung dieser Ausnahme."""
+    return bool(
+        any_symbol_survived
+        and (check.get("name") or check.get("check")) in PER_SYMBOL_PREFLIGHT_REJECTIONS
+        and check.get("scope") is not None)
+
+
+DETECTABILITY_UNATTAINABLE = "unattainable"
+DETECTABILITY_UNDERPOWERED = "underpowered"
+DETECTABILITY_CERTIFIABLE = "certifiable"
 
 
 @invariant_scope("run")
@@ -9296,19 +9408,26 @@ def check_promotion_confidence_reachability(
     target_annual_sharpe: float | None = PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT,
     bars_per_trading_day: int | None = None,
     reference_sr: float = 0.11386,
+    session_window=None, end_ns: int | None = None, bar_interval_ns: int | None = None,
 ) -> InvariantResult:
-    """Issue #1340 (GH #1234) / Issue #1367 (GH #1264) — achsenbewusster Erreichbarkeits-Preflight VOR Phase 1.
+    """Issue #1340 (GH #1234) / Issue #1367 (GH #1264) / Issue #1379 (GH #1281) — achsenbewusster
+    Erreichbarkeits-Preflight VOR Phase 1.
 
-    #1367: der Preflight prüfte gegen einen AUSREISSER-Kandidaten (``reference_sr = 0.11386`` je Bar ≈
-    Sharpe 4,6-4,8 p. a., ein einzelner Juli-Kandidat auf einer seither korrigierten Achse) und meldete
-    "erreichbar", obwohl ein 60-Tage-Holdout (T = 300) bei 0,95 nur Sharpe ≥ 4,0 p. a. zertifizieren kann;
-    ``required_t`` war ein Echo von ``t_holdout``. Jetzt die ehrliche Frage: die Mindest-nachweisbare
-    Sharpe ``mds_bar(T, conf)`` (``deflation.min_detectable_sharpe``), annualisiert mit
-    ``√(252 · BARS_PER_TRADING_DAY)``, gegen das ökonomisch begründete Ziel
-    ``tournament.json['promotion_target_annual_sharpe']`` (Default 1,5): ``passed = mds_annual <= Ziel``.
-    Dazu ``required_t_for_target``/``required_holdout_days_for_target`` (Kalendertage, 5/7 Handelstage) —
-    der Holdout, den das Ziel braucht. ``reference_sr`` bleibt als Telemetrie
-    (``reference_sr_historical_outlier``, ``required_t`` = dessen echtes Minimum, 212).
+    #1367: die ehrliche Frage ist die Mindest-nachweisbare Sharpe ``mds_bar(T, conf)``
+    (``deflation.min_detectable_sharpe``), annualisiert mit ``√(252 · BARS_PER_TRADING_DAY)``, gegen das
+    ökonomisch begründete Ziel ``tournament.json['promotion_target_annual_sharpe']`` (Default 1,5).
+
+    #1379 (Pitfall #500): ein Befund, der allein aus der Konfiguration folgt, unterscheidet keine Läufe — und
+    "trennschwach" ist nicht "unerreichbar". Daher ``detectability_class``:
+
+    * ``unattainable`` — ``mds_bar is None`` oder ``max_attainable_psr(T, reference_sr) < confidence`` (die
+      #1340-Bedingung: KEIN Kandidat kann je promovieren) ⇒ ``passed=False``, ``severity='blocking'``.
+    * ``underpowered`` — erreichbar, aber ``mds_annual > Ziel`` (nur Kandidaten mit Holdout-Sharpe ≥ MDS sind
+      promovierbar) ⇒ ``passed=False``, ``severity='high'``: wird berichtet, blockiert den Lauf nicht.
+    * ``certifiable`` ⇒ ``passed=True``.
+
+    ``required_holdout_days_for_target`` kommt mit ``session_window`` aus dem Session-Kalender (rückwärts ab
+    ``end_ns``; NYSE 2026-10-06: ≈ 440 d statt pauschal 7/5 ⇒ 424,8 d); ohne Fenster bleibt die 7/5-Näherung.
 
     ``t_holdout``/``promotion_confidence`` fehlend ⇒ INCONCLUSIVE (kein FAIL)."""
     import math
@@ -9341,27 +9460,53 @@ def check_promotion_confidence_reachability(
     if mds_bar is None:
         return InvariantResult(
             name="check_promotion_confidence_reachability",
-            passed=None,
+            passed=False,
             expected=expected,
-            actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence},
+            actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence,
+                    "detectability_class": DETECTABILITY_UNATTAINABLE, "mds_bar": None, "mds_annual": None},
             severity="blocking",
-            inconclusive=True,
-            evaluable=False,
-            evaluability={"evaluable": False, "inconclusive_reason": "PSR_DEGENERATE",
-                         "n_studies_measured": 0},
-            detail=f"mds_bar({t_holdout}) numerisch nicht auswertbar (T < 2 oder degenerierter PSR).",
+            evaluable=True,
+            evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+            detail=f"unattainable: mds_bar({t_holdout}) numerisch nicht auswertbar (T < 2 oder degenerierter "
+                   f"PSR) — kein Kandidat kann je promovieren (#1379).",
         )
     mds_annual = mds_bar * annualization
     required_t_for_target = required_periods_for_sharpe(target / annualization, promotion_confidence)
-    required_holdout_days = (None if required_t_for_target is None else
-                             round(required_t_for_target / float(bars_per_trading_day) * 7.0 / 5.0, 1))
+    if required_t_for_target is None:
+        required_holdout_days = None
+    elif session_window is not None and end_ns is not None:
+        from automation.session_windows import NS_PER_HOUR, calendar_days_for_session_bars
+        required_holdout_days = calendar_days_for_session_bars(
+            required_t_for_target, session_window, int(bar_interval_ns or NS_PER_HOUR), int(end_ns))
+    else:
+        required_holdout_days = round(required_t_for_target / float(bars_per_trading_day) * 7.0 / 5.0, 1)
     max_attainable = max_attainable_psr(t_holdout, reference_sr=reference_sr)
-    passed = mds_annual <= target + 1e-12
+    if max_attainable is not None and max_attainable < promotion_confidence:
+        detectability_class, severity = DETECTABILITY_UNATTAINABLE, "blocking"
+    elif mds_annual > target + 1e-12:
+        detectability_class, severity = DETECTABILITY_UNDERPOWERED, "high"
+    else:
+        detectability_class, severity = DETECTABILITY_CERTIFIABLE, "blocking"
+    passed = detectability_class == DETECTABILITY_CERTIFIABLE
+    if passed:
+        detail = "OK"
+    elif detectability_class == DETECTABILITY_UNATTAINABLE:
+        detail = (f"unattainable: mit T={t_holdout} Holdout-Bars ist die Promotionskonfidenz {promotion_confidence} "
+                  f"selbst für den Referenzkandidaten nicht erreichbar (max_attainable_psr="
+                  f"{round(max_attainable, 4) if max_attainable is not None else None}) — kein Kandidat kann je "
+                  f"promovieren (Pitfall #478).")
+    else:
+        detail = (f"underpowered: mit T={t_holdout} Holdout-Bars und Konfidenz {promotion_confidence} ist die "
+                  f"Mindest-nachweisbare Sharpe {mds_annual:.2f} p. a. > Ziel {target} — nur Kandidaten mit Holdout-"
+                  f"Sharpe >= {mds_annual:.2f} sind promovierbar (vorwiegend Glückstreffer). Das Ziel braucht "
+                  f"T={required_t_for_target} Bars ≈ {required_holdout_days} Kalendertage Holdout "
+                  f"(#1367/GH #1264, #1379; Auflösung über Evidenz-Akkumulation, #1368).")
     return InvariantResult(
         name="check_promotion_confidence_reachability",
         passed=passed,
         expected=expected,
         actual={"t_holdout": t_holdout, "promotion_confidence": promotion_confidence,
+                "detectability_class": detectability_class,
                 "mds_bar": round(mds_bar, 6), "mds_annual": round(mds_annual, 4),
                 "promotion_target_annual_sharpe": target,
                 "annualization_factor": round(annualization, 4),
@@ -9371,15 +9516,10 @@ def check_promotion_confidence_reachability(
                 "reference_sr_historical_outlier": reference_sr,
                 "max_attainable_psr": round(max_attainable, 4) if max_attainable is not None else None,
                 "required_t": required_periods_for_sharpe(reference_sr, promotion_confidence)},
-        severity="blocking",
+        severity=severity,
         evaluable=True,
         evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
-        detail=("OK" if passed else
-                f"Mit T={t_holdout} Holdout-Bars und Konfidenz {promotion_confidence} ist die Mindest-"
-                f"nachweisbare Sharpe {mds_annual:.2f} p. a. > Ziel {target} — nur Kandidaten mit Holdout-"
-                f"Sharpe >= {mds_annual:.2f} sind promovierbar (vorwiegend Glückstreffer). Das Ziel braucht "
-                f"T={required_t_for_target} Bars ≈ {required_holdout_days} Kalendertage Holdout "
-                f"(#1367/GH #1264; Auflösung über Evidenz-Akkumulation, #1368)."),
+        detail=detail,
     )
 
 

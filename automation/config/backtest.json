@@ -3,6 +3,8 @@
     "description": "Globale Backtest-Einstellungen. catalog_path ist relativ zu PROJECT_ROOT. Wird von daily_orchestrator.py und backtest_runner.py gelesen.",
     "fields": {
       "catalog_path": "Pfad zum Nautilus-Datenkatalog (relativ zu PROJECT_ROOT)",
+      "bar_axis": "Issue #1382 (GH #1284, Pitfall #503) \u2014 DIE Bar-Achse (automation/bar_axis.py): \"OneHour\" (Default; 7 RTH-Bars je Handelstag) oder \"OneDay\" (1 Bar je Handelstag, Profil daily). Leitet Bar-Intervall, bars_per_trading_day, Bar-Typ-Suffix und Katalog-Intervall ab; geht in study_name und result_fingerprint ein (Tages- und Stunden-Studies kollidieren nie). Live ist bis zu einem eigenen Issue auf OneHour gesperrt.",
+      "max_handelstage": "Issue #1382 (GH #1284) \u2014 Steuergr\u00f6sse der Zeitbox in HANDELSTAGEN (Default 1,0): _contracts.TIME_BOX_BARS = max_handelstage \u00b7 bars_per_trading_day. Profil daily: 5 (optimizer.json time_box_bars dann ebenfalls 5).",
       "start_capital": "Start-Kapital in USD f\u00fcr jeden Backtest-Run",
       "spread_modeling": "bool \u2014 wenn true, werden Buy-Orders zum ask_price und Sell-Orders zum bid_price gef\u00fcllt (realistischere Simulation). NautilusTrader Default-Verhalten mit QuoteTicks.",
       "fill_model": "F\u00fcll-Modell: 'bid_ask' (Buy@Ask, Sell@Bid) oder 'mid' (beide @ Midprice)",
@@ -29,6 +31,8 @@
     }
   },
   "catalog_path": "data/nautilus",
+  "bar_axis": "OneHour",
+  "max_handelstage": 1.0,
   "start_capital": 10000.0,
   "commission_bps": 1.0,
   "spread_bps_by_asset_class": {

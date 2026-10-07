@@ -387,6 +387,7 @@ def phase2_data_acquisition(
     user_key: str,
     skip_api_fetch: bool = False,
     offline: bool = False,
+    with_oneday: bool = False,
 ) -> dict:
     """
     Phase 2: Datenbeschaffung (Multi-ZIP-Import, Merge, API-Backfill).
@@ -460,6 +461,7 @@ def phase2_data_acquisition(
                         etoro_id_to_symbol=etoro_id_map,
                         days=7,
                         specific_symbols=specific,
+                        with_oneday=with_oneday,
                     )
                 )
                 result["api_filled"] = api_filled
@@ -1490,6 +1492,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "weiter (Issue #1363).")
     parser.add_argument("--offline", action="store_true",
         help="Kein Netzabruf in Phase 2 (weder Vorwärts-Schritt 2c noch Tiefen-Abruf 2d; Issue #1363).")
+    parser.add_argument("--with-oneday", action="store_true",
+        help="Phase 2c schreibt zusätzlich die OneDay-Datei fort (Issue #1276); sie entsteht per "
+             "`historical_fetcher --interval OneDay --full-window`.")
     parser.add_argument("--skip-backtest",  action="store_true", help="Phase 3+4 Matrix-Backtesting überspringen.")
     parser.add_argument("--reset-catalog", action="store_true",
         help="Archiviert data/nautilus/data/quote_tick/ nach data/nautilus/archive/<UTC-ts>/ vor Phase 2 "
@@ -1553,6 +1558,7 @@ def main() -> int:
             log, universe_result, api_key, user_key,
             skip_api_fetch=args.skip_api_fetch,
             offline=args.offline,
+            with_oneday=args.with_oneday,
         )
         if args.skip_backtest:
             log.info("[Phase 3+4] --skip-backtest: Matrix-Backtesting übersprungen — lade bestehendes Tournament.")

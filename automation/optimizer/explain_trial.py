@@ -27,6 +27,7 @@ from typing import Any
 
 import optuna
 
+from automation import bar_axis
 from automation.optimizer.run_optimization import _sanitize, resolve_storage
 from automation.optimizer.trial_config import config_dir
 
@@ -36,7 +37,7 @@ class TrialLookupError(Exception):
 
 
 def _load_study(strategy: str, symbol: str):
-    study_name = f"study_{strategy}_{_sanitize(symbol)}"
+    study_name = f"study_{strategy}_{_sanitize(symbol)}{bar_axis.study_suffix()}"
     storage = resolve_storage(study_name=study_name)
     try:
         return optuna.load_study(study_name=study_name, storage=storage), study_name, storage

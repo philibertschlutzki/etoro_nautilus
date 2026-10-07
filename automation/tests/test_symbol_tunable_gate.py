@@ -14,7 +14,7 @@ def _cfg():
     bt = json.loads(Path("automation/config/backtest.json").read_text("utf-8"))
     opt = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
     return {"walk_forward": bt["walk_forward"],
-            **{k: opt[k] for k in ("gate1_buffer_days", "min_bars_per_param", "min_oos_bars_per_fold")}}
+            **{k: opt[k] for k in ("gate1_buffer_days", "min_session_bars_per_param", "min_oos_session_bars_per_fold")}}
 
 
 def _need(cfg, bars_per_day=24):
@@ -23,7 +23,7 @@ def _need(cfg, bars_per_day=24):
     return gate.required_bars(
         is_window_days=wf["is_window_days"], oos_window_days=wf["oos_window_days"],
         splits=wf["splits"], holdout_days=wf["holdout_days"],
-        buffer_days=cfg["gate1_buffer_days"], bars_per_day=bars_per_day,
+        buffer_days=0, bars_per_day=bars_per_day,   # Issue #1376: Gate 1 (a) ohne gate1_buffer_days
         embargo_period_days=wf.get("embargo_period_days", 0),
         # Issue #1357 (GH #1253) — inkl. Holdout-Embargo (Selektionsende → Holdout-Beginn).
         holdout_embargo_days=wf.get("holdout_embargo_days", 0))
@@ -57,27 +57,27 @@ def test_history_boundary_exact_is_inclusive():
     assert why != "INSUFFICIENT_HISTORY"
 
 
-def test_buffer_days_shifts_history_threshold():
-    """Raising gate1_buffer_days raises required_bars — the same bar count now fails (boundary test)."""
+def test_buffer_days_does_not_shift_history_threshold():
+    """Issue #1376 (Pitfall #497) — gate1_buffer_days ist nur Backfill-Auslöser, kein Teil des Floors."""
     cfg = _cfg()
     avail = _need(cfg)
-    cfg2 = {**cfg, "gate1_buffer_days": cfg["gate1_buffer_days"] + 1}
+    cfg2 = {**cfg, "gate1_buffer_days": cfg["gate1_buffer_days"] + 30}
     ok, why = gate.is_symbol_tunable("A.ETORO", n_params=1, available_bars=avail, config=cfg2)
-    assert not ok and why == "INSUFFICIENT_HISTORY"
+    assert why != "INSUFFICIENT_HISTORY"
 
 
 # --- Gate 1b: bars-per-param ratio ------------------------------------------
 def test_param_data_ratio():
     cfg = _cfg()
-    cfg["min_bars_per_param"] = 100_000  # force the ratio to fail
+    cfg["min_session_bars_per_param"] = 100_000  # force the ratio to fail
     ok, why = gate.is_symbol_tunable("A.ETORO", n_params=8, available_bars=_need(cfg) + 1000, config=cfg)
     assert not ok and why == "PARAM_DATA_RATIO_TOO_LOW"
 
 
 def test_param_ratio_boundary():
-    """available_bars / n_params == min_bars_per_param passes; one more param fails (boundary)."""
+    """available_bars / n_params == min_session_bars_per_param passes; one more param fails (boundary)."""
     cfg = _cfg()
-    mbp = cfg["min_bars_per_param"]
+    mbp = cfg["min_session_bars_per_param"]
     # exact multiple of mbp that also clears the history gate
     avail = mbp * (_need(cfg) // mbp + 5)
     n_ok = avail // mbp                       # avail / n_ok == mbp exactly -> passes (>=)
@@ -90,7 +90,7 @@ def test_param_ratio_boundary():
 # --- Gate 1c: OOS fold length -----------------------------------------------
 def test_oos_fold_too_short():
     cfg = _cfg()
-    cfg["min_oos_bars_per_fold"] = 10 ** 9  # force the OOS-fold check to fail
+    cfg["min_oos_session_bars_per_fold"] = 10 ** 9  # force the OOS-fold check to fail
     # huge history so (a) and (b) pass, isolating the OOS-fold rejection
     ok, why = gate.is_symbol_tunable("A.ETORO", n_params=1, available_bars=10 ** 9, config=cfg)
     assert not ok and why == "OOS_FOLD_TOO_SHORT"

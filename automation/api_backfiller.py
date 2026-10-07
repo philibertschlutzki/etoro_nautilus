@@ -372,13 +372,16 @@ async def fetch_precisions_from_api(
 async def _fetch_candles(
     session: aiohttp.ClientSession,
     etoro_id: str,
-    end_time: datetime,
+    end_time: datetime | None,
     api_key: str,
     user_key: str,
     interval: str = "OneHour",
     count: int = 168,  # 7 Tage × 24h
 ) -> list[dict]:
-    """Holt historische Candle-Daten für ein Instrument."""
+    """Holt historische Candle-Daten für ein Instrument.
+
+    Issue #1372 (Pitfall #494): ``end_time=None`` sendet keinen ``endTime`` (der Endpunkt ist laut
+    API-Referenz zählerbasiert und liefert die jüngsten ``count`` Kerzen)."""
     url = _CANDLES_URL.format(etoro_id=etoro_id, interval=interval, count=count)
     headers = {
         "x-api-key":    api_key,
@@ -386,7 +389,7 @@ async def _fetch_candles(
         "x-request-id": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
-    params = {"endTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    params = {"endTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ")} if end_time is not None else {}
 
     for attempt in range(3):
         try:
@@ -424,6 +427,17 @@ async def _fetch_candles(
 
 # ─── Candle → Arrow (FixedSizeBinary(16)) ───────────────────────────────────
 
+def oneday_session_window_for(symbol: str):
+    """Issue #1382 (GH #1284) — ``SessionWindow`` für die Session-Expansion der ``OneDay``-Ticks (Asset-Class aus
+    ``instrument_map.json``, Fenster aus ``backtest.json``; ``None`` ⇒ 24/7-Markt bzw. nicht auflösbar ⇒ Alt-
+    Expansion auf UTC-Tagesbruchteilen). Kein Fehlerpfad: eine Config-Lücke darf den Abruf nie stoppen."""
+    try:
+        from automation.session_windows import load_session_window_for_symbol
+        return load_session_window_for_symbol(symbol)
+    except Exception:
+        return None
+
+
 def _candles_to_arrow_table(
     candles: list[dict],
     symbol: str,
@@ -431,8 +445,22 @@ def _candles_to_arrow_table(
     size_prec: int,
     start_dt: datetime,
     interval: str = DEFAULT_INTERVAL,
+    asof_ns: int | None = None,
+    oneday_session_window=None,
 ) -> pa.Table | None:
     """Konvertiert Candle-Daten DIREKT in eine PyArrow-Table mit FixedSizeBinary(16).
+
+    Issue #1373 (Pitfall #495): mit ``asof_ns`` (Zeitpunkt der API-Antwort) werden unfertige Kerzen
+    (``candle_start + interval > asof_ns``) NICHT geschrieben — ihr Teil-Close läge als
+    ``candle_end − 1 ns`` nach dem Abrufzeitpunkt. Die Zahl wird als ``n_incomplete_dropped`` geloggt und
+    als Event ``INCOMPLETE_CANDLES_DROPPED`` gemeldet. ``asof_ns=None`` ⇒ kein Filter (bit-identisch).
+
+    Issue #1382 (GH #1284) Fix Punkt 2: ``oneday_session_window`` (``SessionWindow``) legt die O/L/H/C-Ticks einer
+    ``OneDay``-Kerze INNERHALB der Session ihres Handelstags ab (O bei Session-Open, L/H dazwischen, C bei
+    Session-Close − 1 ns; Look-Ahead-Invariante #1332) statt auf UTC-Tagesbruchteilen; Kerzen an Nicht-Handelstagen
+    (Wochenende, Feiertag) werden nicht geschrieben (``n_non_trading_dropped`` im Log). Der Handelstag ist das UTC-
+    Datum von ``fromDate`` (die #1375-Klasse entscheidet über die Bezugszeit). ``None`` ⇒ bit-identisches Alt-
+    Verhalten; die Spalte ``bar_interval_ns`` bleibt die Kerzenlänge der Achse.
 
     Issue #1330 (GH #1224): schreibt je Kerze eine geordnete O/L/H/C-Tick-Sequenz statt eines
     Einzeltickers auf dem Close — sonst trägt jede resamplete Bar keine Intrabar-Information
@@ -465,6 +493,7 @@ def _candles_to_arrow_table(
     # Die eToro-API liefert Kerzen `desc` (jüngste zuerst); der open-Fallback ("Close der
     # Vorgängerkerze", Fix Punkt 1) braucht chronologisch aufsteigende Reihenfolge.
     parsed: list[tuple[int, float | None, float, float, float, float | None]] = []
+    n_incomplete_dropped = 0
     for c in candles:
         try:
             c_low = {k.lower(): v for k, v in c.items()}
@@ -503,11 +532,24 @@ def _candles_to_arrow_table(
 
             if ts_ns < min_ts_ns:
                 continue
+            if asof_ns is not None and ts_ns + interval_ns > asof_ns:
+                n_incomplete_dropped += 1
+                continue
 
             parsed.append((ts_ns, open_, low, high, close, volume))
         except Exception as e:
             log.debug(f"[api_backfiller] Candle-Parse-Fehler ({symbol}): {e}")
             continue
+
+    if n_incomplete_dropped:
+        log.info(f"[api_backfiller] {symbol}: n_incomplete_dropped={n_incomplete_dropped} ({interval}) — "
+                 f"unfertige Kerze(n) nicht geschrieben (Issue #1373).")
+        try:
+            from automation.log_manager import emit_execution_event
+            emit_execution_event(log, "INCOMPLETE_CANDLES_DROPPED", {
+                "symbol": symbol, "interval": interval, "n_incomplete_dropped": n_incomplete_dropped})
+        except Exception:  # pragma: no cover - Telemetrie darf den Abruf nie stoppen
+            pass
 
     if not parsed:
         return None
@@ -516,20 +558,30 @@ def _candles_to_arrow_table(
 
     volume_seen_any = False
     volume_missing_any = False
+    n_non_trading_dropped = 0
     prev_close: float | None = None
 
     for candle_start_ns, open_val, low, high, close, volume in parsed:
         if open_val is None:
             open_val = prev_close
         candle_end_ns = candle_start_ns + interval_ns
+        span_ns = interval_ns
+        if oneday_session_window is not None and interval == "OneDay":
+            from automation.session_windows import is_trading_day, session_bounds_utc_ns
+            _day = datetime.fromtimestamp(candle_start_ns / 1e9, tz=timezone.utc).date()
+            if not is_trading_day(_day, oneday_session_window):
+                n_non_trading_dropped += 1
+                continue
+            candle_start_ns, candle_end_ns = session_bounds_utc_ns(_day, oneday_session_window)
+            span_ns = candle_end_ns - candle_start_ns
 
         # Geordnete Tick-Sequenz: O (falls verfügbar) → adverses Extrem (low) → günstiges
         # Extrem (high) → close zuletzt. Reihenfolge ist FEST, nicht richtungsabhängig.
         roles: list[tuple[float, int]] = []
         if open_val is not None:
-            roles.append((open_val, candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_OPEN_FRAC)))
-        roles.append((low,  candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_LOW_FRAC)))
-        roles.append((high, candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_HIGH_FRAC)))
+            roles.append((open_val, candle_start_ns + int(span_ns * _INTRABAR_OFFSET_OPEN_FRAC)))
+        roles.append((low,  candle_start_ns + int(span_ns * _INTRABAR_OFFSET_LOW_FRAC)))
+        roles.append((high, candle_start_ns + int(span_ns * _INTRABAR_OFFSET_HIGH_FRAC)))
         roles.append((close, candle_end_ns - 1))
 
         if volume is not None:
@@ -549,6 +601,10 @@ def _candles_to_arrow_table(
             bar_interval_col.append(interval_ns)
 
         prev_close = close
+
+    if n_non_trading_dropped:
+        log.info(f"[api_backfiller] {symbol}: n_non_trading_dropped={n_non_trading_dropped} ({interval}) — "
+                 f"Kerze(n) an Nicht-Handelstagen nicht geschrieben (Issue #1382).")
 
     if not ts_events:
         return None
@@ -922,8 +978,13 @@ async def run_backfill(
     days: int = 7,
     dry_run: bool = False,
     specific_symbols: set[str] | None = None,
+    with_oneday: bool = False,
 ) -> list[str]:
-    """Backfill-Hauptlogik."""
+    """Backfill-Hauptlogik.
+
+    Issue #1276 (GH #1149, Katalog #1374): mit ``with_oneday=True`` folgt auf den Stunden-Vorwärts-Schritt ein
+    ``OneDay``-Vorwärts-Schritt (``count = min(1000, ceil(gap_d) + 2)``, nur fertige Tageskerzen) in die EIGENE
+    Datei ``<symbol>/OneDay/data.parquet`` — ``OneHour`` bleibt unberührt."""
     if not api_key or not user_key:
         log.warning("[api_backfiller] API-Keys fehlen — Backfill übersprungen.")
         return []
@@ -982,14 +1043,20 @@ async def run_backfill(
                     filter_start_dt = min(
                         start_dt, datetime.fromtimestamp(latest_ts / 1e9, tz=timezone.utc) - timedelta(days=1))
                 else:
-                    candles = await _fetch_candles(session, etoro_id, end_dt, api_key, user_key)
+                    from automation.historical_fetcher import pagination_mode, PAGINATION_END_TIME
+                    candles = await _fetch_candles(
+                        session, etoro_id,
+                        end_dt if pagination_mode(symbol, DEFAULT_INTERVAL) == PAGINATION_END_TIME else None,
+                        api_key, user_key)
                 if not candles:
                     log.debug(f"[api_backfiller] {symbol}: Keine Candles — überspringe.")
                     await asyncio.sleep(0.5)
                     continue
 
+                _asof_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)   # Zeitpunkt der API-Antwort
                 table = _candles_to_arrow_table(
-                    candles, symbol, price_prec, size_prec, filter_start_dt, interval=DEFAULT_INTERVAL
+                    candles, symbol, price_prec, size_prec, filter_start_dt, interval=DEFAULT_INTERVAL,
+                    asof_ns=_asof_ns,
                 )
                 if table is None or len(table) == 0:
                     log.debug(f"[api_backfiller] {symbol}: Leere Table nach Konvertierung.")
@@ -1017,8 +1084,50 @@ async def run_backfill(
                 )
                 await asyncio.sleep(2)
 
+        if with_oneday:
+            await _oneday_forward_steps(session, etoro_id_to_symbol, api_precisions, specific_symbols,
+                                        api_key, user_key, end_dt, dry_run)
+
     log.info(f"[api_backfiller] Backfill abgeschlossen: {len(filled)} Symbole befüllt.")
     return filled
+
+
+async def _oneday_forward_steps(session, etoro_id_to_symbol, api_precisions, specific_symbols,
+                                api_key, user_key, end_dt, dry_run) -> list[str]:
+    """Issue #1276 — OneDay-Vorwärts-Schritt je Symbol mit vorhandener ``OneDay``-Datei (die Datei entsteht per
+    ``historical_fetcher --interval OneDay --full-window``). Gibt die fortgeschriebenen Symbole zurück."""
+    from automation.historical_fetcher import fetch_forward_candles
+    done: list[str] = []
+    for etoro_id, symbol in sorted(etoro_id_to_symbol.items(), key=lambda x: x[1]):
+        if specific_symbols and symbol not in specific_symbols:
+            continue
+        dest = QUOTE_TICK_PATH / symbol / "OneDay" / "data.parquet"
+        if not dest.exists():
+            continue
+        latest = _get_latest_ts(dest)
+        if latest is None:
+            continue
+        price_prec, size_prec = api_precisions.get(etoro_id) or _fallback_precisions(symbol or "")
+        try:
+            candles = await fetch_forward_candles(
+                session, etoro_id, symbol, latest, api_key=api_key, user_key=user_key,
+                interval="OneDay", now=end_dt)
+            if not candles:
+                continue
+            table = _candles_to_arrow_table(
+                candles, symbol, price_prec, size_prec,
+                datetime.fromtimestamp(latest / 1e9, tz=timezone.utc) - timedelta(days=3),
+                interval="OneDay", asof_ns=int(end_dt.timestamp() * 1e9),
+                oneday_session_window=oneday_session_window_for(symbol))
+            if table is None or len(table) == 0:
+                continue
+            if not dry_run:
+                _merge_and_save(log, table, symbol, price_prec, size_prec, interval="OneDay")
+            done.append(symbol)
+            await asyncio.sleep(1.1)
+        except Exception as exc:
+            log.warning(f"[api_backfiller] OneDay-Vorwärts-Schritt {symbol}: {exc}")
+    return done
 
 
 # ─── Universe Loader (Standalone, kein adapters-Import) ──────────────────────

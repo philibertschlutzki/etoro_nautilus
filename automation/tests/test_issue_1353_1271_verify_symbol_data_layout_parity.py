@@ -54,9 +54,14 @@ def test_verify_tool_resolves_the_same_files_as_the_pipeline(tmp_path, layout, i
 def test_default_interval_matches_the_pipeline_default():
     import inspect
 
-    pipeline = inspect.signature(catalog_paths.resolve_quote_tick_files).parameters["interval"].default
+    from automation import bar_axis
+
+    # Issue #1382: der Pipeline-Default ist die Katalog-Auflösung der AKTIVEN Bar-Achse (``None`` ⇒ bar_axis);
+    # das Stand-alone-Tool (keine automation.*-Imports) behält den Literal-Default der Produktionsachse.
+    assert inspect.signature(catalog_paths.resolve_quote_tick_files).parameters["interval"].default is None
+    pipeline = bar_axis.active_axis().catalog_interval
     tool = inspect.signature(verify_symbol_data.resolve_quote_tick_files).parameters["interval"].default
-    assert tool == pipeline == "OneHour"
+    assert tool == pipeline == bar_axis.DEFAULT_AXIS
 
 
 def test_verify_tool_stays_independent_of_the_pipeline_modules():

@@ -71,7 +71,7 @@ def test_sweep_completed_carries_strategy_coverage(monkeypatch, tmp_path, capsys
     """sweep_completed enthält strategies_requested / strategies_enumerated / strategies_skipped[];
     eine übersprungene (nicht enumerierte) Strategie erzeugt eine WARNING-Zusammenfassung."""
     _GATE_CFG = {"walk_forward": {}, "gate1_buffer_days": 30,
-                 "min_bars_per_param": 200, "min_oos_bars_per_fold": 500}
+                 "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91}
     # S1 wird enumeriert, S2 nicht (keine eligiblen Symbole).
     pairs = [("S1", "A.ETORO", "OK")]
     # Issue #799 — der Sweep-Fortschritts-Checkpoint schreibt nach WORK; isoliert halten.

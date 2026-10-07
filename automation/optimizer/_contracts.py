@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 
+from automation import bar_axis
 from automation.session_windows import SessionWindow, bars_per_trading_day
 
 # Issue #1343 (GH #1237) / Issue #1356 (GH #1252) — die EQUITY/COMMODITY-RTH-Session in BÖRSEN-LOKALZEIT
@@ -25,7 +26,10 @@ from automation.session_windows import SessionWindow, bars_per_trading_day
 # (``tests/test_issue_1356_session_windows_dst.py`` haelt beide synchron). Seit #1356 KEINE UTC-
 # Konstante mehr: 13:30-20:00 UTC ist NYSE-RTH nur in EDT.
 _EQUITY_SESSION_WINDOW = SessionWindow("America/New_York", "09:30", "16:00", calendar="NYSE")
-_HOURLY_BAR_INTERVAL_NS = 3_600_000_000_000
+# Issue #1382 (GH #1284) — die Achse (Intervall, Bars/Handelstag) kommt aus ``bar_axis`` (backtest.json["bar_axis"],
+# Default OneHour ⇒ bit-identisch); der Name ``_HOURLY_BAR_INTERVAL_NS`` bleibt für Importeure erhalten.
+_BAR_AXIS = bar_axis.active_axis()
+_HOURLY_BAR_INTERVAL_NS = _BAR_AXIS.bar_interval_ns
 
 
 def _bars_per_trading_day(
@@ -46,11 +50,14 @@ def _bars_per_trading_day(
 # fruehere ``RTH_AXIS_FACTOR``) geschaetzt — ein Wechsel des Bar-Intervalls oder des Session-
 # Fensters aendert diesen Wert automatisch mit, ohne eine unabhaengig gepflegte Konstante
 # nachzufuehren.
-BARS_PER_TRADING_DAY = _bars_per_trading_day()
+BARS_PER_TRADING_DAY = (_bars_per_trading_day() if _BAR_AXIS.name == bar_axis.DEFAULT_AXIS
+                        else _BAR_AXIS.bars_per_trading_day)
 
 # Issue #1343 (GH #1237) — die Konfigurationsgroesse selbst (Default 1,0, entspricht der
 # urspruenglichen GR-01-Absicht "Trade schliesst nach etwa einem Handelstag").
-MAX_HANDELSTAGE_DEFAULT = 1.0
+MAX_HANDELSTAGE_DEFAULT = bar_axis.MAX_HANDELSTAGE_DEFAULT
+# Issue #1382 — die konfigurierte Steuergrösse (backtest.json["max_handelstage"], Default 1,0).
+MAX_HANDELSTAGE = bar_axis.active_max_handelstage()
 
 # Issue #1275 (GH #1148) Fix Punkt 3, seit #1343 (GH #1237) NEU DEFINIERT als reines
 # Rueckwaerts-kompat-Verhaeltnis (``TIME_BOX_BARS / 24``, siehe unten) statt der primaeren Quelle
@@ -66,7 +73,7 @@ RTH_AXIS_FACTOR = BARS_PER_TRADING_DAY / 24.0
 # ``check_timebox_cap_coherence`` (invariants.py) bewacht die Uebereinstimmung dauerhaft.
 # Issue #1343 (GH #1237) — jetzt ``MAX_HANDELSTAGE_DEFAULT · BARS_PER_TRADING_DAY`` (7,0 fuer
 # EQUITY bei max_handelstage=1,0), vormals ``RTH_AXIS_FACTOR · 24.0`` (5,76).
-TIME_BOX_BARS = MAX_HANDELSTAGE_DEFAULT * BARS_PER_TRADING_DAY
+TIME_BOX_BARS = MAX_HANDELSTAGE * BARS_PER_TRADING_DAY
 
 # Issue #714/GR-01 — die Bar-Zeitbox-Obergrenze für ``max_bars_in_trade``. Der Bar-Zähler-Exit
 # in ``HourlyStrategyBase`` erzwingt sie unabhängig vom je Trial gesampelten Wert; der Optuna-

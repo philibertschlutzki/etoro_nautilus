@@ -452,6 +452,51 @@ def expected_bars_between(
     return total
 
 
+def calendar_days_for_session_bars(n_bars: float, window: SessionWindow, bar_interval_ns: int, end_ns: int) -> int:
+    """Issue #1379 (GH #1281) — Kalendertage, die rückwärts ab ``end_ns`` nötig sind, damit das Fenster
+    mindestens ``n_bars`` erwartete Session-Bars enthält (lokale Handelstage, Feiertage und Wochenenden
+    zählen als Kalendertage ohne Bars). Gegenstück zu ``expected_bars_between`` (dort: Tage ⇒ Bars)."""
+    total = 0
+    n_days = 0
+    ordinal = local_day(int(end_ns), window).toordinal()
+    while total < n_bars and n_days < 366 * 20:
+        day = date.fromordinal(ordinal)
+        if is_trading_day(day, window):
+            total += bars_in_session_on_day(day, window, bar_interval_ns)
+        n_days += 1
+        ordinal -= 1
+    return n_days
+
+
+@lru_cache(maxsize=512)
+def min_bars_in_calendar_window(window: SessionWindow, calendar_days: int,
+                                bar_interval_ns: int = NS_PER_HOUR) -> int:
+    """Issue #1377 (GH #1279) — die KLEINSTE Zahl erwarteter Session-Bars in einem Fenster von
+    ``calendar_days`` Kalendertagen, über jede Lage innerhalb der vom Feiertagskalender abgedeckten Jahre
+    (ohne Kalender: eine Referenzjahr 2026). Ein 21-Tage-Fenster enthält bei bis zu zwei Feiertagen
+    mindestens 13 Handelstage = 91 Bars à 7 (Mittel ≈ 100): die Untergrenze verhindert, dass ein Fold mit
+    Feiertag abgewiesen wird, den die Kalenderstunden-Regel zuliess."""
+    _, coverage = load_exchange_holidays()
+    span = coverage.get(window.calendar) if window.calendar else None
+    first_year, last_year = span if span is not None else (2026, 2026)
+    # Ab dem Referenzjahr (2026): die Sonderschliessungen früherer Jahre (z. B. der Trauertag 2025-01-09)
+    # sind für künftige Fold-Fenster ohne Aussage.
+    first_year = max(first_year, _REFERENCE_DAYS[0].year)
+    first, last = date(first_year, 1, 1), date(max(first_year, last_year), 12, 31)
+    n_days = max(1, int(calendar_days))
+    best: int | None = None
+    ordinal = first.toordinal()
+    while ordinal + n_days - 1 <= last.toordinal():
+        total = 0
+        for o in range(ordinal, ordinal + n_days):
+            day = date.fromordinal(o)
+            if is_trading_day(day, window):
+                total += bars_in_session_on_day(day, window, bar_interval_ns)
+        best = total if best is None else min(best, total)
+        ordinal += 1
+    return best if best is not None else 0
+
+
 def snap_window_to_grid(window: SessionWindow, median_delta_t_s: float | None) -> SessionWindow:
     """Issue #1300 (GH #1177) — ``open`` ABWÄRTS, ``close`` AUFWÄRTS auf das nächste Vielfache des beobachteten
     Tick-Rasters (``median_delta_t_s`` auf volle Minuten gerundet, ≥ 1): eine Fenstergrenze darf nie feiner

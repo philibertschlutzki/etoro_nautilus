@@ -1,16 +1,16 @@
 {
-  "_schema": "Issue #1356 (GH #1252) — statische Boersenfeiertags-Tabelle (Nicht-Handelstage) je Kalender, gelesen von automation/session_windows.py. Ein Feiertag ist ein NICHT-HANDELSTAG (kein Datenloch): er faellt aus dem Coverage-Nenner (_bar_coverage_expected_bins), aus compute_holdout_bar_count (mit end_ns) und aus jedem Session-Test. Schluessel: calendars.<NAME> = Liste ISO-Daten (YYYY-MM-DD); coverage.<NAME> = {first_year, last_year} — Daten ausserhalb des abgedeckten Bereichs gelten als Handelstag (fail-open wie vor #1356) UND erzeugen EINMAL je Kalender/Jahr die WARNING EXCHANGE_HOLIDAYS_OUT_OF_RANGE (Tabelle fortschreiben!). Nicht abgebildet: verkuerzte Handelstage (Early Close 13:00 ET: Tag nach Thanksgiving, 24.12., ggf. 03.07.) — die Session-Grenzen bleiben dort die Regelzeiten. Ein SessionWindow referenziert den Kalender ueber das optionale Feld 'calendar' (Default je tz: America/New_York -> NYSE, siehe session_windows.DEFAULT_CALENDAR_BY_TZ).",
+  "_schema": "Issue #1356 (GH #1252) — statische Boersenfeiertags-Tabelle (Nicht-Handelstage) je Kalender, gelesen von automation/session_windows.py. Ein Feiertag ist ein NICHT-HANDELSTAG (kein Datenloch): er faellt aus dem Coverage-Nenner (_bar_coverage_expected_bins), aus compute_holdout_bar_count (mit end_ns) und aus jedem Session-Test. Schluessel: calendars.<NAME> = Liste ISO-Daten (YYYY-MM-DD); coverage.<NAME> = {first_year, last_year} — Daten ausserhalb des abgedeckten Bereichs gelten als Handelstag (fail-open wie vor #1356) UND erzeugen EINMAL je Kalender/Jahr die WARNING EXCHANGE_HOLIDAYS_OUT_OF_RANGE (Tabelle fortschreiben!). Nicht abgebildet: verkuerzte Handelstage (Early Close 13:00 ET: Tag nach Thanksgiving, 24.12., ggf. 03.07.) — die Session-Grenzen bleiben dort die Regelzeiten. Ein SessionWindow referenziert den Kalender ueber das optionale Feld 'calendar' (Default je tz: America/New_York -> NYSE, siehe session_windows.DEFAULT_CALENDAR_BY_TZ). Issue #1382 (GH #1284): NYSE-Tabelle bis 2022 zurück erweitert — die Tagesachse (OneDay, ≈ 1450 d Historie) braucht Handelstage ab 2022; 2022-12-26/2023-01-02 sind die beobachteten Feiertage (Weihnachten/Neujahr auf Sonntag).",
   "coverage": {
-    "NYSE": {"first_year": 2025, "last_year": 2027}
+    "NYSE": {"first_year": 2022, "last_year": 2027}
   },
   "calendars": {
     "NYSE": [
-      "2025-01-01", "2025-01-09", "2025-01-20", "2025-02-17", "2025-04-18",
-      "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-11-27", "2025-12-25",
-      "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
-      "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
-      "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
-      "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"
+      "2022-01-17", "2022-02-21", "2022-04-15", "2022-05-30", "2022-06-20", "2022-07-04", "2022-09-05", "2022-11-24", "2022-12-26",
+      "2023-01-02", "2023-01-16", "2023-02-20", "2023-04-07", "2023-05-29", "2023-06-19", "2023-07-04", "2023-09-04", "2023-11-23", "2023-12-25",
+      "2024-01-01", "2024-01-15", "2024-02-19", "2024-03-29", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-11-28", "2024-12-25",
+      "2025-01-01", "2025-01-09", "2025-01-20", "2025-02-17", "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-11-27", "2025-12-25",
+      "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+      "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"
     ]
   }
 }

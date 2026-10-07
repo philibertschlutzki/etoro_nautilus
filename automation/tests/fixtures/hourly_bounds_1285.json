@@ -1,0 +1,428 @@
+{
+ "AdxAtrMomentumStrategy": {
+  "atr_multiplier": [
+   1.0,
+   4.0
+  ],
+  "atr_period": [
+   5,
+   21
+  ],
+  "atr_trailing_multiplier": [
+   0.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   6,
+   36
+  ],
+  "ema_period": [
+   20,
+   100
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ],
+  "min_holding_time": [
+   0,
+   2
+  ]
+ },
+ "ComboTrendVwapStrategy": {
+  "atr_multiplier": [
+   0.1,
+   1.5
+  ],
+  "atr_period": [
+   7,
+   21
+  ],
+  "atr_trailing_multiplier": [
+   1.0,
+   4.0
+  ],
+  "bb_period": [
+   10,
+   40
+  ],
+  "bb_std_dev": [
+   1.0,
+   2.5
+  ],
+  "bb_touch_window": [
+   6,
+   96
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "macd_fast": [
+   3,
+   14
+  ],
+  "macd_gap": [
+   4,
+   26
+  ],
+  "macd_signal_period": [
+   5,
+   15
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ],
+  "sma_period": [
+   20,
+   100
+  ],
+  "trend_tolerance_pct": [
+   0.0,
+   0.1
+  ],
+  "vwap_period": [
+   10,
+   60
+  ]
+ },
+ "DonchianRegimeBreakoutStrategy": {
+  "atr_period": [
+   7,
+   21
+  ],
+  "atr_trailing_multiplier": [
+   1.0,
+   4.0
+  ],
+  "cooldown_bars": [
+   2,
+   24
+  ],
+  "donchian_period": [
+   8,
+   60
+  ],
+  "ema_period": [
+   20,
+   100
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ]
+ },
+ "DynamicBreakoutStrategy": {
+  "atr_trailing_multiplier": [
+   0.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ],
+  "price_breakout_period": [
+   5,
+   60
+  ]
+ },
+ "FlashCrashReversalStrategy": {
+  "atr_period": [
+   5,
+   20
+  ],
+  "atr_trailing_multiplier": [
+   0.5,
+   3.0
+  ],
+  "bb_period": [
+   10,
+   40
+  ],
+  "bb_std_dev": [
+   1.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "max_bars_in_trade": [
+   1,
+   7
+  ],
+  "rsi_oversold": [
+   10,
+   30
+  ],
+  "rsi_period": [
+   2,
+   14
+  ]
+ },
+ "GapContinuationStrategy": {
+  "atr_period": [
+   7,
+   21
+  ],
+  "atr_trailing_multiplier": [
+   1.0,
+   3.5
+  ],
+  "gap_threshold_pct": [
+   0.005,
+   0.04
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ]
+ },
+ "HourlyMeanReversionStrategy": {
+  "atr_trailing_multiplier": [
+   0.3,
+   2.5
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "keltner_atr_period": [
+   6,
+   40
+  ],
+  "keltner_multiplier": [
+   1.0,
+   3.5
+  ],
+  "keltner_period": [
+   6,
+   40
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ]
+ },
+ "MeanReversionStrategy": {
+  "atr_trailing_multiplier": [
+   0.3,
+   2.5
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "keltner_atr_period": [
+   6,
+   40
+  ],
+  "keltner_multiplier": [
+   1.0,
+   3.5
+  ],
+  "keltner_period": [
+   6,
+   40
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ]
+ },
+ "OpeningRangeBreakoutStrategy": {
+  "atr_period": [
+   7,
+   21
+  ],
+  "atr_trailing_multiplier": [
+   1.0,
+   3.5
+  ],
+  "cooldown_bars": [
+   1,
+   24
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ],
+  "or_atr_buffer": [
+   0.0,
+   1.0
+  ],
+  "or_bars": [
+   1,
+   8
+  ]
+ },
+ "Rsi2ReversionStrategy": {
+  "atr_period": [
+   7,
+   21
+  ],
+  "atr_trailing_multiplier": [
+   0.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   1,
+   18
+  ],
+  "ema_period": [
+   50,
+   200
+  ],
+  "max_bars_in_trade": [
+   2,
+   7
+  ],
+  "rsi_overbought": [
+   75.0,
+   95.0
+  ],
+  "rsi_oversold": [
+   5.0,
+   25.0
+  ],
+  "rsi_period": [
+   2,
+   6
+  ]
+ },
+ "SmaCrossoverStrategy": {
+  "atr_trailing_multiplier": [
+   0.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ],
+  "sma_period": [
+   5,
+   60
+  ]
+ },
+ "SqueezeBreakoutStrategy": {
+  "atr_period": [
+   7,
+   21
+  ],
+  "atr_trailing_multiplier": [
+   1.0,
+   3.5
+  ],
+  "bb_period": [
+   10,
+   40
+  ],
+  "cooldown_bars": [
+   2,
+   24
+  ],
+  "keltner_multiplier": [
+   1.0,
+   2.5
+  ],
+  "keltner_period": [
+   10,
+   40
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ],
+  "min_squeeze_bars": [
+   3,
+   18
+  ],
+  "squeeze_ratio": [
+   0.7,
+   1.05
+  ]
+ },
+ "TrendPullbackStrategy": {
+  "atr_trailing_multiplier": [
+   0.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "ema_period": [
+   50,
+   300
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ],
+  "rsi_overbought": [
+   55.0,
+   85.0
+  ],
+  "rsi_oversold": [
+   15.0,
+   45.0
+  ],
+  "rsi_period": [
+   5,
+   21
+  ]
+ },
+ "VolatilityBreakoutPumpStrategy": {
+  "atr_trailing_multiplier": [
+   1.0,
+   4.0
+  ],
+  "bb_period": [
+   10,
+   40
+  ],
+  "bb_std_dev": [
+   1.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "max_bars_in_trade": [
+   3,
+   7
+  ]
+ },
+ "VwapExhaustionStrategy": {
+  "atr_trailing_multiplier": [
+   0.5,
+   3.0
+  ],
+  "cooldown_bars": [
+   2,
+   36
+  ],
+  "deviation_threshold": [
+   0.005,
+   0.03
+  ],
+  "max_bars_in_trade": [
+   1,
+   7
+  ],
+  "vwap_period": [
+   10,
+   50
+  ]
+ }
+}

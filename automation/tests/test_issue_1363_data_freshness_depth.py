@@ -36,6 +36,10 @@ def catalog(tmp_path, monkeypatch):
     monkeypatch.setattr(hf, "CATALOG_PATH", tmp_path)
     monkeypatch.setattr(ab, "QUOTE_TICK_PATH", qt)
     monkeypatch.setattr(hf, "INCEPTION_CACHE_PATH", tmp_path / "state" / "inception_bounds.json")
+    # Issue #1372 — diese Fixture simuliert eine API, die `endTime` auswertet (Probe-Stempel end_time);
+    # ohne Stempel gilt `count_only` (siehe test_issue_1372_candle_pagination_probe.py).
+    for _itv in ("OneHour", "OneDay"):
+        hf._save_pagination_probe(_SYM, _itv, "end_time")
     return tmp_path
 
 
@@ -50,6 +54,7 @@ class _FakeApi:
         self.step = {"OneHour": timedelta(hours=1), "OneDay": timedelta(days=1)}
 
     async def __call__(self, session, etoro_id, end_time, api_key, user_key, interval, count=1000):
+        end_time = end_time or self.now
         self.calls.append((interval, end_time, count))
         oldest_allowed = self.now - self.depth[interval]
         step = self.step[interval]
@@ -73,7 +78,7 @@ def _span_days(catalog_root: Path) -> float:
 # ─── Inception-Bounds je Intervall ────────────────────────────────────────────────────
 
 def test_old_inception_format_is_migrated(catalog):
-    hf.INCEPTION_CACHE_PATH.parent.mkdir(parents=True)
+    hf.INCEPTION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     hf.INCEPTION_CACHE_PATH.write_text(json.dumps({_SYM: 1_750_000_000_000_000_000}), "utf-8")
     bounds = hf._load_inception_bounds()
     assert bounds[_SYM] == {"OneHour": 1_750_000_000_000_000_000, "observed_utc": None}
@@ -164,7 +169,7 @@ def test_forward_step_paginates_until_it_overlaps_the_latest_local_tick():
     latest_local = now - timedelta(days=60)                  # 1440 h Lücke > 1000 je Seite
     candles = asyncio.run(hf.fetch_forward_candles(
         None, "1", _SYM, int(latest_local.timestamp() * 1e9), api_key="k", user_key="u", now=now,
-        fetch_chunk=api))
+        fetch_chunk=api, mode="end_time"))
     assert len(api.calls) == 2
     assert api.calls[0][2] == 1000
     oldest = min(datetime.fromisoformat(c["fromDate"].replace("Z", "+00:00")) for c in candles)

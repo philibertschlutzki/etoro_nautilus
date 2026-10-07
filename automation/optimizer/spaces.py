@@ -95,6 +95,67 @@ def _current_time_box_bars_axis() -> str | None:
         return None
 
 
+# ─── Achsen-Bounds (Issue #1383, GH #1285) ────────────────────────────────────────────
+
+_axis_bounds_cache: dict[str, dict] = {}
+
+
+class AxisBoundsConfigError(ValueError):
+    """``axis_bounds.json`` enthält einen Eintrag ausserhalb des Domänenregisters oder mit lo > hi."""
+
+
+def _load_axis_bounds() -> dict:
+    """``axis_bounds.json`` (``{strategy: {axis: {param: [lo, hi]}}}``), je Pfad gecached; fehlende Datei ⇒ ``{}``.
+    Jeder Eintrag wird beim Laden gegen das Domänenregister geprüft (FAIL-LOUD, wie kuratierte Overrides #1066)."""
+    from automation.optimizer.trial_config import config_dir
+    path = config_dir() / "axis_bounds.json"
+    key = str(path)
+    if key in _axis_bounds_cache:
+        return _axis_bounds_cache[key]
+    table: dict = {}
+    if path.exists():
+        table = (_json.loads(path.read_text("utf-8")) or {}).get("axis_bounds", {}) or {}
+        for strategy, axes in table.items():
+            for axis, params in axes.items():
+                for param, bound in params.items():
+                    lo, hi = bound
+                    if lo > hi or not is_bounds_admissible(param, lo, hi):
+                        raise AxisBoundsConfigError(
+                            f"AXIS_BOUNDS_INADMISSIBLE: {strategy}/{axis}.{param}={bound!r} (lo > hi oder ausserhalb "
+                            f"des Domänenregisters {_PARAM_DOMAIN_REGISTRY.get(param)!r}) — axis_bounds.json korrigieren.")
+    _axis_bounds_cache[key] = table
+    return table
+
+
+def _axis_bound(strategy: str, param: str):
+    """``(lo, hi)`` der AKTIVEN Achse für (``strategy``, ``param``) oder ``None`` (Stundenachse hat keine Einträge)."""
+    from automation import bar_axis
+    axis = bar_axis.active_axis_name()
+    if axis == bar_axis.DEFAULT_AXIS:
+        return None
+    bound = ((_load_axis_bounds().get(strategy) or {}).get(axis) or {}).get(param)
+    return (bound[0], bound[1]) if bound else None
+
+
+class _AxisTrial:
+    """Trial-Proxy für Nicht-Stunden-Achsen: ersetzt ``(low, high)`` jedes ``suggest_int``/``suggest_float`` durch den
+    ``axis_bounds``-Eintrag der Strategie, falls vorhanden. Auf der Stundenachse wird er nie gebaut (bit-identisch)."""
+
+    def __init__(self, strategy: str, trial) -> None:
+        self._strategy, self._trial = strategy, trial
+
+    def suggest_int(self, name, low, high, *a, **k):
+        low, high = _axis_bound(self._strategy, name) or (low, high)
+        return self._trial.suggest_int(name, low, high, *a, **k)
+
+    def suggest_float(self, name, low, high, *a, **k):
+        low, high = _axis_bound(self._strategy, name) or (low, high)
+        return self._trial.suggest_float(name, low, high, *a, **k)
+
+    def __getattr__(self, item):
+        return getattr(self._trial, item)
+
+
 def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
     """Issue #669/#761 — löst die effektiven ``(low, high)``-Suchraumgrenzen für ``param`` auf, in
     Prioritätsreihenfolge: (1) eine kuratierte symbol-spezifische Überschreibung
@@ -110,7 +171,17 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
     (``_BAR_DENOMINATED_PARAMS``), MUSS der Override-Block eine ``axis`` tragen, die mit
     ``optimizer.json['time_box_bars_axis']`` übereinstimmt — sonst ``StaleAxisOverrideError``
     (siehe dortigen Docstring). Der AUTOMATISCHE #761-Diagnose-Cache-Pfad bleibt unberührt (kein
-    ``axis``-Feld in diesem Format, ausserhalb des #1316-Scopes)."""
+    ``axis``-Feld in diesem Format, ausserhalb des #1316-Scopes).
+
+    Issue #1383 (GH #1285) — auf einer Nicht-Stunden-Achse (``bar_axis``) gilt ``axis_bounds[strategy][axis][param]``
+    (falls vorhanden) und KEIN symbol-spezifischer Override: kuratierte Overrides und der Diagnose-Cache sind auf der
+    Stundenachse kalibriert. Auf der Stundenachse ist dieser Zweig inaktiv (bit-identisch)."""
+    _axis_override = _axis_bound(strategy, param)
+    if _axis_override is not None:
+        return _axis_override
+    from automation import bar_axis
+    if bar_axis.active_axis_name() != bar_axis.DEFAULT_AXIS:
+        return low, high
     if not symbol:
         return low, high
     entry = (_load_search_space_overrides().get(strategy) or {}).get(symbol) or {}
@@ -341,7 +412,13 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
 
     Issue #713 — jede Strategie erhält zusätzlich die konditionalen ``dyn_tp_*``-Suchdimensionen
     (siehe ``_dyn_tp_params``), einheitlich am Ende dieser Funktion angehängt statt pro Strategie-
-    Zweig dupliziert."""
+    Zweig dupliziert.
+
+    Issue #1383 (GH #1285) — auf einer Nicht-Stunden-Achse läuft das Sampling über ``_AxisTrial`` (Achsen-Bounds aus
+    ``axis_bounds.json``); auf der Stundenachse bleibt ``trial`` unverändert (bit-identisch)."""
+    from automation import bar_axis
+    if bar_axis.active_axis_name() != bar_axis.DEFAULT_AXIS:
+        trial = _AxisTrial(strategy, trial)
     if strategy == "HourlyMeanReversionStrategy":
         kp_lo, kp_hi = _bounds_for(strategy, symbol, "keltner_period", 6, 40)
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)

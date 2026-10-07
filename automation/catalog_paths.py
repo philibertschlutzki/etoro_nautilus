@@ -20,6 +20,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from automation import bar_axis
+
 # Issue #1364 (GH #1260) — Archiv-Verzeichnis des Katalogs. ``--rebuild-catalog`` VERSCHIEBT einen
 # Instrument-Katalog hierher (``<catalog>/archive/<UTC-ts>/<symbol>/``), statt ihn zu löschen: Historie
 # jenseits der API-Tiefe und Echt-Ticks sind nach einem ``rmtree`` unwiederbringlich verloren.
@@ -66,7 +68,7 @@ _QUOTE_TICK_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 
 
 def resolve_quote_tick_files(
-    catalog_path: str | Path, symbol: str, interval: str = "OneHour"
+    catalog_path: str | Path, symbol: str, interval: str | None = None
 ) -> list[Path]:
     """Löst die Quote-Tick-Parquet-Datei(en) für ``symbol`` im Katalog unter ``catalog_path`` auf.
 
@@ -84,6 +86,7 @@ def resolve_quote_tick_files(
 
     Leere Liste, wenn das Instrument-Verzeichnis fehlt oder kein Muster einen Treffer liefert —
     kein Fehler, der Aufrufer entscheidet über Fail-open/Fail-loud."""
+    interval = interval or bar_axis.active_axis().catalog_interval
     inst_dir = Path(catalog_path) / "data" / "quote_tick" / str(symbol)
     if not inst_dir.is_dir():
         return []
@@ -155,12 +158,14 @@ class EngineCatalogView:
 
 
 def engine_catalog_view(
-    catalog_path: str | Path, symbol: str, interval: str = "OneHour",
+    catalog_path: str | Path, symbol: str, interval: str | None = None,
 ) -> EngineCatalogView:
     """Baut die Engine-Sicht für ``symbol`` (Hardlink → Symlink → Kopie). Wirft
     ``EngineCatalogViewError`` ohne Quelldatei. Als ``with``-Block oder mit explizitem ``close()``
-    verwenden. Die Sicht enthält GENAU EINE Datei: die Auflösung ``interval`` (Default ``OneHour``) —
-    nie ``OneDay``-Zeilen oder Echt-Ticks (``RealTick/``, #1366)."""
+    verwenden. Die Sicht enthält GENAU EINE Datei: die Auflösung ``interval`` (Default: die Katalog-
+    Auflösung der aktiven Bar-Achse, ``bar_axis``; OneHour) — nie Zeilen einer anderen Auflösung oder Echt-Ticks
+    (``RealTick/``, #1366)."""
+    interval = interval or bar_axis.active_axis().catalog_interval
     files = resolve_quote_tick_files(catalog_path, symbol, interval=interval)
     if not files:
         raise EngineCatalogViewError(

@@ -25,6 +25,7 @@ import enum
 import functools
 import logging
 import statistics
+from automation import bar_axis
 import traceback
 import pandas as pd
 import pyarrow.parquet as pq
@@ -316,7 +317,7 @@ def _nearest_rank_percentile(sorted_vals: list[float], p: float) -> float:
 def _bar_interval_ns_of(bar_type) -> int:
     """Intervall der Bar-Achse in Nanosekunden aus dem ``bar_type``-String (``…-1-HOUR-MID-INTERNAL`` ⇒
     3,6e12); nicht ermittelbar (Mock/unbekanntes Format) ⇒ 1 Stunde, die nominale Achse dieses Systems."""
-    default = 3_600_000_000_000
+    default = bar_axis.HOURLY_INTERVAL_NS
     try:
         parts = str(bar_type).split("-")
         step = int(parts[-4])
@@ -619,7 +620,7 @@ class HourlyStrategyBase(Strategy):
         if window is None:
             return True
         ts = int(bar.ts_event)
-        interval = int(getattr(self, "_bar_interval_ns", 3_600_000_000_000))
+        interval = int(getattr(self, "_bar_interval_ns", bar_axis.HOURLY_INTERVAL_NS))
         self._last_bar_trading_day = trading_day_of_candle(ts - interval, ts, window)
         return self._last_bar_trading_day is not None
 
@@ -642,7 +643,7 @@ class HourlyStrategyBase(Strategy):
             return
         ts = int(bar.ts_event)
         last = getattr(self, "_out_of_session_last_event_ns", None)
-        if last is not None and ts - last < 3_600_000_000_000:
+        if last is not None and ts - last < bar_axis.HOURLY_INTERVAL_NS:
             return
         try:
             emit_execution_event(log, "LIVE_BAR_SKIPPED_OUT_OF_SESSION", {
@@ -702,7 +703,7 @@ class HourlyStrategyBase(Strategy):
             # konservativ per Wall-Clock — die sichere Richtung im Offline-Recovery-Kontext (eher
             # schliessen als dangeln lassen).
             now_ns = self.clock.timestamp_ns()
-            elapsed_hours = (now_ns - entry_ns) / 3_600_000_000_000.0
+            elapsed_hours = (now_ns - entry_ns) / float(bar_axis.HOURLY_INTERVAL_NS)
             expired = elapsed_hours >= 24.0
             rehydrated_bars = self._max_bars_in_trade if expired else 0
             basis = f"wall_clock_elapsed_h={elapsed_hours:.2f}"

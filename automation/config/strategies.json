@@ -2,6 +2,7 @@
   "_schema": {
     "description": "Aktive Strategie-Liste mit optionalen per-Strategie-Parameter-Overrides. Defaults kommen aus strategy_defaults.json; Werte hier haben Vorrang.",
     "fields": {
+      "bar_axes": "Issue #1383 (GH #1285) — Liste der Bar-Achsen, auf denen die Strategie sinnvoll ist (Default [\"OneHour\"], fehlender Key = nur Stundenachse). Gelesen wie invalid_on_continuous_bars (sweep_diagnostics.load_strategy_bar_axes); der Sweep enumeriert nur Strategien mit der aktiven Achse (backtest.json bar_axis) und meldet übersprungene mit dem Event STRATEGY_AXIS_SKIPPED. OneDay-Erstzulassung: Rsi2Reversion, DonchianRegimeBreakout, SmaCrossover, MeanReversion, DynamicBreakout, SqueezeBreakout, TrendPullback, AdxAtrMomentum; ausgeschlossen (intraday definiert: Opening-Range-Anker trading_day, VWAP-Fenster, stündliche Mean-Reversion, Flash-Crash/Pump): OpeningRangeBreakout, VwapExhaustion, ComboTrendVwap, HourlyMeanReversion, FlashCrashReversal, VolatilityBreakoutPump.",
       "active": "bool \u2014 wenn false, wird die Strategie beim Backtest \u00fcbersprungen",
       "strategy_module": "Python-Modul-Pfad der Strategie",
       "strategy_class": "Klassen-Name der Strategie",
@@ -17,6 +18,7 @@
       "active": true,
       "strategy_module": "automation.strategies.sma_crossover",
       "strategy_class": "SmaCrossoverStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "SmaCrossoverConfig",
       "params": {}
     },
@@ -24,6 +26,7 @@
       "active": true,
       "strategy_module": "automation.strategies.mean_reversion",
       "strategy_class": "MeanReversionStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "MeanReversionConfig",
       "params": {},
       "_note": "Deaktiviert: Whipsaw-Anfälligkeit / Overtrading"
@@ -32,6 +35,7 @@
       "active": true,
       "strategy_module": "automation.strategies.dynamic_breakout",
       "strategy_class": "DynamicBreakoutStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "DynamicBreakoutConfig",
       "params": {},
       "_note": "Deaktiviert: Whipsaw-Anfälligkeit / Overtrading"
@@ -40,6 +44,7 @@
       "active": true,
       "strategy_module": "automation.strategies.flash_crash_reversal",
       "strategy_class": "FlashCrashReversalStrategy",
+      "bar_axes": ["OneHour"],
       "config_class": "FlashCrashReversalConfig",
       "params": {}
     },
@@ -47,6 +52,7 @@
       "active": true,
       "strategy_module": "automation.strategies.volatility_breakout",
       "strategy_class": "VolatilityBreakoutPumpStrategy",
+      "bar_axes": ["OneHour"],
       "config_class": "VolatilityBreakoutConfig",
       "params": {}
     },
@@ -54,6 +60,7 @@
       "active": true,
       "strategy_module": "automation.strategies.tesla_combo_strategy",
       "strategy_class": "ComboTrendVwapStrategy",
+      "bar_axes": ["OneHour"],
       "config_class": "ComboTrendVwapConfig",
       "params": {
         "allow_short": true
@@ -66,6 +73,7 @@
       "active": true,
       "strategy_module": "automation.strategies.vwap_exhaustion",
       "strategy_class": "VwapExhaustionStrategy",
+      "bar_axes": ["OneHour"],
       "config_class": "VwapExhaustionConfig",
       "params": {},
       "tournament_overrides": {
@@ -77,6 +85,7 @@
       "active": true,
       "strategy_module": "automation.strategies.trend_pullback",
       "strategy_class": "TrendPullbackStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "TrendPullbackConfig",
       "params": {},
       "_note": "Issue #699 — Root-Cause der vormaligen '0 FIFO-Schliessungen'-Note behoben: on_bar() rief entgegen dem HourlyStrategyBase-Vertrag nie _check_exits_and_update() auf (kein ATR-Trailing-Stop, kein Time-Exit) — jetzt verdrahtet, inkl. on_position_closed-Reset von current_signal (verhindert einen Flat-Lock nach Trailing-Stop-Exits)."
@@ -85,6 +94,7 @@
       "active": true,
       "strategy_module": "automation.strategies.adx_atr_momentum",
       "strategy_class": "AdxAtrMomentumStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "AdxAtrMomentumConfig",
       "params": {},
       "_note": "Issue #699 — Root-Cause der vormaligen ADX-Initialisierungsproblem-Note behoben: DirectionalMovement.value bleibt in NautilusTrader 1.230.0 konstant 0.0, das Entry-Gate adx_value>25 war daher IMMER False (0 Trades). Analog DonchianRegimeBreakout (#691) durch eine EMA-Steigungs-Bestätigung (Option B) ersetzt; adx_period wird nicht mehr gesampelt (spaces.py)."
@@ -93,6 +103,7 @@
       "active": true,
       "strategy_module": "automation.strategies.hourly_mean_reversion",
       "strategy_class": "HourlyMeanReversionStrategy",
+      "bar_axes": ["OneHour"],
       "config_class": "HourlyMeanReversionConfig",
       "params": {}
     },
@@ -100,6 +111,7 @@
       "active": true,
       "strategy_module": "automation.strategies.squeeze_breakout",
       "strategy_class": "SqueezeBreakoutStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "SqueezeBreakoutConfig",
       "params": {},
       "tournament_overrides": {
@@ -111,6 +123,7 @@
       "active": true,
       "strategy_module": "automation.strategies.opening_range_breakout",
       "strategy_class": "OpeningRangeBreakoutStrategy",
+      "bar_axes": ["OneHour"],
       "config_class": "OpeningRangeBreakoutConfig",
       "params": {},
       "_note": "Issue #690 — Momentum-Ignition am Tagesbeginn (Opening-Range-Breakout)."
@@ -119,6 +132,7 @@
       "active": true,
       "strategy_module": "automation.strategies.donchian_regime_breakout",
       "strategy_class": "DonchianRegimeBreakoutStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "DonchianRegimeBreakoutConfig",
       "params": {},
       "_note": "Issue #691 — ADX-gegateter Donchian-Kanal-Ausbruch (Trend-Fortsetzung nur im Trend-Regime)."
@@ -127,6 +141,7 @@
       "active": true,
       "strategy_module": "automation.strategies.rsi2_reversion",
       "strategy_class": "Rsi2ReversionStrategy",
+      "bar_axes": ["OneHour", "OneDay"],
       "config_class": "Rsi2ReversionConfig",
       "params": {},
       "_note": "Issue #692 — Connors-RSI(2)-Pullback-/Bounce-Reversion mit EMA-Trend-Filter."

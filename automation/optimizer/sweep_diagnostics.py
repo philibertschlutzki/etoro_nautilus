@@ -14,6 +14,7 @@ import json
 import statistics
 from pathlib import Path
 
+from automation import bar_axis
 from automation.optimizer.invariants import InvariantResult, invariant_scope
 
 # Issue #669/#769 — die moeglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible
@@ -1173,6 +1174,30 @@ def load_continuous_bar_invalid_strategies(base_cfg: Path | None = None) -> froz
         if entry.get("invalid_on_continuous_bars") is True and entry.get("strategy_class"):
             out.add(entry["strategy_class"])
     return frozenset(out)
+
+
+def load_strategy_bar_axes(base_cfg: Path | None = None) -> dict[str, frozenset[str]]:
+    """Issue #1383 (GH #1285) Fix Punkt 1 — ``{strategy_class: frozenset(bar_axes)}`` aus ``strategies.json``
+    (``bar_axes`` je Strategie-Eintrag; fehlender Key ⇒ nur die Default-Achse ``OneHour``). Gelesen wie
+    ``load_continuous_bar_invalid_strategies`` (Zero-Hardcoding). Eine nicht lesbare Datei ⇒ ``{}`` (dann gilt für
+    jede Strategie der Default, d. h. bit-identisches Alt-Verhalten auf der Stundenachse)."""
+    if base_cfg is None:
+        from automation.optimizer.trial_config import config_dir
+        base_cfg = config_dir()
+    path = base_cfg / "strategies.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, frozenset[str]] = {}
+    for entry in data.get("strategies", []) or []:
+        cls = entry.get("strategy_class")
+        if cls:
+            axes = entry.get("bar_axes")
+            out[cls] = frozenset(axes) if axes else frozenset({bar_axis.DEFAULT_AXIS})
+    return out
 
 
 def diagnose_symbol_degeneracy(symbol: str, per_strategy_diagnoses: list[dict], *,

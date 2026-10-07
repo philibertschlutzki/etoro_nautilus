@@ -49,6 +49,7 @@ from nautilus_trader.model.identifiers import (
 )
 from nautilus_trader.model.objects import AccountBalance, Money, Price
 
+from automation import bar_axis
 from automation.adapters.etoro_rate_limiter import _RateLimiter
 from automation.adapters.etoro_state_manager import _StateManager
 from automation.adapters.instrument_map import ETORO_INSTRUMENTS
@@ -295,7 +296,7 @@ class EToroExecutionClient(LiveExecutionClient):
         try:
             from nautilus_trader.model.data import BarType
 
-            bar_type = BarType.from_str(f"{instrument_id}-1-HOUR-MID-INTERNAL")
+            bar_type = BarType.from_str(bar_axis.bar_type(str(instrument_id), bar_axis.LIVE_AXIS))
             bars = self._cache.bars(bar_type)
         except Exception:
             return None

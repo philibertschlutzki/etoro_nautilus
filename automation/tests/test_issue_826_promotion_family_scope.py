@@ -136,7 +136,7 @@ def test_run_per_symbol_sweep_aborts_before_any_optimization_when_scope_is_per_s
         "holdout_days": 45, "is_window_days": 120, "oos_window_days": 45, "splits": 1,
         "embargo_period_days": 0}}), "utf-8")
     (cfg_dir / "optimizer.json").write_text(json.dumps({
-        "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
+        "gate1_buffer_days": 30, "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91,
     }), "utf-8")
 
     monkeypatch.setattr(sweep, "enumerate_tunable_pairs", lambda *a, **k: [("S", "A.ETORO", "OK")])

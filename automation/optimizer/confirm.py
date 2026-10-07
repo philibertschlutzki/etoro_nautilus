@@ -3,6 +3,7 @@ import json
 import hashlib
 from collections import Counter
 from pathlib import Path
+from automation import bar_axis
 from automation.optimizer.trial_config import (
     build_trial, config_dir, confirm_trial_kwargs, freeze_study_config, resolve_wf_settings,
 )
@@ -782,7 +783,7 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
 
     # Deterministischer Discriminator, damit symbol- und global-Lauf nicht in dasselbe trial_dir schreiben.
     tag = hashlib.sha1(json.dumps(params or {}, sort_keys=True, default=str).encode()).hexdigest()[:8]
-    study_name = f"confirm_{strategy}_{symbol.replace('.', '_')}_{tag}"
+    study_name = f"confirm_{strategy}_{symbol.replace('.', '_')}_{tag}{bar_axis.study_suffix()}"
 
     # Issue #796 — EINE eingefrorene Config statt einer Pro-Trial-Kopie (der Studyname ist per
     # Param-Hash eindeutig, ein einmaliges Freeze genuegt).
@@ -2680,6 +2681,13 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         **{k: (getattr(study, "user_attrs", None) or {}).get(k)
            for k in ("selection_end_utc", "holdout_start_utc", "holdout_embargo_days",
                      "holdout_overlap_days")},
+        # Issue #1379 (GH #1281) — Transparenz im Promotion-Record (keine Deployment-Klausel).
+        **{k: (getattr(study, "user_attrs", None) or {}).get(k)
+           for k in ("holdout_mds_annual", "detectability_class")},
+        # Issue #1381 (GH #1283) — Config-Profil der Study (Eingang der Klausel config_profile_production).
+        "config_profile": (getattr(study, "user_attrs", None) or {}).get("config_profile"),
+        # Issue #1382 (GH #1284) — Bar-Achse der Study (Eingang der Live-Sperre).
+        "bar_axis": (getattr(study, "user_attrs", None) or {}).get("bar_axis"),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],

@@ -183,7 +183,7 @@ def test_write_and_parse_tournament_oos_coverage_roundtrip(tmp_path):
 # ===========================================================================
 _GATE_CFG = {
     "walk_forward": {"is_window_days": 180, "oos_window_days": 45, "splits": 4, "holdout_days": 45},
-    "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
+    "gate1_buffer_days": 30, "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91,
 }
 
 
