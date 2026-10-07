@@ -336,14 +336,15 @@ def build_trial(
 
     # Issue #531 — Fail-Loud gegen die REAL vorhandene Bar-Spanne (nicht nur gegen den Config-Wert
     # data_history_days, #445 oben). Übergibt der Aufrufer die gemessene Katalog-Spanne (Tage), MUSS
-    # sie die volle Walk-Forward-Geometrie (is + splits*oos + holdout) abdecken — sonst würden der
+    # sie die volle Walk-Forward-Geometrie (is + embargo + splits*oos + holdout + holdout_embargo) abdecken — sonst würden der
     # letzte OOS-Fold UND der Holdout still via .loc über den Datenrand geklemmt (No-Clamping-Policy).
     # Kein catalog_span_days ⇒ No-Op (rückwärtskompatibel, z. B. minimale Inline-Test-Configs).
     if catalog_span_days is not None:
         from automation.optimizer.gate import assert_walk_forward_geometry, InsufficientGeometryError
-        _wf_geometry = {"is_window_days": is_window_days, "oos_window_days": oos_window_days,
-                        "splits": n_folds, "holdout_days": holdout_days,
-                        "holdout_embargo_days": holdout_embargo_days}
+        # Issue #1378 (Pitfall #499) — der Guard bekommt die VOLLSTAENDIGE ``wf_settings`` (inkl.
+        # ``embargo_period_days``), kein selbstgebautes Teil-Dict: ``required_span_days`` wertet einen
+        # fehlenden Key als 0 und verlangte sonst 21 Tage zu wenig.
+        _wf_geometry = wf_settings
         _symbol = instruments[0] if instruments else None
         try:
             assert_walk_forward_geometry(actual_span_days=catalog_span_days,
