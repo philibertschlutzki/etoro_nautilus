@@ -141,6 +141,19 @@ Der eToro-Candle-Endpunkt ist laut API-Referenz **zählerbasiert**: `candlesCoun
 - Die Stundenhistorie wächst **nur vorwärts**: Phase 2c muss täglich laufen. Die tolerierbare Ausfallzeit ist `window_span_h`; der Horizont-Wächter meldet `FORWARD_GAP_NEAR_HORIZON` (Lücke > 0,5 × Fenster, WARNING) und `FORWARD_GAP_UNRECOVERABLE` (> 1,0 ×, ERROR mit dem verlorenen Intervall). Eine nicht mehr schliessbare Lücke setzt `effective_span_days` zurück und verschiebt jede ETA.
 - **OneDay (Issue #1276):** `python -m automation.historical_fetcher --interval OneDay --full-window --symbols TSLA,NVDA,GOOGL` ruft einmal 1000 Tageskerzen ab und speichert sie ohne `target_start`-Schnitt nach `<symbol>/OneDay/data.parquet` (`OneHour/` bleibt unberührt). `daily_orchestrator --with-oneday` schreibt sie in Phase 2c fort (`count = min(1000, ceil(gap_d) + 2)`). Die Frische prüft `check_catalog_freshness(interval="OneDay")` gegen `max_catalog_staleness_d_oneday` (Tage, Default 4); der Messlauf (`sweep --measurement-run`) berichtet `oneday_n_candles`, `oneday_oldest_utc`, `oneday_effective_span_days`.
 
+### Config-Profile: `smoke` und `daily` (Issues #1283, #1284)
+
+Eine abweichende Geometrie (kürzere Historie, andere Bar-Achse) läuft nie über ein von Hand kopiertes Config-Verzeichnis, sondern als **Profil** aus `automation/config/config_profiles.json`:
+
+```bash
+python -m automation.optimizer.config_profile materialize smoke      # erzeugt automation/config_smoke/ (Overlay)
+ETORO_CONFIG_DIR="$PWD/automation/config_smoke" OPTIMIZER_WORK_DIR=/tmp/smoke_work python -m automation.optimizer.sweep …
+```
+
+- Das Overlay liegt zwingend unter `<Projekt>/automation/<name>/` (der Katalogpfad wird als `config_dir().parent.parent / catalog_path` aufgelöst) und ist per `.gitignore` ausgeschlossen.
+- `smoke`: Durchstich auf der heutigen kurzen Historie (verkürzte Geometrie 94 d, `gate1_buffer_days` 0, Champion-Store und Diagnose-Rückschrieb aus). **Ergebnisse sind nie Evidenz**: der Report trägt `config_profile=smoke` und die erste Zeile „SMOKE — keine Evidenz“; die Deployment-Grenze hat dafür die Klausel `config_profile_production`.
+- `daily`: Tagesachse `bar_axis="OneDay"` (1 Bar je Handelstag, `max_handelstage` 5; Geometrie IS 365 + Embargo 30 + 3 × OOS 145 + Holdout 442 + Holdout-Embargo 8 = 1280 d ≤ 1456 d OneDay-Fenster). Voraussetzungen: OneDay-Katalog (`historical_fetcher --interval OneDay --full-window`) und eine `oneday_definition`-Klasse ≠ `inconclusive` aus dem Messlauf (`sweep --measurement-run --oneday-definition`). Die Achse steckt in `automation/bar_axis.py` (einzige Quelle für Intervall, Bars je Handelstag, Bar-Typ und Katalog-Intervall) und geht in `study_name` und `result_fingerprint` ein. Je Strategie legt `bar_axes` in `strategies.json` fest, auf welchen Achsen sie läuft (übersprungene meldet das Event `STRATEGY_AXIS_SKIPPED`); die Tages-Bounds stehen in `config/axis_bounds.json`. **Live ist auf der Tagesachse gesperrt** (Klausel `bar_axis_live_supported`).
+
 ## 5. Befehls-Cheatsheet
 
 ```bash

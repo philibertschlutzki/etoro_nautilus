@@ -7141,3 +7141,57 @@ Die Abnahme erfolgte gegen dedizierte Unit-Tests (`automation/tests/test_issue_9
 
 ### 🟡 Pitfall #493 — „Erfolgreich" ohne Nachbedingung ist eine Behauptung; „mindestens eine" über null Elemente ist falsch [Issues #1363, #1369]
 **Verbatim:** „3/3 Symbol(e) nachgeladen" bei 0 Tagen Zugewinn; „mindestens eine Study trägt …" bei 0 Studies.
+
+## Issue-Katalog #1372–#1384 — Historien-Tiefe, OneDay-Achse, Lauf-Zulässigkeit (GitHub-Issues #1274–#1286, Sitzung 2026-10-06)
+
+**Änderungsprotokoll.** Auslöser Lauf `da16c310` (0 Studies, `waiting_for_data`): 96,04 d OneHour gegen 444 d Geometrie. Prüfauftrag „OneDay statt OneHour mit 1000 Records": Tiefe ja (1000 Tageskerzen ≈ 1456 d), Ersatz nein (Auflösungs-Homogenität, Stunden-Strategien, Tick-Expansion). Die Tagesachse ist als eigenes Profil `daily` angelegt (#1382/#1383). Kein globaler Versions-Bump; `params_schema_version` +1 mit #1383.
+
+| Katalog-Nr. (GH) | Stufe | Kernänderung | Dateien |
+|---|---|---|---|
+| **#1372** (#1274) | 0 | Probe `pagination_mode`; bei `count_only` ein Abruf je Intervall, kein `endTime`; `inception_bounds` = API-Fenster (`window_oldest_utc`, `window_span_h`); Horizont-Wächter `FORWARD_GAP_NEAR_HORIZON`/`FORWARD_GAP_UNRECOVERABLE`. Pitfall #494. | `historical_fetcher.py`, `api_backfiller.py`, `daily_orchestrator.py`, `README.md` |
+| **#1373** (#1275) | 0 | Unfertige Kerzen (`candle_end > asof`) werden nicht geschrieben; `check_catalog_freshness` FAILt bei `age_h < 0` (`REJECT_FUTURE_TICK`). Pitfall #495. | `api_backfiller.py`, `historical_fetcher.py`, `optimizer/sweep.py` |
+| **#1378** (#1280) | 0 | No-Clamping-Guard in `build_trial` mit Embargo. Pitfall #499. | `optimizer/trial_config.py` |
+| **#1376** (#1278) | 1 | `gate.history_floor_days` als einziger Floor (Auflösungs-Check, ETA, Gate 1); Puffer nur Backfill-Auslöser; `check_history_floor_coherence`. Pitfall #497. | `optimizer/gate.py`, `optimizer/sweep.py`, `optimizer/invariants.py`, `historical_fetcher.py`, `config/optimizer.json` |
+| **#1377** (#1279) | 1 | Gate 1 in Session-Bars (`min_session_bars_per_param` 40, `min_oos_session_bars_per_fold` 91). Pitfall #498. | `optimizer/gate.py`, `optimizer/sweep.py`, `config/optimizer.json` |
+| **#1379** (#1281) | 2 | `detectability_class` unattainable (blocking) / underpowered (high) / certifiable; Holdout-Bedarf aus dem Session-Kalender. Pitfall #500. | `optimizer/invariants.py`, `optimizer/sweep.py`, `optimizer/report.py`, `optimizer/summary_de.py`, `optimizer/confirm.py` |
+| **#1380** (#1282) | 2 | `PER_SYMBOL_PREFLIGHT_REJECTIONS` + `is_scoped_preflight_rejection` für `run_status` und `decision_admissible`. Pitfall #501. | `optimizer/invariants.py`, `optimizer/sweep.py`, `optimizer/report.py` |
+| **#1381** (#1283) | 3 | Config-Profile (`config_profiles.json`, Overlay `automation/config_<profil>/`, Stempel `config_profile`, 14. Klausel `config_profile_production`); Profil `smoke`. Pitfall #502. | `config/config_profiles.json`, `config/optimizer.json`, `optimizer/config_profile.py`, `optimizer/sweep.py`, `optimizer/report.py`, `optimizer/summary_de.py`, `optimizer/champions.py`, `optimizer/deployment_gate.py`, `optimizer/confirm.py` |
+| **#1374** (#1276) | 4 | OneDay-Vollfenster (1000 Kerzen, kein `target_start`-Schnitt), OneDay-Vorwärtsschritt, Freshness je Intervall. | `historical_fetcher.py`, `api_backfiller.py`, `daily_orchestrator.py`, `optimizer/sweep.py` |
+| **#1375** (#1277) | 4 | Messlauf `oneday_definition` (rth_session / etoro_trading_day / utc_day / inconclusive). Pitfall #496. | `optimizer/oneday_definition.py`, `optimizer/sweep.py` |
+| **#1382** (#1284) | 5 | `bar_axis` als einzige Quelle der Achsengrössen; Tick-Expansion und Session-Semantik OneDay; Profil `daily` (Holdout 442 d, MDS ≤ 1,5); Live gesperrt. Pitfall #503. | `bar_axis.py`, `optimizer/_contracts.py`, `optimizer/trial_config.py`, `optimizer/sweep.py`, `catalog_paths.py`, `backtest_runner.py`, `optimizer/invariants.py`, `strategies/hourly_strategy_base.py`, `config/backtest.json`, `config/exchange_holidays.json` |
+| **#1383** (#1285) | 5 | `bar_axes` je Strategie, Achsen-Bounds; `params_schema_version` +1. | `config/strategies.json`, `optimizer/spaces.py`, `optimizer/bounds.py`, `optimizer/sweep.py`, `optimizer/sweep_diagnostics.py` |
+| **#1384** (#1286) | 6 | Abschluss: AGENTS.md, README, Versionen. Pitfalls #494–#503. | `AGENTS.md`, `README.md` |
+
+**Sperrvermerke (#1384).** OneDay nie in OneHour-Pfade · kein `catalog_schema_version`-Bump und kein `--rebuild-catalog --accept-history-loss` (eToro liefert nur die jüngsten 1000 Kerzen) · `deflation_confidence` 0,95 und `promotion_target_annual_sharpe` 1,5 bleiben · `smoke` ist nie Evidenz · `daily` ohne Live-Pfad · #1382 erst nach #1375 ≠ `inconclusive`.
+
+## Neue Pitfalls #494–#503 (Issue-Katalog #1372–#1384, GitHub-Issues #1274–#1286, verbatim aus Issue #1384)
+
+### 🔴 Pitfall #494 — Ein undokumentierter Parameter ist eine Hoffnung, kein Vertrag [Katalog #1372]
+**Verbatim (Issue #1384):** Beide eToro-Fetcher sendeten `endTime`; die API-Referenz kennt nur `candlesCount` (1–1000). Die Rückwärts-Paginierung lieferte dieselbe Seite, „Historische Tiefe erreicht" registrierte das 1000-Kerzen-Fenster als Archivgrenze, und die Retry-Sperre verdeckte es. Jede Annahme über eine externe Schnittstelle, von der eine Datenlage abhängt, braucht eine Probe mit gespeichertem Ergebnis.
+
+### 🟠 Pitfall #495 — Ein Wert mit Zeitstempel nach dem Abrufzeitpunkt ist noch nicht fertig [Katalog #1373]
+**Verbatim (Issue #1384):** Der Vorwärtsschritt schrieb die laufende Stundenkerze; ihr Teil-Close lag als `candle_end − 1 ns` eine halbe Stunde in der Zukunft, `check_catalog_freshness` meldete `age_h = −0,45` als PASS. Eine Kerze wird erst nach ihrem Ende geschrieben; ein negatives Alter ist ein Befund.
+
+### 🔴 Pitfall #496 — Für Kerzen, die länger sind als die Session, entscheidet der Handelstag, nicht der Tick-Zeitpunkt [Katalog #1375]
+**Verbatim (Issue #1384):** Die O/L/H/C-Expansion stempelt bei 0/25/50 % des Intervalls; für eine Tageskerze ab 00:00Z liegen die Ticks bei 00:00, 06:00, 12:00 und 23:59:59Z, der Punkt-Test des Session-Filters behält davon einen. Bevor eine neue Auflösung genutzt wird, wird ihre Kerzendefinition gemessen.
+
+### 🔴 Pitfall #497 — Zwei Schwellen für dieselbe Frage liefern zwei Antworten [Katalog #1376]
+**Verbatim (Issue #1384):** Auflösungs-Check und ETA rechneten mit 444 Tagen, Gate 1 mit 474 (`gate1_buffer_days`). Der Report hätte am 2027-09-19 „Historie ausreichend" gemeldet und Gate 1 jedes Paar verworfen. Jede ablehnende Stelle und jede Prognose liest denselben Floor aus derselben Funktion; ein Puffer ohne Konsument ist kein Floor.
+
+### 🟠 Pitfall #498 — Die Einheit gehört in den Namen der Schwelle [Katalog #1377]
+**Verbatim (Issue #1384):** `min_oos_bars_per_fold = 500` waren Kalenderstunden — auf der RTH-Achse ≈ 100 Session-Bars. Ein Achsenwechsel muss jede Schwelle finden, deren Name eine Einheit behauptet, die der Code nicht misst.
+
+### 🟠 Pitfall #499 — Ein Guard, der seine Formel aus einem selbstgebauten Dict speist, prüft eine andere Formel [Katalog #1378]
+**Verbatim (Issue #1384):** `build_trial` übergab `assert_walk_forward_geometry` kein `embargo_period_days`; `required_span_days` las 0 und verlangte 21 Tage zu wenig. Ein Guard bekommt die Konfiguration, nicht eine Auswahl daraus.
+
+### 🔴 Pitfall #500 — Ein Befund, der allein aus der Konfiguration folgt, unterscheidet keine Läufe [Katalog #1379]
+**Verbatim (Issue #1384):** `check_promotion_confidence_reachability` FAILte bei 60 Tagen Holdout in jedem Lauf blockierend; `decision_admissible` war dauerhaft false, der Diagnose-Rückschrieb dauerhaft aus. „Unerreichbar" (kein Kandidat kann bestehen, #478) blockiert; „unterpowert" (nur Kandidaten mit Holdout-Sharpe ≥ MDS bestehen) wird berichtet.
+
+### 🟠 Pitfall #501 — Eine Ausnahme an nur einer von zwei Ableitungsstellen erzeugt zwei Wahrheiten [Katalog #1380]
+**Verbatim (Issue #1384):** `run_status` nahm per-Symbol-Ablehnungen aus, `decision_admissible` nicht; die Ausnahmeliste kannte zwei später eingeführte Ablehnungscodes nicht. Eine Ausnahme ist eine Funktion mit Registry, kein kopiertes Set.
+
+### 🟡 Pitfall #502 — Ein abweichender Lauf ohne Stempel wird irgendwann als Evidenz gelesen [Katalog #1381]
+**Verbatim (Issue #1384):** Eine verkürzte Geometrie über ein von Hand kopiertes Config-Verzeichnis war im Report nicht von Produktion zu unterscheiden und hätte in denselben Champion-Store geschrieben. Profile sind gestempelt, und jede kapitalwirksame Stelle prüft den Stempel.
+
+### 🔴 Pitfall #503 — Tiefe einer anderen Auflösung ist keine Tiefe der Zielachse [Katalog #1382]
+**Verbatim (Issue #1384):** 1000 Tageskerzen reichen ≈ 1456 Tage zurück, das Dreifache der geforderten 474 — keine davon trägt eine Stundenbar. Eine Auflösung wechselt man als eigenes Profil mit eigener Tick-Expansion, Session-Semantik, Zeitbox und Strategie-Eignung, nicht als Lückenfüller (#472 verbietet das Mischen, #503 das Ersetzen).
