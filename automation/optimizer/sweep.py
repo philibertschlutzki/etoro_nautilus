@@ -2895,7 +2895,8 @@ def _oneday_measurement(symbol: str) -> dict:
             "oneday_effective_span_days": seg.get("effective_span_days")}
 
 
-def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None = None) -> dict:
+def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None = None,
+                         oneday_definition: bool = False) -> dict:
     """Issue #1342 (GH #1236, P1) Fix-Punkt 2/3 — der reine MESSLAUF, den der #1236-Sperrvermerk
     verlangt, bevor irgendeine der vier ATR-abgeleiteten Kalibrierungen (``atr_floor_bps_by_
     asset_class``, ``k_min_bar_range_multiple``, die ``atr_trailing_multiplier``-Bänder in
@@ -2914,6 +2915,9 @@ def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None
     stillschweigend zu fehlen. Eine spätere Erweiterung (ein einzelner, fixparametrisierter
     Backtest je Symbol ohne Optuna-Suche) ist der nächste Schritt, sobald ein echter Katalog-
     Rebuild vorliegt.
+
+    Issue #1277 (GH #1150, Katalog #1375): ``oneday_definition=True`` (``--oneday-definition``) ergänzt die
+    OneDay-Kerzendefinition je Symbol (``oneday_definition``-Report, Klasse + Δ-Tabelle; read-only).
 
     ``symbols=None`` ⇒ das volle Symbol-Universum (``load_symbol_universe``). Rückgabe: das
     geschriebene Report-Dict (auch der Aufrufer/Tests bekommen es, ohne die Datei erneut lesen zu
@@ -2953,6 +2957,17 @@ def run_measurement_pass(*, symbols: list[str] | None = None, run_id: str | None
         "run_id": _run_id, "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "symbols_measured": len(measurements), "measurements": measurements,
     }
+    if oneday_definition:
+        from automation.optimizer import oneday_definition as _odef
+        _cat = config_dir().parent.parent / "data" / "nautilus"
+        try:
+            _bt = json.loads((config_dir() / "backtest.json").read_text("utf-8"))
+            _cat = config_dir().parent.parent / _bt.get("catalog_path", "data/nautilus")
+        except (OSError, ValueError):
+            pass
+        _def = _odef.run_oneday_definition(list(_symbols), run_id=_run_id, work_dir=WORK, catalog_path=_cat)
+        report["oneday_definition"] = {s_: r["oneday_definition"] for s_, r in _def["symbols"].items()}
+        report["oneday_definition_section_de"] = _def["section_de"]
     write_json_atomic(_measurement_run_report_path(WORK, _run_id), report)
     return report
 
@@ -5692,6 +5707,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
     # (analog --corroboration-pass/--calibrate-alpha-tstat-gate): protokolliert intrabar_range_
     # median_bps/atr_median_bps je Symbol OHNE Selektion/Suche, siehe run_measurement_pass-
     # Docstring fuer den dokumentierten stop_distance_bps_measured-Scope-Cut.
+    parser.add_argument("--oneday-definition", action="store_true", default=False,
+                        help="Nur mit --measurement-run (Issue #1277): vermisst die OneDay-Kerzendefinition je Symbol "
+                             "(rth_session | etoro_trading_day | utc_day | inconclusive), schreibt "
+                             "reports/oneday_definition_<run_id>.json; read-only.")
     parser.add_argument("--measurement-run", action="store_true", default=False,
                         help="Reiner Messlauf (keine Selektion/Suche/Promotion): protokolliert "
                              "intrabar_range_median_bps/atr_median_bps je Symbol der "
@@ -5762,7 +5781,8 @@ def main(argv: list[str] | None = None) -> list[Path]:
     if args.measurement_run:
         _measurement_run_id = args.run_id or f"measurement_run_{default_run_id()}"
         setup_bot_logging("optimizer", run_id=_measurement_run_id)
-        report = run_measurement_pass(symbols=symbols, run_id=_measurement_run_id)
+        report = run_measurement_pass(symbols=symbols, run_id=_measurement_run_id,
+                                      oneday_definition=args.oneday_definition)
         print(f"📏 Messlauf: {report['symbols_measured']} Symbol(e) — "
               f"{_measurement_run_report_path(WORK, _measurement_run_id)}")
         return []
