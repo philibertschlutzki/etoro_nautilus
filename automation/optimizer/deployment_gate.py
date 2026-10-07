@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from automation import bar_axis
 from automation.live_params import (
     load_live_param_sources, mismatching_live_params, resolve_live_params,
 )
@@ -71,6 +72,8 @@ DEPLOYMENT_CLAUSES: tuple[str, ...] = (
     # Issue #1381 (GH #1283, Pitfall #502) — vierzehnte Klausel: siehe _clause_config_profile_production-
     # Docstring.
     "config_profile_production",
+    # Issue #1382 (GH #1284) — fünfzehnte Klausel: siehe _clause_bar_axis_live_supported-Docstring.
+    "bar_axis_live_supported",
 )
 
 # Issue #993 Akzeptanzkriterium — dieselbe #663-Default-Schwelle wie confirm._study_pbo
@@ -343,6 +346,18 @@ def _clause_config_profile_production(record: Mapping[str, Any] | None) -> bool 
     return profile == "production"
 
 
+def _clause_bar_axis_live_supported(record: Mapping[str, Any] | None) -> bool | None:
+    """Issue #1382 (GH #1284) Fix Punkt 7 (Pitfall #487: validiert = gehandelt) — fünfzehnte Klausel: der
+    Promotion-Record stammt von der Live-Achse (``bar_axis == "OneHour"``). Ein Tagesachsen-Record ist nicht
+    live handelbar, bis es ein eigenes Live-Issue gibt (Live-Bot und Phase 5 laufen auf Stundenbars).
+    Records vor #1382 tragen kein ``bar_axis`` und stammen per Konstruktion von der Stundenachse (die Achse war
+    nicht konfigurierbar) ⇒ fehlendes Feld zählt als ``OneHour``; ein vorhandener Wert ≠ ``OneHour`` blockiert."""
+    if not record:
+        return None
+    axis = record.get("bar_axis")
+    return True if axis is None else axis == bar_axis.LIVE_AXIS
+
+
 def evaluate_deployment_eligibility(
     pair,
     promotion_records: Mapping[Any, Mapping[str, Any]],
@@ -396,6 +411,7 @@ def evaluate_deployment_eligibility(
         "expectancy_outlier_robust": _clause_expectancy_outlier_robust(record),
         "holdout_disjoint": _clause_holdout_disjoint(record),
         "config_profile_production": _clause_config_profile_production(record),
+        "bar_axis_live_supported": _clause_bar_axis_live_supported(record),
     }
     clause_results["live_params_match_promotion"], live_params_detail = (
         _clause_live_params_match_promotion(
@@ -453,6 +469,8 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "holdout_overlap_days": proposal.get("holdout_overlap_days"),
         # Issue #1381 (GH #1283) — Eingang der Klausel ``config_profile_production`` (fehlend ⇒ fail-closed).
         "config_profile": proposal.get("config_profile"),
+        # Issue #1382 (GH #1284) — Eingang der Klausel ``bar_axis_live_supported``.
+        "bar_axis": proposal.get("bar_axis"),
         # Issue #1379 (GH #1281) — Nachweisbarkeit zur Transparenz (KEINE Klausel).
         "holdout_mds_annual": proposal.get("holdout_mds_annual"),
         "detectability_class": proposal.get("detectability_class"),

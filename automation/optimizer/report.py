@@ -37,6 +37,7 @@ from typing import Any, Iterable
 
 import optuna
 
+from automation import bar_axis
 from automation.log_manager import emit_execution_event, jsonl_sidecar_path
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
@@ -304,6 +305,10 @@ def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
         ",".join(sorted(s for s in (strategies or []) if s)),
         str(reward_semantics_version), str(simulation_semantics_version), str(seed_salt),
     ])
+    # Issue #1382 (GH #1284) Fix Punkt 6 — Bar-Achse als elfte Komponente, NUR für Nicht-Default-Achsen.
+    _axis_component = bar_axis.fingerprint_component()
+    if _axis_component:
+        payload += "\x1e" + _axis_component
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -345,6 +350,11 @@ def compute_result_fingerprint(study_summaries: list[dict]) -> str:
         ])
         for s in study_summaries
     )
+    # Issue #1382 (GH #1284) Fix Punkt 6 — die Bar-Achse ist Teil der Ergebnis-Identität (Default-Achse ⇒ kein
+    # Zusatzfeld, bit-identischer Hash).
+    _axis_component = bar_axis.fingerprint_component()
+    if _axis_component:
+        rows.append(_axis_component)
     return hashlib.sha256("\x1d".join(rows).encode("utf-8")).hexdigest()
 
 
@@ -806,7 +816,7 @@ def _load_study_for_proposal(proposal: dict):
     symbol = proposal.get("symbol")
     if not strategy or not symbol:
         return None
-    study_name = f"study_{strategy}_{_sanitize(symbol)}"
+    study_name = f"study_{strategy}_{_sanitize(symbol)}{bar_axis.study_suffix()}"
     storage = resolve_storage(study_name=study_name)
     try:
         return optuna.load_study(study_name=study_name, storage=storage)

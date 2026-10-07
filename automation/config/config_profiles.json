@@ -2,7 +2,8 @@
   "_schema": {
     "description": "Issue #1381 (GH #1283, Pitfall #502) — Config-Profile: Overrides je Profil auf die Basis-Configs in automation/config. `python -m automation.optimizer.config_profile materialize <profil>` erzeugt daraus das Overlay automation/config_<profil>/ (Kopie von automation/config + Overrides + config_profile=<profil>). Jede Config ausser `production` ist gestempelt und nie Evidenz.",
     "profiles": {
-      "smoke": "Durchstich auf der heutigen kurzen Historie (96 Tage): verkürzte Walk-Forward-Geometrie (94 d), gate1_buffer_days 0, Champion-Store und Diagnose-Rückschrieb aus. Ergebnisse sind NIE Evidenz: keine Champions, keine Promotion, kein Rückschrieb (deployment_gate-Klausel config_profile_production)."
+      "smoke": "Durchstich auf der heutigen kurzen Historie (96 Tage): verkürzte Walk-Forward-Geometrie (94 d), gate1_buffer_days 0, Champion-Store und Diagnose-Rückschrieb aus. Ergebnisse sind NIE Evidenz: keine Champions, keine Promotion, kein Rückschrieb (deployment_gate-Klausel config_profile_production).",
+      "daily": "Issue #1382 (GH #1284) — Tagesachse: bar_axis=OneDay (1 Bar je Handelstag), max_handelstage 5 (time_box_bars 5), Geometrie IS 365 + Embargo 30 + 3 x OOS 145 + Holdout 442 + Holdout-Embargo 8 = 1280 d <= 1456 d (OneDay-Fenster). Holdout-Embargo 8 statt der Untergrenze 6 (holdout_embargo_floor_days zaehlt Handelstage als Kalendertage). Gate-1-Schwellen unveraendert: 145 d ~ 100 Tagesbars >= 91 je Fold. Study-Identitaet traegt bar_axis; live gesperrt (Klausel bar_axis_live_supported). Voraussetzung: OneDay-Katalog (historical_fetcher --interval OneDay --full-window) und #1277-Klasse != inconclusive."
     }
   },
   "smoke": {
@@ -20,6 +21,24 @@
       "gate1_buffer_days": 0,
       "champion_enabled": false,
       "diagnostic_writeback_enabled": false
+    }
+  },
+  "daily": {
+    "backtest.json": {
+      "bar_axis": "OneDay",
+      "max_handelstage": 5,
+      "walk_forward": {
+        "is_window_days": 365,
+        "embargo_period_days": 30,
+        "splits": 3,
+        "oos_window_days": 145,
+        "holdout_days": 442,
+        "holdout_embargo_days": 8,
+        "data_history_days": 1456
+      }
+    },
+    "optimizer.json": {
+      "time_box_bars": 5.0
     }
   }
 }

@@ -27,6 +27,7 @@ from automation.catalog_paths import (
     resolve_quote_tick_files, resolve_quote_tick_columns, decode_fsb16_price,
 )
 from automation.optimizer import bounds
+from automation import bar_axis
 from automation.optimizer import invariants
 from automation.optimizer._contracts import pair_key, split_pair_key, ReportCohortUnresolvable
 from automation.optimizer.gate import (
@@ -595,10 +596,30 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
                         oldest = lo if oldest is None else min(oldest, lo)
                         newest = hi if newest is None else max(newest, hi)
                 if oldest is not None and newest is not None:
-                    n = max(0, int((newest - oldest) / (3600 * 1_000_000_000)))
+                    n = max(0, int((newest - oldest) / bar_axis.active_axis().bar_interval_ns))
             except Exception:
                 n = 0
         out[sym] = n
+    return out
+
+
+def _read_oneday_ts_events(symbol: str, catalog_path: Path | None = None) -> list[int]:
+    """``ts_event`` (ns) der ``OneDay``-Datei von ``symbol`` (read-only; leer bei fehlender Datei/Lesefehler)."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        try:
+            raw = (json.loads((base / "backtest.json").read_text("utf-8")) or {}).get("catalog_path", raw)
+        except (OSError, ValueError):
+            pass
+        catalog_path = base.parent.parent / raw
+    out: list[int] = []
+    try:
+        import pyarrow.parquet as pq
+        for path in resolve_quote_tick_files(catalog_path, symbol, interval=bar_axis.AXES["OneDay"].catalog_interval):
+            out.extend(int(t) for t in pq.read_table(str(path), columns=["ts_event"]).column("ts_event").to_pylist())
+    except Exception:
+        return []
     return out
 
 
@@ -724,7 +745,7 @@ def _candle_interval_overlaps_session_utc(
 
 
 def _expected_session_bins_per_day(
-    window_or_open, close_utc: str | None = None, bar_interval_ns: int = 3_600_000_000_000,
+    window_or_open, close_utc: str | None = None, bar_interval_ns: int = bar_axis.active_axis().bar_interval_ns,
 ) -> int:
     """Issue #1336 (GH #1230) Fix Punkt 1 — Bar-Intervalle je Handelstag, deren Intervall das Session-
     Fenster SCHNEIDET (``session_windows.bars_per_trading_day``, dieselbe Überlappungs-Konvention wie
@@ -736,7 +757,7 @@ def _expected_session_bins_per_day(
 
 def _bar_coverage_expected_bins(
     window_start, window_end, window_or_open, close_utc: str | None = None,
-    bar_interval_ns: int = 3_600_000_000_000,
+    bar_interval_ns: int = bar_axis.active_axis().bar_interval_ns,
 ) -> int:
     """Issue #1336 (GH #1230) Fix Punkt 1 — erwartete Zahl Session-Bins im Fenster ``[window_start,
     window_end]`` (pandas-Timestamps, inklusive Randtage) STATT der rohen 24/7-Kalenderstundendifferenz
@@ -751,7 +772,7 @@ def _bar_coverage_expected_bins(
 
 def compute_holdout_bar_count(
     holdout_days: float, session_hours_by_asset_class: dict | None, asset_class_key: str | None,
-    *, bar_interval_ns: int = 3_600_000_000_000, end_ns: int | None = None,
+    *, bar_interval_ns: int = bar_axis.active_axis().bar_interval_ns, end_ns: int | None = None,
 ) -> int:
     """Issue #1340 (GH #1234) — ``T_holdout`` (Anzahl Bars im Holdout-Fenster) AUS DER TATSAECHLICHEN
     Bar-Achse, statt der impliziten 24-Bars/Kalendertag-Annahme. Für ein Symbol MIT Session-Fenster
@@ -765,11 +786,11 @@ def compute_holdout_bar_count(
     gegen ≈ 252 Handelstage, T um ≈ 3,6 % zu hoch)."""
     window = _resolve_session_window(asset_class_key, session_hours_by_asset_class)
     if window is None:
-        bars_per_day = int(round(86_400_000_000_000 / bar_interval_ns))
+        bars_per_day = int(round(bar_axis.DAILY_INTERVAL_NS / bar_interval_ns))
         return int(round(holdout_days * bars_per_day))
     if end_ns is not None:
         from automation.session_windows import expected_bars_between
-        start_ns = int(end_ns) - int(round(float(holdout_days) * 86_400_000_000_000))
+        start_ns = int(end_ns) - int(round(float(holdout_days) * bar_axis.DAILY_INTERVAL_NS))
         return expected_bars_between(start_ns, int(end_ns), window, int(bar_interval_ns))
     from automation.session_windows import expected_trading_day_fraction
     bins_per_trading_day = _expected_session_bins_per_day(window, bar_interval_ns=bar_interval_ns)
@@ -842,7 +863,7 @@ MAX_CATALOG_STALENESS_D_ONEDAY_DEFAULT = 4.0   # Issue #1276 (GH #1149): Tageske
 
 
 def check_catalog_freshness(newest_ns: int | None, *, max_staleness_h: float = MAX_CATALOG_STALENESS_H_DEFAULT,
-                            now: dt.datetime | None = None, interval: str = "OneHour",
+                            now: dt.datetime | None = None, interval: str = bar_axis.active_axis().catalog_interval,
                             max_staleness_d_oneday: float = MAX_CATALOG_STALENESS_D_ONEDAY_DEFAULT) -> dict:
     """Issue #1363 (GH #1259) Fix Punkt 4 — BLOCKIERENDER Preflight je Symbol: das Alter des jüngsten
     ``OneHour``-Ticks darf ``max_staleness_h`` (Default 96 h: Wochenende + Feiertag) nicht übersteigen, sonst
@@ -906,7 +927,7 @@ _LAST_DETECTABILITY: dict | None = None
 
 def check_engine_reader_parity(
     symbol: str, catalog_path: Path | None = None, *, holdout_days: float | None = None,
-    start_ns: int | None = None, end_ns: int | None = None, interval: str = "OneHour",
+    start_ns: int | None = None, end_ns: int | None = None, interval: str = bar_axis.active_axis().catalog_interval,
 ) -> dict | None:
     """Issue #1354 (GH #1251, P0) Fix Punkt 4 — blockierender Preflight je Symbol VOR Phase 1: ZWEI
     Leser für dieselbe Grösse (Pitfall #483) müssen übereinstimmen. Alle Preflights lesen über
@@ -1173,7 +1194,7 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         # Bar zu verlassen — robust auch fuer ein schmales Session-Fenster, das keinen der
         # deterministischen Sub-Intervall-Offsets aus #1330 trifft.
         if window is not None:
-            _bar_interval_ns = 3_600_000_000_000  # 1h-Resample-Bucket == nominale Bar-Achse
+            _bar_interval_ns = bar_axis.active_axis().bar_interval_ns  # Resample-Bucket == nominale Bar-Achse
             bucket_mask = [
                 _candle_interval_overlaps_session_utc(int(ts.value), _bar_interval_ns, window)
                 for ts in bars.index
@@ -1619,10 +1640,7 @@ def per_symbol_span_stats(latest_ts: dict[str, int | None], earliest_ts: dict[st
 # ``automation.api_backfiller.INTERVAL_TO_NS``, hier DUPLIZIERT statt importiert: ein Import aus
 # ``api_backfiller.py`` zöge dessen ``aiohttp``/``dotenv``-Abhängigkeiten in JEDEN ``sweep.py``-
 # Import mit (dieselbe Begründung wie ``_resolve_session_window`` oben).
-_RESOLUTION_INTERVAL_TO_NS: dict[str, int] = {
-    "OneHour": 3_600_000_000_000,
-    "OneDay": 86_400_000_000_000,
-}
+_RESOLUTION_INTERVAL_TO_NS: dict[str, int] = {a.catalog_interval: a.bar_interval_ns for a in bar_axis.AXES.values()}
 
 
 MAX_CONTIGUITY_GAP_DAYS_DEFAULT = 4.0
@@ -1673,7 +1691,7 @@ def _contiguous_resolution_segments(
 def check_catalog_resolution_homogeneity(
     symbol: str, catalog_path: Path | None = None, *,
     required_span_days: float | None = None,
-    target_interval: str = "OneHour",
+    target_interval: str = bar_axis.active_axis().catalog_interval,
     max_contiguity_gap_days: float = MAX_CONTIGUITY_GAP_DAYS_DEFAULT,
     session_window=None,
 ) -> dict:
@@ -1781,7 +1799,7 @@ def check_catalog_resolution_homogeneity(
 
 def check_no_future_price_in_tick(
     symbol: str, catalog_path: Path | None = None, *,
-    target_interval: str = "OneHour", max_ticks: int = 200_000,
+    target_interval: str = bar_axis.active_axis().catalog_interval, max_ticks: int = 200_000,
 ) -> dict:
     """Issue #1332 (GH #1226) Fix Punkt 3 — neue Invariante: für JEDEN Tick gilt ``ts_event``
     innerhalb ``[candle_start, candle_end)`` seiner Herkunftskerze (``candle_start = (ts_event //
@@ -3653,7 +3671,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _max_staleness_h = float(_opt_cfg_fresh.get("max_catalog_staleness_h", MAX_CATALOG_STALENESS_H_DEFAULT))
         _stale_syms: list[str] = []
         for _sym in syms:
-            _fresh = check_catalog_freshness((latest_ts or {}).get(_sym), max_staleness_h=_max_staleness_h)
+            _fresh = check_catalog_freshness(
+                (latest_ts or {}).get(_sym), max_staleness_h=_max_staleness_h,
+                max_staleness_d_oneday=float(_opt_cfg_fresh.get(
+                    "max_catalog_staleness_d_oneday", MAX_CATALOG_STALENESS_D_ONEDAY_DEFAULT)))
             _freshness_by_symbol[_sym] = _fresh
             emit_execution_event(_log_fresh, "INVARIANT_STREAM_RESULT", {
                 "name": "check_catalog_freshness", "check": "check_catalog_freshness",
@@ -3778,6 +3799,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             )
         if _resolution_rejected_syms:
             syms = [s for s in syms if s not in _resolution_rejected_syms]
+
+        # Issue #1382 (GH #1284) Akzeptanzkriterium 3 — Tagesachse: jeder OneDay-Tick liegt in der Session eines
+        # Handelstags, je Handelstag genau eine Kerze (nur bei bar_axis=OneDay; Stundenachse unberührt).
+        if bar_axis.active_axis().trading_day_bars:
+            _oneday_rejected: list[str] = []
+            for _sym in syms:
+                _chk = invariants.check_oneday_ticks_within_session(
+                    _read_oneday_ts_events(_sym), _symbol_session_window(_sym), scope=_sym)
+                emit_execution_event(_log, "INVARIANT_STREAM_RESULT", {
+                    "name": _chk.name, "check": _chk.name, "passed": _chk.passed, "source": "sweep", "scope": _sym,
+                    "expected": _chk.expected, "actual": _chk.actual, "detail": _chk.detail,
+                    "severity": _chk.severity,
+                }, level=logging.INFO if _chk.passed is not False else logging.WARNING)
+                if _chk.passed is False:
+                    _oneday_rejected.append(_sym)
+                    _symbols_rejected.append({
+                        "symbol": _sym, "reason": "REJECT_ONEDAY_TICKS_OUTSIDE_SESSION", "detail": _chk.detail})
+            if _oneday_rejected:
+                syms = [s for s in syms if s not in _oneday_rejected]
 
         # Issue #1363 (GH #1259) Fix Punkt 5 — Daten-Tiefen-Prognose: scheitern ALLE verbliebenen Symbole an
         # der Spanne (effective_span_days < required_span_days), wartet der Lauf auf Daten
@@ -4677,7 +4717,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.
                 # Fail-open: ein Retention-Fehler darf den Sweep nie crashen (analog Champion-Store).
                 try:
-                    study_name = f"study_{strategy}_{_sanitize(symbol)}"
+                    study_name = f"study_{strategy}_{_sanitize(symbol)}{bar_axis.study_suffix()}"
                     retention.prune_completed_trial_dirs(
                         study_name, retention.collect_referenced_trial_dirs())
                 except Exception:
@@ -5744,7 +5784,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
         _cal_pairs, _cal_studies = [], []
         for _strategy in strategies:
             for _symbol in _cal_symbols:
-                _study_name = f"study_{_strategy}_{_sanitize(_symbol)}"
+                _study_name = f"study_{_strategy}_{_sanitize(_symbol)}{bar_axis.study_suffix()}"
                 try:
                     _storage = resolve_storage(study_name=_study_name)
                     _study = _optuna.load_study(study_name=_study_name, storage=_storage)

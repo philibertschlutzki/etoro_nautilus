@@ -24,6 +24,8 @@ import statistics
 from collections import Counter
 from pathlib import Path
 
+from automation import bar_axis
+
 HYPOTHESES: tuple[str, ...] = ("rth_session", "etoro_trading_day", "utc_day")
 CLASS_INCONCLUSIVE = "inconclusive"
 CLASSES: tuple[str, ...] = HYPOTHESES + (CLASS_INCONCLUSIVE,)
@@ -32,8 +34,9 @@ INCONCLUSIVE_CLOSE_BPS = 1.0               # Close-Median-|Δ| ≤ 1 bps, sonst 
 DEFAULT_OVERLAP_START = dt.date(2026, 7, 2)  # Beginn der OneHour-Historie (Issue #1375)
 ETORO_DAY_END_LOCAL_MIN = 20 * 60            # 20:00 Börsenzeit (24/5-Handel)
 
-_NS_DAY = 86_400_000_000_000
-_NS_HOUR = 3_600_000_000_000
+_NS_DAY = bar_axis.DAILY_INTERVAL_NS
+_NS_HOUR = bar_axis.HOURLY_INTERVAL_NS
+_HOURLY = bar_axis.AXES[bar_axis.DEFAULT_AXIS].catalog_interval   # Referenzachse der Messung (Stundenkerzen)
 _FIELDS = ("open", "high", "low", "close")
 
 
@@ -176,7 +179,7 @@ def run_oneday_definition(symbols: list[str], *, run_id: str, work_dir: Path, ca
     for sym in symbols:
         window = (windows or {}).get(sym) or load_session_window_for_symbol(sym, config_dir())
         daily = read_candles(sym, "OneDay", catalog_path)
-        hourly = read_candles(sym, "OneHour", catalog_path)
+        hourly = read_candles(sym, _HOURLY, catalog_path)
         if window is None or not daily or not hourly:
             out[sym] = {"oneday_definition": CLASS_INCONCLUSIVE, "delta_table": {},
                         "reason": "NO_SESSION_WINDOW" if window is None else "NO_OVERLAP_DATA"}

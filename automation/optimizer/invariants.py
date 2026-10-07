@@ -9325,6 +9325,45 @@ def check_history_floor_coherence(walk_forward: dict | None, *, resolution_floor
                 f"Zwei Schwellen für dieselbe Frage (Pitfall #497): {offenders} != history_floor_days={floor}."))
 
 
+def check_oneday_ticks_within_session(ts_events, window, *, scope: str | None = None) -> InvariantResult:
+    """Issue #1382 (GH #1284, Pitfall #503) Akzeptanzkriterium 3 — blockierend je Symbol auf der Tagesachse: JEDER
+    Tick der ``OneDay``-Datei liegt innerhalb der Session eines HANDELSTAGS (``[open, close)`` in Börsen-
+    Lokalzeit, Wochenenden/Feiertage ausgeschlossen), und je Handelstag liegt genau EINE Kerze (≤ 4 O/L/H/C-
+    Ticks, kein zweites Tick-Quartett). Ticks auf UTC-Tagesbruchteilen (Alt-Expansion vor #1382) oder an
+    Nicht-Handelstagen sind ein Befund — der Tagesbar-Aggregator würde sonst die Kerze am falschen Tag bilden.
+
+    ``ts_events`` = ``ts_event`` (ns) der OneDay-Datei; ``window`` = ``SessionWindow`` (``None`` ⇒ nicht auswertbar,
+    24/7-Markt)."""
+    expected = "alle OneDay-Ticks in der Session eines Handelstags, je Handelstag genau eine Kerze"
+    ts = [int(t) for t in (ts_events or [])]
+    if window is None or not ts:
+        reason = "NO_SESSION_WINDOW" if window is None else "NO_ONEDAY_TICKS"
+        return InvariantResult(
+            name="check_oneday_ticks_within_session", passed=None, expected=expected, actual={},
+            severity="blocking", inconclusive=True, evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": reason, "n_studies_measured": 0},
+            detail=f"nicht auswertbar ({reason}).", cohort=scope)
+    from automation.session_windows import is_within_session, local_day
+    outside = 0
+    per_day: dict = {}
+    for t in ts:
+        if not is_within_session(t, window):
+            outside += 1
+        d = local_day(t, window)
+        per_day[d] = per_day.get(d, 0) + 1
+    multi = sorted(d.isoformat() for d, n in per_day.items() if n > 4)
+    passed = outside == 0 and not multi
+    actual = {"n_ticks": len(ts), "n_outside_session": outside, "n_trading_days": len(per_day),
+              "days_with_more_than_one_candle": multi[:10]}
+    return InvariantResult(
+        name="check_oneday_ticks_within_session", passed=passed, expected=expected, actual=actual,
+        severity="blocking", evaluable=True, cohort=scope,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+        detail=("OK" if passed else
+                f"{outside} Tick(s) ausserhalb der Session bzw. an Nicht-Handelstagen, "
+                f"{len(multi)} Tag(e) mit mehr als einer Kerze (#1382)."))
+
+
 PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT = 1.5
 
 
@@ -9338,6 +9377,7 @@ PER_SYMBOL_PREFLIGHT_REJECTIONS: dict[str, tuple[str, ...]] = {
     "check_engine_reader_parity": ("REJECT_ENGINE_READER_MISMATCH",),           # #1354
     "check_tick_population": ("REJECT_DATA_UNAVAILABLE",),                      # #1298
     "check_bar_quality": ("REJECT_DATA_DEGENERATE",),                           # #807
+    "check_oneday_ticks_within_session": ("REJECT_ONEDAY_TICKS_OUTSIDE_SESSION",),   # #1382
 }
 PER_SYMBOL_REJECTION_CODES: frozenset[str] = frozenset(
     code for codes in PER_SYMBOL_PREFLIGHT_REJECTIONS.values() for code in codes)

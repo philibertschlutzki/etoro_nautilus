@@ -20,6 +20,7 @@ from pathlib import Path
 # Rueckmeldung, vgl. Issue #401) bleiben bewusst erhalten (KEIN globales set_verbosity(ERROR),
 # um die Observability aus Issue #403 nicht zu untergraben).
 warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
+from automation import bar_axis
 from automation.optimizer.manifest import WORK, catalog_fingerprint, git_commit
 from automation.optimizer.spaces import sample_params
 from automation.optimizer.trial_config import build_trial, config_dir, freeze_study_config, resolve_wf_settings
@@ -1981,7 +1982,7 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #568 — n_startup_trials dokumentiert an die Parameterzahl koppeln (Legacy ohne den Key).
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
-    study_name = f"study_{strategy}"
+    study_name = f"study_{strategy}{bar_axis.study_suffix()}"
 
     reward_mode = opt_data.get("reward_mode", "auto")
     directions = None
@@ -2037,6 +2038,8 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True)
+    # Issue #1382 (GH #1284) — Bar-Achse der Study (Eingang der Live-Sperre, Klausel bar_axis_live_supported).
+    study.set_user_attr("bar_axis", bar_axis.active_axis_name())
     # Issue #1381 (GH #1283) — Config-Profil der Study in die Promotion-Records stempeln.
     try:
         _opt_for_profile = json.loads((Path(cfg_dir) / "optimizer.json").read_text("utf-8")) or {}
@@ -4268,7 +4271,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
        Pre-Fix-Verhalten) wird an jeden in dieser Study neu erzeugten Trial durchgereicht (siehe
        ``make_symbol_objective``-Docstring); ``sweep.run_per_symbol_sweep`` übergibt seinen
        eigenen ``run_id`` (denselben, der bereits den #799-Checkpoint treibt)."""
-    study_name = f"study_{strategy}_{_sanitize(symbol)}"
+    study_name = f"study_{strategy}_{_sanitize(symbol)}{bar_axis.study_suffix()}"
     with bind_study_context(strategy=strategy, symbol=symbol, study_name=study_name):
         return _optimize_symbol_impl(
             strategy, symbol, n_trials,

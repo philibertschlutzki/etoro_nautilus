@@ -427,6 +427,17 @@ async def _fetch_candles(
 
 # ─── Candle → Arrow (FixedSizeBinary(16)) ───────────────────────────────────
 
+def oneday_session_window_for(symbol: str):
+    """Issue #1382 (GH #1284) — ``SessionWindow`` für die Session-Expansion der ``OneDay``-Ticks (Asset-Class aus
+    ``instrument_map.json``, Fenster aus ``backtest.json``; ``None`` ⇒ 24/7-Markt bzw. nicht auflösbar ⇒ Alt-
+    Expansion auf UTC-Tagesbruchteilen). Kein Fehlerpfad: eine Config-Lücke darf den Abruf nie stoppen."""
+    try:
+        from automation.session_windows import load_session_window_for_symbol
+        return load_session_window_for_symbol(symbol)
+    except Exception:
+        return None
+
+
 def _candles_to_arrow_table(
     candles: list[dict],
     symbol: str,
@@ -435,6 +446,7 @@ def _candles_to_arrow_table(
     start_dt: datetime,
     interval: str = DEFAULT_INTERVAL,
     asof_ns: int | None = None,
+    oneday_session_window=None,
 ) -> pa.Table | None:
     """Konvertiert Candle-Daten DIREKT in eine PyArrow-Table mit FixedSizeBinary(16).
 
@@ -442,6 +454,13 @@ def _candles_to_arrow_table(
     (``candle_start + interval > asof_ns``) NICHT geschrieben — ihr Teil-Close läge als
     ``candle_end − 1 ns`` nach dem Abrufzeitpunkt. Die Zahl wird als ``n_incomplete_dropped`` geloggt und
     als Event ``INCOMPLETE_CANDLES_DROPPED`` gemeldet. ``asof_ns=None`` ⇒ kein Filter (bit-identisch).
+
+    Issue #1382 (GH #1284) Fix Punkt 2: ``oneday_session_window`` (``SessionWindow``) legt die O/L/H/C-Ticks einer
+    ``OneDay``-Kerze INNERHALB der Session ihres Handelstags ab (O bei Session-Open, L/H dazwischen, C bei
+    Session-Close − 1 ns; Look-Ahead-Invariante #1332) statt auf UTC-Tagesbruchteilen; Kerzen an Nicht-Handelstagen
+    (Wochenende, Feiertag) werden nicht geschrieben (``n_non_trading_dropped`` im Log). Der Handelstag ist das UTC-
+    Datum von ``fromDate`` (die #1375-Klasse entscheidet über die Bezugszeit). ``None`` ⇒ bit-identisches Alt-
+    Verhalten; die Spalte ``bar_interval_ns`` bleibt die Kerzenlänge der Achse.
 
     Issue #1330 (GH #1224): schreibt je Kerze eine geordnete O/L/H/C-Tick-Sequenz statt eines
     Einzeltickers auf dem Close — sonst trägt jede resamplete Bar keine Intrabar-Information
@@ -539,20 +558,30 @@ def _candles_to_arrow_table(
 
     volume_seen_any = False
     volume_missing_any = False
+    n_non_trading_dropped = 0
     prev_close: float | None = None
 
     for candle_start_ns, open_val, low, high, close, volume in parsed:
         if open_val is None:
             open_val = prev_close
         candle_end_ns = candle_start_ns + interval_ns
+        span_ns = interval_ns
+        if oneday_session_window is not None and interval == "OneDay":
+            from automation.session_windows import is_trading_day, session_bounds_utc_ns
+            _day = datetime.fromtimestamp(candle_start_ns / 1e9, tz=timezone.utc).date()
+            if not is_trading_day(_day, oneday_session_window):
+                n_non_trading_dropped += 1
+                continue
+            candle_start_ns, candle_end_ns = session_bounds_utc_ns(_day, oneday_session_window)
+            span_ns = candle_end_ns - candle_start_ns
 
         # Geordnete Tick-Sequenz: O (falls verfügbar) → adverses Extrem (low) → günstiges
         # Extrem (high) → close zuletzt. Reihenfolge ist FEST, nicht richtungsabhängig.
         roles: list[tuple[float, int]] = []
         if open_val is not None:
-            roles.append((open_val, candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_OPEN_FRAC)))
-        roles.append((low,  candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_LOW_FRAC)))
-        roles.append((high, candle_start_ns + int(interval_ns * _INTRABAR_OFFSET_HIGH_FRAC)))
+            roles.append((open_val, candle_start_ns + int(span_ns * _INTRABAR_OFFSET_OPEN_FRAC)))
+        roles.append((low,  candle_start_ns + int(span_ns * _INTRABAR_OFFSET_LOW_FRAC)))
+        roles.append((high, candle_start_ns + int(span_ns * _INTRABAR_OFFSET_HIGH_FRAC)))
         roles.append((close, candle_end_ns - 1))
 
         if volume is not None:
@@ -572,6 +601,10 @@ def _candles_to_arrow_table(
             bar_interval_col.append(interval_ns)
 
         prev_close = close
+
+    if n_non_trading_dropped:
+        log.info(f"[api_backfiller] {symbol}: n_non_trading_dropped={n_non_trading_dropped} ({interval}) — "
+                 f"Kerze(n) an Nicht-Handelstagen nicht geschrieben (Issue #1382).")
 
     if not ts_events:
         return None
@@ -1084,7 +1117,8 @@ async def _oneday_forward_steps(session, etoro_id_to_symbol, api_precisions, spe
             table = _candles_to_arrow_table(
                 candles, symbol, price_prec, size_prec,
                 datetime.fromtimestamp(latest / 1e9, tz=timezone.utc) - timedelta(days=3),
-                interval="OneDay", asof_ns=int(end_dt.timestamp() * 1e9))
+                interval="OneDay", asof_ns=int(end_dt.timestamp() * 1e9),
+                oneday_session_window=oneday_session_window_for(symbol))
             if table is None or len(table) == 0:
                 continue
             if not dry_run:

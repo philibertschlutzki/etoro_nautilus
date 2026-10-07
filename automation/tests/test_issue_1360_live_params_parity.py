@@ -86,7 +86,7 @@ def test_live_params_sha256_is_order_independent_and_value_sensitive():
 
 def test_twelfth_clause_exists_last_and_completeness_check_follows():
     # Issue #1357 (GH #1253) haengt ``holdout_disjoint`` als dreizehnte Klausel dahinter.
-    assert len(DEPLOYMENT_CLAUSES) == 14
+    assert len(DEPLOYMENT_CLAUSES) == 15
     assert DEPLOYMENT_CLAUSES[11] == "live_params_match_promotion"
     full = {"deployment_gate": {"clause_results": {c: True for c in DEPLOYMENT_CLAUSES}}}
     assert check_deployment_gate_completeness({"X": full}).passed is True

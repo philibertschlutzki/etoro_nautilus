@@ -28,6 +28,9 @@ def catalog(tmp_path, monkeypatch):
     monkeypatch.setattr(hf, "QUOTE_TICK_PATH", qt)
     monkeypatch.setattr(ab, "QUOTE_TICK_PATH", qt)
     monkeypatch.setattr(hf, "_save_api_window", lambda *a, **k: None)
+    # Issue #1382: ohne Session-Fenster (24/7-Verhalten) — dieses Modul testet den Abruf-/Fortschreibe-Pfad,
+    # die Session-Expansion hat test_issue_1284_bar_axis.py.
+    monkeypatch.setattr(ab, "oneday_session_window_for", lambda symbol: None)
     return qt
 
 

@@ -474,6 +474,11 @@ async def fetch_forward_candles(
     return out
 
 
+def _oneday_window(symbol: str):
+    from automation.api_backfiller import oneday_session_window_for
+    return oneday_session_window_for(symbol)
+
+
 # ─── Per-Symbol Fetch ─────────────────────────────────────────────────────────
 
 async def _fetch_symbol(
@@ -625,6 +630,7 @@ async def _fetch_symbol(
         table = _candles_to_arrow_table(
             candles, symbol, price_prec, size_prec, target_start, interval=interval,
             asof_ns=int(datetime.now(timezone.utc).timestamp() * 1e9),   # Issue #1373: unfertige Kerzen nicht schreiben
+            oneday_session_window=_oneday_window(symbol) if interval == "OneDay" else None,   # Issue #1382
         )
         if table is None or len(table) == 0:
             log.warning(f"[{symbol}] {interval}: Leere Arrow-Table nach Konvertierung.")
@@ -1384,7 +1390,7 @@ async def fetch_oneday_full_window(
     Speichern OHNE ``target_start``-Schnitt nach ``<symbol>/OneDay/data.parquet``
     (``_merge_and_save(..., interval="OneDay")``). ``OneHour/data.parquet`` wird nie angefasst. Gibt die
     Messgrössen (Anzahl, ältester Tag) zurück, ``None`` bei leerer Antwort/Tabelle."""
-    from automation.api_backfiller import _candles_to_arrow_table, _merge_and_save
+    from automation.api_backfiller import _candles_to_arrow_table, _merge_and_save, oneday_session_window_for
     fetch = fetch_chunk or _fetch_candle_chunk
     now = now or datetime.now(timezone.utc)
     chunk = await fetch(session, etoro_id, None, api_key, user_key, ONEDAY, count=_WINDOW_COUNT)
@@ -1395,6 +1401,7 @@ async def fetch_oneday_full_window(
     table = _candles_to_arrow_table(
         chunk, symbol, price_prec, size_prec, datetime.fromtimestamp(0, tz=timezone.utc), interval=ONEDAY,
         asof_ns=int(now.timestamp() * 1e9),                              # Issue #1373: nur fertige Tageskerzen
+        oneday_session_window=oneday_session_window_for(symbol),         # Issue #1382: Ticks in der Handelstag-Session
     )
     if table is None or len(table) == 0:
         log.warning(f"[{symbol}] {ONEDAY}: Leere Arrow-Table nach Konvertierung.")
