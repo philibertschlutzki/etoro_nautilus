@@ -1,0 +1,25 @@
+{
+  "_schema": {
+    "description": "Issue #1381 (GH #1283, Pitfall #502) — Config-Profile: Overrides je Profil auf die Basis-Configs in automation/config. `python -m automation.optimizer.config_profile materialize <profil>` erzeugt daraus das Overlay automation/config_<profil>/ (Kopie von automation/config + Overrides + config_profile=<profil>). Jede Config ausser `production` ist gestempelt und nie Evidenz.",
+    "profiles": {
+      "smoke": "Durchstich auf der heutigen kurzen Historie (96 Tage): verkürzte Walk-Forward-Geometrie (94 d), gate1_buffer_days 0, Champion-Store und Diagnose-Rückschrieb aus. Ergebnisse sind NIE Evidenz: keine Champions, keine Promotion, kein Rückschrieb (deployment_gate-Klausel config_profile_production)."
+    }
+  },
+  "smoke": {
+    "backtest.json": {
+      "walk_forward": {
+        "is_window_days": 30,
+        "embargo_period_days": 5,
+        "splits": 2,
+        "oos_window_days": 21,
+        "holdout_days": 14,
+        "holdout_embargo_days": 3
+      }
+    },
+    "optimizer.json": {
+      "gate1_buffer_days": 0,
+      "champion_enabled": false,
+      "diagnostic_writeback_enabled": false
+    }
+  }
+}

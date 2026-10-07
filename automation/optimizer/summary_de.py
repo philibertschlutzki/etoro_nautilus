@@ -1568,6 +1568,10 @@ def generate_german_summary(report: dict, *, report_sha256: str | None = None) -
     Vorzeichenwechsel beim TSLA-Buy&Hold — ohne dass ein Leser das am Text selbst erkennen konnte)."""
     run_id = report.get("run_id", "unbekannt")
     header = f"# Sweep-Zusammenfassung {run_id}\n"
+    # Issue #1381 (Pitfall #502) — ein Nicht-Produktionsprofil ist in der ERSTEN Zeile gekennzeichnet.
+    _profile = report.get("config_profile")
+    if _profile and _profile != "production":
+        header = f"**{str(_profile).upper()} — keine Evidenz** (config_profile={_profile})\n\n" + header
     if report_sha256:
         header += f"<!-- report_sha256: {report_sha256} -->\n"
     sections = [

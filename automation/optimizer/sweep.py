@@ -6069,6 +6069,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
         if run_status == "completed_invalid":
             run_status = _apply_waiting_for_data_status(report_path, run_status)
         _stamp_detectability_section(report_path)
+        _stamp_config_profile(report_path)
         # Issue #1066/#1216 — siehe _stamp_report_artifact_metadata-Docstring: das Ergebnis von
         # invariants.check_report_artifact_written (unten emittiert) kann strukturell nie im
         # eigenen invariant_checks-Strom stehen; run.json traegt es stattdessen direkt.
@@ -6433,6 +6434,23 @@ def _stamp_detectability_section(report_path) -> None:
     except Exception:
         logging.getLogger("optimizer").debug("[#1367] detectability-Abschnitt nicht geschrieben.",
                                              exc_info=True)
+
+
+def _stamp_config_profile(report_path) -> None:
+    """Issue #1381 (GH #1283, Pitfall #502) — stempelt ``config_profile`` (Name des aktiven Config-Profils) in den
+    Run-Report; ``summary_de`` setzt für jedes Profil ausser ``production`` die erste Zeile
+    "<PROFIL> — keine Evidenz". Fail-open."""
+    try:
+        from automation.optimizer.config_profile import banner, current_profile
+        profile = current_profile(_load_optimizer_config())
+        written_report = json.loads(Path(report_path).read_text("utf-8"))
+        written_report["config_profile"] = profile
+        write_json_atomic(report_path, written_report)
+        if banner(profile):
+            logging.getLogger("optimizer").warning("[#1381] %s — Ergebnisse dieses Laufs sind nie Evidenz.",
+                                                   banner(profile))
+    except Exception:
+        logging.getLogger("optimizer").debug("[#1381] config_profile nicht gestempelt.", exc_info=True)
 
 
 def _apply_waiting_for_data_status(report_path, run_status: str) -> str:

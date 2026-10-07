@@ -2037,6 +2037,14 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True)
+    # Issue #1381 (GH #1283) — Config-Profil der Study in die Promotion-Records stempeln.
+    try:
+        _opt_for_profile = json.loads((Path(cfg_dir) / "optimizer.json").read_text("utf-8")) or {}
+        study.set_user_attr("config_profile", str(_opt_for_profile.get("config_profile") or "production"))
+    except Exception:
+        logging.getLogger("optimizer").debug("[#1381] config_profile nicht stempelbar (non-fatal).",
+                                             exc_info=True)
+
     # Issue #1379 (GH #1281) — Nachweisbarkeit (holdout_mds_annual, detectability_class) für den Promotion-Record.
     try:
         _stamp_detectability(study, cfg_dir, symbol, catalog_newest_ns=catalog_newest_ns)

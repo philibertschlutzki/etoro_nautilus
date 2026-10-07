@@ -180,6 +180,16 @@ _GATE_KEY_TO_THRESHOLD_CONFIG_KEY = {
 }
 
 
+def champion_store_enabled(opt_data: dict) -> bool:
+    """Champion-Store-Kill-Switch UND Config-Profil (Issue #1381, Pitfall #502): der globale Store
+    (``data/optimizer/champions``) wird nur bei ``config_profile == "production"`` gelesen oder geschrieben —
+    ein Smoke-/Abweichungsprofil darf weder Champions in ihn schreiben noch aus ihm warmstarten (seine
+    Ergebnisse sind nie Evidenz)."""
+    if not opt_data.get("champion_enabled", True):
+        return False
+    return str(opt_data.get("config_profile") or "production") == "production"
+
+
 def _sanitize(symbol: str) -> str:
     """'TSLA.ETORO' -> 'TSLA_ETORO'. Bewusst hier dupliziert (nicht aus run_optimization
     importiert) — eine triviale, reine String-Transformation; ein Modul-Import würde einen
@@ -489,7 +499,7 @@ def champion_is_admissible(entry: dict, opt_data: dict,
          mehr aus (siehe ``champion_quality_stale`` für die zugehörige Writeback-Sperre).
       9. ``degrade_streak < champion_demote_after_runs`` (#708 — nicht demoted).
     """
-    if not opt_data.get("champion_enabled", True):
+    if not champion_store_enabled(opt_data):
         return False, "CHAMPION_DISABLED"
 
     params = entry.get("params") or {}
@@ -770,7 +780,7 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
     Returns den Pfad der (ggf. aktualisierten) Store-Datei, oder ``None``, wenn der Kandidat
     dieses Laufs selbst nicht speicherwürdig ist (ein zuvor auf demselben Weg erkannter
     Degrade-/Demotion-Effekt auf einen BESTEHENDEN Eintrag bleibt davon unberührt persistiert)."""
-    if not opt_data.get("champion_enabled", True):
+    if not champion_store_enabled(opt_data):
         return None
     if not run_id:
         raise ValueError(
@@ -1216,7 +1226,7 @@ def maybe_write_back(entry: dict, opt_data: dict, *, base_cfg: Path | None = Non
     **Warum niemals nach ``strategy_defaults.json``:** das ist der globale Cross-Symbol-Prior; ein
     symbol-getunter Vektor kann global toxisch sein (R_symbol positiv ↔ R_global negativ ist ein
     realer Fall, siehe Issue #705 §2), Symbol-Seeds gehören strikt symbol-skopiert."""
-    if not opt_data.get("champion_enabled", True):
+    if not champion_store_enabled(opt_data):
         return False
     if champion_quality_stale(entry, opt_data):
         return False

@@ -457,7 +457,7 @@ def test_phase5_with_incubation_enabled_requires_a_live_stage(tmp_path, monkeypa
         "data_snapshot_sha256": catalog_fingerprint(),
         "proposed_instrument_override": {"sma_period": live["sma_period"]},
         "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
-        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0, "config_profile": "production",
         "holdout": {"symbol": {
             "deflated_dsr": 0.97, "oos_psr": 0.80, "holdout_ci_lower_sortino": 0.05, "pbo": 0.30,
             "pbo_n_configs": 40, "blocking_invariant_names": [], "oos_expectancy_cost_stress_2x": 0.001,

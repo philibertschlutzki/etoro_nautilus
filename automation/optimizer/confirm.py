@@ -2683,6 +2683,8 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # Issue #1379 (GH #1281) — Transparenz im Promotion-Record (keine Deployment-Klausel).
         **{k: (getattr(study, "user_attrs", None) or {}).get(k)
            for k in ("holdout_mds_annual", "detectability_class")},
+        # Issue #1381 (GH #1283) — Config-Profil der Study (Eingang der Klausel config_profile_production).
+        "config_profile": (getattr(study, "user_attrs", None) or {}).get("config_profile"),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],
