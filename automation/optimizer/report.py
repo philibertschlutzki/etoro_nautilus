@@ -1121,6 +1121,9 @@ def _read_jsonl_events(path: Path | None, event_type: str) -> list[dict]:
 # permanent als "fehlend" melden — ein Placebo-Fund ueber die eigene Nichtexistenz-zum-
 # Messzeitpunkt, keine echte Beobachtung.
 _DELIBERATELY_UNWIRED_INVARIANT_CHECKS: tuple[str, ...] = (
+    # Issue #1382 (GH #1284) — nur auf der Tagesachse (bar_axis=OneDay) emittiert: auf der Stundenachse gibt es
+    # keine OneDay-Datei, die der Sweep prüfen könnte (strukturell nicht anwendbar, kein vergessener Aufruf).
+    "check_oneday_ticks_within_session",
     "check_live_exposure_budget",
     "check_cost_model_resolution",
     "check_cost_model_floor",

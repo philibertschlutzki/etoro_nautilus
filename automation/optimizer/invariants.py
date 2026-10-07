@@ -9325,6 +9325,7 @@ def check_history_floor_coherence(walk_forward: dict | None, *, resolution_floor
                 f"Zwei Schwellen für dieselbe Frage (Pitfall #497): {offenders} != history_floor_days={floor}."))
 
 
+@invariant_scope("run")
 def check_oneday_ticks_within_session(ts_events, window, *, scope: str | None = None) -> InvariantResult:
     """Issue #1382 (GH #1284, Pitfall #503) Akzeptanzkriterium 3 — blockierend je Symbol auf der Tagesachse: JEDER
     Tick der ``OneDay``-Datei liegt innerhalb der Session eines HANDELSTAGS (``[open, close)`` in Börsen-
