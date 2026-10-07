@@ -122,7 +122,7 @@ python3 automation/daily_orchestrator.py
 python3 automation/daily_orchestrator.py --offline
 ```
 
-**Vorwärts-Füllung, Tiefe und Aktualität (Issue #1363):** `--skip-api-fetch` überspringt nur noch den *Tiefen*-Abruf (Phase 2d); der *Vorwärts*-Schritt (Phase 2c: neue `OneHour`-Kerzen vom jüngsten lokalen Tick bis jetzt, Anzahl aus der Lücke, paginiert) läuft immer — sonst wuchs der Katalog im dokumentierten Tagesbetrieb nicht. Nur `--offline` verzichtet auf jeden Netzabruf. Die erreichbare API-Tiefe wird je Intervall in `data/state/inception_bounds.json` registriert (`{symbol: {"OneHour": ns, "OneDay": ns, "observed_utc": …}}`); bringt ein Rückwärts-Abruf weniger als einen Tag Zugewinn, meldet der Pre-Sweep-Backfill `BACKFILL_NO_GAIN` und ruft dieses Symbol für `backfill_retry_days` (optimizer.json, Default 7) nicht erneut ab. Vor Phase 1 lehnt der blockierende Preflight `check_catalog_freshness` Symbole ab, deren jüngster `OneHour`-Tick älter als `max_catalog_staleness_h` (Default 96 h) ist (`REJECT_DATA_STALE`). Scheitern alle Symbole nur an der Historien-Spanne, endet der Lauf mit `run_status = "waiting_for_data"` und `eta_utc` (heute + fehlende Tage; der Katalog wächst um einen Tag je Tag).
+**Vorwärts-Füllung, Tiefe und Aktualität (Issue #1363):** `--skip-api-fetch` überspringt nur noch den *Tiefen*-Abruf (Phase 2d); der *Vorwärts*-Schritt (Phase 2c: neue `OneHour`-Kerzen vom jüngsten lokalen Tick bis jetzt, Anzahl aus der Lücke, paginiert) läuft immer — sonst wuchs der Katalog im dokumentierten Tagesbetrieb nicht. Nur `--offline` verzichtet auf jeden Netzabruf. Das erreichbare API-Fenster wird je Intervall in `data/state/inception_bounds.json` registriert (`{symbol: {"OneHour": ns, "OneDay": ns, "observed_utc": …}}`); bringt ein Rückwärts-Abruf weniger als einen Tag Zugewinn, meldet der Pre-Sweep-Backfill `BACKFILL_NO_GAIN` und ruft dieses Symbol für `backfill_retry_days` (optimizer.json, Default 7) nicht erneut ab. Vor Phase 1 lehnt der blockierende Preflight `check_catalog_freshness` Symbole ab, deren jüngster `OneHour`-Tick älter als `max_catalog_staleness_h` (Default 96 h) ist (`REJECT_DATA_STALE`). Scheitern alle Symbole nur an der Historien-Spanne, endet der Lauf mit `run_status = "waiting_for_data"` und `eta_utc` (heute + fehlende Tage; der Katalog wächst um einen Tag je Tag).
 
 **Gemessener Spread (Issue #1366):** Die Echt-Ticks des 24/7-Collectors liegen unter `quote_tick/<symbol>/RealTick/` (nie Teil der Engine-Sicht). Vor Phase 1 kalibriert der Sweep je Symbol Median und P75 von `(ask − bid) / mid` in bps über die letzten `spread_calibration_window_days` (30) — nur Ticks in der Session, ab `spread_calibration_n_min` (200) — nach `data/optimizer/cache/calibrated_spread.json` (Quelle `realtick`). Der Backtest wendet `max(Config-Spread, gemessener Median)` an (`resolve_spread_bps`); `COST_MODEL_RESOLVED` und der Study-Record tragen `spread_bps_applied`, `spread_bps_measured_p50/p75` und `spread_source`, und die promotions-blockierende Invariante `check_modeled_spread_not_below_measured` verlangt modellierter Spread ≥ gemessener Median je promoviertem Symbol.
 
@@ -131,6 +131,14 @@ python3 automation/daily_orchestrator.py --offline
 Vollständiger Ablauf Schritt für Schritt: [`manuals/momentum_ls.md`](manuals/momentum_ls.md) und [`manuals/end_to_end_workflow.md`](manuals/end_to_end_workflow.md).
 
 ---
+
+### Datenbeschaffung: API-Fenster statt Archivtiefe (Issue #1372)
+
+Der eToro-Candle-Endpunkt ist laut API-Referenz **zählerbasiert**: `candlesCount` 1–1000, kein Zeitparameter. Ein Abruf liefert die jüngsten 1000 Kerzen; die „Tiefe" ist ein **API-Fenster**, kein Archivende.
+
+- `python -m automation.historical_fetcher --probe-pagination TSLA,NVDA,GOOGL [--interval OneHour|OneDay]` prüft je Symbol und Intervall, ob `endTime` ausgewertet wird, und stempelt `pagination_mode` (`end_time` | `count_only`) in `inception_bounds.json`. Ohne Probe gilt `count_only`: je Intervall genau ein Abruf mit `candlesCount=1000`, kein `endTime`, keine Rückwärtsschleife.
+- `inception_bounds.json` führt je Intervall `window_oldest_utc` und `window_span_h` (Zeitspanne der jüngsten 1000 Kerzen).
+- Die Stundenhistorie wächst **nur vorwärts**: Phase 2c muss täglich laufen. Die tolerierbare Ausfallzeit ist `window_span_h`; der Horizont-Wächter meldet `FORWARD_GAP_NEAR_HORIZON` (Lücke > 0,5 × Fenster, WARNING) und `FORWARD_GAP_UNRECOVERABLE` (> 1,0 ×, ERROR mit dem verlorenen Intervall). Eine nicht mehr schliessbare Lücke setzt `effective_span_days` zurück und verschiebt jede ETA.
 
 ## 5. Befehls-Cheatsheet
 
@@ -373,7 +381,7 @@ Der Prozess, der die besten Strategie-Parameter sucht (Kapitel 9), bewertet Kand
 | `data/nautilus/data/cfd/{symbol}/*.parquet` | Cfd-Instrument-Definitionen (size_precision!) |
 | `data/state/execution_mapping.json` | eToro-Order-IDs ↔ Nautilus-Mapping |
 | `data/state/size_increment_cache.json` | Precision-Cache |
-| `data/state/inception_bounds.json` | Erreichbare API-Tiefe je Symbol und Intervall (`OneHour`/`OneDay`, `observed_utc`; Issue #1363) |
+| `data/state/inception_bounds.json` | API-Fenster je Symbol und Intervall (`OneHour`/`OneDay`, `observed_utc`; Issue #1363), `pagination` (`pagination_mode`, `probed_utc`) und `window` (`window_oldest_utc`, `window_span_h`; Issue #1372) |
 | `data/state/live_equity_hwm.json` | Persistenter Equity-Hochwasserstand + Tagesbasis des Live-Circuit-Breakers (Issue #1362) — überlebt Bot-Neustarts; Zurücksetzen nur per `momentum_ls_run.py --reset-hwm` |
 | `data/state/live_bot.lock` | Exklusive `flock`-Sperre des laufenden Live-Bots (Inhalt: `pid`, `started_utc`, `environment`, `whitelist_sha256`; Issue #1358) — ersetzt die nie gelesene PID-Datei |
 | `data/universe/momentum_ls.json` | Universe-Snapshot (`fetched_at` + `universe[]`) |

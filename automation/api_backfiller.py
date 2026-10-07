@@ -372,13 +372,16 @@ async def fetch_precisions_from_api(
 async def _fetch_candles(
     session: aiohttp.ClientSession,
     etoro_id: str,
-    end_time: datetime,
+    end_time: datetime | None,
     api_key: str,
     user_key: str,
     interval: str = "OneHour",
     count: int = 168,  # 7 Tage × 24h
 ) -> list[dict]:
-    """Holt historische Candle-Daten für ein Instrument."""
+    """Holt historische Candle-Daten für ein Instrument.
+
+    Issue #1372 (Pitfall #494): ``end_time=None`` sendet keinen ``endTime`` (der Endpunkt ist laut
+    API-Referenz zählerbasiert und liefert die jüngsten ``count`` Kerzen)."""
     url = _CANDLES_URL.format(etoro_id=etoro_id, interval=interval, count=count)
     headers = {
         "x-api-key":    api_key,
@@ -386,7 +389,7 @@ async def _fetch_candles(
         "x-request-id": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
-    params = {"endTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    params = {"endTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ")} if end_time is not None else {}
 
     for attempt in range(3):
         try:
@@ -982,7 +985,11 @@ async def run_backfill(
                     filter_start_dt = min(
                         start_dt, datetime.fromtimestamp(latest_ts / 1e9, tz=timezone.utc) - timedelta(days=1))
                 else:
-                    candles = await _fetch_candles(session, etoro_id, end_dt, api_key, user_key)
+                    from automation.historical_fetcher import pagination_mode, PAGINATION_END_TIME
+                    candles = await _fetch_candles(
+                        session, etoro_id,
+                        end_dt if pagination_mode(symbol, DEFAULT_INTERVAL) == PAGINATION_END_TIME else None,
+                        api_key, user_key)
                 if not candles:
                     log.debug(f"[api_backfiller] {symbol}: Keine Candles — überspringe.")
                     await asyncio.sleep(0.5)

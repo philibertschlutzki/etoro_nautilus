@@ -102,14 +102,8 @@ def _load_inception_bounds() -> dict[str, dict]:
     return out
 
 
-def _save_inception_bound(symbol: str, ts_ns: int, interval: str = "OneHour",
-                          *, now: datetime | None = None) -> None:
-    """Speichert die erreichte Tiefe ``ts_ns`` für ``symbol``/``interval`` atomar (Issue #1363: je Intervall,
-    mit ``observed_utc`` — Grundlage der ``backfill_retry_days``-Sperre)."""
-    bounds = _load_inception_bounds()
-    entry = bounds.setdefault(symbol, {})
-    entry[interval] = int(ts_ns)
-    entry["observed_utc"] = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _write_inception_bounds(bounds: dict[str, dict], symbol: str) -> None:
+    """Schreibt ``bounds`` atomar nach ``INCEPTION_CACHE_PATH`` (Tempdatei + ``os.replace``)."""
     INCEPTION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = INCEPTION_CACHE_PATH.with_suffix(".tmp.json")
     try:
@@ -120,6 +114,107 @@ def _save_inception_bound(symbol: str, ts_ns: int, interval: str = "OneHour",
         log.warning(f"Fehler beim Speichern von {INCEPTION_CACHE_PATH} für {symbol}: {e}")
         if tmp_path.exists():
             tmp_path.unlink()
+
+
+def _save_inception_bound(symbol: str, ts_ns: int, interval: str = "OneHour",
+                          *, now: datetime | None = None) -> None:
+    """Speichert die erreichte Tiefe ``ts_ns`` für ``symbol``/``interval`` atomar (Issue #1363: je Intervall,
+    mit ``observed_utc`` — Grundlage der ``backfill_retry_days``-Sperre)."""
+    bounds = _load_inception_bounds()
+    entry = bounds.setdefault(symbol, {})
+    entry[interval] = int(ts_ns)
+    entry["observed_utc"] = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _write_inception_bounds(bounds, symbol)
+
+
+# ─── Pagination-Modus und API-Fenster (Issue #1372, Pitfall #494) ─────────────────────
+
+PAGINATION_END_TIME = "end_time"
+PAGINATION_COUNT_ONLY = "count_only"
+_WINDOW_COUNT = 1000          # candlesCount-Maximum der API (1–1000)
+
+
+def _utc_str(dt_: datetime) -> str:
+    return dt_.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _save_pagination_probe(symbol: str, interval: str, mode: str, *, now: datetime | None = None) -> None:
+    """Stempelt das Ergebnis der Pagination-Probe je Symbol und Intervall (``pagination_mode``,
+    ``probed_utc``) in ``inception_bounds.json`` und emittiert ``CANDLE_PAGINATION_PROBED``."""
+    when = now or datetime.now(timezone.utc)
+    bounds = _load_inception_bounds()
+    bounds.setdefault(symbol, {}).setdefault("pagination", {})[interval] = {
+        "pagination_mode": mode, "probed_utc": _utc_str(when)}
+    _write_inception_bounds(bounds, symbol)
+    try:
+        from automation.log_manager import emit_execution_event
+        emit_execution_event(log, "CANDLE_PAGINATION_PROBED", {
+            "symbol": symbol, "interval": interval, "pagination_mode": mode})
+    except Exception:  # pragma: no cover - Telemetrie darf den Abruf nie stoppen
+        pass
+
+
+def pagination_mode(symbol: str, interval: str = "OneHour") -> str:
+    """Gestempelter Pagination-Modus; ohne Probe gilt ``count_only`` (kein ``endTime`` — die API-Referenz
+    kennt nur ``candlesCount``; ein undokumentierter Parameter ist eine Hoffnung, kein Vertrag, #494)."""
+    stamp = ((_load_inception_bounds().get(symbol) or {}).get("pagination") or {}).get(interval) or {}
+    return PAGINATION_END_TIME if stamp.get("pagination_mode") == PAGINATION_END_TIME else PAGINATION_COUNT_ONLY
+
+
+def _save_api_window(symbol: str, interval: str, chunk: list[dict], *,
+                     now: datetime | None = None) -> dict | None:
+    """Registriert das API-Fenster (die jüngsten ``len(chunk)`` Kerzen): ``window_oldest_utc`` und
+    ``window_span_h`` (Zeitspanne bis zum Abrufzeitpunkt). Kein Archivende — nur ein Fenster."""
+    oldest_ns = _oldest_ts_ns_from_chunk(chunk)
+    if oldest_ns is None:
+        return None
+    when = now or datetime.now(timezone.utc)
+    oldest = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc)
+    window = {"window_oldest_utc": _utc_str(oldest),
+              "window_span_h": round((when - oldest).total_seconds() / 3600.0, 2),
+              "n_candles": len(chunk), "observed_utc": _utc_str(when)}
+    bounds = _load_inception_bounds()
+    bounds.setdefault(symbol, {}).setdefault("window", {})[interval] = window
+    _write_inception_bounds(bounds, symbol)
+    log.info(f"[{symbol}] API-Fenster {interval}: jüngste {len(chunk)} Kerzen, älteste {window['window_oldest_utc']}")
+    return window
+
+
+def api_window_span_h(symbol: str, interval: str = "OneHour") -> float | None:
+    """Zeitspanne (h) des zuletzt registrierten API-Fensters oder ``None``."""
+    win = ((_load_inception_bounds().get(symbol) or {}).get("window") or {}).get(interval) or {}
+    span = win.get("window_span_h")
+    return float(span) if span is not None else None
+
+
+def check_forward_gap_horizon(symbol: str, interval: str, latest_local_ns: int, *, now: datetime,
+                              window_span_h: float | None = None) -> str | None:
+    """Horizont-Wächter: die Lücke seit dem jüngsten lokalen Tick gegen die Fensterspanne.
+
+    > 0,5 × ⇒ WARNING ``FORWARD_GAP_NEAR_HORIZON``; > 1,0 × ⇒ ERROR ``FORWARD_GAP_UNRECOVERABLE`` mit dem
+    verlorenen Intervall ``[jüngster lokaler Tick, ältester Fensterzeitpunkt]``. Gibt den Eventnamen oder
+    ``None`` zurück (ohne bekannte Fensterspanne kein Befund)."""
+    span = window_span_h if window_span_h is not None else api_window_span_h(symbol, interval)
+    if not span or span <= 0:
+        return None
+    gap_h = (now.timestamp() - latest_local_ns / 1e9) / 3600.0
+    if gap_h <= 0.5 * span:
+        return None
+    latest = datetime.fromtimestamp(latest_local_ns / 1e9, tz=timezone.utc)
+    payload = {"symbol": symbol, "interval": interval, "gap_h": round(gap_h, 2),
+               "window_span_h": round(span, 2)}
+    if gap_h > span:
+        event, level = "FORWARD_GAP_UNRECOVERABLE", logging.ERROR
+        payload["lost_interval"] = [_utc_str(latest), _utc_str(now - timedelta(hours=span))]
+    else:
+        event, level = "FORWARD_GAP_NEAR_HORIZON", logging.WARNING
+    log.log(level, f"[{symbol}] {event}: Lücke {gap_h:.1f} h bei API-Fenster {span:.1f} h ({interval}).")
+    try:
+        from automation.log_manager import emit_execution_event
+        emit_execution_event(log, event, payload, level=level)
+    except Exception:  # pragma: no cover
+        pass
+    return event
 
 
 def inception_bound(symbol: str, interval: str = "OneHour") -> int | None:
@@ -239,13 +334,17 @@ def _oldest_ts_ns_from_chunk(chunk: list[dict]) -> int | None:
 async def _fetch_candle_chunk(
     session: aiohttp.ClientSession,
     etoro_id: str,
-    end_time: datetime,
+    end_time: datetime | None,
     api_key: str,
     user_key: str,
     interval: str,
     count: int = 1000,
 ) -> list[dict]:
-    """Fetches up to `count` candles before `end_time` for the given interval."""
+    """Fetches up to `count` candles for the given interval.
+
+    Issue #1372 (Pitfall #494): ``end_time=None`` sendet KEINEN ``endTime`` — der Endpunkt ist laut
+    API-Referenz zählerbasiert (``candlesCount`` 1–1000) und liefert die jüngsten ``count`` Kerzen. Nur ein
+    per Probe als ``end_time`` gestempelter Endpunkt (``pagination_mode``) bekommt den Parameter."""
     url = _CANDLES_URL.format(etoro_id=etoro_id, interval=interval, count=count)
     headers = {
         "x-api-key": api_key,
@@ -253,7 +352,7 @@ async def _fetch_candle_chunk(
         "x-request-id": str(uuid.uuid4()),
         "Content-Type": "application/json",
     }
-    params = {"endTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    params = {"endTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ")} if end_time is not None else {}
 
     for attempt in range(3):
         try:
@@ -289,6 +388,29 @@ async def _fetch_candle_chunk(
     return []
 
 
+# ─── Pagination-Probe (Issue #1372) ──────────────────────────────────────────
+
+async def probe_pagination(session, etoro_id: str, symbol: str, interval: str, *, api_key: str,
+                           user_key: str, fetch_chunk=None, now: datetime | None = None) -> str:
+    """Zwei Requests: A ohne ``endTime`` (``candlesCount=100``), B mit ``endTime = ältester(A) − 1 s``.
+
+    Enthält B Kerzen, die älter sind als ältester(A) ⇒ ``end_time`` (die API wertet den Parameter aus,
+    die „API-Tiefe" wäre dann eine echte Archivgrenze), sonst ``count_only`` (ein 1000-Kerzen-Fenster).
+    Das Ergebnis wird je Symbol und Intervall gestempelt."""
+    fetch = fetch_chunk or _fetch_candle_chunk
+    chunk_a = await fetch(session, etoro_id, None, api_key, user_key, interval, count=100)
+    oldest_a = _oldest_ts_ns_from_chunk(chunk_a) if chunk_a else None
+    mode = PAGINATION_COUNT_ONLY
+    if oldest_a is not None:
+        end_time = datetime.fromtimestamp(oldest_a / 1e9, tz=timezone.utc) - timedelta(seconds=1)
+        chunk_b = await fetch(session, etoro_id, end_time, api_key, user_key, interval, count=100)
+        oldest_b = _oldest_ts_ns_from_chunk(chunk_b) if chunk_b else None
+        if oldest_b is not None and oldest_b < oldest_a:
+            mode = PAGINATION_END_TIME
+    _save_pagination_probe(symbol, interval, mode, now=now)
+    return mode
+
+
 # ─── Vorwärts-Schritt (Issue #1363) ──────────────────────────────────────────
 
 def forward_fill_count(gap_hours: float) -> int:
@@ -301,17 +423,30 @@ def forward_fill_count(gap_hours: float) -> int:
 async def fetch_forward_candles(
     session, etoro_id: str, symbol: str, latest_local_ns: int, *, api_key: str, user_key: str,
     interval: str = "OneHour", now: datetime | None = None, fetch_chunk=None, max_pages: int = 50,
+    mode: str | None = None,
 ) -> list[dict]:
     """Issue #1363 (GH #1259) Fix Punkt 1 — Vorwärts-Schritt: von ``now`` rückwärts bis zur Überlappung mit
-    ``latest_local_ns`` (paginiert, ``count`` aus der Lücke). Vorher kamen neue Kerzen ausschliesslich über
+    ``latest_local_ns`` (``count`` aus der Lücke). Vorher kamen neue Kerzen ausschliesslich über
     Phase 2c (fix 168 Kerzen), die ``--skip-api-fetch`` übersprang — im dokumentierten Betrieb wuchs der
-    ``OneHour``-Katalog nicht mehr."""
+    ``OneHour``-Katalog nicht mehr.
+
+    Issue #1372 (Pitfall #494): im Modus ``count_only`` (Default ohne Probe) genau EIN Abruf ohne ``endTime``
+    (``count`` ≤ 1000); eine Lücke über das API-Fenster hinaus bleibt dann ein Loch — der Horizont-Wächter
+    (``check_forward_gap_horizon``) meldet ``FORWARD_GAP_NEAR_HORIZON``/``FORWARD_GAP_UNRECOVERABLE``.
+    Paginiert wird nur, wenn die Probe ``end_time`` gestempelt hat."""
     fetch = fetch_chunk or _fetch_candle_chunk
     now = now or datetime.now(timezone.utc)
+    mode = mode or pagination_mode(symbol, interval)
     gap_h = (now.timestamp() - latest_local_ns / 1e9) / 3600.0
     if gap_h < 1.0:
         return []
-    out: list[dict] = []
+    if mode == PAGINATION_COUNT_ONLY:
+        check_forward_gap_horizon(symbol, interval, latest_local_ns, now=now)
+        out = await fetch(session, etoro_id, None, api_key, user_key, interval,
+                          count=forward_fill_count(gap_h)) or []
+        log.info(f"[{symbol}] Vorwärts-Schritt {interval}: {len(out)} Kerzen (Lücke {gap_h:.1f} h, count_only).")
+        return out
+    out = []
     end_time, last_oldest = now, None
     count = forward_fill_count(gap_h)
     for _ in range(max_pages):
@@ -369,8 +504,29 @@ async def _fetch_symbol(
 
     candles_by_interval: dict[str, list[dict]] = {itv: [] for itv in _FETCH_INTERVALS}
 
+    # Issue #1372 — Intervalle OHNE als ``end_time`` gestempelte Probe sind ``count_only``: genau ein
+    # Fenster-Abruf (``candlesCount=1000``, kein ``endTime``, keine Rückwärtsschleife). Er ersetzt für
+    # dieses Intervall Vorwärts- und Rückwärts-Schritt (die API liefert nur die jüngsten Kerzen).
+    window_intervals = [itv for itv in _FETCH_INTERVALS
+                        if pagination_mode(symbol, itv) == PAGINATION_COUNT_ONLY]
+    for interval in window_intervals:
+        latest_local_ns = _get_latest_ts_ns(QUOTE_TICK_PATH / symbol / interval / "data.parquet") \
+            if (QUOTE_TICK_PATH / symbol / interval / "data.parquet").exists() else None
+        chunk = await _fetch_candle_chunk(session, etoro_id, None, api_key, user_key, interval,
+                                          count=_WINDOW_COUNT)
+        if chunk:
+            candles_by_interval[interval].extend(chunk)
+            window = _save_api_window(symbol, interval, chunk)
+            if window is not None and latest_local_ns is not None:
+                check_forward_gap_horizon(symbol, interval, latest_local_ns,
+                                          now=datetime.now(timezone.utc),
+                                          window_span_h=window["window_span_h"])
+        else:
+            log.info(f"[{symbol}] Keine Candles für {interval}.")
+        await asyncio.sleep(1.1)
+
     # Issue #1363 Fix Punkt 1 — Vorwärts-Schritt VOR dem Rückwärts-Schritt (primäre Auflösung).
-    if dest_file.exists():
+    if dest_file.exists() and primary_interval not in window_intervals:
         latest_local_ns = _get_latest_ts_ns(dest_file)
         if latest_local_ns is not None:
             candles_by_interval[primary_interval].extend(await fetch_forward_candles(
@@ -390,6 +546,8 @@ async def _fetch_symbol(
     # Cascade: OneHour first, then OneDay to reach deeper history — jede Auflösung sammelt
     # in ihren EIGENEN Kandidaten-Puffer (kein all_candles.extend() über die Kaskade hinweg).
     for interval in _FETCH_INTERVALS:
+        if interval in window_intervals:
+            continue                      # Issue #1372: bereits per Fenster-Abruf bedient
         last_oldest_ts_ns: int | None = None
         if cascade_end_time > target_start and inception_bound_is_fresh(
                 symbol, interval, retry_days=backfill_retry_days):
@@ -397,7 +555,7 @@ async def _fetch_symbol(
             # backfill_retry_days beobachtet: kein erneuter (wirkungsloser) Rückwärts-Abruf; die Kaskade
             # setzt an der registrierten Tiefe mit der nächsten Auflösung fort.
             known = inception_bound(symbol, interval)
-            log.info(f"[{symbol}] {interval}: API-Tiefe bekannt "
+            log.info(f"[{symbol}] {interval}: API-Fenster bekannt "
                      f"({datetime.fromtimestamp(known / 1e9, tz=timezone.utc).date()}) — kein erneuter "
                      f"Rückwärts-Abruf (< {backfill_retry_days} Tage).")
             cascade_end_time = min(cascade_end_time,
@@ -443,7 +601,7 @@ async def _fetch_symbol(
         _depth = min((x for x in (_local_oldest, last_oldest_ts_ns) if x is not None), default=None)
         if _depth is not None:
             _save_inception_bound(symbol, _depth, interval)
-            log.info(f"[{symbol}] {interval}: API-Tiefe registriert "
+            log.info(f"[{symbol}] {interval}: API-Fenster registriert "
                      f"({datetime.fromtimestamp(_depth / 1e9, tz=timezone.utc).isoformat()}).")
 
     if not any(candles_by_interval.values()):
@@ -674,7 +832,7 @@ def ensure_walkforward_history(
         else:
             to_fetch.append(sym)
     if report["skipped_known_depth"]:
-        log.info("[#1363] %d Symbol(e) mit bekannter API-Tiefe (< %d Tage registriert) — kein erneuter "
+        log.info("[#1363] %d Symbol(e) mit bekanntem API-Fenster (< %d Tage registriert) — kein erneuter "
                  "Rückwärts-Abruf: %s", len(report["skipped_known_depth"]), backfill_retry_days,
                  report["skipped_known_depth"])
     if not to_fetch:
@@ -884,6 +1042,13 @@ async def _probe_symbol_depth(
     Tiefengrenze — wie ``_fetch_symbol``, aber ohne etwas zu schreiben)."""
     result: dict[str, int | None] = {}
     for interval in intervals:
+        if pagination_mode(symbol, interval) == PAGINATION_COUNT_ONLY:
+            # Issue #1372 — zählerbasierter Endpunkt: ein Abruf, die „Tiefe" ist das API-Fenster.
+            window = await _fetch_candle_chunk(session, etoro_id, None, api_key, user_key, interval,
+                                               count=_WINDOW_COUNT)
+            result[interval] = _oldest_ts_ns_from_chunk(window) if window else None
+            await asyncio.sleep(1.1)
+            continue
         end_time = datetime.now(timezone.utc)
         last_oldest: int | None = None
         reached: int | None = None
@@ -1172,6 +1337,26 @@ def migrate_catalog(target: str, etoro_id_to_symbol: dict[str, str] | None = Non
 
 # ─── CLI Entry-Point ──────────────────────────────────────────────────────────
 
+async def run_pagination_probe(
+    api_key: str, user_key: str, etoro_id_to_symbol: dict[str, str], symbols: list[str],
+    intervals: list[str] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Issue #1372 — Pagination-Probe für ``symbols`` (mit oder ohne ``.ETORO``-Suffix) je Intervall;
+    ergibt ``{symbol: {interval: pagination_mode}}`` und stempelt jedes Ergebnis."""
+    wanted = {x.strip().upper().removesuffix(".ETORO") for x in symbols if x.strip()}
+    targets = {eid: sym for eid, sym in etoro_id_to_symbol.items()
+               if sym.upper().removesuffix(".ETORO") in wanted}
+    result: dict[str, dict[str, str]] = {}
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+        for eid, sym in sorted(targets.items(), key=lambda x: x[1]):
+            for interval in intervals or list(_FETCH_INTERVALS):
+                mode = await probe_pagination(session, eid, sym, interval, api_key=api_key, user_key=user_key)
+                result.setdefault(sym, {})[interval] = mode
+                log.info(f"[{sym}] Pagination-Probe {interval}: {mode}")
+                await asyncio.sleep(1.1)
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="eToro Nautilus Historical Fetcher (Standalone)",
@@ -1198,6 +1383,13 @@ def main() -> int:
         "--migrate-catalog", type=str, default=None, metavar="SYMBOL|all",
         help="Verlustfreie catalog_schema_version-Migration (Issue #1364/GH #1260) statt Rebuild.",
     )
+    parser.add_argument(
+        "--probe-pagination", type=str, default=None, metavar="SYMBOL[,…]",
+        help="Issue #1372: prüft je Symbol/Intervall, ob der Candle-Endpunkt `endTime` auswertet "
+             "(pagination_mode end_time) oder zählerbasiert ist (count_only), und stempelt das Ergebnis.",
+    )
+    parser.add_argument("--interval", type=str, default=None, choices=list(_FETCH_INTERVALS),
+                        help="Nur mit --probe-pagination: nur dieses Intervall (Default: beide).")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1220,6 +1412,13 @@ def main() -> int:
     if not etoro_id_map:
         log.error("[historical_fetcher] Keine Instrumente im Universe — Abbruch.")
         return 1
+
+    if args.probe_pagination:
+        modes = asyncio.run(run_pagination_probe(
+            api_key, user_key, etoro_id_map, args.probe_pagination.split(","),
+            [args.interval] if args.interval else None))
+        print(json.dumps(modes, indent=2))
+        return 0 if modes else 1
 
     if args.migrate_catalog:
         from automation.api_backfiller import CatalogSchemaMigrationUnavailable
