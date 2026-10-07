@@ -172,12 +172,13 @@ def test_a_dst_dependent_bar_count_raises_instead_of_rounding():
 
 # ─── Feiertage ────────────────────────────────────────────────────────────────────────
 
-def test_nyse_holiday_table_covers_2025_to_2027_on_weekdays_only():
+def test_nyse_holiday_table_covers_2022_to_2027_on_weekdays_only():
     holidays, coverage = sw.load_exchange_holidays()
-    assert coverage["NYSE"] == (2025, 2027)
+    assert coverage["NYSE"] == (2022, 2027)      # Issue #1382: ab 2022 für die Tagesachse
     nyse = holidays["NYSE"]
     assert all(d.weekday() < 5 for d in nyse)
-    assert {y: sum(1 for d in nyse if d.year == y) for y in (2025, 2026, 2027)} == {2025: 11, 2026: 10, 2027: 10}
+    assert {y: sum(1 for d in nyse if d.year == y) for y in range(2022, 2028)} == {
+        2022: 9, 2023: 10, 2024: 10, 2025: 11, 2026: 10, 2027: 10}
     assert {date(2026, 4, 3), date(2026, 7, 3), _THANKSGIVING, date(2027, 12, 24)} <= nyse
 
 

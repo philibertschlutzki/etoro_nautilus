@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
+from automation import bar_axis
 from automation.live_params import (
     load_live_param_sources, mismatching_live_params, resolve_live_params,
 )
@@ -68,6 +69,11 @@ DEPLOYMENT_CLAUSES: tuple[str, ...] = (
     "live_params_match_promotion",
     # Issue #1357 (GH #1253, P0) — dreizehnte Klausel: siehe _clause_holdout_disjoint-Docstring.
     "holdout_disjoint",
+    # Issue #1381 (GH #1283, Pitfall #502) — vierzehnte Klausel: siehe _clause_config_profile_production-
+    # Docstring.
+    "config_profile_production",
+    # Issue #1382 (GH #1284) — fünfzehnte Klausel: siehe _clause_bar_axis_live_supported-Docstring.
+    "bar_axis_live_supported",
 )
 
 # Issue #993 Akzeptanzkriterium — dieselbe #663-Default-Schwelle wie confirm._study_pbo
@@ -327,6 +333,31 @@ def _clause_holdout_disjoint(record: Mapping[str, Any] | None) -> bool | None:
     return int(overlap) == 0 and gap_days >= float(emb)
 
 
+def _clause_config_profile_production(record: Mapping[str, Any] | None) -> bool | None:
+    """Issue #1381 (GH #1283, Pitfall #502) — vierzehnte Klausel: der Promotion-Record stammt aus einem Lauf mit
+    ``config_profile == "production"``. Ein Smoke-/Abweichungsprofil (verkürzte Geometrie, ``gate1_buffer_days=0``)
+    ist nie Evidenz und darf nicht kapitalwirksam werden. Fail-closed: fehlt das Feld (Record vor #1381), ist die
+    Klausel ``None`` — "nicht geprüft" ist KEINE bestandene Prüfung."""
+    if not record:
+        return None
+    profile = record.get("config_profile")
+    if profile is None:
+        return None
+    return profile == "production"
+
+
+def _clause_bar_axis_live_supported(record: Mapping[str, Any] | None) -> bool | None:
+    """Issue #1382 (GH #1284) Fix Punkt 7 (Pitfall #487: validiert = gehandelt) — fünfzehnte Klausel: der
+    Promotion-Record stammt von der Live-Achse (``bar_axis == "OneHour"``). Ein Tagesachsen-Record ist nicht
+    live handelbar, bis es ein eigenes Live-Issue gibt (Live-Bot und Phase 5 laufen auf Stundenbars).
+    Records vor #1382 tragen kein ``bar_axis`` und stammen per Konstruktion von der Stundenachse (die Achse war
+    nicht konfigurierbar) ⇒ fehlendes Feld zählt als ``OneHour``; ein vorhandener Wert ≠ ``OneHour`` blockiert."""
+    if not record:
+        return None
+    axis = record.get("bar_axis")
+    return True if axis is None else axis == bar_axis.LIVE_AXIS
+
+
 def evaluate_deployment_eligibility(
     pair,
     promotion_records: Mapping[Any, Mapping[str, Any]],
@@ -379,6 +410,8 @@ def evaluate_deployment_eligibility(
         "cost_stress": _clause_cost_stress(record),
         "expectancy_outlier_robust": _clause_expectancy_outlier_robust(record),
         "holdout_disjoint": _clause_holdout_disjoint(record),
+        "config_profile_production": _clause_config_profile_production(record),
+        "bar_axis_live_supported": _clause_bar_axis_live_supported(record),
     }
     clause_results["live_params_match_promotion"], live_params_detail = (
         _clause_live_params_match_promotion(
@@ -434,6 +467,13 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "holdout_start_utc": proposal.get("holdout_start_utc"),
         "holdout_embargo_days": proposal.get("holdout_embargo_days"),
         "holdout_overlap_days": proposal.get("holdout_overlap_days"),
+        # Issue #1381 (GH #1283) — Eingang der Klausel ``config_profile_production`` (fehlend ⇒ fail-closed).
+        "config_profile": proposal.get("config_profile"),
+        # Issue #1382 (GH #1284) — Eingang der Klausel ``bar_axis_live_supported``.
+        "bar_axis": proposal.get("bar_axis"),
+        # Issue #1379 (GH #1281) — Nachweisbarkeit zur Transparenz (KEINE Klausel).
+        "holdout_mds_annual": proposal.get("holdout_mds_annual"),
+        "detectability_class": proposal.get("detectability_class"),
         # Issue #1042 (Katalog #866, E-1) — siehe _clause_cost_stress-Docstring.
         "expectancy_cost_stress_2x": holdout_symbol.get("oos_expectancy_cost_stress_2x"),
         # Issue #1073 (Katalog #866-2) — siehe _clause_expectancy_outlier_robust-Docstring. Issue

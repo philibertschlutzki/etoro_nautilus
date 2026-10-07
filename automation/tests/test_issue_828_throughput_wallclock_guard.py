@@ -86,7 +86,7 @@ def test_thread_pool_max_workers_is_n_jobs_not_capped_by_pair_count(monkeypatch,
     monkeypatch.setattr(sweep, "_load_gate_config", lambda: {
         "walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4,
                          "holdout_days": 45},
-        "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
+        "gate1_buffer_days": 30, "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91,
     })
 
     sweep.run_per_symbol_sweep(
@@ -100,7 +100,7 @@ def test_thread_pool_max_workers_is_n_jobs_not_capped_by_pair_count(monkeypatch,
 # ── Fix Punkt 5: sweep.py-Verdrahtung — dasselbe Muster wie disk_guard.sweep_abort_requested ────────
 _GATE_CFG = {
     "walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4, "holdout_days": 45},
-    "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
+    "gate1_buffer_days": 30, "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91,
 }
 
 

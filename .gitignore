@@ -31,3 +31,6 @@ automation/.env
 
 # Harness worktree/session state, not repo content
 .claude/
+
+# Issue #1381 — materialisierte Config-Profil-Overlays (python -m automation.optimizer.config_profile materialize <profil>)
+automation/config_*/

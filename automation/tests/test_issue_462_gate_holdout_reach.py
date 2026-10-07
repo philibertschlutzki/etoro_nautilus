@@ -33,8 +33,8 @@ def test_sweep_enumeration_skips_on_holdout_unreachable(caplog):
 
     available_bars = {"TEST.ETORO": 1000}
     config = {
-        "min_bars_per_param": 10,
-        "min_oos_bars_per_fold": 10,
+        "min_session_bars_per_param": 10,
+        "min_oos_session_bars_per_fold": 10,
         "gate1_buffer_days": 10,
         "walk_forward": {
             "is_window_days": 90,

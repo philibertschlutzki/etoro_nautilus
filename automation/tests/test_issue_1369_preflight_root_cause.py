@@ -45,7 +45,8 @@ def _reference_stream() -> list[dict]:
         {"name": n, "check": n, "passed": True, "severity": "blocking", "scope": "global", "source": "sweep",
          "expected": "…", "actual": None, "detail": "OK"}
         for n in ("check_required_config_keys", "check_instrument_metadata_coherence",
-                  "check_promotion_confidence_reachability")
+                  "check_promotion_confidence_reachability",
+                  "check_history_floor_coherence")           # Issue #1376: run-weiter Preflight im Strom
     ] + [
         {"name": "check_wallclock_budget", "check": "check_wallclock_budget", "passed": True,
          "severity": "high", "scope": "global", "source": "sweep", "expected": "…", "actual": None,

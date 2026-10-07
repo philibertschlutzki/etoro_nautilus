@@ -40,7 +40,7 @@ def _record(**overrides) -> dict:
         # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
         # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
         "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
-        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0, "config_profile": "production",
     }
     rec.update(overrides)
     return rec
@@ -86,7 +86,7 @@ def test_live_params_sha256_is_order_independent_and_value_sensitive():
 
 def test_twelfth_clause_exists_last_and_completeness_check_follows():
     # Issue #1357 (GH #1253) haengt ``holdout_disjoint`` als dreizehnte Klausel dahinter.
-    assert len(DEPLOYMENT_CLAUSES) == 13
+    assert len(DEPLOYMENT_CLAUSES) == 15
     assert DEPLOYMENT_CLAUSES[11] == "live_params_match_promotion"
     full = {"deployment_gate": {"clause_results": {c: True for c in DEPLOYMENT_CLAUSES}}}
     assert check_deployment_gate_completeness({"X": full}).passed is True
@@ -250,7 +250,7 @@ def test_phase5_whitelist_entry_carries_live_params_sha256_and_override(tmp_path
         # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
         # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
         "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
-        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0, "config_profile": "production",
         "holdout": {"symbol": {
             "deflated_dsr": 0.97, "oos_psr": 0.80, "holdout_ci_lower_sortino": 0.05, "pbo": 0.30,
             "pbo_n_configs": 40, "blocking_invariant_names": [],

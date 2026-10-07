@@ -148,7 +148,7 @@ def test_study_summary_emitted(tmp_path, monkeypatch):
 # ── 4. run_per_symbol_sweep emittiert sweep_completed ────────────────────────
 def test_sweep_summary_emitted(monkeypatch, tmp_path, capsys):
     _GATE_CFG = {"walk_forward": {}, "gate1_buffer_days": 30,
-                 "min_bars_per_param": 200, "min_oos_bars_per_fold": 500}
+                 "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91}
     pairs = [("S", "A.ETORO", "OK"), ("S", "B.ETORO", "OK")]
     # Issue #799 — der Sweep-Fortschritts-Checkpoint schreibt nach WORK; isoliert halten.
     monkeypatch.setattr(sweep, "WORK", tmp_path)

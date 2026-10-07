@@ -96,7 +96,7 @@ def test_checkpoint_carries_strategies_fingerprint(monkeypatch, tmp_path):
     monkeypatch.setattr(sweep, "count_available_bars", lambda *a, **k: {})
     monkeypatch.setattr(sweep, "_load_gate_config", lambda: {
         "walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4, "holdout_days": 45},
-        "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
+        "gate1_buffer_days": 30, "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91,
     })
     monkeypatch.setattr(sweep, "WORK", tmp_path)
     monkeypatch.setattr(sweep, "config_dir", lambda: tmp_path)
@@ -225,7 +225,7 @@ def test_ak1_resume_skips_completed_symbols_across_two_run_per_symbol_sweep_call
     monkeypatch.setattr(sweep, "count_available_bars", lambda *a, **k: {})
     monkeypatch.setattr(sweep, "_load_gate_config", lambda: {
         "walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4, "holdout_days": 45},
-        "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
+        "gate1_buffer_days": 30, "min_session_bars_per_param": 40, "min_oos_session_bars_per_fold": 91,
     })
     monkeypatch.setattr(sweep, "WORK", tmp_path)
     monkeypatch.setattr(sweep, "config_dir", lambda: tmp_path)

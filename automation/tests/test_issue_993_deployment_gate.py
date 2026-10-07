@@ -60,7 +60,7 @@ def _passing_record(**overrides) -> dict:
         # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
         # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
         "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
-        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0, "config_profile": "production",
         "run_id": "run_abc123",
     }
     record.update(overrides)
@@ -300,7 +300,7 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
         # Issue #1357 (GH #1253) — dreizehnte Klausel ``holdout_disjoint``: Selektion endet das
         # Holdout-Embargo vor dem Holdout-Beginn, keine Ueberlappung (fehlende Felder waeren fail-closed).
         "selection_end_utc": "2026-07-31T00:00:00Z", "holdout_start_utc": "2026-08-03T00:00:00Z",
-        "holdout_embargo_days": 3, "holdout_overlap_days": 0,
+        "holdout_embargo_days": 3, "holdout_overlap_days": 0, "config_profile": "production",
         "holdout": {
             "symbol": {
                 "deflated_dsr": 0.96,

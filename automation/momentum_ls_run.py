@@ -15,6 +15,7 @@ from nautilus_trader.live.node import TradingNode
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from automation import bar_axis
 from automation.adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
 from automation.adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
 import json
@@ -165,7 +166,7 @@ def _build_bots_config(
             "strategy_class": strat_class_name,
             "etoro_id": etoro_id,
             "symbol": symbol,
-            "bar_type": f"{symbol}-1-HOUR-MID-INTERNAL",
+            "bar_type": bar_axis.bar_type(symbol, bar_axis.LIVE_AXIS),
             "params": merged_params,
             "live_params_sha256": params_sha256,
         }
@@ -210,7 +211,7 @@ def _build_incubation_bots_config(
             continue
         bot_spec = {
             "strategy_class": strat_class_name, "etoro_id": str(etoro_id), "symbol": symbol,
-            "bar_type": f"{symbol}-1-HOUR-MID-INTERNAL", "params": params,
+            "bar_type": bar_axis.bar_type(symbol, bar_axis.LIVE_AXIS), "params": params,
             "live_params_sha256": entry["params_sha256"], "stage": INCUBATING,
         }
         if "max_open_positions" in params:

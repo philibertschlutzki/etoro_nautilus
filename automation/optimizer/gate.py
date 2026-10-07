@@ -54,7 +54,8 @@ def required_span_days(walk_forward_dict: dict) -> int:
     Symbol mit 405–425 d Historie passierte den Guard, obwohl ``start`` vor den Datenanfang fiel und
     das IS-Fenster still verkürzt wurde (genau die No-Clamping-Verletzung, die #531 ausschliessen
     sollte). Bewusst OHNE ``gate1_buffer_days`` (der Puffer ist die Backfill-Schwelle, nicht der
-    Fail-Loud-Floor).
+    Fail-Loud-Floor); seit Issue #1376 ist ``history_floor_days`` (= diese Funktion) die einzige Quelle für
+    Auflösungs-Check, ETA UND Gate 1 (a).
 
     Issue #1357 (GH #1253) — ``holdout_embargo_days`` (Abstand Selektionsende → Holdout-Beginn) gehört
     ebenfalls in die Spanne (``compute_walk_forward_window`` zieht ihn vom Fensterende ab). Fehlt der Key
@@ -67,6 +68,28 @@ def required_span_days(walk_forward_dict: dict) -> int:
         + wf.get("holdout_days", 0)
         + wf.get("holdout_embargo_days", 0)
     )
+
+
+def history_floor_days(walk_forward_dict: dict) -> int:
+    """Issue #1376 (GH #1278, Pitfall #497) — die EINZIGE Quelle der Frage "reicht die Historie?":
+    Auflösungs-Check (``check_catalog_resolution_homogeneity``), Daten-Tiefen-ETA (``check_data_depth_eta``)
+    und Gate 1 (a) (``is_symbol_tunable``) lesen alle diesen Floor (= ``required_span_days``, 444 d mit der
+    Produktionsgeometrie). ``gate1_buffer_days`` ist KEIN Teil des Floors — er ist ausschliesslich der
+    Backfill-Auslöser in ``historical_fetcher.ensure_walkforward_history`` (ein Puffer ohne Konsument ist
+    kein Floor)."""
+    return required_span_days(walk_forward_dict)
+
+
+def gate1_history_floor_days(walk_forward_dict: dict, *, bars_per_day: int = 24) -> float:
+    """Der Floor, den Gate 1 (a) in ``is_symbol_tunable`` tatsächlich durchsetzt (``required_bars`` ohne
+    Puffer, zurück in Tage gerechnet) — Gegenstück zu ``history_floor_days`` für
+    ``invariants.check_history_floor_coherence``."""
+    wf = walk_forward_dict or {}
+    return required_bars(
+        is_window_days=wf.get("is_window_days", 0), oos_window_days=wf.get("oos_window_days", 0),
+        splits=wf.get("splits", 0), holdout_days=wf.get("holdout_days", 0), buffer_days=0,
+        bars_per_day=bars_per_day, embargo_period_days=wf.get("embargo_period_days", 0),
+        holdout_embargo_days=wf.get("holdout_embargo_days", 0)) / float(bars_per_day)
 
 
 def assert_walk_forward_geometry(*, actual_span_days: float, walk_forward_dict: dict,
@@ -95,35 +118,72 @@ def required_bars(*, is_window_days: int, oos_window_days: int, splits: int,
 
     Issue #596 — konsistent zu ``required_span_days`` um ``embargo_period_days`` erweitert (der
     Embargo/Purge-Gap gehört in die geforderte Spanne; vgl. ``compute_walk_forward_window``/#548).
-    Fehlt der Parameter (Default 0) ⇒ bit-identisch zum Alt-Verhalten. Issue #1357 — ebenso
+    Fehlt der Parameter (Default 0) ⇒ bit-identisch zum Alt-Verhalten. Issue #1376 — Gate 1 ruft
+    ``buffer_days=0`` auf; der Puffer ist nur Backfill-Auslöser. Issue #1357 — ebenso
     ``holdout_embargo_days`` (konsistent zu ``required_span_days``)."""
     return int((is_window_days + embargo_period_days + splits * oos_window_days
                 + holdout_days + holdout_embargo_days + buffer_days) * bars_per_day)
 
 
+_LEGACY_GATE1_KEYS = ("min_bars_per_param", "min_oos_bars_per_fold")
+
+
+def validate_gate1_config(config: dict) -> None:
+    """Issue #1377 (Pitfall #498) — die Einheit gehört in den Namen der Schwelle: die alten Schlüssel
+    ``min_bars_per_param``/``min_oos_bars_per_fold`` zählten Kalenderstunden als "Bars" und entfallen.
+    Startup-Validierung: sind sie noch gesetzt, wird laut abgebrochen (kein stilles Weiterrechnen)."""
+    stale = [k for k in _LEGACY_GATE1_KEYS if k in config]
+    if stale:
+        raise ValueError(
+            f"Gate-1-Schlüssel {stale} sind entfallen (Issue #1377): sie zählten Kalenderstunden. Ersetze sie "
+            f"durch min_session_bars_per_param (Default 40) und min_oos_session_bars_per_fold (Default 91).")
+
+
+def oos_session_bars_per_fold(oos_window_days: int, session_window=None, *,
+                              bar_interval_ns: int = 3_600 * 1_000_000_000, bars_per_day: int = 24) -> int:
+    """Issue #1377 — Session-Bars eines OOS-Folds aus dem Session-Kalender (Untergrenze über die Lage des
+    Fold-Fensters, ``session_windows.min_bars_in_calendar_window``) statt ``oos_window_days × 24``.
+    Ohne Session-Fenster (24/7-Achse) ``oos_window_days × bars_per_day``."""
+    if session_window is None:
+        return int(oos_window_days * bars_per_day)
+    from automation.session_windows import min_bars_in_calendar_window
+    return int(min_bars_in_calendar_window(session_window, int(oos_window_days), int(bar_interval_ns)))
+
+
 def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
-                      config: dict, bars_per_day: int = 24) -> tuple[bool, str]:
+                      config: dict, bars_per_day: int = 24,
+                      available_session_bars: int | None = None,
+                      session_window=None, bar_interval_ns: int = 3_600 * 1_000_000_000) -> tuple[bool, str]:
     """Decide whether ``symbol`` has enough data to be safely tuned.
 
     Returns ``(ok, reason)`` where ``ok`` is True only if ALL of:
-      (a) ``available_bars >= required_bars(... config['walk_forward'] + config['gate1_buffer_days'])``
-      (b) ``available_bars / max(1, n_params) >= config['min_bars_per_param']``
-      (c) ``oos_window_days * bars_per_day >= config['min_oos_bars_per_fold']``
+      (a) ``available_bars >= required_bars(... config['walk_forward'])`` — der Floor ist
+          ``history_floor_days`` (Issue #1376: OHNE ``gate1_buffer_days``, der nur Backfill-Auslöser ist);
+          ``available_bars`` ist hier die KALENDER-Spanne (Stunden bzw. ``bars_per_day`` je Tag)
+      (b) ``available_session_bars / max(1, n_params) >= config['min_session_bars_per_param']``
+      (c) Session-Bars je OOS-Fold (``oos_session_bars_per_fold``) ``>= config['min_oos_session_bars_per_fold']``
+
+    Issue #1377 (Pitfall #498): (b) und (c) zählen SESSION-Bars (RTH-Achse: 7 je Handelstag), nicht
+    Kalenderstunden. ``available_session_bars=None`` ⇒ ``available_bars`` (24/7-Achse, Alt-Aufrufer);
+    ``bar_interval_ns`` kommt aus der Bar-Achse (Default 1 h) — dieselben Funktionen rechnen auf einer
+    Tagesachse ohne Code-Kopie.
 
     ``reason`` ∈ {'OK', 'INSUFFICIENT_HISTORY', 'PARAM_DATA_RATIO_TOO_LOW',
     'OOS_FOLD_TOO_SHORT'}. Thresholds come from ``config`` (zero-hardcoding, HI-6).
     ``available_bars`` is injected by the caller — this function performs NO I/O.
     """
+    validate_gate1_config(config)
     wf = config["walk_forward"]
 
-    # (a) absolute history coverage of the full walk-forward corridor + buffer
+    # (a) absolute history coverage of the full walk-forward corridor.
     # Issue #596 — inkl. embargo_period_days (konsistent zu required_span_days / #548-Geometrie).
+    # Issue #1376 — buffer_days=0: derselbe Floor wie Auflösungs-Check und ETA (history_floor_days).
     need = required_bars(
         is_window_days=wf["is_window_days"],
         oos_window_days=wf["oos_window_days"],
         splits=wf["splits"],
         holdout_days=wf["holdout_days"],
-        buffer_days=config["gate1_buffer_days"],
+        buffer_days=0,
         bars_per_day=bars_per_day,
         embargo_period_days=wf.get("embargo_period_days", 0),
         holdout_embargo_days=wf.get("holdout_embargo_days", 0),
@@ -131,12 +191,14 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
     if available_bars < need:
         return (False, "INSUFFICIENT_HISTORY")
 
-    # (b) enough data per tuned parameter (anti-overfit ratio)
-    if available_bars / max(1, n_params) < config["min_bars_per_param"]:
+    # (b) enough SESSION bars per tuned parameter (anti-overfit ratio)
+    session_bars = available_bars if available_session_bars is None else available_session_bars
+    if session_bars / max(1, n_params) < config["min_session_bars_per_param"]:
         return (False, "PARAM_DATA_RATIO_TOO_LOW")
 
-    # (c) each OOS fold must itself be statistically meaningful
-    if wf["oos_window_days"] * bars_per_day < config["min_oos_bars_per_fold"]:
+    # (c) each OOS fold must itself be statistically meaningful (Session-Bars des Fold-Fensters)
+    if oos_session_bars_per_fold(wf["oos_window_days"], session_window, bar_interval_ns=bar_interval_ns,
+                                 bars_per_day=bars_per_day) < config["min_oos_session_bars_per_fold"]:
         return (False, "OOS_FOLD_TOO_SHORT")
 
     return (True, "OK")

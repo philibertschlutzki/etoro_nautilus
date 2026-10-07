@@ -57,6 +57,8 @@ import types
 from pathlib import Path
 from typing import Any, Callable
 
+from automation import bar_axis
+
 logger = logging.getLogger(__name__)
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent / "workspace"
@@ -170,7 +172,7 @@ def run_candidate_backtest(
         "config_class": config_class_name,
         "params": dict(params),
     }
-    bar_type = f"{symbol}-1-HOUR-MID-INTERNAL"
+    bar_type = bar_axis.bar_type(symbol)
 
     try:
         if worker_fn is not None:

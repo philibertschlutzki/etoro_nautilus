@@ -37,6 +37,7 @@ from typing import Any, Iterable
 
 import optuna
 
+from automation import bar_axis
 from automation.log_manager import emit_execution_event, jsonl_sidecar_path
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
@@ -304,6 +305,10 @@ def compute_run_fingerprint(*, git_commit_simulation, tournament_config_sha256,
         ",".join(sorted(s for s in (strategies or []) if s)),
         str(reward_semantics_version), str(simulation_semantics_version), str(seed_salt),
     ])
+    # Issue #1382 (GH #1284) Fix Punkt 6 — Bar-Achse als elfte Komponente, NUR für Nicht-Default-Achsen.
+    _axis_component = bar_axis.fingerprint_component()
+    if _axis_component:
+        payload += "\x1e" + _axis_component
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -345,6 +350,11 @@ def compute_result_fingerprint(study_summaries: list[dict]) -> str:
         ])
         for s in study_summaries
     )
+    # Issue #1382 (GH #1284) Fix Punkt 6 — die Bar-Achse ist Teil der Ergebnis-Identität (Default-Achse ⇒ kein
+    # Zusatzfeld, bit-identischer Hash).
+    _axis_component = bar_axis.fingerprint_component()
+    if _axis_component:
+        rows.append(_axis_component)
     return hashlib.sha256("\x1d".join(rows).encode("utf-8")).hexdigest()
 
 
@@ -806,7 +816,7 @@ def _load_study_for_proposal(proposal: dict):
     symbol = proposal.get("symbol")
     if not strategy or not symbol:
         return None
-    study_name = f"study_{strategy}_{_sanitize(symbol)}"
+    study_name = f"study_{strategy}_{_sanitize(symbol)}{bar_axis.study_suffix()}"
     storage = resolve_storage(study_name=study_name)
     try:
         return optuna.load_study(study_name=study_name, storage=storage)
@@ -1111,6 +1121,9 @@ def _read_jsonl_events(path: Path | None, event_type: str) -> list[dict]:
 # permanent als "fehlend" melden — ein Placebo-Fund ueber die eigene Nichtexistenz-zum-
 # Messzeitpunkt, keine echte Beobachtung.
 _DELIBERATELY_UNWIRED_INVARIANT_CHECKS: tuple[str, ...] = (
+    # Issue #1382 (GH #1284) — nur auf der Tagesachse (bar_axis=OneDay) emittiert: auf der Stundenachse gibt es
+    # keine OneDay-Datei, die der Sweep prüfen könnte (strukturell nicht anwendbar, kein vergessener Aufruf).
+    "check_oneday_ticks_within_session",
     "check_live_exposure_budget",
     "check_cost_model_resolution",
     "check_cost_model_floor",
@@ -4329,7 +4342,7 @@ def diagnosis_writeback_admissible(run_report: dict) -> tuple[bool, str]:
     return True, "admissible"
 
 
-def _compute_decision_admissible(invariant_checks: list[dict]) -> bool:
+def _compute_decision_admissible(invariant_checks: list[dict], *, any_symbol_survived: bool = False) -> bool:
     """Issue #942/#1108 (Katalog #960) — eine der drei orthogonalen Achsen, die den vorher
     ueberladenen ``run_status``-String ersetzen (siehe ``_build_report``-Docstring): ``False``
     sobald mindestens eine ``severity='blocking'``-Invariante in ``invariant_checks`` FAILt.
@@ -4346,6 +4359,9 @@ def _compute_decision_admissible(invariant_checks: list[dict]) -> bool:
         c.get("severity") == "blocking" and not c.get("passed", True)
         # Issue #1369 — unterdrückte Folge-Invarianten zählen nicht als blockierend-INCONCLUSIVE.
         and not _inv.is_suppressed_upstream(c)
+        # Issue #1380 (Pitfall #501) — eine per-Symbol-Preflight-Ablehnung ist kein run-weiter Blocker, solange
+        # ein anderes Symbol überlebt hat: dieselbe Funktion wie ``sweep._downgrade_run_status_...``.
+        and not _inv.is_scoped_preflight_rejection(c, any_symbol_survived=any_symbol_survived)
         for c in invariant_checks)
 
 
@@ -6280,7 +6296,8 @@ def _build_report(
     # angeforderten Symbole im Preflight abgewiesen wurden, trägt SUPPRESSED_UPSTREAM_NO_SYMBOLS.
     if _no_symbols_upstream:
         _inv.suppress_inconclusive_for_no_symbols(invariant_checks)
-    _decision_admissible = _compute_decision_admissible(invariant_checks)
+    _decision_admissible = _compute_decision_admissible(
+        invariant_checks, any_symbol_survived=bool(symbols_planned))
 
     # Issue #1305 (GH #1182, P1) Fix Punkt 1/2 — Rückschrieb-Zulässigkeit dieses Laufs, EINMAL aus
     # dem FINALEN invariant_checks-Stand berechnet (Pitfall #467 in AGENTS.md: ein Snapshot VOR dem

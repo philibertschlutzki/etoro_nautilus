@@ -49,3 +49,8 @@ run_sweep() {
 # Wallclock-Entscheidung deaktiviert (unverändert).
 #run_sweep PLTR.ETORO,ASML.ETORO,KRYS.ETORO,LULU.ETORO,NATGAS.ETORO
 run_sweep "TSLA.ETORO,NVDA.ETORO,GOOGL.ETORO"
+
+# Issue #1381 (GH #1283, Pitfall #502) — Beispiel: Smoke-Durchstich auf der heutigen kurzen Historie (nie Evidenz:
+# keine Champions, keine Promotion, kein Rückschrieb). Das Overlay vorher einmal erzeugen:
+#   python -m automation.optimizer.config_profile materialize smoke
+#ETORO_CONFIG_DIR="$PWD/automation/config_smoke" OPTIMIZER_WORK_DIR="data/optimizer/runs/smoke_$(date -u +%Y%m%dT%H%M%S)" python -m automation.optimizer.sweep --strategies all --tier all --symbols "TSLA.ETORO,NVDA.ETORO,GOOGL.ETORO" --seed-salt "$(date -u +%Y%m%dT%H%M%S%N)"

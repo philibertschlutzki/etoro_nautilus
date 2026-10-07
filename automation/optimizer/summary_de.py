@@ -1322,6 +1322,13 @@ def _section_detectability(report: dict) -> str | None:
     if not det:
         return None
     lines = ["## Nachweisbarkeit", ""]
+    # Issue #1379 — die erste Zeile nennt die Klasse; `underpowered` ist ein Hinweis, kein blockierender Befund.
+    _klass = det.get("detectability_class", "k. A.")
+    lines.append(f"**detectability_class: {_klass}**"
+                 + (" — Hinweis, der Lauf bleibt gültig (nur Kandidaten oberhalb der Mindest-nachweisbaren Sharpe "
+                    "sind promovierbar)." if _klass == "underpowered" else
+                    " — blockierend: kein Kandidat kann je promovieren." if _klass == "unattainable" else "."))
+    lines.append("")
     lines.append(
         f"Holdout {det.get('holdout_days', 'k. A.')} Tage ⇒ T = {det.get('t_holdout', 'k. A.')} Bars; "
         f"Konfidenz {det.get('promotion_confidence', 'k. A.')} ⇒ **Mindest-nachweisbare Sharpe "
@@ -1561,6 +1568,10 @@ def generate_german_summary(report: dict, *, report_sha256: str | None = None) -
     Vorzeichenwechsel beim TSLA-Buy&Hold — ohne dass ein Leser das am Text selbst erkennen konnte)."""
     run_id = report.get("run_id", "unbekannt")
     header = f"# Sweep-Zusammenfassung {run_id}\n"
+    # Issue #1381 (Pitfall #502) — ein Nicht-Produktionsprofil ist in der ERSTEN Zeile gekennzeichnet.
+    _profile = report.get("config_profile")
+    if _profile and _profile != "production":
+        header = f"**{str(_profile).upper()} — keine Evidenz** (config_profile={_profile})\n\n" + header
     if report_sha256:
         header += f"<!-- report_sha256: {report_sha256} -->\n"
     sections = [

@@ -1,0 +1,145 @@
+{
+  "_schema": {
+    "description": "Issue #1383 (GH #1285) — Suchraum-Bounds je Strategie und Bar-Achse. spaces.py liest axis_bounds[strategy][axis][param] = [lo, hi]; die Achse OneHour hat KEINE Einträge (die Stunden-Bounds in spaces.py bleiben bit-identisch). Auf einer Nicht-Stunden-Achse ersetzt der Eintrag die Stunden-Bounds dieses Parameters; Parameter ohne Eintrag (Multiplikatoren, Schwellen, rsi_oversold/-overbought, bb_std_dev, …) sind achsenunabhängig und behalten ihre Bounds. Kuratierte symbol-spezifische Overrides (search_space_overrides.json) und der Diagnose-Cache sind auf der Stundenachse kalibriert und gelten auf einer Nicht-Stunden-Achse NICHT.",
+    "derivation": "OneDay (1 Bar = 1 Handelstag, 7 Stundenbars): (1) Mitte = Stundenband ÷ 7 gerundet (z. B. ema_period 50–300 ⇒ 7–43 Handelstage); (2) Untergrenze = Warm-up-Minimum des Indikators (Perioden ≥ 5; RSI-Periode ≥ 3, Rsi2Reversion behält 2–6; Cooldown ≥ 1); (3) Obergrenze ≤ 21 Bars: embargo_period_days ≥ ceil(21 · 7/5) = 30 Kalendertage, die Konvention embargo_period_days ≥ grösster Lookback (backtest.json-Schema), passend zum Profil daily (Embargo 30). max_bars_in_trade folgt _contracts.MAX_BARS_IN_TRADE_HARD_CAP (= max_handelstage · 1 = 5 im Profil daily) und steht deshalb nicht in dieser Tabelle.",
+    "max_lookback_bars": 21
+  },
+  "axis_bounds": {
+    "SmaCrossoverStrategy": {
+      "OneDay": {
+        "sma_period": [
+          5,
+          21
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ]
+      }
+    },
+    "MeanReversionStrategy": {
+      "OneDay": {
+        "keltner_period": [
+          5,
+          21
+        ],
+        "keltner_atr_period": [
+          5,
+          14
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ]
+      }
+    },
+    "DynamicBreakoutStrategy": {
+      "OneDay": {
+        "price_breakout_period": [
+          5,
+          21
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ]
+      }
+    },
+    "SqueezeBreakoutStrategy": {
+      "OneDay": {
+        "bb_period": [
+          5,
+          21
+        ],
+        "keltner_period": [
+          5,
+          21
+        ],
+        "atr_period": [
+          5,
+          14
+        ],
+        "min_squeeze_bars": [
+          2,
+          8
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ]
+      }
+    },
+    "TrendPullbackStrategy": {
+      "OneDay": {
+        "ema_period": [
+          8,
+          21
+        ],
+        "rsi_period": [
+          3,
+          14
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ]
+      }
+    },
+    "AdxAtrMomentumStrategy": {
+      "OneDay": {
+        "ema_period": [
+          5,
+          21
+        ],
+        "atr_period": [
+          5,
+          14
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ],
+        "min_holding_time": [
+          0,
+          1
+        ]
+      }
+    },
+    "DonchianRegimeBreakoutStrategy": {
+      "OneDay": {
+        "donchian_period": [
+          5,
+          21
+        ],
+        "ema_period": [
+          5,
+          21
+        ],
+        "atr_period": [
+          5,
+          14
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ]
+      }
+    },
+    "Rsi2ReversionStrategy": {
+      "OneDay": {
+        "ema_period": [
+          10,
+          21
+        ],
+        "atr_period": [
+          5,
+          14
+        ],
+        "cooldown_bars": [
+          1,
+          5
+        ]
+      }
+    }
+  }
+}

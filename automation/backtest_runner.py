@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pyarrow.parquet as pq
+from automation import bar_axis
 from automation.utils import _fallback_precisions
 from automation.disaster_stop import DISASTER_STOP_MODE_SIMULATED, resolve_disaster_stop_params
 # Issue #1332 (GH #1226) / #1356 (GH #1252) — Handelszeit-Fenster: kanonische Implementierung in
@@ -47,6 +48,8 @@ from automation.session_windows import (
     SessionWindow,
     interval_overlaps_session,
     interval_overlaps_session_hours,
+    is_trading_day,
+    local_day,
     is_within_session_hours,
     resolve_session_window,
     session_window_to_param,
@@ -192,7 +195,7 @@ def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> boo
     # ``OneHour/``/``OneDay/``/``RealTick/`` trägt je Auflösung bewusst abweichende Metadaten
     # (``catalog_interval``, ``bar_interval_ns``-Semantik); das Angleichen auf die zuletzt
     # sortierte Datei überschrieb die deklarierte Auflösung der anderen Segmente (Pitfall #483).
-    parquet_files = list(resolve_quote_tick_files(catalog_path, instrument_id_str, interval="OneHour"))
+    parquet_files = list(resolve_quote_tick_files(catalog_path, instrument_id_str, interval=bar_axis.active_axis().catalog_interval))
     if len(parquet_files) <= 1:
         return False
 
@@ -1647,6 +1650,21 @@ def _filter_ticks_to_session_hours(
     if window is None:
         return ticks
     n_before = len(ticks)
+    if bar_axis.active_axis().trading_day_bars:
+        # Issue #1382 (GH #1284) Fix Punkt 3 — Tagesachse: eine Kerze ist mindestens so lang wie die Session, also
+        # entscheidet der HANDELSTAG (Kalender #1356) über die Zugehörigkeit, nicht der Tick-Zeitpunkt (Pitfall #485).
+        if out is not None:
+            out["session_window_tz"] = window.tz
+            out["session_filter_mode"] = "trading_day"
+        _day_ok: dict = {}
+
+        def _on_trading_day(ts_ns: int) -> bool:
+            day = local_day(ts_ns, window)
+            if day not in _day_ok:
+                _day_ok[day] = is_trading_day(day, window)
+            return _day_ok[day]
+
+        return [t for t in ticks if _on_trading_day(int(t.ts_event))]
     median_delta_t_s = _median_tick_delta_t_s(ticks)
     snapped = snap_window_to_grid(window, median_delta_t_s)
     if out is not None:
@@ -8506,7 +8524,7 @@ def run_backtest() -> None:
             pass
 
     dynamic_instruments = [
-        {"id": iid, "bar_type": f"{iid}-1-HOUR-MID-INTERNAL"}
+        {"id": iid, "bar_type": bar_axis.bar_type(iid)}
         for iid in instrument_ids
     ]
 
@@ -8764,7 +8782,7 @@ def _run_remaining_sequentially(
         )
         if rem_strat is None:
             continue
-        bar_type = f"{rem_inst}-1-HOUR-MID-INTERNAL"
+        bar_type = bar_axis.bar_type(rem_inst)
         res = run_single_backtest_worker(
             rem_inst, bar_type, rem_strat, catalog_path,
             start_ns, end_ns, start_capital, generate_html, reports_dir, rem_log,
