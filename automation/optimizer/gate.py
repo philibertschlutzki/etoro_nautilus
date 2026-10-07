@@ -54,7 +54,8 @@ def required_span_days(walk_forward_dict: dict) -> int:
     Symbol mit 405–425 d Historie passierte den Guard, obwohl ``start`` vor den Datenanfang fiel und
     das IS-Fenster still verkürzt wurde (genau die No-Clamping-Verletzung, die #531 ausschliessen
     sollte). Bewusst OHNE ``gate1_buffer_days`` (der Puffer ist die Backfill-Schwelle, nicht der
-    Fail-Loud-Floor).
+    Fail-Loud-Floor); seit Issue #1376 ist ``history_floor_days`` (= diese Funktion) die einzige Quelle für
+    Auflösungs-Check, ETA UND Gate 1 (a).
 
     Issue #1357 (GH #1253) — ``holdout_embargo_days`` (Abstand Selektionsende → Holdout-Beginn) gehört
     ebenfalls in die Spanne (``compute_walk_forward_window`` zieht ihn vom Fensterende ab). Fehlt der Key
@@ -67,6 +68,28 @@ def required_span_days(walk_forward_dict: dict) -> int:
         + wf.get("holdout_days", 0)
         + wf.get("holdout_embargo_days", 0)
     )
+
+
+def history_floor_days(walk_forward_dict: dict) -> int:
+    """Issue #1376 (GH #1278, Pitfall #497) — die EINZIGE Quelle der Frage "reicht die Historie?":
+    Auflösungs-Check (``check_catalog_resolution_homogeneity``), Daten-Tiefen-ETA (``check_data_depth_eta``)
+    und Gate 1 (a) (``is_symbol_tunable``) lesen alle diesen Floor (= ``required_span_days``, 444 d mit der
+    Produktionsgeometrie). ``gate1_buffer_days`` ist KEIN Teil des Floors — er ist ausschliesslich der
+    Backfill-Auslöser in ``historical_fetcher.ensure_walkforward_history`` (ein Puffer ohne Konsument ist
+    kein Floor)."""
+    return required_span_days(walk_forward_dict)
+
+
+def gate1_history_floor_days(walk_forward_dict: dict, *, bars_per_day: int = 24) -> float:
+    """Der Floor, den Gate 1 (a) in ``is_symbol_tunable`` tatsächlich durchsetzt (``required_bars`` ohne
+    Puffer, zurück in Tage gerechnet) — Gegenstück zu ``history_floor_days`` für
+    ``invariants.check_history_floor_coherence``."""
+    wf = walk_forward_dict or {}
+    return required_bars(
+        is_window_days=wf.get("is_window_days", 0), oos_window_days=wf.get("oos_window_days", 0),
+        splits=wf.get("splits", 0), holdout_days=wf.get("holdout_days", 0), buffer_days=0,
+        bars_per_day=bars_per_day, embargo_period_days=wf.get("embargo_period_days", 0),
+        holdout_embargo_days=wf.get("holdout_embargo_days", 0)) / float(bars_per_day)
 
 
 def assert_walk_forward_geometry(*, actual_span_days: float, walk_forward_dict: dict,
@@ -95,7 +118,8 @@ def required_bars(*, is_window_days: int, oos_window_days: int, splits: int,
 
     Issue #596 — konsistent zu ``required_span_days`` um ``embargo_period_days`` erweitert (der
     Embargo/Purge-Gap gehört in die geforderte Spanne; vgl. ``compute_walk_forward_window``/#548).
-    Fehlt der Parameter (Default 0) ⇒ bit-identisch zum Alt-Verhalten. Issue #1357 — ebenso
+    Fehlt der Parameter (Default 0) ⇒ bit-identisch zum Alt-Verhalten. Issue #1376 — Gate 1 ruft
+    ``buffer_days=0`` auf; der Puffer ist nur Backfill-Auslöser. Issue #1357 — ebenso
     ``holdout_embargo_days`` (konsistent zu ``required_span_days``)."""
     return int((is_window_days + embargo_period_days + splits * oos_window_days
                 + holdout_days + holdout_embargo_days + buffer_days) * bars_per_day)
@@ -106,7 +130,8 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
     """Decide whether ``symbol`` has enough data to be safely tuned.
 
     Returns ``(ok, reason)`` where ``ok`` is True only if ALL of:
-      (a) ``available_bars >= required_bars(... config['walk_forward'] + config['gate1_buffer_days'])``
+      (a) ``available_bars >= required_bars(... config['walk_forward'])`` — der Floor ist
+          ``history_floor_days`` (Issue #1376: OHNE ``gate1_buffer_days``, der nur Backfill-Auslöser ist)
       (b) ``available_bars / max(1, n_params) >= config['min_bars_per_param']``
       (c) ``oos_window_days * bars_per_day >= config['min_oos_bars_per_fold']``
 
@@ -116,14 +141,15 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
     """
     wf = config["walk_forward"]
 
-    # (a) absolute history coverage of the full walk-forward corridor + buffer
+    # (a) absolute history coverage of the full walk-forward corridor.
     # Issue #596 — inkl. embargo_period_days (konsistent zu required_span_days / #548-Geometrie).
+    # Issue #1376 — buffer_days=0: derselbe Floor wie Auflösungs-Check und ETA (history_floor_days).
     need = required_bars(
         is_window_days=wf["is_window_days"],
         oos_window_days=wf["oos_window_days"],
         splits=wf["splits"],
         holdout_days=wf["holdout_days"],
-        buffer_days=config["gate1_buffer_days"],
+        buffer_days=0,
         bars_per_day=bars_per_day,
         embargo_period_days=wf.get("embargo_period_days", 0),
         holdout_embargo_days=wf.get("holdout_embargo_days", 0),

@@ -9287,6 +9287,44 @@ def check_modeled_spread_not_below_measured(study_records: list[dict]) -> Invari
     )
 
 
+@invariant_scope("run")
+def check_history_floor_coherence(walk_forward: dict | None, *, resolution_floor_days: float | None = None,
+                                  eta_floor_days: float | None = None,
+                                  gate1_floor_days: float | None = None) -> InvariantResult:
+    """Issue #1376 (GH #1278, Pitfall #497) — blockierende, laufweite Invariante: Auflösungs-Check, Daten-
+    Tiefen-ETA und Gate 1 (a) liefern für DIESELBE Geometrie denselben Historien-Floor
+    (``gate.history_floor_days``). Vorher rechneten Auflösungs-Check/ETA mit 444 d, Gate 1 mit 474 d
+    (``gate1_buffer_days``): die ETA meldete "ausreichend" 30 Tage vor dem ersten möglichen Gate-1-PASS.
+
+    Nicht übergebene Floors werden aus der Geometrie abgeleitet (Gate 1 über ``gate1_history_floor_days``)."""
+    from automation.optimizer.gate import gate1_history_floor_days, history_floor_days
+
+    expected = "resolution_floor == eta_floor == gate1_floor == history_floor_days(walk_forward)"
+    if not walk_forward:
+        return InvariantResult(
+            name="check_history_floor_coherence", passed=None, expected=expected, actual={},
+            severity="blocking", inconclusive=True, evaluable=False,
+            evaluability={"evaluable": False, "inconclusive_reason": "WALK_FORWARD_UNRESOLVED",
+                         "n_studies_measured": 0},
+            detail="walk_forward nicht aufloesbar — nicht auswertbar.")
+    floor = float(history_floor_days(walk_forward))
+    floors = {
+        "history_floor_days": floor,
+        "resolution_floor_days": float(floor if resolution_floor_days is None else resolution_floor_days),
+        "eta_floor_days": float(floor if eta_floor_days is None else eta_floor_days),
+        "gate1_floor_days": float(gate1_history_floor_days(walk_forward) if gate1_floor_days is None
+                                  else gate1_floor_days),
+    }
+    offenders = {k: v for k, v in floors.items() if abs(v - floor) > 1e-9}
+    passed = not offenders
+    return InvariantResult(
+        name="check_history_floor_coherence", passed=passed, expected=expected, actual=floors,
+        severity="blocking", evaluable=True,
+        evaluability={"evaluable": True, "inconclusive_reason": None, "n_studies_measured": 0},
+        detail=("OK" if passed else
+                f"Zwei Schwellen für dieselbe Frage (Pitfall #497): {offenders} != history_floor_days={floor}."))
+
+
 PROMOTION_TARGET_ANNUAL_SHARPE_DEFAULT = 1.5
 
 

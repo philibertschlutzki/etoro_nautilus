@@ -23,7 +23,7 @@ def _need(cfg, bars_per_day=24):
     return gate.required_bars(
         is_window_days=wf["is_window_days"], oos_window_days=wf["oos_window_days"],
         splits=wf["splits"], holdout_days=wf["holdout_days"],
-        buffer_days=cfg["gate1_buffer_days"], bars_per_day=bars_per_day,
+        buffer_days=0, bars_per_day=bars_per_day,   # Issue #1376: Gate 1 (a) ohne gate1_buffer_days
         embargo_period_days=wf.get("embargo_period_days", 0),
         # Issue #1357 (GH #1253) — inkl. Holdout-Embargo (Selektionsende → Holdout-Beginn).
         holdout_embargo_days=wf.get("holdout_embargo_days", 0))
@@ -57,13 +57,13 @@ def test_history_boundary_exact_is_inclusive():
     assert why != "INSUFFICIENT_HISTORY"
 
 
-def test_buffer_days_shifts_history_threshold():
-    """Raising gate1_buffer_days raises required_bars — the same bar count now fails (boundary test)."""
+def test_buffer_days_does_not_shift_history_threshold():
+    """Issue #1376 (Pitfall #497) — gate1_buffer_days ist nur Backfill-Auslöser, kein Teil des Floors."""
     cfg = _cfg()
     avail = _need(cfg)
-    cfg2 = {**cfg, "gate1_buffer_days": cfg["gate1_buffer_days"] + 1}
+    cfg2 = {**cfg, "gate1_buffer_days": cfg["gate1_buffer_days"] + 30}
     ok, why = gate.is_symbol_tunable("A.ETORO", n_params=1, available_bars=avail, config=cfg2)
-    assert not ok and why == "INSUFFICIENT_HISTORY"
+    assert why != "INSUFFICIENT_HISTORY"
 
 
 # --- Gate 1b: bars-per-param ratio ------------------------------------------

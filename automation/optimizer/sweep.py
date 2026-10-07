@@ -31,6 +31,7 @@ from automation.optimizer import invariants
 from automation.optimizer._contracts import pair_key, split_pair_key, ReportCohortUnresolvable
 from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
+    history_floor_days,
 )
 from automation.optimizer.trial_config import (
     HOLDOUT_EMBARGO_DAYS_DEFAULT, config_dir, compute_walk_forward_window,
@@ -3407,8 +3408,18 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # sinnvolle Einzelgrösse.
     _earliest_ts = earliest_ts_by_symbol(syms)
     _wf = config.get("walk_forward") or {}
-    _req_span = required_span_days(_wf)
+    # Issue #1376 — EIN Historien-Floor für Auflösungs-Check, ETA und Gate 1 (a): history_floor_days.
+    _req_span = history_floor_days(_wf)
     _span_stats = per_symbol_span_stats(latest_ts, _earliest_ts, syms, required_span_days=_req_span)
+    # Issue #1376 (Pitfall #497) — Auflösungs-Check, ETA und Gate 1 (a) müssen denselben Floor liefern.
+    _floor_coherence = invariants.check_history_floor_coherence(
+        _wf, resolution_floor_days=_req_span, eta_floor_days=_req_span)
+    emit_execution_event(logging.getLogger("optimizer"), "INVARIANT_STREAM_RESULT", {
+        "name": "check_history_floor_coherence", "check": "check_history_floor_coherence",
+        "passed": _floor_coherence.passed, "source": "sweep", "scope": None,
+        "expected": _floor_coherence.expected, "actual": _floor_coherence.actual,
+        "detail": _floor_coherence.detail, "severity": _floor_coherence.severity,
+    }, level=logging.INFO if _floor_coherence.passed is not False else logging.ERROR)
     # Issue #1367 (GH #1264) — die [#624]-Geometriezeile wird NACH dem Erreichbarkeits-Preflight unten aus
     # DENSELBEN Werten erzeugt (vorher behauptete sie ein Literal (45 d Holdout, T≈202, PSR≈0.946), während
     # das JSON-Event derselben Sekunde 60 Tage / T=300 / 0,975 meldete).

@@ -791,7 +791,8 @@ def ensure_walkforward_history(
     """Issue #531 — Pre-Sweep-Hook: erzwingt die volle Walk-Forward-Historie VOR dem Sweep.
 
     Liegt die REAL vorhandene Bar-Spanne eines Symbols (``span_days_by_symbol[sym]``, vom Aufrufer
-    aus den Parquet-Statistiken injiziert) unter ``required_span_days + gate1_buffer_days``, wird ein
+    aus den Parquet-Statistiken injiziert) unter ``required_span_days + gate1_buffer_days`` (Issue #1376: der
+    Puffer ist AUSSCHLIESSLICH dieser Backfill-Auslöser, nicht Teil des Historien-Floors), wird ein
     **synchroner** Backfill-Request an den ``historical_fetcher`` abgesetzt, bevor der Sweep iteriert.
 
     Issue #1363 (GH #1259) — mit NACHBEDINGUNG: die Spanne wird vorher/nachher gemessen (``span_fn``,
