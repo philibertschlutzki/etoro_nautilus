@@ -434,8 +434,14 @@ def _candles_to_arrow_table(
     size_prec: int,
     start_dt: datetime,
     interval: str = DEFAULT_INTERVAL,
+    asof_ns: int | None = None,
 ) -> pa.Table | None:
     """Konvertiert Candle-Daten DIREKT in eine PyArrow-Table mit FixedSizeBinary(16).
+
+    Issue #1373 (Pitfall #495): mit ``asof_ns`` (Zeitpunkt der API-Antwort) werden unfertige Kerzen
+    (``candle_start + interval > asof_ns``) NICHT geschrieben — ihr Teil-Close läge als
+    ``candle_end − 1 ns`` nach dem Abrufzeitpunkt. Die Zahl wird als ``n_incomplete_dropped`` geloggt und
+    als Event ``INCOMPLETE_CANDLES_DROPPED`` gemeldet. ``asof_ns=None`` ⇒ kein Filter (bit-identisch).
 
     Issue #1330 (GH #1224): schreibt je Kerze eine geordnete O/L/H/C-Tick-Sequenz statt eines
     Einzeltickers auf dem Close — sonst trägt jede resamplete Bar keine Intrabar-Information
@@ -468,6 +474,7 @@ def _candles_to_arrow_table(
     # Die eToro-API liefert Kerzen `desc` (jüngste zuerst); der open-Fallback ("Close der
     # Vorgängerkerze", Fix Punkt 1) braucht chronologisch aufsteigende Reihenfolge.
     parsed: list[tuple[int, float | None, float, float, float, float | None]] = []
+    n_incomplete_dropped = 0
     for c in candles:
         try:
             c_low = {k.lower(): v for k, v in c.items()}
@@ -506,11 +513,24 @@ def _candles_to_arrow_table(
 
             if ts_ns < min_ts_ns:
                 continue
+            if asof_ns is not None and ts_ns + interval_ns > asof_ns:
+                n_incomplete_dropped += 1
+                continue
 
             parsed.append((ts_ns, open_, low, high, close, volume))
         except Exception as e:
             log.debug(f"[api_backfiller] Candle-Parse-Fehler ({symbol}): {e}")
             continue
+
+    if n_incomplete_dropped:
+        log.info(f"[api_backfiller] {symbol}: n_incomplete_dropped={n_incomplete_dropped} ({interval}) — "
+                 f"unfertige Kerze(n) nicht geschrieben (Issue #1373).")
+        try:
+            from automation.log_manager import emit_execution_event
+            emit_execution_event(log, "INCOMPLETE_CANDLES_DROPPED", {
+                "symbol": symbol, "interval": interval, "n_incomplete_dropped": n_incomplete_dropped})
+        except Exception:  # pragma: no cover - Telemetrie darf den Abruf nie stoppen
+            pass
 
     if not parsed:
         return None
@@ -995,8 +1015,10 @@ async def run_backfill(
                     await asyncio.sleep(0.5)
                     continue
 
+                _asof_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)   # Zeitpunkt der API-Antwort
                 table = _candles_to_arrow_table(
-                    candles, symbol, price_prec, size_prec, filter_start_dt, interval=DEFAULT_INTERVAL
+                    candles, symbol, price_prec, size_prec, filter_start_dt, interval=DEFAULT_INTERVAL,
+                    asof_ns=_asof_ns,
                 )
                 if table is None or len(table) == 0:
                     log.debug(f"[api_backfiller] {symbol}: Leere Table nach Konvertierung.")

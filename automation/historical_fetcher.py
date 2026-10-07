@@ -613,7 +613,8 @@ async def _fetch_symbol(
         if not candles:
             continue
         table = _candles_to_arrow_table(
-            candles, symbol, price_prec, size_prec, target_start, interval=interval
+            candles, symbol, price_prec, size_prec, target_start, interval=interval,
+            asof_ns=int(datetime.now(timezone.utc).timestamp() * 1e9),   # Issue #1373: unfertige Kerzen nicht schreiben
         )
         if table is None or len(table) == 0:
             log.warning(f"[{symbol}] {interval}: Leere Arrow-Table nach Konvertierung.")

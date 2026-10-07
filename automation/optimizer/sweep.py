@@ -791,11 +791,18 @@ def check_catalog_freshness(newest_ns: int | None, *, max_staleness_h: float = M
         return {"passed": None, "age_h": None, "max_staleness_h": max_staleness_h, "severity": "blocking",
                 "reason": "NEWEST_TICK_UNKNOWN"}
     age_h = (now.timestamp() - newest_ns / 1e9) / 3600.0
+    newest_utc = dt.datetime.fromtimestamp(newest_ns / 1e9, tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Issue #1373 (Pitfall #495) — ein Tick NACH dem Abrufzeitpunkt (negatives Alter) ist eine unfertige Kerze:
+    # ein Befund, kein PASS.
+    if age_h < 0:
+        return {"passed": False, "age_h": round(age_h, 2), "max_staleness_h": max_staleness_h,
+                "severity": "blocking", "newest_utc": newest_utc, "reason_code": "FUTURE_TICK",
+                "rejection_code": "REJECT_FUTURE_TICK",
+                "reason": f"REJECT_FUTURE_TICK: jüngster OneHour-Tick liegt {-age_h:.2f} h in der Zukunft "
+                          f"(unfertige Kerze, FUTURE_TICK)"}
     passed = age_h <= max_staleness_h
     return {"passed": passed, "age_h": round(age_h, 2), "max_staleness_h": max_staleness_h,
-            "severity": "blocking",
-            "newest_utc": dt.datetime.fromtimestamp(newest_ns / 1e9, tz=dt.timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"),
+            "severity": "blocking", "newest_utc": newest_utc,
             "reason": None if passed else
             f"REJECT_DATA_STALE: jüngster OneHour-Tick {age_h:.1f} h alt > {max_staleness_h:.0f} h"}
 
@@ -3532,8 +3539,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             }, level=logging.INFO if _fresh["passed"] is not False else logging.ERROR)
             if _fresh["passed"] is False:
                 _stale_syms.append(_sym)
-                _symbols_rejected.append({"symbol": _sym, "reason": "REJECT_DATA_STALE",
-                                          "detail": _fresh["reason"]})
+                _rejection = {"symbol": _sym, "reason": "REJECT_DATA_STALE", "detail": _fresh["reason"]}
+                if _fresh.get("rejection_code"):          # Issue #1373: REJECT_FUTURE_TICK
+                    _rejection["reason"] = _fresh["rejection_code"]
+                _symbols_rejected.append(_rejection)
                 _log_fresh.error("[#1363] %s: %s", _sym, _fresh["reason"])
         if _stale_syms:
             syms = [s for s in syms if s not in _stale_syms]
