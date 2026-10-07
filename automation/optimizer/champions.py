@@ -349,12 +349,18 @@ def _params_schema_version(strategy: str) -> str | None:
     ``params``-Vektor strukturell inkompatibel, weil ``store_champion``/``resolve_params`` ihn dann
     gegen einen anderen Suchraum anwenden würden). ``None`` bei unbekannter Strategie (ein reines
     Store-Housekeeping-Feld darf nie crashen)."""
+    from automation import bar_axis
     from automation.optimizer import bounds
     try:
         keys = sorted(bounds.extract_numeric_bounds(strategy).keys())
     except ValueError:
         return None
-    return ",".join(keys)
+    # Issue #1383 (GH #1285) — "params_schema_version +1 wegen der neuen Bound-Tabellen": diese Signatur ist (wie
+    # in #1351 dokumentiert) KEIN Config-Schlüssel, sondern aus dem Suchraum abgeleitet. Die Stunden-Signatur bleibt
+    # bit-identisch (die Parameter-Namen ändern sich nicht); eine Nicht-Stunden-Achse trägt ihre Achse in der
+    # Signatur — ein Champion von der Tagesachse ist damit versionsfremd zu jedem Stunden-Champion.
+    axis_component = bar_axis.fingerprint_component()
+    return ",".join(keys) + (f"|{axis_component}" if axis_component else "")
 
 
 def _load_tournament_cfg(base_cfg: Path | None = None) -> dict:

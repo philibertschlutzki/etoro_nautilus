@@ -59,7 +59,8 @@ from automation.optimizer import wallclock_guard
 from automation.optimizer import symbol_coverage
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
-    load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
+    load_continuous_bar_invalid_strategies, load_strategy_bar_axes,
+    age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
     bar_quality_profile, diagnose_symbol_degeneracy, record_diagnosed_pair,
 )
 from automation.log_manager import (
@@ -2007,6 +2008,10 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     # 24/7-Bar-Semantik strukturell ungültig ist (z. B. GapContinuation Variante A — kein echter
     # Overnight-Gap ohne Handelspausen). Deklarativ aus strategies.json, leer ⇒ bit-identisch.
     continuous_bar_invalid = load_continuous_bar_invalid_strategies()
+    # Issue #1383 (GH #1285) — Strategien ohne die aktive Bar-Achse in ``bar_axes`` werden mit Event
+    # ``STRATEGY_AXIS_SKIPPED`` übersprungen (nie still). Fehlender Key ⇒ nur OneHour ⇒ auf der Stundenachse unberührt.
+    _active_axis_name = bar_axis.active_axis_name()
+    _strategy_bar_axes = load_strategy_bar_axes()
 
     # Issue #942 (Katalog A) — INSUFFICIENT_HISTORY hängt NUR von available_bars/config['walk_forward']
     # ab (gate.is_symbol_tunable Zweig (a)), NICHT von n_params/strategy — für ein datenknappes
@@ -2021,6 +2026,15 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
         # Issue #698 — VOR jeder Symbol-Enumeration: eine auf dieser Bar-Semantik strukturell
         # ungültige Strategie überspringt ALLE Symbole in EINEM Schritt (kein 16/180-Trial-Budget
         # je Symbol) und fällt im sweep_completed-Event unter strategies_skipped.
+        _axes_of_strategy = _strategy_bar_axes.get(strategy)
+        if _axes_of_strategy is not None and _active_axis_name not in _axes_of_strategy:
+            emit_execution_event(log, "STRATEGY_AXIS_SKIPPED", {
+                "strategy": strategy, "bar_axis": _active_axis_name, "bar_axes": sorted(_axes_of_strategy),
+                "reason": "SKIPPED_AXIS_NOT_SUPPORTED",
+            })
+            log.warning("⏭️  %s vollständig übersprungen (Bar-Achse %s nicht in bar_axes=%s, Issue #1383: "
+                        "SKIPPED_AXIS_NOT_SUPPORTED).", strategy, _active_axis_name, sorted(_axes_of_strategy))
+            continue
         if strategy in continuous_bar_invalid:
             emit_execution_event(log, "STRATEGY_INVALID_ON_CONTINUOUS_BARS", {
                 "strategy": strategy,
@@ -5518,7 +5532,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # Strategie, die auf der kontinuierlichen 24/7-Bar-Semantik strukturell ungültig ist
             # (siehe enumerate_tunable_pairs), HAT einen Suchraum UND wäre für Symbole eligibel —
             # der generische Fallback würde sie sonst fälschlich als NO_ELIGIBLE_SYMBOLS ausweisen.
-            if s in continuous_bar_invalid:
+            _axes_s = load_strategy_bar_axes().get(s)
+            if _axes_s is not None and bar_axis.active_axis_name() not in _axes_s:
+                reason = "SKIPPED_AXIS_NOT_SUPPORTED"
+            elif s in continuous_bar_invalid:
                 reason = "SKIPPED_INVALID_ON_CONTINUOUS_BARS"
             else:
                 reason = "NO_SEARCH_SPACE" if not strategy_has_search_space(s) else "NO_ELIGIBLE_SYMBOLS"
