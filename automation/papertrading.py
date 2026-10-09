@@ -35,7 +35,8 @@ def assert_demo_environment(environment: str | None) -> None:
     if env != "demo":
         raise PaperTradingError(
             f"--papertrading verweigert: ETORO_ENV={environment!r} zeigt nicht auf das Demo-Konto. "
-            f"Paper-Trading handelt ausschliesslich mit ETORO_ENV=demo und fällt nie auf ein echtes Konto zurück.")
+            f"Gehandelt wird ausschliesslich im Demo-Konto (fest verdrahtet); ETORO_ENV ist kein Schalter, "
+            f"bitte entfernen.")
 
 
 def measure_depth_days(catalog_path: Path, symbols: list[str] | None = None) -> float:

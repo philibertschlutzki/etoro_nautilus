@@ -92,7 +92,6 @@ pip install -r automation/requirements.txt
 ETORO_API_KEY=dein_api_key
 ETORO_USER_KEY=dein_user_key
 MOMENTUM_LS_USERNAME=etoro_username_des_smart_portfolios   # nur für universe_fetcher
-ETORO_CONFIRM_LIVE=1                                       # NUR setzen, wenn Live-Trading bewusst aktiviert wird
 ```
 
 > **Hinweis:** `MOMENTUM_LS_USERNAME` ist der **öffentliche** eToro-Benutzername des kopierten Smart Portfolios (z. B. `OutSmartNSDQ`), **nicht** dein eigener.
@@ -163,7 +162,7 @@ python3 automation/api_backfiller.py --days 7     # 7-Tage-Backfill
 python3 automation/historical_fetcher.py --months 12   # Deep Backfill (Erstbefüllung)
 python3 automation/catalog_service.py             # 24/7-Tick-Sammlung (systemd-fähig)
 
-# Live-Bot manuell (erfordert ETORO_CONFIRM_LIVE=1; ohne das Flag automatisch Dry-Run)
+# Bot manuell (handelt fest im eToro-Demo-Konto; `--dry-run` platziert keine Orders)
 python3 automation/momentum_ls_run.py \
   --universe data/universe/momentum_ls.json \
   --tournament logs/tournament_$(date +%Y-%m-%d).json
@@ -297,21 +296,13 @@ Der Live-Bot (`momentum_ls_run.py`) startet als **detached Subprozess** und lies
 
 **Betriebsmodell: Forward-Evidenz durch Demo-Inkubation (Issue #1368, Default aus):** Die volle Walk-Forward-Geometrie ist frühestens 2027-09 erreichbar, und ein 60-Tage-Holdout zertifiziert nur Sharpe ≥ 4 p. a. (#1367). Mit `tournament.json["incubation"]["enabled"] = true` führt Phase 5b (vor Phase 5) je Paar die Zustandsmaschine `CANDIDATE → INCUBATING (Demo) → LIVE_SMALL → LIVE_FULL` (Rückfall jederzeit → `RETIRED`; `data/state/deployment_stages.json`):
 1. **Selektion:** eigener Turnierlauf mit kürzerer Geometrie (`incubation.walk_forward`, IS 40 + Embargo 3 + 3 × 12 OOS = 79 Tage), dieselben Eligibility-Gates, Rangfolge nach OOS-PSR, höchstens `max_concurrent` (3) Paare. Die Parameter werden eingefroren (`data/state/incubation/incubation_<strategy>_<symbol>.json`, `params_sha256` = derselbe Fingerabdruck wie `live_params_sha256`).
-2. **Demo-Betrieb:** `momentum_ls_run.py --incubation --tournament data/state/incubation_whitelist.json` — eigene Instanz mit eigener Sperre (`incubation_bot.lock`) und eigenem Hochwasserstand; **startet nie im `real`-Environment** (der Orchestrator setzt `ETORO_ENV=demo`, der Bot prüft es vor jedem weiteren Schritt, sonst Exit-Code 6). Je Session-Bar (#1361-Achse) schreibt ein Beobachter die Netto-Rendite der Paar-Equity ins Evidenz-Ledger `data/state/incubation/<strategy>_<symbol>.jsonl`; eine Parameteränderung beginnt ein neues Ledger (alte Evidenz zählt nicht).
+2. **Demo-Betrieb:** `momentum_ls_run.py --incubation --tournament data/state/incubation_whitelist.json` — eigene Instanz mit eigener Sperre (`incubation_bot.lock`) und eigenem Hochwasserstand; **startet nie im `real`-Environment** (Demo ist fest verdrahtet, der Bot prüft ein abweichendes `ETORO_ENV` vor jedem weiteren Schritt, sonst Exit-Code 6). Je Session-Bar (#1361-Achse) schreibt ein Beobachter die Netto-Rendite der Paar-Equity ins Evidenz-Ledger `data/state/incubation/<strategy>_<symbol>.jsonl`; eine Parameteränderung beginnt ein neues Ledger (alte Evidenz zählt nicht).
 3. **Sequenzieller Test** (`optimizer/sequential.py`, wöchentlich, höchstens `k_max` = 26 Prüfzeitpunkte): Promotion, wenn `PSR_boot(Ledger) ≥ 1 − 0,05 / (26 · 3) = 0,99936` **und** die Deployment-Grenze zulässt (alle 13 Klauseln); Rückzug, wenn der Test auf SR < 0 auf demselben Niveau anschlägt, nach 26 Prüfungen ohne Entscheidung oder wenn der Verteilungs-Auslöser (#1362) feuert. Simulation unter H0 (10 000 Familien, K = 26, n = 3): familienweite Fehlpromotionsrate ≈ 0,02 ≤ 0,05; bei wahrer Sharpe 2,0 p. a. promovieren ≈ 8 % innerhalb von 26 Wochen, Median 15 Prüfzeitpunkte (≈ 525 Session-Bars).
 4. **Kapital:** Mit aktivierter Inkubation ist die Deployment-Grenze notwendig, aber nicht hinreichend — Phase 5 whitelistet nur Paare in `LIVE_SMALL`/`LIVE_FULL` mit unverändertem Fingerabdruck (`STAGE-REJECT`: `stage_not_live`/`stage_params_changed`). `LIVE_SMALL` handelt mit `capital_fraction_small` (0,25) der regulären Allokation (`MomentumLSAllocator(symbol_capital_fractions=…)`), bis `t_full_bars` (420) Echtgeld-Bars dieselbe Schranke erneut erfüllen ⇒ `LIVE_FULL`. Die Schwelle sinkt nicht — die Stichprobe wächst.
 
 > 🔒 **Live-Trading-Sicherheitsregel (absolut):** **Null** OOS-taugliche Paare verhindern jeden Live-Deploy. Ein bestandenes Aggregat-OOS kann ein Per-Pair-Versagen **niemals** überstimmen. Kein Symbol-Strategie-Paar wird live geschaltet, solange seine Strategie nicht im Turnier OOS-tauglich verifiziert wurde (`DEPLOY-GATE-REJECT`-Filter in `_build_bots_config`).
 
-**Dreistufiger Echtgeld-Interlock** (alle drei nötig, sonst `sys.exit(1)`):
-
-| Stufe | Parameter | Erwarteter Wert |
-|-------|-----------|-----------------|
-| 1 | `environment` | `"real"` |
-| 2 | `dry_run` | `False` |
-| 3 | `ETORO_CONFIRM_LIVE` | `"1"` (Umgebungsvariable / `.env`) |
-
-Fehlt eine Bedingung, läuft der Bot automatisch im **Dry-Run** (keine echten Orders). Notfall-Abschaltung, Graceful Shutdown und State-Integrität: [`manuals/run_bot_manual.md`](manuals/run_bot_manual.md), Kapitel 8.
+**Nur Demo-Konto:** Das Konto ist fest das eToro-Demo-Konto (Paper-Trading); `ETORO_ENV`, `ETORO_DRY_RUN` und `ETORO_CONFIRM_LIVE` sind keine Schalter mehr. Zeigt `ETORO_ENV` auf etwas anderes als `demo`, bricht jeder Einstiegspunkt ab (Stolperdraht gegen ein künftiges Echtgeld-Konto). `daily_orchestrator.py --papertrading` und `logs/executor.sh --papertrading` nutzen die real vorhandene Datentiefe; bei zu wenig Daten endet der Lauf sauber ohne Handel. Notfall-Abschaltung, Graceful Shutdown und State-Integrität: [`manuals/run_bot_manual.md`](manuals/run_bot_manual.md), Kapitel 8.
 
 **Kapital-Allocator (`MomentumLSAllocator`):**
 - **No-Interference:** existiert eine offene Position für ein Symbol → Allokation `0.0`.

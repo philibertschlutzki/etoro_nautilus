@@ -44,18 +44,20 @@ from automation.incubation import (
 # Issue #1368 (GH #1265) — Exit-Code, wenn eine Inkubation in einem anderen als dem Demo-Environment starten soll.
 EXIT_INCUBATION_NOT_DEMO = 6
 
+# Das Konto ist fest das eToro-Demo-Konto (10k USD Paper-Trading); Orders werden dort wirklich platziert
+# (``--dry-run`` bleibt als reiner CLI-Schalter). ETORO_ENV/ETORO_DRY_RUN/ETORO_CONFIRM_LIVE sind KEINE
+# Schalter mehr: ETORO_ENV wird nur noch als Stolperdraht gelesen — alles ausser "demo" bricht ab.
 ETORO_EXECUTION = {
-    "environment": os.getenv("ETORO_ENV", "demo"),
-    "dry_run": os.getenv("ETORO_DRY_RUN", "1") == "1",
+    "environment": os.getenv("ETORO_ENV", "demo").strip().lower() or "demo",
+    "dry_run": False,
     "enable_trailing_stop": os.getenv("ETORO_ENABLE_TSL", "0") == "1"
 }
 
 def _check_live_safety_interlock(log):
+    """Harter Abbruch, falls irgendetwas auf ein echtes Konto zeigt (es gibt auf Jahre keines)."""
     environment = ETORO_EXECUTION.get('environment', 'demo')
-    dry_run = ETORO_EXECUTION.get('dry_run', True)
-    confirm_live = os.getenv('ETORO_CONFIRM_LIVE', '0').strip() == '1'
-    if environment == 'real' and not dry_run and not confirm_live:
-        log.critical('SAFETY INTERLOCK TRIGGERED')
+    if environment != 'demo':
+        log.critical(f"SAFETY INTERLOCK: Environment {environment!r} ist nicht 'demo' — Handel nur im Demo-Konto.")
         sys.exit(1)
 
 logging.basicConfig(

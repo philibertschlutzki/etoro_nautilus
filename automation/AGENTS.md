@@ -415,7 +415,7 @@ Kernmetriken auf Round-Trip-Ebene: `total_trades` == n_positions, `win_rate` == 
 Safety-Interlock: Zweistufiges Fail-Closed-Verhalten:
 1. **Per-Pair Check:** Es wird zwingend geprüft, ob `fully_eligible_pairs > 0` und `winner_count > 0`. Falls nicht, bricht die Phase hart ab (`LIVE_DEPLOY_ABORTED`).
 2. **Aggregat-OOS Evaluierung:** Danach muss der Aggregat-Gewinner ein gültiges und bestandenes OOS-Ergebnis vorweisen (`oos_evaluated` und `oos_eligible` == `True`).
-Zusätzlicher Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`. Stale-Check: Prüft ob Universe-Daten älter als 24 Stunden sind.
+Zusätzlicher Interlock: Das Konto ist fest `demo`; ein abweichendes `ETORO_ENV` → `sys.exit(1)` (`ETORO_DRY_RUN`/`ETORO_CONFIRM_LIVE` entfallen). Stale-Check: Prüft ob Universe-Daten älter als 24 Stunden sind.
 
 ### 11.1 Die Deployment-Grenze (Issue #993, P0-blocking)
 
@@ -486,7 +486,6 @@ Ein Trip flattet alle Strategien (`node.trader.market_exit_strategy` je `strateg
 | `ETORO_API_KEY` | Ja | alle Dienste |
 | `ETORO_USER_KEY` | Ja | alle Dienste |
 | `MOMENTUM_LS_USERNAME` | Ja (nur fetch) | universe_fetcher.py |
-| `ETORO_CONFIRM_LIVE` | nur Live | momentum_ls_run.py Safety-Interlock |
 
 Installation: `pip install -r automation/requirements.txt` (nautilus_trader>=1.226.0, aiohttp, websockets, pyarrow≥16, pandas, pytest). systemd-Unit für `catalog_service.py` mit `Restart=always`, `RestartSec=5`.
 

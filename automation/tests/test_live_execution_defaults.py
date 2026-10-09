@@ -15,7 +15,7 @@ class TestLiveExecutionDefaults(unittest.TestCase):
         from automation.momentum_ls_run import ETORO_EXECUTION
 
         self.assertEqual(ETORO_EXECUTION["environment"], "demo")
-        self.assertTrue(ETORO_EXECUTION["dry_run"])
+        self.assertFalse(ETORO_EXECUTION["dry_run"])
         self.assertFalse(ETORO_EXECUTION["enable_trailing_stop"])
 
 if __name__ == '__main__':

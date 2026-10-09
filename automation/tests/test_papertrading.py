@@ -59,9 +59,62 @@ def test_orchestrator_flag_and_real_abort(monkeypatch):
         orch._enter_papertrading(orch.logging.getLogger("t"))
 
 
-def test_enter_papertrading_forces_demo_and_live_orders(monkeypatch):
+def test_enter_papertrading_needs_no_env_switch(monkeypatch):
+    import os
     monkeypatch.delenv("ETORO_ENV", raising=False)
+    monkeypatch.delenv("ETORO_DRY_RUN", raising=False)
     monkeypatch.setattr(orch, "load_dotenv", lambda *_a, **_k: None)
     orch._enter_papertrading(orch.logging.getLogger("t"))
-    import os
-    assert os.environ["ETORO_ENV"] == "demo" and os.environ["ETORO_DRY_RUN"] == "0"
+    assert "ETORO_ENV" not in os.environ and "ETORO_DRY_RUN" not in os.environ
+
+
+# ─── End-to-End mit Mocks (keine eToro-Keys im CI): zu wenig Daten ⇒ sauberer No-Trade-Lauf ───────────
+
+def _stub_main(monkeypatch, tmp_path, *, depth_days):
+    import sys
+    monkeypatch.setattr(sys, "argv", ["daily_orchestrator.py", "--papertrading", "--offline"])
+    monkeypatch.setattr(orch, "load_dotenv", lambda *_a, **_k: None)
+    monkeypatch.setattr(orch, "IMPORT_PATH", tmp_path / "imp")
+    monkeypatch.setattr(orch, "REPORTS_DIR", tmp_path / "rep")
+    monkeypatch.setattr(orch, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(orch, "_setup_orchestrator_logging", lambda: orch.logging.getLogger("e2e"))
+    monkeypatch.setattr(orch, "cleanup_old_logs", lambda *_a, **_k: None)
+    monkeypatch.setattr(orch, "logs_dir", lambda: tmp_path / "logs")
+    monkeypatch.setattr(orch, "phase1_universe_and_mapping", lambda *a, **k: {})
+    monkeypatch.setattr(orch, "phase2_data_acquisition", lambda *a, **k: {})
+    monkeypatch.setattr(pt, "measure_depth_days", lambda *_a, **_k: depth_days)
+    monkeypatch.delenv("ETORO_ENV", raising=False)
+    calls = []
+    monkeypatch.setattr(orch, "phase5b_incubation", lambda *a, **k: calls.append(k) or {"status": "no_deploy"})
+    monkeypatch.setattr(orch, "phase5_live_deployment", lambda *a, **k: pytest.fail("Phase 5 darf entfallen"))
+    return calls
+
+
+def test_e2e_too_little_data_is_a_clean_no_trade_run(monkeypatch, tmp_path):
+    calls = _stub_main(monkeypatch, tmp_path, depth_days=10.0)
+    assert orch.main() == 0
+    assert calls == []                                   # kein Bot, keine Orders
+
+
+def test_e2e_enough_data_hands_derived_geometry_to_incubation(monkeypatch, tmp_path):
+    calls = _stub_main(monkeypatch, tmp_path, depth_days=99.0)
+    assert orch.main() == 0
+    (kw,) = calls
+    assert kw["inc_cfg_override"]["enabled"] is True
+    assert kw["inc_cfg_override"]["walk_forward"]["splits"] == pt.SPLITS
+
+
+def test_e2e_real_env_aborts_before_any_phase(monkeypatch, tmp_path):
+    _stub_main(monkeypatch, tmp_path, depth_days=99.0)
+    monkeypatch.setenv("ETORO_ENV", "real")
+    monkeypatch.setattr(orch, "phase1_universe_and_mapping", lambda *a, **k: pytest.fail("kein Netzzugriff"))
+    assert orch.main() == 2
+
+
+def test_phase5b_without_winners_starts_no_bot(tmp_path, monkeypatch):
+    """Selektion ohne Gewinner (wenig Daten) ⇒ Zyklus läuft durch, es wird kein Demo-Bot gestartet."""
+    from automation.tests.test_issue_1368_incubation import _orch_env, _Popen
+    o = _orch_env(tmp_path, monkeypatch)
+    popen = _Popen()
+    res = o.phase5b_incubation(o.logging.getLogger("t"), popen=popen, selection_fn=lambda *a: None)
+    assert res["status"] != "error" and popen.calls == []
