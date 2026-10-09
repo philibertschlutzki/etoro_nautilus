@@ -174,12 +174,12 @@ log = logging.getLogger("api_backfiller")
 
 # ─── Precision-Heuristik (aus automation.utils — kein doppelter Code) ────────
 try:
-    from automation.utils import _fallback_precisions
+    from automation.utils import _fallback_precisions, apply_price_precision_floor
 except ImportError:
     # Direkter Import wenn automation/ nicht im sys.path ist
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from automation.utils import _fallback_precisions
+    from automation.utils import _fallback_precisions, apply_price_precision_floor
 
 
 # ─── FixedSizeBinary(16) Encoding ────────────────────────────────────────────
@@ -1029,6 +1029,7 @@ async def run_backfill(
                     f"[api_backfiller] {symbol}: Precision-Fallback "
                     f"price_prec={price_prec}, size_prec={size_prec}"
                 )
+            price_prec, size_prec = apply_price_precision_floor(symbol or "", (price_prec, size_prec))
 
             try:
                 # Issue #1363 (GH #1259) Fix Punkt 1 — mit lokalem Bestand: Vorwärts-Schritt bis zur
@@ -1107,7 +1108,8 @@ async def _oneday_forward_steps(session, etoro_id_to_symbol, api_precisions, spe
         latest = _get_latest_ts(dest)
         if latest is None:
             continue
-        price_prec, size_prec = api_precisions.get(etoro_id) or _fallback_precisions(symbol or "")
+        price_prec, size_prec = apply_price_precision_floor(
+            symbol or "", api_precisions.get(etoro_id) or _fallback_precisions(symbol or ""))
         try:
             candles = await fetch_forward_candles(
                 session, etoro_id, symbol, latest, api_key=api_key, user_key=user_key,

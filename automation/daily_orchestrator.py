@@ -81,6 +81,12 @@ UNIVERSE_PATH    = PROJECT_ROOT / "data" / "universe" / "momentum_ls.json"
 def logs_dir() -> Path:
     return Path(os.environ.get("ETORO_LOGS_DIR", str(PROJECT_ROOT / "logs")))
 
+def latest_tournament_path(directory: Path | None = None) -> Path | None:
+    """Jüngste ``tournament_YYYY-MM-DD.json`` im Logs-Verzeichnis (Datum im Namen sortiert lexikografisch)."""
+    candidates = sorted((directory or logs_dir()).glob("tournament_????-??-??.json"))
+    return candidates[-1] if candidates else None
+
+
 REPORTS_DIR      = PROJECT_ROOT / "reports"
 TOURNAMENT_PATH  = logs_dir() / f"tournament_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.json"
 ENV_FILE         = PROJECT_ROOT / ".env"
@@ -1027,6 +1033,11 @@ def phase5_live_deployment(
 
     tournament_path = tournament_result.get("tournament_path", str(TOURNAMENT_PATH))
     if not Path(tournament_path).exists():
+        if no_deploy:
+            # Ohne Deployment gibt es nichts abzusichern: kein Tournament ist hier eine Warnung, kein Fehler.
+            log.warning(f"[Phase 5] Tournament-Datei nicht gefunden: {tournament_path} — --no-deploy, "
+                        f"Phase 5 entfällt (Exit 0).")
+            return 0
         log.error(f"[Phase 5] Tournament-Datei nicht gefunden: {tournament_path}")
         return 1
 
@@ -1562,7 +1573,10 @@ def main() -> int:
         )
         if args.skip_backtest:
             log.info("[Phase 3+4] --skip-backtest: Matrix-Backtesting übersprungen — lade bestehendes Tournament.")
-            tournament_result = {"tournament_path": str(TOURNAMENT_PATH), "exit_code": 0}
+            _tp = TOURNAMENT_PATH if TOURNAMENT_PATH.exists() else (latest_tournament_path() or TOURNAMENT_PATH)
+            if _tp != TOURNAMENT_PATH:
+                log.warning(f"[Phase 3+4] Tournament von heute fehlt — verwende das jüngste vorhandene: {_tp.name}")
+            tournament_result = {"tournament_path": str(_tp), "exit_code": 0}
         else:
             tournament_result = phase3_4_backtest_and_tournament(log)
         # Issue #1368 — Phase 5b VOR Phase 5: eine heutige Promotion (LIVE_SMALL) ist im selben Lauf

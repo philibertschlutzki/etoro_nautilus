@@ -52,6 +52,7 @@ try:
         _candles_to_arrow_table,
         _merge_and_save,
         _fallback_precisions,
+        apply_price_precision_floor,
         _load_etoro_id_map,
         fetch_precisions_from_api,
         CatalogSchemaVersionMismatch,
@@ -63,6 +64,7 @@ except ImportError:
         _candles_to_arrow_table,
         _merge_and_save,
         _fallback_precisions,
+        apply_price_precision_floor,
         _load_etoro_id_map,
         fetch_precisions_from_api,
         CatalogSchemaVersionMismatch,
@@ -713,6 +715,7 @@ async def run_historical_fetch(
                 price_prec, size_prec = api_precisions[etoro_id]
             else:
                 price_prec, size_prec = _fallback_precisions(symbol)
+            price_prec, size_prec = apply_price_precision_floor(symbol, (price_prec, size_prec))
 
             try:
                 ok = await _fetch_symbol(
@@ -1433,7 +1436,8 @@ async def run_oneday_full_window(
             log.warning(f"[historical_fetcher] Precision-Fetch Fehler: {exc} — nutze Fallback.")
             precisions = {}
         for eid, sym in sorted(targets.items(), key=lambda x: x[1]):
-            price_prec, size_prec = precisions.get(eid) or _fallback_precisions(sym)
+            price_prec, size_prec = apply_price_precision_floor(
+                sym, precisions.get(eid) or _fallback_precisions(sym))
             info = await fetch_oneday_full_window(
                 session, eid, sym, price_prec, size_prec, api_key=api_key, user_key=user_key)
             if info is not None:
