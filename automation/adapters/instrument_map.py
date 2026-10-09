@@ -4,7 +4,7 @@ Zentrale Zuordnung der eToro internen IDs zu den Nautilus InstrumentIds.
 Wird automatisch durch dev_scripts/auto_map_instruments.py aktualisiert.
 """
 
-ETORO_INSTRUMENTS = {
+_LEGACY_INSTRUMENTS = {
     "22": "NATGAS.ETORO",
     "42": "USDZAR.ETORO",
     "62": "USDTRY.ETORO",
@@ -83,3 +83,21 @@ ETORO_INSTRUMENTS = {
     "100421": "AERO.ETORO",
     "100446": "HYPE.ETORO",
 }
+
+
+def _load_instruments() -> dict[str, str]:
+    """``automation/config/instrument_map.json`` ist die Source of Truth (170 Instrumente); die Legacy-Liste
+    oben ist nur noch Rückfall, falls die Datei fehlt. Vorher kannte der Daten-/Exec-Client nur die 77
+    Legacy-Einträge, und Inkubations-Kandidaten wie MOD/CRS wurden mit "no instrument found" nicht abonniert."""
+    import json
+    from pathlib import Path
+    out = dict(_LEGACY_INSTRUMENTS)
+    try:
+        raw = json.loads((Path(__file__).resolve().parent.parent / "config" / "instrument_map.json").read_text("utf-8"))
+        out.update({str(k): v["symbol"] for k, v in (raw.get("instruments") or {}).items() if v.get("symbol")})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return out
+
+
+ETORO_INSTRUMENTS = _load_instruments()
