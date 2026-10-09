@@ -56,7 +56,7 @@ from automation.disaster_stop import (
     format_sl_tag,
     parse_sl_pct_from_tags,
 )
-from automation.live_risk import compute_sizing_cap_correction
+from automation.live_risk import compute_sizing_cap_correction, risk_capped_notional
 from automation.log_manager import emit_execution_event
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
 from automation.session_windows import (
@@ -182,6 +182,10 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # invariants.check_sizing_cap_enforcement's max_overshoot_factor (dort UNVERAENDERT als reine
     # Abnahmemessung erhalten) durch einen expliziten, an der DURCHSETZUNG wirksamen Config-Key.
     sizing_cap_tolerance: float = 0.02
+    # Risiko je Trade: Notional so gedeckelt, dass der Verlust am Katastrophen-Stop (SL:<pct>) hoechstens
+    # diesen Anteil der Equity betraegt (0.01 = 1 %). Wirkt nur auf den Pfaden mit bekannter Equity (A
+    # Allocator, C trade_amount_pct) und nur bei weiten Stops; None/0 schaltet ihn ab.
+    max_risk_per_trade_frac: float | None = 0.01
     # Issue #1359 (GH #1255, P0) — Katastrophen-Stop. Defaults kommen aus
     # ``strategy_defaults.json['_disaster_stop']`` (via ``automation/disaster_stop.py``, EINE Quelle;
     # nicht im Suchraum). ``disaster_stop_mode``: ``broker_attribute`` (Live: nur der ``SL:``-Tag, der
@@ -1742,6 +1746,21 @@ class HourlyStrategyBase(Strategy):
                         f"Deckel {_cap_notional:.2f} USD) — auf Spielraum gekappt (#1209)."
                     )
                     trade_amount_usd = _headroom
+
+        # Risiko-Deckel je Trade (HourlyStrategyConfig.max_risk_per_trade_frac): Verlust am Katastrophen-Stop
+        # <= Anteil der Equity. Nur mit bereits bekannter Equity (Pfade A/C), kein zusaetzlicher Balance-Call.
+        if self.allocator is not None or _sizing_via_pct:
+            _risk_frac = getattr(self.config, "max_risk_per_trade_frac", None)
+            _stop_pct = compute_disaster_stop_pct(
+                self._stop_distance_at_entry_bps(bar), k_disaster=self._k_disaster,
+                disaster_stop_min_pct=self._disaster_stop_min_pct,
+                disaster_stop_max_pct=self._disaster_stop_max_pct)
+            _risk_cap = risk_capped_notional(equity=balance, stop_pct=_stop_pct, max_risk_fraction=_risk_frac)
+            if _risk_cap is not None and trade_amount_usd > _risk_cap:
+                self._log.warning(
+                    f"[{self.instrument_id}] RISK_CAP_HIT: {trade_amount_usd:.2f} USD -> {_risk_cap:.2f} USD "
+                    f"(Verlust am Stop {_stop_pct:.2%} <= {float(_risk_frac):.2%} der Equity {balance:.2f} USD)")
+                trade_amount_usd = _risk_cap
 
         MIN_TRADE_USD = 11.0
         if trade_amount_usd < MIN_TRADE_USD:
