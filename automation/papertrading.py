@@ -110,11 +110,87 @@ def profile_spec(depth_days: float, *, oos_floor_days: int = 1) -> dict:
                                "diagnostic_writeback_enabled": False}}
 
 
-def materialize_papertrading_profile(depth_days: float, *, project_root: Path | None = None,
-                                     oos_floor_days: int = 1) -> Path:
-    return config_profile.materialize(
-        PROFILE, project_root=project_root,
-        profiles={PROFILE: profile_spec(depth_days, oos_floor_days=oos_floor_days)})
+def materialize_papertrading_profile(depth_days: float | None = None, *, project_root: Path | None = None,
+                                     oos_floor_days: int = 1, spec: dict | None = None) -> Path:
+    spec = spec if spec is not None else profile_spec(depth_days, oos_floor_days=oos_floor_days)
+    return config_profile.materialize(PROFILE, project_root=project_root, profiles={PROFILE: spec})
+
+
+# ─── Tagesachse (OneDay): die API liefert je Intervall 1000 Kerzen — 1h reicht ~42-64 Tage zurück, 1d ~4 Jahre ───
+
+DAILY_EMBARGO_DAYS = 10
+DAILY_HOLDOUT_EMBARGO_DAYS = 8
+DAILY_SPLITS = 3
+DAILY_MIN_IS_DAYS = 120
+DAILY_MIN_HOLDOUT_DAYS = 60
+DAILY_MIN_OOS_SESSION_BARS = 91      # Produktions-Schwelle; darunter relaxed (RELAXED_MIN_OOS_SESSION_BARS)
+
+
+def measure_daily_depths(catalog_path: Path, symbols: list[str] | None = None) -> dict[str, float]:
+    """Kalender-Spanne (Tage) der OneDay-Dateien je Symbol."""
+    from automation.optimizer.sweep import _read_oneday_ts_events
+    cat = Path(catalog_path)
+    if symbols is None:
+        qt = cat / "data" / "quote_tick"
+        symbols = sorted(p.name for p in qt.iterdir() if p.is_dir()) if qt.is_dir() else []
+    out: dict[str, float] = {}
+    for sym in symbols:
+        ts = _read_oneday_ts_events(sym, cat)
+        if len(ts) >= 2:
+            out[sym] = (max(ts) - min(ts)) / 86_400e9
+    return out
+
+
+def derive_walk_forward_daily(depth_days: float) -> tuple[dict, int]:
+    """``(walk_forward, min_oos_session_bars)`` für die Tagesachse (1 Bar je Handelstag ≈ 5/7 je Kalendertag)."""
+    import math
+    usable = int(depth_days) - MARGIN_DAYS
+    for min_bars in (DAILY_MIN_OOS_SESSION_BARS, RELAXED_MIN_OOS_SESSION_BARS):
+        oos = math.ceil(min_bars * 7 / 5)
+        rest = usable - DAILY_EMBARGO_DAYS - DAILY_HOLDOUT_EMBARGO_DAYS - DAILY_SPLITS * oos
+        if rest >= DAILY_MIN_IS_DAYS + DAILY_MIN_HOLDOUT_DAYS:
+            is_days = max(DAILY_MIN_IS_DAYS, round(rest * 0.45))
+            return ({"is_window_days": is_days, "embargo_period_days": DAILY_EMBARGO_DAYS, "splits": DAILY_SPLITS,
+                     "oos_window_days": oos, "holdout_days": rest - is_days,
+                     "holdout_embargo_days": DAILY_HOLDOUT_EMBARGO_DAYS}, min_bars)
+    need = (DAILY_EMBARGO_DAYS + DAILY_HOLDOUT_EMBARGO_DAYS + DAILY_MIN_IS_DAYS + DAILY_MIN_HOLDOUT_DAYS
+            + DAILY_SPLITS * math.ceil(RELAXED_MIN_OOS_SESSION_BARS * 7 / 5) + MARGIN_DAYS)
+    raise PaperTradingError(f"OneDay-Tiefe {depth_days:.1f} d reicht nicht (benötigt mindestens {need} d).")
+
+
+def daily_profile_spec(depth_days: float) -> dict:
+    wf, min_bars = derive_walk_forward_daily(depth_days)
+    return {"backtest.json": {"bar_axis": "OneDay", "max_handelstage": 5,
+                              "walk_forward": {**wf, "data_history_days": max(int(depth_days), 1)}},
+            "optimizer.json": {"time_box_bars": 5.0, "gate1_buffer_days": 0, "champion_enabled": False,
+                               "diagnostic_writeback_enabled": False,
+                               "min_oos_session_bars_per_fold": min_bars}}
+
+
+def plan_axis(catalog_path: Path, symbols: list[str] | None = None, *, floor: bool = False,
+              axis: str = "auto") -> dict:
+    """Wählt die Achse: ``auto`` nimmt die Stundenachse, wenn ihre Tiefe reicht, sonst die Tagesachse.
+    Rückgabe: ``{"axis", "depth", "n_symbols", "walk_forward", "spec"}``."""
+    if axis not in ("auto", "hourly", "daily"):
+        raise PaperTradingError(f"Unbekannte Achse {axis!r} (erlaubt: auto, hourly, daily).")
+    hourly_error = None
+    if axis in ("auto", "hourly"):
+        try:
+            depth, n, wf = plan_geometry(catalog_path, symbols, floor=floor)
+            return {"axis": "hourly", "depth": depth, "n_symbols": n, "walk_forward": wf,
+                    "spec": profile_spec(depth, oos_floor_days=wf["oos_window_days"])}
+        except PaperTradingError as exc:
+            if axis == "hourly":
+                raise
+            hourly_error = exc
+    depths = measure_daily_depths(catalog_path, symbols)
+    depth = min(depths.values()) if (floor and depths) else pick_depth(depths)
+    try:
+        spec = daily_profile_spec(depth)
+    except PaperTradingError as exc:
+        raise PaperTradingError(f"{hourly_error or 'Stundenachse nicht angefordert'}; Tagesachse: {exc}") from exc
+    return {"axis": "daily", "depth": depth, "n_symbols": len(depths),
+            "walk_forward": spec["backtest.json"]["walk_forward"], "spec": spec}
 
 
 def plan_geometry(catalog_path: Path, symbols: list[str] | None = None, *, floor: bool = False) -> tuple[float, int, dict]:
@@ -130,16 +206,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Paper-Trading-Overlay mit maximaler Datentiefe erzeugen")
     parser.add_argument("--symbols", default=None, help="Komma-Liste; Default: alle Katalog-Symbole")
     parser.add_argument("--catalog-path", default=str(config_profile.PROJECT_ROOT / "data" / "nautilus"))
+    parser.add_argument("--axis", default="auto", choices=["auto", "hourly", "daily"],
+                        help="auto: Stundenachse, wenn die 1h-Tiefe reicht, sonst Tagesachse (OneDay, ~4 Jahre)")
     args = parser.parse_args(argv)
     try:
         assert_demo_environment(os.environ.get("ETORO_ENV"))
         syms = [s for s in args.symbols.split(",") if s] if args.symbols else None
-        depth, n_syms, geometry = plan_geometry(Path(args.catalog_path), syms, floor=bool(syms))
-        overlay = materialize_papertrading_profile(depth, oos_floor_days=geometry["oos_window_days"])
+        plan = plan_axis(Path(args.catalog_path), syms, floor=bool(syms), axis=args.axis)
+        overlay = materialize_papertrading_profile(spec=plan["spec"])
     except (PaperTradingError, config_profile.ConfigProfileError) as exc:
         print(f"FEHLER: {exc}", file=sys.stderr)
         return 2
-    print(f"Datentiefe: {depth:.1f} d ({n_syms} Symbole); Geometrie: {geometry}", file=sys.stderr)
+    print(f"Achse: {plan['axis']}; Datentiefe: {plan['depth']:.1f} d ({plan['n_symbols']} Symbole); "
+          f"Geometrie: {plan['walk_forward']}", file=sys.stderr)
     print(overlay)
     return 0
 

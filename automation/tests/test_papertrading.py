@@ -192,3 +192,37 @@ def test_demo_order_check_full_cycle_with_fake_session():
         rc = asyncio.run(d.run_check("k", "u", place_test_order=True, symbol="BTC.ETORO", amount=50,
                                      out=msgs.append, session_factory=Session))
     assert rc == 0 and state["open"] == {} and any("Stufe 3" in x for x in msgs)
+
+
+# ─── Tagesachse: 1000 OneDay-Kerzen ≈ 4 Jahre ────────────────────────────────────────────────────
+
+def test_daily_geometry_fits_four_years_and_crypto_depth():
+    for depth in (1500.0, 1000.0):
+        wf, bars = pt.derive_walk_forward_daily(depth)
+        total = (wf["is_window_days"] + wf["embargo_period_days"] + wf["splits"] * wf["oos_window_days"]
+                 + wf["holdout_days"] + wf["holdout_embargo_days"])
+        assert total <= depth - pt.MARGIN_DAYS and bars in (91, 49)
+    with pytest.raises(pt.PaperTradingError, match="mindestens"):
+        pt.derive_walk_forward_daily(200.0)
+
+
+def test_daily_spec_sets_axis_and_stays_non_production(tmp_path):
+    root = tmp_path / "proj"
+    shutil.copytree(_REPO / "automation" / "config", root / "automation" / "config")
+    overlay = pt.materialize_papertrading_profile(project_root=root, spec=pt.daily_profile_spec(1400.0))
+    bt = json.loads((overlay / "backtest.json").read_text("utf-8"))
+    opt = json.loads((overlay / "optimizer.json").read_text("utf-8"))
+    assert bt["bar_axis"] == "OneDay" and opt["config_profile"] == "papertrading" and opt["champion_enabled"] is False
+
+
+def test_plan_axis_auto_falls_back_to_daily(monkeypatch):
+    def shallow(*_a, **_k): raise pt.PaperTradingError("1h zu flach")
+    monkeypatch.setattr(pt, "plan_geometry", shallow)
+    monkeypatch.setattr(pt, "measure_daily_depths", lambda *_a, **_k: {"A.ETORO": 1400.0, "B.ETORO": 1000.0})
+    plan = pt.plan_axis(Path("/x"), None, axis="auto")
+    assert plan["axis"] == "daily" and plan["spec"]["backtest.json"]["bar_axis"] == "OneDay"
+    with pytest.raises(pt.PaperTradingError):
+        pt.plan_axis(Path("/x"), None, axis="hourly")
+    monkeypatch.setattr(pt, "measure_daily_depths", lambda *_a, **_k: {})
+    with pytest.raises(pt.PaperTradingError, match="1h zu flach"):
+        pt.plan_axis(Path("/x"), None, axis="auto")
