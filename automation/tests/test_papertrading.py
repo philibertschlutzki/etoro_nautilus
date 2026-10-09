@@ -82,7 +82,8 @@ def _stub_main(monkeypatch, tmp_path, *, depth_days):
     monkeypatch.setattr(orch, "logs_dir", lambda: tmp_path / "logs")
     monkeypatch.setattr(orch, "phase1_universe_and_mapping", lambda *a, **k: {})
     monkeypatch.setattr(orch, "phase2_data_acquisition", lambda *a, **k: {})
-    monkeypatch.setattr(pt, "measure_depth_days", lambda *_a, **_k: depth_days)
+    monkeypatch.setattr(pt, "measure_depths", lambda *_a, **_k: {"A.ETORO": depth_days, "B.ETORO": depth_days})
+    monkeypatch.setattr(pt, "min_oos_days", lambda *_a, **_k: 1)
     monkeypatch.delenv("ETORO_ENV", raising=False)
     calls = []
     monkeypatch.setattr(orch, "phase5b_incubation", lambda *a, **k: calls.append(k) or {"status": "no_deploy"})
@@ -118,3 +119,76 @@ def test_phase5b_without_winners_starts_no_bot(tmp_path, monkeypatch):
     popen = _Popen()
     res = o.phase5b_incubation(o.logging.getLogger("t"), popen=popen, selection_fn=lambda *a: None)
     assert res["status"] != "error" and popen.calls == []
+
+
+# ─── Tiefe/Geometrie aus echten Katalogwerten (summary.csv: Krypto 41,7 d, Aktien ~60 d) ───────────────────
+
+def test_crypto_depth_41_6_days_no_longer_blocked():
+    wf = pt.derive_walk_forward(41.6, oos_floor_days=4)
+    assert sum([wf["is_window_days"], wf["embargo_period_days"], wf["splits"] * wf["oos_window_days"],
+                wf["holdout_days"], wf["holdout_embargo_days"]]) <= 41.6 - pt.MARGIN_DAYS
+
+
+def test_rth_stocks_at_60_days_fit_with_relaxed_gate():
+    floor = pt.min_oos_days(["TSLA.ETORO", "NVDA.ETORO", "GOOGL.ETORO"])
+    wf = pt.derive_walk_forward(60.0, oos_floor_days=floor)
+    assert wf["oos_window_days"] >= floor
+    assert pt.profile_spec(60.0, oos_floor_days=floor)["optimizer.json"]["min_oos_session_bars_per_fold"] \
+        == pt.RELAXED_MIN_OOS_SESSION_BARS
+
+
+def test_too_shallow_error_names_required_days():
+    with pytest.raises(pt.PaperTradingError, match="mindestens"):
+        pt.derive_walk_forward(30.0, oos_floor_days=13)
+
+
+def test_pick_depth_uses_quantile_not_minimum():
+    depths = {"BTC": 41.7, "ETH": 41.7, **{f"S{i}": 60.0 for i in range(10)}, "HK": 249.0}
+    assert pt.pick_depth(depths) == 60.0 and pt.pick_depth({}) == 0.0
+
+
+# ─── Demo-Order-Check (gemockte HTTP-Schicht) ────────────────────────────────────────────────────
+
+def test_demo_order_check_payloads_and_parsing():
+    from automation import demo_order_check as d
+    assert d.load_instrument_id("BTC.ETORO") == 100000
+    assert d.open_payload(100000, 50)["Amount"] == 50.0 and d.open_payload(100000, 50)["IsBuy"] is True
+    assert d.close_payload(1) == {"InstrumentID": 1, "UnitsToDeduct": None}
+    pnl = {"clientPortfolio": {"credit": 10000, "positions": [{"positionID": 7, "instrumentID": 100000}]}}
+    assert d.open_positions(pnl) == {"7": 100000} and d.credit(pnl) == 10000.0
+
+
+def test_demo_order_check_full_cycle_with_fake_session():
+    import asyncio
+    from automation import demo_order_check as d
+
+    state = {"open": {}}
+
+    class Resp:
+        def __init__(self, status, body): self.status, self._b = status, body
+        async def text(self): return json.dumps(self._b)
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    class Session:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def get(self, url, headers=None):
+            assert "/info/demo/pnl" in url
+            return Resp(200, {"clientPortfolio": {"credit": 10000, "positions": [
+                {"positionID": k, "instrumentID": v} for k, v in state["open"].items()]}})
+        def post(self, url, json=None, headers=None):
+            assert "/execution/demo/" in url and "/execution/real" not in url
+            if "market-open-orders" in url:
+                state["open"]["99"] = json["InstrumentID"]
+            else:
+                state["open"].pop(url.rsplit("/", 1)[1], None)
+            return Resp(200, {})
+
+    async def no_sleep(_): return None
+    import unittest.mock as m
+    msgs = []
+    with m.patch.object(d.asyncio, "sleep", no_sleep):
+        rc = asyncio.run(d.run_check("k", "u", place_test_order=True, symbol="BTC.ETORO", amount=50,
+                                     out=msgs.append, session_factory=Session))
+    assert rc == 0 and state["open"] == {} and any("Stufe 3" in x for x in msgs)

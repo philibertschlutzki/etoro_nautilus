@@ -10,6 +10,7 @@ source venv/bin/activate
 # (Geometrie aus dem Katalog abgeleitet, Overlay automation/config_papertrading/, Profil "papertrading" —
 # nie Evidenz, kein Champion-Store, keine Promotion). Das Konto ist fest das Demo-Konto; zeigt irgendetwas
 # auf ein echtes Konto, bricht der Lauf ab. Ohne den Parameter bleibt alles unverändert (Produktionsprofil).
+SWEEP_SYMBOLS="TSLA.ETORO,NVDA.ETORO,GOOGL.ETORO"
 PAPERTRADING=0
 for arg in "$@"; do
     case "$arg" in
@@ -18,7 +19,7 @@ for arg in "$@"; do
     esac
 done
 if [ "$PAPERTRADING" = "1" ]; then
-    PAPER_OVERLAY="$(python -m automation.papertrading)" || { echo "Paper-Trading-Overlay fehlgeschlagen — Abbruch." >&2; exit 2; }
+    PAPER_OVERLAY="$(python -m automation.papertrading --symbols "$SWEEP_SYMBOLS")" || { echo "Paper-Trading-Overlay fehlgeschlagen — Abbruch." >&2; exit 2; }
     export ETORO_CONFIG_DIR="$PAPER_OVERLAY"
     echo "==> PAPERTRADING: ETORO_CONFIG_DIR=${ETORO_CONFIG_DIR}"
 fi
@@ -66,7 +67,7 @@ run_sweep() {
 # Komma-Batches ersetzt: PLTR/ASML/KRYS/LULU/NATGAS bleiben als bewusste
 # Wallclock-Entscheidung deaktiviert (unverändert).
 #run_sweep PLTR.ETORO,ASML.ETORO,KRYS.ETORO,LULU.ETORO,NATGAS.ETORO
-run_sweep "TSLA.ETORO,NVDA.ETORO,GOOGL.ETORO"
+run_sweep "$SWEEP_SYMBOLS"
 
 # Issue #1381 (GH #1283, Pitfall #502) — Beispiel: Smoke-Durchstich auf der heutigen kurzen Historie (nie Evidenz:
 # keine Champions, keine Promotion, kein Rückschrieb). Das Overlay vorher einmal erzeugen:
