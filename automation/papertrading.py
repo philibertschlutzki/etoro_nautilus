@@ -175,9 +175,22 @@ def derive_walk_forward_daily(depth_days: float) -> tuple[dict, int]:
     raise PaperTradingError(f"OneDay-Tiefe {depth_days:.1f} d reicht nicht (benötigt mindestens {need} d).")
 
 
+# Nur für die Kandidaten-AUSWAHL im Paper-Overlay (nie Evidenz, nie Produktion): lockerere Qualitäts-Gates,
+# damit mehr Paare Forward-Daten sammeln. Das Risiko-Gate max_drawdown (0.3) und die Forward-Evidenz-Schwelle
+# (Bonferroni, deflation_confidence) bleiben unverändert; die Produktions-tournament.json wird nicht angefasst.
+PAPER_SELECTION_GATES = {
+    "min_trades": 10, "oos_min_trades": 10,
+    "oos_min_alpha_tstat": 1.0,
+    "oos_min_psr": 0.5,
+    "min_profit_factor": 1.0, "oos_min_profit_factor": 1.0,
+    "oos_min_expectancy": 0.0, "min_expectancy": 0.0,
+}
+PAPER_MAX_CONCURRENT = 5       # gleichzeitige Inkubations-Bots (Summe bleibt unter max_total_exposure_fraction)
+
+
 def daily_profile_spec(depth_days: float) -> dict:
     wf, min_bars = derive_walk_forward_daily(depth_days)
-    return {"backtest.json": {"bar_axis": "OneDay", "max_handelstage": 5,
+    return {"tournament.json": dict(PAPER_SELECTION_GATES), "backtest.json": {"bar_axis": "OneDay", "max_handelstage": 5,
                               "walk_forward": {**wf, "data_history_days": max(int(depth_days), 1)}},
             "optimizer.json": {"time_box_bars": 5.0, "gate1_buffer_days": 0, "champion_enabled": False,
                                "diagnostic_writeback_enabled": False,

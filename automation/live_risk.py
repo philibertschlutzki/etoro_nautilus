@@ -175,6 +175,25 @@ def compute_sizing_cap_correction(
         True, target_notional, realized_notional - target_notional, overshoot_factor)
 
 
+def risk_capped_notional(
+    *, equity: float | None, stop_pct: float | None, max_risk_fraction: float | None,
+) -> float | None:
+    """Obergrenze fuer das Notional einer Position, so dass der Verlust am (Katastrophen-)Stop hoechstens
+    ``max_risk_fraction`` der Equity betraegt: ``equity · max_risk_fraction / stop_pct``.
+
+    FAIL-OPEN (``None`` = kein Deckel) ohne auswertbare Basis (Equity, Stop-Abstand oder Anteil fehlend,
+    nicht endlich oder <= 0), dieselbe Konvention wie ``compute_sizing_cap_correction``. Der Deckel bindet
+    nur bei weiten Stops (volatile Instrumente): bei ``max_risk_fraction=0.01`` erst ab einem Stop-Abstand
+    ueber ``1 % / trade_amount_pct`` (15 % Positionsgroesse: ab 6,7 %)."""
+    try:
+        e, s, f = float(equity), float(stop_pct), float(max_risk_fraction)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) and v > 0 for v in (e, s, f)):
+        return None
+    return e * f / s
+
+
 def drawdown_damper(dd_current: float | None, *, dd_halt_fraction: float = 0.10, psi_min: float = 0.2) -> float:
     """``psi(DD) = max(psi_min, 1 − DD_current/DD_halt)`` — skaliert die Positionsgroesse
     kontinuierlich herunter, WAEHREND sich der Live-Drawdown dem harten Ausloeser A naehert, statt

@@ -257,3 +257,16 @@ def test_daily_selection_overlay_is_separate_and_non_production(tmp_path, monkey
     assert overlay.name == pt.SELECTION_OVERLAY and overlay != config_profile.overlay_dir("papertrading", project_root=root)
     opt = json.loads((overlay / "optimizer.json").read_text("utf-8"))
     assert opt["config_profile"] == "papertrading" and plan["axis"] == "daily"
+
+
+def test_daily_spec_relaxes_selection_gates_but_keeps_risk_and_evidence(tmp_path):
+    root = tmp_path / "proj"
+    shutil.copytree(_REPO / "automation" / "config", root / "automation" / "config")
+    base = json.loads((_REPO / "automation" / "config" / "tournament.json").read_text("utf-8"))
+    overlay = pt.materialize_papertrading_profile(project_root=root, spec=pt.daily_profile_spec(1400.0))
+    t = json.loads((overlay / "tournament.json").read_text("utf-8"))
+    assert t["oos_min_trades"] == 10 and t["oos_min_alpha_tstat"] == 1.0
+    for key in ("max_drawdown", "deflation_confidence", "promotion_target_annual_sharpe"):
+        assert t[key] == base[key]
+    for key, val in pt.PAPER_SELECTION_GATES.items():       # nur lockern, nie verschärfen
+        assert val <= base[key]

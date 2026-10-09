@@ -1547,7 +1547,7 @@ def _papertrading_inc_cfg(log: logging.Logger) -> dict:
     Historie, eigenes Overlay), weil 60 Tage Stundendaten keinen Kandidaten durch die OOS-Gates bringen. Der Bot
     handelt danach unverändert stündlich; die Forward-Evidenz (Bonferroni-Schwelle) bleibt unverändert."""
     from automation import incubation as inc
-    from automation.papertrading import materialize_daily_selection_overlay
+    from automation.papertrading import PAPER_MAX_CONCURRENT, materialize_daily_selection_overlay
     symbols = None
     try:
         with open(UNIVERSE_PATH, "r", encoding="utf-8") as f:
@@ -1559,6 +1559,7 @@ def _papertrading_inc_cfg(log: logging.Logger) -> dict:
              f"75-%-Quantil) -> Geometrie {plan['walk_forward']}")
     cfg = inc.incubation_config(_load_tournament_cfg())
     cfg["enabled"] = True
+    cfg["max_concurrent"] = max(int(cfg["max_concurrent"]), PAPER_MAX_CONCURRENT)
     cfg["walk_forward"] = {**cfg["walk_forward"], **plan["walk_forward"]}
     cfg["selection_config_dir"] = str(overlay)
     return cfg
