@@ -83,3 +83,24 @@ ETORO_INSTRUMENTS = {
     "100421": "AERO.ETORO",
     "100446": "HYPE.ETORO",
 }
+
+
+def _merge_json_instruments() -> None:
+    """``config/instrument_map.json`` ist die laufend gepflegte Quelle (universe_fetcher schreibt dort neue
+    Mappings); das Literal oben veraltet. Fehlende IDs werden ergänzt, bestehende Einträge nie überschrieben —
+    sonst bekommt der Daten-Client für neue Universum-Symbole (z. B. Inkubations-Kandidaten) kein Instrument."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "config" / "instrument_map.json"
+    try:
+        instruments = (json.loads(path.read_text("utf-8")) or {}).get("instruments") or {}
+    except (OSError, ValueError):
+        return
+    for etoro_id, entry in instruments.items():
+        symbol = entry.get("symbol") if isinstance(entry, dict) else None
+        if symbol:
+            ETORO_INSTRUMENTS.setdefault(str(etoro_id), symbol)
+
+
+_merge_json_instruments()
