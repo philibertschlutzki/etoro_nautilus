@@ -1534,10 +1534,15 @@ def _enter_papertrading(log: logging.Logger) -> None:
 def _papertrading_inc_cfg(log: logging.Logger) -> dict:
     """Inkubations-Config mit enabled=True und der Geometrie aus der real vorhandenen Datentiefe."""
     from automation import incubation as inc
-    from automation.papertrading import derive_walk_forward, measure_depth_days
-    depth = measure_depth_days(CATALOG_PATH)
-    wf = derive_walk_forward(depth)
-    log.info(f"[PAPERTRADING] Datentiefe {depth:.1f} d -> Geometrie {wf}")
+    from automation.papertrading import plan_geometry
+    symbols = None
+    try:
+        with open(UNIVERSE_PATH, "r", encoding="utf-8") as f:
+            symbols = [u["symbol"] for u in (json.load(f) or {}).get("universe", []) if u.get("symbol")] or None
+    except (OSError, ValueError):
+        pass
+    depth, n_syms, wf = plan_geometry(CATALOG_PATH, symbols)
+    log.info(f"[PAPERTRADING] Datentiefe {depth:.1f} d ({n_syms} Symbole, 75-%-Quantil) -> Geometrie {wf}")
     cfg = inc.incubation_config(_load_tournament_cfg())
     cfg["enabled"] = True
     cfg["walk_forward"] = {**cfg["walk_forward"], **wf}
