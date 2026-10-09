@@ -82,8 +82,12 @@ def _stub_main(monkeypatch, tmp_path, *, depth_days):
     monkeypatch.setattr(orch, "logs_dir", lambda: tmp_path / "logs")
     monkeypatch.setattr(orch, "phase1_universe_and_mapping", lambda *a, **k: {})
     monkeypatch.setattr(orch, "phase2_data_acquisition", lambda *a, **k: {})
-    monkeypatch.setattr(pt, "measure_depths", lambda *_a, **_k: {"A.ETORO": depth_days, "B.ETORO": depth_days})
-    monkeypatch.setattr(pt, "min_oos_days", lambda *_a, **_k: 1)
+    monkeypatch.setattr(pt, "measure_daily_depths", lambda *_a, **_k: {"A.ETORO": depth_days, "B.ETORO": depth_days})
+
+    def fake_overlay(catalog, symbols=None, **_k):      # kein Schreiben ins echte Repo
+        plan = pt.plan_axis(catalog, symbols, axis="daily")
+        return tmp_path / "overlay_daily", plan
+    monkeypatch.setattr(pt, "materialize_daily_selection_overlay", fake_overlay)
     monkeypatch.delenv("ETORO_ENV", raising=False)
     calls = []
     monkeypatch.setattr(orch, "phase5b_incubation", lambda *a, **k: calls.append(k) or {"status": "no_deploy"})
@@ -98,15 +102,16 @@ def test_e2e_too_little_data_is_a_clean_no_trade_run(monkeypatch, tmp_path):
 
 
 def test_e2e_enough_data_hands_derived_geometry_to_incubation(monkeypatch, tmp_path):
-    calls = _stub_main(monkeypatch, tmp_path, depth_days=99.0)
+    calls = _stub_main(monkeypatch, tmp_path, depth_days=1400.0)
     assert orch.main() == 0
     (kw,) = calls
-    assert kw["inc_cfg_override"]["enabled"] is True
-    assert kw["inc_cfg_override"]["walk_forward"]["splits"] == pt.SPLITS
+    cfg = kw["inc_cfg_override"]
+    assert cfg["enabled"] is True and cfg["walk_forward"]["splits"] == pt.DAILY_SPLITS
+    assert cfg["selection_config_dir"].endswith("overlay_daily")
 
 
 def test_e2e_real_env_aborts_before_any_phase(monkeypatch, tmp_path):
-    _stub_main(monkeypatch, tmp_path, depth_days=99.0)
+    _stub_main(monkeypatch, tmp_path, depth_days=1400.0)
     monkeypatch.setenv("ETORO_ENV", "real")
     monkeypatch.setattr(orch, "phase1_universe_and_mapping", lambda *a, **k: pytest.fail("kein Netzzugriff"))
     assert orch.main() == 2
@@ -226,3 +231,29 @@ def test_plan_axis_auto_falls_back_to_daily(monkeypatch):
     monkeypatch.setattr(pt, "measure_daily_depths", lambda *_a, **_k: {})
     with pytest.raises(pt.PaperTradingError, match="1h zu flach"):
         pt.plan_axis(Path("/x"), None, axis="auto")
+
+
+def test_selection_subprocess_gets_daily_overlay_env(monkeypatch, tmp_path):
+    seen = {}
+    def fake_run(cmd, **kw):
+        seen["env"] = kw.get("env")
+        class P: returncode = 0
+        return P()
+    monkeypatch.setattr(orch.subprocess, "run", fake_run)
+    monkeypatch.setattr(orch, "logs_dir", lambda: tmp_path / "logs")
+    monkeypatch.setattr(orch, "_build_backtest_config", lambda *a, **k: {})
+    log = orch.logging.getLogger("t")
+    orch._run_incubation_selection(log, {"walk_forward": {}, "selection_config_dir": "/ov"}, tmp_path / "o.json")
+    assert seen["env"]["ETORO_CONFIG_DIR"] == "/ov"
+    orch._run_incubation_selection(log, {"walk_forward": {}}, tmp_path / "o.json")
+    assert seen["env"] is None
+
+
+def test_daily_selection_overlay_is_separate_and_non_production(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    shutil.copytree(_REPO / "automation" / "config", root / "automation" / "config")
+    monkeypatch.setattr(pt, "measure_daily_depths", lambda *_a, **_k: {"A.ETORO": 1400.0})
+    overlay, plan = pt.materialize_daily_selection_overlay(Path("/x"), None, project_root=root)
+    assert overlay.name == pt.SELECTION_OVERLAY and overlay != config_profile.overlay_dir("papertrading", project_root=root)
+    opt = json.loads((overlay / "optimizer.json").read_text("utf-8"))
+    assert opt["config_profile"] == "papertrading" and plan["axis"] == "daily"
