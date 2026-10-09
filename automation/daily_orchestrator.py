@@ -1399,6 +1399,7 @@ def phase5b_incubation(
     *,
     no_deploy: bool = False,
     skip_selection: bool = False,
+    inc_cfg_override: dict | None = None,
     now: datetime | None = None,
     selection_fn=None,
     popen=subprocess.Popen,
@@ -1416,7 +1417,7 @@ def phase5b_incubation(
     log.info("PHASE 5b: Demo-Inkubation (Forward-Evidenz, Issue #1368)")
     log.info("═" * 60)
     tournament_cfg = _load_tournament_cfg()
-    inc_cfg = inc.incubation_config(tournament_cfg)
+    inc_cfg = inc_cfg_override if inc_cfg_override is not None else inc.incubation_config(tournament_cfg)
     if not inc_cfg.get("enabled"):
         log.info("[Phase 5b] Inkubation deaktiviert (tournament.json incubation.enabled = false).")
         emit_json_event(log, "INCUBATION_SKIPPED", {"reason": "disabled"})
@@ -1510,7 +1511,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reset-catalog", action="store_true",
         help="Archiviert data/nautilus/data/quote_tick/ nach data/nautilus/archive/<UTC-ts>/ vor Phase 2 "
              "(einmalig; Issue #1364 — es wird nichts mehr gelöscht).")
+    parser.add_argument("--papertrading", action="store_true",
+        help="Paper-Trading gegen das Demo-Konto mit den vorhandenen Daten: erzwingt ETORO_ENV=demo (bricht bei "
+             "einem echten Konto ab), wählt mit der aus der Datentiefe abgeleiteten Geometrie aus und handelt "
+             "über die Demo-Inkubation. Kein Phase-3+4-Produktionsturnier, kein Phase 5 (Live).")
     return parser
+
+
+def _enter_papertrading(log: logging.Logger) -> None:
+    """Erzwingt das Demo-Environment VOR jedem Netz-/Bot-Zugriff; wirft ``PaperTradingError`` bei ``real``."""
+    from automation.papertrading import assert_demo_environment
+    load_dotenv(str(ENV_FILE))
+    assert_demo_environment(os.environ.get("ETORO_ENV"))
+    os.environ["ETORO_ENV"] = "demo"
+    os.environ["ETORO_DRY_RUN"] = "0"
+    log.info("[PAPERTRADING] ETORO_ENV=demo erzwungen; Trades laufen im Demo-Konto.")
+
+
+def _papertrading_inc_cfg(log: logging.Logger) -> dict:
+    """Inkubations-Config mit enabled=True und der Geometrie aus der real vorhandenen Datentiefe."""
+    from automation import incubation as inc
+    from automation.papertrading import derive_walk_forward, measure_depth_days
+    depth = measure_depth_days(CATALOG_PATH)
+    wf = derive_walk_forward(depth)
+    log.info(f"[PAPERTRADING] Datentiefe {depth:.1f} d -> Geometrie {wf}")
+    cfg = inc.incubation_config(_load_tournament_cfg())
+    cfg["enabled"] = True
+    cfg["walk_forward"] = {**cfg["walk_forward"], **wf}
+    return cfg
 
 def main() -> int:
     """Haupt-Pipeline: 5 Phasen sequentiell ausführen."""
@@ -1527,6 +1555,16 @@ def main() -> int:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     log = _setup_orchestrator_logging()
+
+    if args.papertrading:
+        from automation.papertrading import PaperTradingError
+        try:
+            _enter_papertrading(log)
+        except PaperTradingError as exc:
+            log.critical(str(exc))
+            return 2
+        api_key  = os.getenv("ETORO_API_KEY",  "")
+        user_key = os.getenv("ETORO_USER_KEY", "")
 
     # ── Catalog-Reset (einmalig) ────────────────────────────────────────────
     if args.reset_catalog:
@@ -1571,6 +1609,14 @@ def main() -> int:
             offline=args.offline,
             with_oneday=args.with_oneday,
         )
+        if args.papertrading:
+            log.info("[PAPERTRADING] Phase 3+4 (Produktionsturnier) und Phase 5 (Live) entfallen; Demo-Inkubation "
+                     "mit abgeleiteter Geometrie.")
+            res = phase5b_incubation(log, skip_selection=args.skip_backtest,
+                                     inc_cfg_override=_papertrading_inc_cfg(log))
+            exit_code = 1 if res.get("status") in ("error", "start_failed") else 0
+            emit_json_event(log, "ORCHESTRATOR_EXIT", {"exit_code": exit_code})
+            return exit_code
         if args.skip_backtest:
             log.info("[Phase 3+4] --skip-backtest: Matrix-Backtesting übersprungen — lade bestehendes Tournament.")
             _tp = TOURNAMENT_PATH if TOURNAMENT_PATH.exists() else (latest_tournament_path() or TOURNAMENT_PATH)
