@@ -1386,10 +1386,14 @@ def _run_incubation_selection(log: logging.Logger, inc_cfg: dict, output_path: P
     cmd = [sys.executable, str(_THIS_DIR / "backtest_runner.py"), "--momentum",
            "--catalog-path", str(CATALOG_PATH), "--config", str(cfg_path), "--output", str(output_path)]
     bt_log_path = logs_dir() / f"backtest_incubation_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
+    env = None
+    if inc_cfg.get("selection_config_dir"):     # Paper-Trading: Auswahl auf der Tagesachse (eigenes Overlay)
+        env = {**os.environ, "ETORO_CONFIG_DIR": str(inc_cfg["selection_config_dir"])}
+        log.info(f"[Phase 5b] Selektions-Config: {inc_cfg['selection_config_dir']}")
     log.info(f"[Phase 5b] Inkubations-Selektion: {' '.join(cmd)}")
     with open(bt_log_path, "w", encoding="utf-8") as bt_log_f:
         proc = subprocess.run(cmd, stdout=bt_log_f, stderr=subprocess.STDOUT, cwd=str(PROJECT_ROOT),
-                              timeout=3600, check=False)
+                              timeout=3600, check=False, env=env)
     log.info(f"[Phase 5b] Inkubations-Selektion beendet (Exit-Code: {proc.returncode}).")
     return output_path if output_path.exists() else None
 
@@ -1539,21 +1543,26 @@ def _enter_papertrading(log: logging.Logger) -> None:
 
 
 def _papertrading_inc_cfg(log: logging.Logger) -> dict:
-    """Inkubations-Config mit enabled=True und der Geometrie aus der real vorhandenen Datentiefe."""
+    """Inkubations-Config mit enabled=True. Die Kandidaten-Auswahl läuft auf der Tagesachse (OneDay, ~4 Jahre
+    Historie, eigenes Overlay), weil 60 Tage Stundendaten keinen Kandidaten durch die OOS-Gates bringen. Der Bot
+    handelt danach unverändert stündlich; die Forward-Evidenz (Bonferroni-Schwelle) bleibt unverändert."""
     from automation import incubation as inc
-    from automation.papertrading import plan_geometry
+    from automation.papertrading import materialize_daily_selection_overlay
     symbols = None
     try:
         with open(UNIVERSE_PATH, "r", encoding="utf-8") as f:
             symbols = [u["symbol"] for u in (json.load(f) or {}).get("universe", []) if u.get("symbol")] or None
     except (OSError, ValueError):
         pass
-    depth, n_syms, wf = plan_geometry(CATALOG_PATH, symbols)
-    log.info(f"[PAPERTRADING] Datentiefe {depth:.1f} d ({n_syms} Symbole, 75-%-Quantil) -> Geometrie {wf}")
+    overlay, plan = materialize_daily_selection_overlay(CATALOG_PATH, symbols)
+    log.info(f"[PAPERTRADING] Auswahl auf Tagesachse: Tiefe {plan['depth']:.1f} d ({plan['n_symbols']} Symbole, "
+             f"75-%-Quantil) -> Geometrie {plan['walk_forward']}")
     cfg = inc.incubation_config(_load_tournament_cfg())
     cfg["enabled"] = True
-    cfg["walk_forward"] = {**cfg["walk_forward"], **wf}
+    cfg["walk_forward"] = {**cfg["walk_forward"], **plan["walk_forward"]}
+    cfg["selection_config_dir"] = str(overlay)
     return cfg
+
 
 def main() -> int:
     """Haupt-Pipeline: 5 Phasen sequentiell ausführen."""

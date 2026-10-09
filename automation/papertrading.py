@@ -111,9 +111,26 @@ def profile_spec(depth_days: float, *, oos_floor_days: int = 1) -> dict:
 
 
 def materialize_papertrading_profile(depth_days: float | None = None, *, project_root: Path | None = None,
-                                     oos_floor_days: int = 1, spec: dict | None = None) -> Path:
+                                     oos_floor_days: int = 1, spec: dict | None = None,
+                                     dest: Path | None = None) -> Path:
     spec = spec if spec is not None else profile_spec(depth_days, oos_floor_days=oos_floor_days)
-    return config_profile.materialize(PROFILE, project_root=project_root, profiles={PROFILE: spec})
+    return config_profile.materialize(PROFILE, project_root=project_root, profiles={PROFILE: spec}, dest=dest)
+
+
+# Eigenes Overlay für die Tages-Selektion der Inkubation: das Stunden-Overlay (executor.sh) bleibt unberührt.
+SELECTION_OVERLAY = "config_papertrading_daily"
+
+
+def materialize_daily_selection_overlay(catalog_path: Path, symbols: list[str] | None = None, *,
+                                        project_root: Path | None = None) -> tuple[Path, dict]:
+    """Overlay ``automation/config_papertrading_daily/`` (Achse OneDay, ~4 Jahre Historie) für die Auswahl der
+    Inkubations-Kandidaten. Rückgabe: ``(overlay, plan)``. Gestempelt ``papertrading`` (nie Evidenz); der Bot
+    handelt weiterhin nur auf der Stundenachse, die Tagesachse wählt nur Kandidaten für die Forward-Evidenz."""
+    plan = plan_axis(catalog_path, symbols, axis="daily")
+    root = (project_root or config_profile.PROJECT_ROOT).resolve()
+    overlay = materialize_papertrading_profile(spec=plan["spec"], project_root=root,
+                                               dest=root / "automation" / SELECTION_OVERLAY)
+    return overlay, plan
 
 
 # ─── Tagesachse (OneDay): die API liefert je Intervall 1000 Kerzen — 1h reicht ~42-64 Tage zurück, 1d ~4 Jahre ───
