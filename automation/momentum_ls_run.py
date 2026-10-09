@@ -463,6 +463,13 @@ def main():
     )
 
     environment = ETORO_EXECUTION["environment"]
+    # Paper-Konto nur über Real-Endpunkte erreichbar? Dann ausschliesslich mit geprüfter Konto-ID (account_guard).
+    from automation.account_guard import PaperAccountError, verify_paper_account
+    try:
+        api_environment = verify_paper_account(api_key, user_key)
+    except PaperAccountError as exc:
+        logger.critical(f"[PAPER-KONTO] {exc}")
+        sys.exit(1)
     dry_run = True if args.dry_run else ETORO_EXECUTION["dry_run"]
     if args.incubation and not args.dry_run:
         # Issue #1368 — die Inkubation handelt im Demo-Konto (environment == "demo" ist oben erzwungen):
@@ -514,7 +521,7 @@ def main():
             "ETORO": EToroExecClientConfig(
                 api_key=api_key,
                 user_key=user_key,
-                environment=environment,
+                environment=api_environment,
                 dry_run=dry_run,
                 enable_trailing_stop=enable_trailing_stop,
             )

@@ -1,6 +1,7 @@
 """End-to-End-Prüfung der Demo-API (10k-USD-Paper-Trading-Konto) mit den Keys aus ``.env``.
 
-Fest auf das Demo-Konto verdrahtet (kein Environment-Schalter; ``ETORO_ENV`` != demo bricht ab).
+Fest auf das Paper-Konto verdrahtet: Demo-Endpunkte, oder — nur mit ``ETORO_PAPER_ACCOUNT_CID`` und passender ``realCid``
+aus ``/me`` (account_guard) — die Real-Endpunkte eines Spielgeld-Kontos. ``ETORO_ENV`` != demo bricht ab.
 
 Stufen:
  1. ``python -m automation.demo_order_check``                    nur lesend: Keys, PnL-/Portfolio-Endpunkt, Guthaben.
@@ -22,8 +23,14 @@ from pathlib import Path
 from automation.papertrading import PaperTradingError, assert_demo_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-REST_BASE = "https://public-api.etoro.com/api/v1/trading/execution/demo"
-PNL_URL = "https://public-api.etoro.com/api/v1/trading/info/demo/pnl"
+_BASES = {
+    "demo": ("https://public-api.etoro.com/api/v1/trading/execution/demo",
+             "https://public-api.etoro.com/api/v1/trading/info/demo/pnl"),
+    # Nur für ein per Konto-ID angeheftetes Paper-Konto (account_guard); ohne Anheftung nie benutzt.
+    "real": ("https://public-api.etoro.com/api/v1/trading/execution",
+             "https://public-api.etoro.com/api/v1/trading/info/real/pnl"),
+}
+REST_BASE, PNL_URL = _BASES["demo"]
 
 
 def load_instrument_id(symbol: str, map_path: Path | None = None) -> int:
@@ -161,6 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     api_key, user_key = os.getenv("ETORO_API_KEY", ""), os.getenv("ETORO_USER_KEY", "")
     if not api_key or not user_key:
         print("FEHLER: ETORO_API_KEY / ETORO_USER_KEY fehlen in .env.", file=sys.stderr)
+        return 2
+    global REST_BASE, PNL_URL
+    from automation.account_guard import PaperAccountError as _AccountError, verify_paper_account
+    try:
+        REST_BASE, PNL_URL = _BASES[verify_paper_account(api_key, user_key)]
+    except _AccountError as exc:
+        print(f"FEHLER: {exc}", file=sys.stderr)
         return 2
     return asyncio.run(run_check(api_key, user_key, place_test_order=args.place_test_order,
                                  symbol=args.symbol, amount=args.amount))
