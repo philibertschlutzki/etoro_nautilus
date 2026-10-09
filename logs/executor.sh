@@ -8,8 +8,8 @@ source venv/bin/activate
 
 # Paper-Trading-Modus: `logs/executor.sh --papertrading` optimiert mit der maximal vorhandenen Datentiefe
 # (Geometrie aus dem Katalog abgeleitet, Overlay automation/config_papertrading/, Profil "papertrading" —
-# nie Evidenz, kein Champion-Store, keine Promotion). Erzwingt ETORO_ENV=demo und bricht bei einem echten
-# Konto ab. Ohne den Parameter bleibt alles unverändert (Produktionsprofil).
+# nie Evidenz, kein Champion-Store, keine Promotion). Das Konto ist fest das Demo-Konto; zeigt irgendetwas
+# auf ein echtes Konto, bricht der Lauf ab. Ohne den Parameter bleibt alles unverändert (Produktionsprofil).
 PAPERTRADING=0
 for arg in "$@"; do
     case "$arg" in
@@ -18,10 +18,9 @@ for arg in "$@"; do
     esac
 done
 if [ "$PAPERTRADING" = "1" ]; then
-    export ETORO_ENV=demo
     PAPER_OVERLAY="$(python -m automation.papertrading)" || { echo "Paper-Trading-Overlay fehlgeschlagen — Abbruch." >&2; exit 2; }
     export ETORO_CONFIG_DIR="$PAPER_OVERLAY"
-    echo "==> PAPERTRADING: ETORO_ENV=demo ETORO_CONFIG_DIR=${ETORO_CONFIG_DIR}"
+    echo "==> PAPERTRADING: ETORO_CONFIG_DIR=${ETORO_CONFIG_DIR}"
 fi
 
 # Issue #1099 (Stufe 0, Sperrvermerk §5.9 / Empfehlung E-1) — jeder Sweep-Lauf bekommt ein

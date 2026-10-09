@@ -389,7 +389,7 @@ def test_phase5b_is_off_by_default(tmp_path, monkeypatch):
 
 def test_phase5b_starts_the_demo_bot_never_real(tmp_path, monkeypatch):
     orch = _orch_env(tmp_path, monkeypatch)
-    monkeypatch.setenv("ETORO_ENV", "real")                 # selbst ein real-Orchestrator startet demo
+    monkeypatch.delenv("ETORO_ENV", raising=False)          # Demo ist fest verdrahtet, kein Schalter nötig
     defaults, raw = load_live_param_sources(REPO / "automation" / "config")
     monkeypatch.setattr(orch, "_load_live_param_sources", lambda: (defaults, raw))
     winners = {"AAA.ETORO": {"strategy": "SmaCrossoverStrategy", "oos_eligible": True,
@@ -399,12 +399,25 @@ def test_phase5b_starts_the_demo_bot_never_real(tmp_path, monkeypatch):
                                   selection_fn=_selection(tmp_path, winners), now=_T0)
     assert res["status"] == "started" and res["incubating"] == ["AAA.ETORO"]
     (cmd, kwargs), = popen.calls
-    assert "--incubation" in cmd and kwargs["env"]["ETORO_ENV"] == "demo"
+    assert "--incubation" in cmd and "ETORO_ENV" not in kwargs["env"]
     assert cmd[cmd.index("--tournament") + 1] == str(tmp_path / "data" / "state" / "incubation_whitelist.json")
     stages = inc.DeploymentStages(tmp_path / "data" / "state" / "deployment_stages.json")
     assert stages.stage("SmaCrossoverStrategy", "AAA.ETORO") == inc.INCUBATING
     assert stages.entry("SmaCrossoverStrategy", "AAA.ETORO")["params_sha256"] == live_params_sha256(
         resolve_live_params("SmaCrossoverStrategy", "AAA.ETORO", defaults, raw))
+
+
+def test_phase5b_refuses_to_start_a_bot_when_env_points_to_real(tmp_path, monkeypatch):
+    orch = _orch_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("ETORO_ENV", "real")
+    defaults, raw = load_live_param_sources(REPO / "automation" / "config")
+    monkeypatch.setattr(orch, "_load_live_param_sources", lambda: (defaults, raw))
+    winners = {"AAA.ETORO": {"strategy": "SmaCrossoverStrategy", "oos_eligible": True,
+                             "oos_metrics": {"psr": 0.9}}}
+    popen = _Popen()
+    res = orch.phase5b_incubation(orch.logging.getLogger("t1368"), popen=popen,
+                                  selection_fn=_selection(tmp_path, winners), now=_T0)
+    assert res["status"] == "error" and popen.calls == []
 
 
 def test_phase5b_promotion_goes_through_the_deployment_gate(tmp_path, monkeypatch):

@@ -1472,8 +1472,13 @@ def phase5b_incubation(
     cmd = [sys.executable, str(PROJECT_ROOT / "automation" / "momentum_ls_run.py"), "--incubation",
            "--universe", str(UNIVERSE_PATH), "--tournament", str(paths["whitelist"])]
     # INCUBATING läuft ausschliesslich im Demo-Konto: das Environment wird hier gesetzt UND vom Bot geprüft.
-    env = {**os.environ, "PYTHONUNBUFFERED": "1", "ETORO_ENV": "demo"}
-    inc.assert_stage_environment(inc.INCUBATING, env["ETORO_ENV"])
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    # Demo ist fest verdrahtet; zeigt ETORO_ENV auf etwas anderes, startet kein Bot (Stolperdraht).
+    try:
+        inc.assert_stage_environment(inc.INCUBATING, os.environ.get("ETORO_ENV") or "demo")
+    except inc.IncubationEnvironmentError as exc:
+        log.critical(f"[Phase 5b] {exc}")
+        return {"status": "error", "error": str(exc)}
     bot_log = logs_dir() / f"incubation_bot_{datetime.now(timezone.utc).strftime('%Y%m%d')}.log"
     try:
         logs_dir().mkdir(parents=True, exist_ok=True)
@@ -1512,7 +1517,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Archiviert data/nautilus/data/quote_tick/ nach data/nautilus/archive/<UTC-ts>/ vor Phase 2 "
              "(einmalig; Issue #1364 — es wird nichts mehr gelöscht).")
     parser.add_argument("--papertrading", action="store_true",
-        help="Paper-Trading gegen das Demo-Konto mit den vorhandenen Daten: erzwingt ETORO_ENV=demo (bricht bei "
+        help="Paper-Trading gegen das Demo-Konto mit den vorhandenen Daten: handelt fest im Demo-Konto (bricht bei "
              "einem echten Konto ab), wählt mit der aus der Datentiefe abgeleiteten Geometrie aus und handelt "
              "über die Demo-Inkubation. Kein Phase-3+4-Produktionsturnier, kein Phase 5 (Live).")
     return parser
@@ -1523,9 +1528,7 @@ def _enter_papertrading(log: logging.Logger) -> None:
     from automation.papertrading import assert_demo_environment
     load_dotenv(str(ENV_FILE))
     assert_demo_environment(os.environ.get("ETORO_ENV"))
-    os.environ["ETORO_ENV"] = "demo"
-    os.environ["ETORO_DRY_RUN"] = "0"
-    log.info("[PAPERTRADING] ETORO_ENV=demo erzwungen; Trades laufen im Demo-Konto.")
+    log.info("[PAPERTRADING] Trades laufen im Demo-Konto (fest verdrahtet).")
 
 
 def _papertrading_inc_cfg(log: logging.Logger) -> dict:
@@ -1612,8 +1615,16 @@ def main() -> int:
         if args.papertrading:
             log.info("[PAPERTRADING] Phase 3+4 (Produktionsturnier) und Phase 5 (Live) entfallen; Demo-Inkubation "
                      "mit abgeleiteter Geometrie.")
-            res = phase5b_incubation(log, skip_selection=args.skip_backtest,
-                                     inc_cfg_override=_papertrading_inc_cfg(log))
+            from automation.papertrading import PaperTradingError
+            try:
+                inc_cfg = _papertrading_inc_cfg(log)
+            except PaperTradingError as exc:
+                # Zu wenig Daten ist kein Fehler: sauberer No-Trade-Lauf (Exit 0), der Bot wird nicht angefasst.
+                log.warning(f"[PAPERTRADING] Kein Handel in diesem Lauf: {exc}")
+                emit_json_event(log, "PAPERTRADING_NO_TRADE", {"reason": "insufficient_history", "detail": str(exc)})
+                emit_json_event(log, "ORCHESTRATOR_EXIT", {"exit_code": 0})
+                return 0
+            res = phase5b_incubation(log, skip_selection=args.skip_backtest, inc_cfg_override=inc_cfg)
             exit_code = 1 if res.get("status") in ("error", "start_failed") else 0
             emit_json_event(log, "ORCHESTRATOR_EXIT", {"exit_code": exit_code})
             return exit_code
