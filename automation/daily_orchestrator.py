@@ -1528,7 +1528,14 @@ def _enter_papertrading(log: logging.Logger) -> None:
     from automation.papertrading import assert_demo_environment
     load_dotenv(str(ENV_FILE))
     assert_demo_environment(os.environ.get("ETORO_ENV"))
-    log.info("[PAPERTRADING] Trades laufen im Demo-Konto (fest verdrahtet).")
+    from automation.account_guard import PaperAccountError, verify_paper_account
+    from automation.papertrading import PaperTradingError
+    try:
+        endpoints = verify_paper_account(os.getenv("ETORO_API_KEY", ""), os.getenv("ETORO_USER_KEY", ""))
+    except PaperAccountError as exc:
+        raise PaperTradingError(str(exc)) from exc
+    log.info(f"[PAPERTRADING] Trades laufen im Paper-Konto (Endpunkte: {endpoints}; ETORO_PAPER_ACCOUNT_CID "
+             f"{'gesetzt und geprüft' if endpoints == 'real' else 'nicht gesetzt'}).")
 
 
 def _papertrading_inc_cfg(log: logging.Logger) -> dict:
