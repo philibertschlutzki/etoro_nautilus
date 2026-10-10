@@ -134,7 +134,7 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
             self.entry_price = 0.0
             self.trailing_stop = 0.0
             return
-        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+        if len(self.cache.positions_open(instrument_id=self.instrument_id)) >= self.config.max_open_positions:
             return
         qty = self._compute_quantity(bar)
         if qty is None:
@@ -160,7 +160,7 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
             self.entry_price = 0.0
             self.trailing_stop = 0.0
             return
-        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+        if len(self.cache.positions_open(instrument_id=self.instrument_id)) >= self.config.max_open_positions:
             return
         qty = self._compute_quantity(bar)
         if qty is None:

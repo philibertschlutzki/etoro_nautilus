@@ -176,6 +176,50 @@ def _reclassify_existing_entries(existing_map: dict, meta_lookup: dict[str, dict
         )
     return changed
 
+EXTRA_SYMBOLS_PATH = _THIS_DIR / "config" / "volatile_universe.json"
+_EXTRA_ASSET_CLASSES = ("equity", "crypto")
+
+
+def load_extra_symbols(path: Path | None = None) -> list[str]:
+    """Zusätzliche volatile Symbole (``config/volatile_universe.json``); fehlt die Datei ⇒ leer."""
+    try:
+        raw = json.loads(Path(path or EXTRA_SYMBOLS_PATH).read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return []
+    return [str(s).strip().upper() for s in (raw.get("symbols") or []) if str(s).strip()]
+
+
+def resolve_extra_symbols(existing_map: dict, meta_lookup: dict[str, dict], symbols: list[str]) -> dict[str, dict]:
+    """Neue ``instrument_map``-Einträge ``{uid: {...}}`` für die ``symbols``, die noch nicht im Map stehen: Auflösung
+    NUR über ``SymbolFull`` der eToro-Metadaten (exakt, ohne Gross/Klein), nur ``equity``/``crypto``. Nicht
+    auflösbare Symbole bleiben draussen (geloggt) — eine Instrument-ID wird nie geraten."""
+    known = {str((e or {}).get("symbol") or "").upper() for e in existing_map.values()}
+    by_symbol: dict[str, tuple[str, dict]] = {}
+    for uid, item in meta_lookup.items():
+        sym = str(_meta_field(item, "SymbolFull", "symbolFull") or "").strip().upper()
+        if sym and sym not in by_symbol:
+            by_symbol[sym] = (uid, item)
+    out: dict[str, dict] = {}
+    for sym in symbols:
+        if f"{sym}.ETORO" in known:
+            continue
+        hit = by_symbol.get(sym)
+        if hit is None:
+            logger.warning(f"[VOLATIL] {sym}: nicht in den eToro-Metadaten gefunden - übersprungen.")
+            continue
+        uid, item = hit
+        if uid in existing_map:
+            continue
+        asset_class = _classify_instrument_metadata(item)
+        if asset_class not in _EXTRA_ASSET_CLASSES:
+            logger.warning(f"[VOLATIL] {sym} ({uid}): asset_class={asset_class!r} - übersprungen.")
+            continue
+        symbol = f"{_meta_field(item, 'SymbolFull', 'symbolFull')}.ETORO"
+        pp, sp = _precisions_for(symbol, asset_class)
+        out[uid] = {"symbol": symbol, "asset_class": asset_class, "price_precision": pp, "size_precision": sp}
+    return out
+
+
 def get_etoro_metadata():
     """Fetch eToro metadata with caching and retries."""
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -334,8 +378,12 @@ async def run_fetch(
     needs_reclassification = any(
         not _is_canonical_asset_class(entry.get("asset_class")) for entry in existing_map.values())
 
+    extra_symbols = load_extra_symbols()
+    known_symbols = {str((e or {}).get("symbol") or "").upper() for e in existing_map.values()}
+    extras_missing = [s for s in extra_symbols if f"{s}.ETORO" not in known_symbols]
+
     meta_lookup: dict[str, dict] | None = None
-    if unknown_instruments or needs_reclassification:
+    if unknown_instruments or needs_reclassification or extras_missing:
         if unknown_instruments:
             logger.info(f"Found {len(unknown_instruments)} unknown instrument IDs. Attempting to resolve...")
         metadata = get_etoro_metadata()
@@ -385,6 +433,14 @@ async def run_fetch(
         logger.error("Could not fetch eToro metadata to resolve unknown instruments.")
         for uid, info in unknown_instruments.items():
             logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - occurred {info['count']} times")
+
+    if extras_missing and meta_lookup is not None:
+        added = resolve_extra_symbols(existing_map, meta_lookup, extras_missing)
+        for uid, entry in added.items():
+            existing_map[uid] = entry
+            universe.append({"etoro_id": uid, "symbol": entry["symbol"], "raw_name": entry["symbol"].split(".")[0]})
+            logger.info(f"[VOLATIL] {entry['symbol']} ({uid}, {entry['asset_class']}) ins Universum aufgenommen.")
+        newly_mapped += len(added)
 
     reclassified = (_reclassify_existing_entries(existing_map, meta_lookup or {})
                     if needs_reclassification else 0)

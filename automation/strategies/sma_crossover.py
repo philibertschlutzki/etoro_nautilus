@@ -80,7 +80,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
             self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None
             return
-        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+        if len(self.cache.positions_open(instrument_id=self.instrument_id)) >= self.config.max_open_positions:
             return
         qty = self._compute_quantity(bar)
         if qty is None:
@@ -104,7 +104,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
             self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None
             return
-        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+        if len(self.cache.positions_open(instrument_id=self.instrument_id)) >= self.config.max_open_positions:
             return
         qty = self._compute_quantity(bar)
         if qty is None:
