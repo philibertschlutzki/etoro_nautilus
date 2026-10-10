@@ -102,7 +102,7 @@ def _build_bots_config(
 
     for uni_obj in universe_data.get("universe", []):
         symbol = uni_obj.get("symbol")
-        if not symbol:
+        if not symbol or symbol in active_symbols:   # Universum listet je offener Portfolio-Position einmal
             continue
 
         winner = per_symbol_winners.get(symbol)
@@ -196,6 +196,8 @@ def _build_incubation_bots_config(
     active_symbols, bots_config = [], []
     for uni_obj in universe_data.get("universe", []):
         symbol = uni_obj.get("symbol")
+        if symbol in active_symbols:    # doppelte Universums-Einträge: eine Strategie je Symbol
+            continue
         entry = winners.get(symbol) if symbol else None
         if not entry or entry.get("stage") != INCUBATING:
             continue

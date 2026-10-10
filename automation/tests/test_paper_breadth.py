@@ -65,3 +65,23 @@ def test_resolve_extra_symbols_only_via_metadata():
 def test_volatile_universe_config_loads():
     syms = uf.load_extra_symbols()
     assert "MARA" in syms and len(syms) == len(set(syms))
+
+
+def test_incubation_bots_dedupe_duplicate_universe_entries():
+    from automation.momentum_ls_run import _build_incubation_bots_config
+    params = {"sma_period": 5}
+    universe = {"universe": [{"symbol": "AAA.ETORO"}, {"symbol": "AAA.ETORO"}, {"symbol": "BBB.ETORO"}]}
+    winners = {"per_symbol_winners": {
+        s: {"stage": inc.INCUBATING, "strategy": "SmaCrossoverStrategy", "params": dict(params),
+            "params_sha256": inc.params_fingerprint(params)} for s in ("AAA.ETORO", "BBB.ETORO")}}
+    registry = {"SmaCrossoverStrategy": ("m", "C", "Cfg")}
+    syms, bots = _build_incubation_bots_config(universe, winners, registry, {"AAA.ETORO": "1", "BBB.ETORO": "2"})
+    assert syms == ["AAA.ETORO", "BBB.ETORO"] and len(bots) == 2
+
+
+def test_extras_fetch_due_respects_min_age(tmp_path):
+    from automation.daily_orchestrator import _extras_fetch_due
+    f = tmp_path / "u.json"
+    assert _extras_fetch_due(f) is True                   # fehlt ⇒ fällig
+    f.write_text("{}")
+    assert _extras_fetch_due(f) is False                  # gerade geschrieben

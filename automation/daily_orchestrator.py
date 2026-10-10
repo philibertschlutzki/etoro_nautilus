@@ -198,6 +198,16 @@ def emit_json_event(log: logging.Logger, event_type: str, payload: dict) -> None
 # PHASE 1: Universe & Mapping
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _extras_fetch_due(universe_path: Path, min_age_h: float = 6.0) -> bool:
+    """Nicht auflösbare Zusatz-Symbole sollen nicht bei jedem Lauf einen Fetch auslösen: höchstens alle
+    ``min_age_h`` Stunden (gemessen am Datei-Zeitstempel des Universums)."""
+    try:
+        age_h = (time.time() - os.path.getmtime(universe_path)) / 3600
+    except OSError:
+        return True
+    return age_h >= min_age_h
+
+
 def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key: str = "") -> dict:
     """Phase 1: Lädt das Anlage-Universum aus der JSON-Datei.
     Wenn alt oder fehlend, wird es automatisch über universe_fetcher aktualisiert.
@@ -239,6 +249,16 @@ def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key
                 log.warning("[Phase 1] Konnte Universe-Zeitstempel nicht parsen. Erfordert auto-fetch.")
                 needs_fetch = True
         else:
+            needs_fetch = True
+
+    if not needs_fetch:
+        # Neue volatile Zusatz-Symbole (config/volatile_universe.json) brauchen den Fetch, der sie über die
+        # eToro-Metadaten auflöst — auch wenn das Universum selbst noch frisch ist.
+        from automation.universe_fetcher import load_extra_symbols, load_instrument_map as _lim
+        _known = {str(s).upper() for s in _lim(INSTRUMENT_MAP_PATH).values() if s}
+        _missing = [s for s in load_extra_symbols() if f"{s}.ETORO" not in _known]
+        if _missing and _extras_fetch_due(UNIVERSE_PATH):
+            log.info(f"[Phase 1] {len(_missing)} volatile Zusatz-Symbole noch nicht im Instrument-Map — Fetch.")
             needs_fetch = True
 
     if needs_fetch:
