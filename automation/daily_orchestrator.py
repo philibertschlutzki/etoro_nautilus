@@ -1509,7 +1509,8 @@ def phase5b_incubation(
             stages, winners=winners, tournament_cfg=tournament_cfg,
             resolve_params=lambda strategy, symbol: resolve_live_params(strategy, symbol, *live_param_sources),
             deployment_decision_fn=_gate, now=now, ledger_dir=paths["dir"], live_ledger_dir=paths["live_dir"],
-            distribution_trips=inc.read_distribution_trips(paths["trips"]), inc_cfg=inc_cfg)
+            distribution_trips=inc.read_distribution_trips(paths["trips"]), inc_cfg=inc_cfg,
+            slot_group=_round_the_clock_slot_group() if inc_cfg.get("group_slots") else None)
         emit_json_event(log, "INCUBATION_CYCLE", {
             **cycle.to_dict(), "threshold": inc.bonferroni_threshold_for(inc_cfg),
             "stages": {k: v.get("stage") for k, v in stages.data.items()}})
@@ -1599,12 +1600,30 @@ def _enter_papertrading(log: logging.Logger) -> None:
              f"{'gesetzt und geprüft' if endpoints == 'real' else 'nicht gesetzt'}).")
 
 
+def _round_the_clock_slot_group(instrument_map_path: Path | None = None):
+    """``symbol -> "round_the_clock"`` für Symbole der rund um die Uhr handelbaren Klassen (laut
+    ``instrument_map.json``), sonst ``None`` (Aktien-Kontingent)."""
+    from automation.papertrading import PAPER_ROUND_THE_CLOCK_GROUP
+    from automation.universe_fetcher import load_round_the_clock_classes
+    classes = set(load_round_the_clock_classes())
+    try:
+        instruments = (json.loads(Path(instrument_map_path or INSTRUMENT_MAP_PATH).read_text("utf-8")) or {}).get(
+            "instruments") or {}
+    except (OSError, ValueError):
+        instruments = {}
+    rtc = {str(e.get("symbol")) for e in instruments.values() if e and e.get("asset_class") in classes}
+    return lambda symbol: PAPER_ROUND_THE_CLOCK_GROUP if symbol in rtc else None
+
+
 def _papertrading_inc_cfg(log: logging.Logger) -> dict:
     """Inkubations-Config mit enabled=True. Die Kandidaten-Auswahl läuft auf der Tagesachse (OneDay, ~4 Jahre
     Historie, eigenes Overlay), weil 60 Tage Stundendaten keinen Kandidaten durch die OOS-Gates bringen. Der Bot
     handelt danach unverändert stündlich; die Forward-Evidenz (Bonferroni-Schwelle) bleibt unverändert."""
     from automation import incubation as inc
-    from automation.papertrading import PAPER_MAX_CONCURRENT, materialize_daily_selection_overlay
+    from automation.papertrading import (
+        PAPER_MAX_CONCURRENT, PAPER_ROUND_THE_CLOCK_GROUP, PAPER_ROUND_THE_CLOCK_SLOTS,
+        materialize_daily_selection_overlay,
+    )
     symbols = None
     try:
         with open(UNIVERSE_PATH, "r", encoding="utf-8") as f:
@@ -1617,6 +1636,7 @@ def _papertrading_inc_cfg(log: logging.Logger) -> dict:
     cfg = inc.incubation_config(_load_tournament_cfg())
     cfg["enabled"] = True
     cfg["max_concurrent"] = max(int(cfg["max_concurrent"]), PAPER_MAX_CONCURRENT)
+    cfg["group_slots"] = {PAPER_ROUND_THE_CLOCK_GROUP: PAPER_ROUND_THE_CLOCK_SLOTS}
     cfg["walk_forward"] = {**cfg["walk_forward"], **plan["walk_forward"]}
     cfg["selection_config_dir"] = str(overlay)
     return cfg
