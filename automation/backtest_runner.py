@@ -1777,8 +1777,12 @@ def load_ticks_from_catalog(
         sp = _normalize_size_precision(sp_parquet, instrument_id_str)
 
         needs_normalization = hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision != sp
+        # Katalog-Ticks aus Kerzen ohne Volumen tragen Größe 0 (vor SYNTHETIC_TOB_SIZE geschrieben):
+        # ohne Liquidität lehnt der Handelsplatz jede Order mit "no market" ab.
+        has_zero_size = any(t.bid_size.as_double() <= 0.0 or t.ask_size.as_double() <= 0.0 for t in ticks)
 
-        if needs_normalization or spread_bps > 0.0:
+        if needs_normalization or spread_bps > 0.0 or has_zero_size:
+            from automation.api_backfiller import SYNTHETIC_TOB_SIZE
             from nautilus_trader.model.data import QuoteTick
             from nautilus_trader.model.objects import Quantity, Price
 
@@ -1788,6 +1792,11 @@ def load_ticks_from_catalog(
                  pp = ticks[0].bid_price.precision
             else:
                  pp = pp_parquet
+
+            def _tob_size(size):
+                if size.as_double() <= 0.0:
+                    return Quantity(SYNTHETIC_TOB_SIZE, precision=sp)
+                return Quantity(size.as_double(), precision=sp) if needs_normalization else size
 
             normalized = []
             for t in ticks:
@@ -1808,8 +1817,8 @@ def load_ticks_from_catalog(
                         instrument_id=t.instrument_id,
                         bid_price=new_bid,
                         ask_price=new_ask,
-                        bid_size=Quantity(t.bid_size.as_double(), precision=sp) if needs_normalization else t.bid_size,
-                        ask_size=Quantity(t.ask_size.as_double(), precision=sp) if needs_normalization else t.ask_size,
+                        bid_size=_tob_size(t.bid_size),
+                        ask_size=_tob_size(t.ask_size),
                         ts_event=t.ts_event,
                         ts_init=t.ts_init,
                     )
