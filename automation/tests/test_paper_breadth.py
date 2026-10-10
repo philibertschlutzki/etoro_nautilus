@@ -85,3 +85,46 @@ def test_extras_fetch_due_respects_min_age(tmp_path):
     assert _extras_fetch_due(f) is True                   # fehlt ⇒ fällig
     f.write_text("{}")
     assert _extras_fetch_due(f) is False                  # gerade geschrieben
+
+
+def _write_oneday(qt, symbol, days):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    d = qt / symbol / "OneDay"
+    d.mkdir(parents=True)
+    pq.write_table(pa.table({"ts_event": [int(x) * 86_400_000_000_000 for x in days]}), str(d / "data.parquet"))
+
+
+def test_oneday_full_window_due(tmp_path, monkeypatch):
+    import json as _json
+    from automation import historical_fetcher as hf
+    bounds = tmp_path / "bounds.json"
+    monkeypatch.setattr(hf, "INCEPTION_CACHE_PATH", bounds)
+    qt = tmp_path / "qt"
+    _write_oneday(qt, "OLD.ETORO", range(19000, 20000))   # 2022-01-08 … volles Fenster
+    _write_oneday(qt, "CUT.ETORO", range(19950, 20000))   # von Phase 2d gekürzt
+    win = {"window": {"OneDay": {"window_oldest_utc": "2022-01-08T00:00:00Z"}}}
+    bounds.write_text(_json.dumps({"OLD.ETORO": win, "CUT.ETORO": win}))
+    assert hf.oneday_full_window_due("OLD.ETORO", qt) is False
+    assert hf.oneday_full_window_due("CUT.ETORO", qt) is True
+    assert hf.oneday_full_window_due("NEW.ETORO", qt) is True     # weder Datei noch Fenster
+
+
+def test_phase2e_fetches_only_due_symbols(monkeypatch):
+    import logging
+    from automation import daily_orchestrator as do
+    from automation import historical_fetcher as hf
+    from automation import api_backfiller as ab
+    monkeypatch.setattr(hf, "oneday_full_window_due", lambda s: s != "OLD.ETORO")
+    monkeypatch.setattr(ab, "_load_etoro_id_map", lambda p: {"1": "OLD.ETORO", "2": "MARA.ETORO"})
+    seen = {}
+
+    async def fake_run(api_key, user_key, id_map, symbols):
+        seen["symbols"] = symbols
+        return {s: {} for s in symbols}
+
+    monkeypatch.setattr(hf, "run_oneday_full_window", fake_run)
+    result = {}
+    universe = {"universe": [{"symbol": "OLD.ETORO"}, {"symbol": "MARA.ETORO"}, {"symbol": "MARA.ETORO"}]}
+    do._phase2e_oneday_full_window(logging.getLogger("t"), universe, "k", "u", result)
+    assert seen["symbols"] == ["MARA.ETORO"] and result["oneday_filled"] == ["MARA.ETORO"]
