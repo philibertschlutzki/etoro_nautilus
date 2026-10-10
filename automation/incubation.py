@@ -388,7 +388,7 @@ def run_incubation_cycle(
     stages: DeploymentStages, *, winners: Mapping[str, Mapping[str, Any]], tournament_cfg: Mapping[str, Any],
     resolve_params, deployment_decision_fn=None, now: datetime | None = None,
     ledger_dir: Path = INCUBATION_DIR, live_ledger_dir: Path | None = None, psr_fn=None,
-    distribution_trips: Mapping[str, Any] | None = None,
+    distribution_trips: Mapping[str, Any] | None = None, inc_cfg: Mapping[str, Any] | None = None,
 ) -> CycleResult:
     """Ein täglicher Zyklus:
 
@@ -399,8 +399,11 @@ def run_incubation_cycle(
     2. ``LIVE_SMALL``: sobald ``t_full_bars`` Echtgeld-Bars (eigenes Ledger) vorliegen, dieselbe Schranke erneut:
        ``PROMOTE`` ∧ Gate ⇒ ``LIVE_FULL``; ``RETIRE`` ⇒ ``RETIRED``.
     3. Freie Plätze mit neuen Kandidaten füllen (``CANDIDATE → INCUBATING``, eingefrorene Parameter aus
-       ``resolve_params(strategy, symbol)`` — ``live_params.resolve_live_params``)."""
-    cfg = incubation_config(tournament_cfg)
+       ``resolve_params(strategy, symbol)`` — ``live_params.resolve_live_params``).
+
+    ``inc_cfg``: bereits aufgelöste Inkubations-Config (z. B. das Paper-Overlay mit mehr Plätzen); ohne sie gilt
+    ``incubation_config(tournament_cfg)``."""
+    cfg = dict(inc_cfg) if inc_cfg is not None else incubation_config(tournament_cfg)
     now = now or datetime.now(timezone.utc)
     live_ledger_dir = Path(live_ledger_dir) if live_ledger_dir is not None else Path(ledger_dir) / "live"
     gate_fn = deployment_decision_fn or (lambda *_a: {"admitted": None})

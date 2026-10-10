@@ -1452,7 +1452,7 @@ def phase5b_incubation(
             stages, winners=winners, tournament_cfg=tournament_cfg,
             resolve_params=lambda strategy, symbol: resolve_live_params(strategy, symbol, *live_param_sources),
             deployment_decision_fn=_gate, now=now, ledger_dir=paths["dir"], live_ledger_dir=paths["live_dir"],
-            distribution_trips=inc.read_distribution_trips(paths["trips"]))
+            distribution_trips=inc.read_distribution_trips(paths["trips"]), inc_cfg=inc_cfg)
         emit_json_event(log, "INCUBATION_CYCLE", {
             **cycle.to_dict(), "threshold": inc.bonferroni_threshold_for(inc_cfg),
             "stages": {k: v.get("stage") for k, v in stages.data.items()}})
@@ -1632,7 +1632,7 @@ def main() -> int:
             log, universe_result, api_key, user_key,
             skip_api_fetch=args.skip_api_fetch,
             offline=args.offline,
-            with_oneday=args.with_oneday,
+            with_oneday=args.with_oneday or args.papertrading,   # Paper-Auswahl läuft auf OneDay
         )
         if args.papertrading:
             log.info("[PAPERTRADING] Phase 3+4 (Produktionsturnier) und Phase 5 (Live) entfallen; Demo-Inkubation "

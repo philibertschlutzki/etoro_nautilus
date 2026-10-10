@@ -82,8 +82,11 @@ async def _run(tmp_path, instruments, positions, metadata):
 
 
 @pytest.fixture(autouse=True)
-def _username(monkeypatch):
+def _username(monkeypatch, tmp_path):
     monkeypatch.setenv("MOMENTUM_LS_USERNAME", "testuser")
+    # Ohne volatile Zusatz-Symbole: diese Tests prüfen nur Klassifikation und Metadaten-Abruf.
+    import automation.universe_fetcher as _uf
+    monkeypatch.setattr(_uf, "EXTRA_SYMBOLS_PATH", tmp_path / "keine_extras.json")
 
 
 @pytest.mark.asyncio

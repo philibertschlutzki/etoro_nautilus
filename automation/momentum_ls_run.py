@@ -223,6 +223,19 @@ def _build_incubation_bots_config(
     return active_symbols, bots_config
 
 
+INCUBATION_MIN_SYMBOL_FRACTION = 0.02   # 200 USD bei 10 000 USD: über dem eToro-Minimum, sinnvolle Positionsgröße
+
+
+def incubation_sizing(n_pairs: int, max_total: float, max_symbol: float) -> tuple[float, int]:
+    """``(Anteil je Symbol, max. offene Positionen)`` für den Demo-Inkubations-Bot: ``min(max_symbol,
+    max_total / n_pairs)``, nach unten auf ``INCUBATION_MIN_SYMBOL_FRACTION`` begrenzt; die Positionszahl
+    reicht für alle Paare (mindestens 5, der bisherige Default). Das Gesamtbudget bleibt ``max_total``
+    (der Allocator gibt keinem Paar mehr als den Rest)."""
+    n = max(1, int(n_pairs))
+    frac = max(min(float(max_symbol), float(max_total) / n), min(float(max_symbol), INCUBATION_MIN_SYMBOL_FRACTION))
+    return frac, max(5, n)
+
+
 def _pair_equity(strategy) -> float | None:
     """Realisierte + unrealisierte PnL des Instruments der Strategie (Portfolio des Nodes, Kosten in den
     Fills) — die Equity-Grösse des Evidenz-Ledgers (#1368). ``None``, solange das Portfolio nichts liefert."""
@@ -287,6 +300,8 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     )
     if "max_open_positions" in bot_spec:
         cfg_kwargs["max_open_positions"] = bot_spec["max_open_positions"]
+    if "max_aggregate_open_positions" in bot_spec:
+        cfg_kwargs["max_aggregate_open_positions"] = bot_spec["max_aggregate_open_positions"]
     # Issue #1361 (GH #1257) — Session-Gate: dasselbe Fenster (Börsen-Lokalzeit), das der Backtest-Runner
     # aus backtest.json auflöst (session_windows.resolve_session_window) — live verwirft die Strategie
     # Extended-Hours-Bars, wie der Backtest Ticks/Füllbars ausserhalb der Session nie sieht. Nie aus dem
@@ -449,10 +464,22 @@ def main():
     except Exception as e:
         logger.warning(f"live_risk-Konfiguration konnte nicht geladen werden ({e}) — Allocator/Watchdog nutzen Defaults.")
 
+    max_total_exposure = live_risk_cfg.get("max_total_exposure_fraction", 0.60)
+    max_symbol_exposure = live_risk_cfg.get("max_symbol_exposure_fraction", 0.10)
+    if args.incubation:
+        # Demo-Inkubation mit vielen Paaren: das Gesamtbudget (60 %) gleichmässig verteilen, damit alle Paare
+        # gleichzeitig eine Position halten können, statt dass die ersten sechs das Budget aufbrauchen.
+        max_symbol_exposure, max_aggregate = incubation_sizing(
+            len(active_symbols), max_total_exposure, max_symbol_exposure)
+        for b in bots_config:
+            b["max_aggregate_open_positions"] = max_aggregate
+        logger.info(f"[INKUBATION] {len(active_symbols)} Paare: je Symbol {max_symbol_exposure:.2%} Equity, "
+                    f"bis zu {max_aggregate} offene Positionen, gesamt <= {max_total_exposure:.0%}")
+
     allocator = MomentumLSAllocator(
         active_symbols,
-        max_total_exposure_fraction=live_risk_cfg.get("max_total_exposure_fraction", 0.60),
-        max_symbol_exposure_fraction=live_risk_cfg.get("max_symbol_exposure_fraction", 0.10),
+        max_total_exposure_fraction=max_total_exposure,
+        max_symbol_exposure_fraction=max_symbol_exposure,
         dd_halt_fraction=live_risk_cfg.get("dd_halt_fraction", 0.10),
         psi_min=live_risk_cfg.get("psi_min", 0.2),
         # Issue #1368 — LIVE_SMALL-Paare handeln mit ``capital_fraction_small`` der regulären Allokation

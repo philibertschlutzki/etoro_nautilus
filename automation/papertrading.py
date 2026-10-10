@@ -179,13 +179,13 @@ def derive_walk_forward_daily(depth_days: float) -> tuple[dict, int]:
 # damit mehr Paare Forward-Daten sammeln. Das Risiko-Gate max_drawdown (0.3) und die Forward-Evidenz-Schwelle
 # (Bonferroni, deflation_confidence) bleiben unverändert; die Produktions-tournament.json wird nicht angefasst.
 PAPER_SELECTION_GATES = {
-    "min_trades": 10, "oos_min_trades": 10,
-    "oos_min_alpha_tstat": 1.0,
+    "min_trades": 8, "oos_min_trades": 8,
+    "oos_min_alpha_tstat": 0.5,         # OOS-Alpha muss weiterhin positiv sein, nur mit weniger Signifikanz
     "oos_min_psr": 0.5,
     "min_profit_factor": 1.0, "oos_min_profit_factor": 1.0,
     "oos_min_expectancy": 0.0, "min_expectancy": 0.0,
 }
-PAPER_MAX_CONCURRENT = 5       # gleichzeitige Inkubations-Bots (Summe bleibt unter max_total_exposure_fraction)
+PAPER_MAX_CONCURRENT = 20      # gleichzeitige Inkubations-Paare; das Gesamtbudget (max_total_exposure_fraction) bleibt
 
 
 def daily_profile_spec(depth_days: float) -> dict:

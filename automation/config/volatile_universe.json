@@ -1,0 +1,11 @@
+{
+  "_schema": {
+    "description": "Zusätzliche, besonders volatile eToro-Instrumente für das Universum (mehr Signale/Trades im Paper-Trading). universe_fetcher löst jedes Symbol über die eToro-Metadaten (SymbolFull) zur Instrument-ID auf und trägt es in instrument_map.json ein; nicht auflösbare Symbole werden nur geloggt (nie geraten). Nur equity/crypto werden übernommen.",
+    "symbols": "Liste von eToro-SymbolFull-Werten"
+  },
+  "symbols": [
+    "MARA", "IONQ", "SMCI", "SOUN", "RGTI", "QBTS", "HOOD", "AFRM", "SOFI", "RKLB",
+    "CVNA", "ASTS", "OKLO", "APP", "LCID", "RIVN", "NIO", "AI", "PLUG", "BBAI",
+    "LINK", "DOT", "LTC", "BCH", "NEAR", "SUI", "UNI", "XLM", "ARB", "TRX"
+  ]
+}

@@ -265,7 +265,7 @@ def test_daily_spec_relaxes_selection_gates_but_keeps_risk_and_evidence(tmp_path
     base = json.loads((_REPO / "automation" / "config" / "tournament.json").read_text("utf-8"))
     overlay = pt.materialize_papertrading_profile(project_root=root, spec=pt.daily_profile_spec(1400.0))
     t = json.loads((overlay / "tournament.json").read_text("utf-8"))
-    assert t["oos_min_trades"] == 10 and t["oos_min_alpha_tstat"] == 1.0
+    assert t["oos_min_trades"] == 8 and t["oos_min_alpha_tstat"] == 0.5
     for key in ("max_drawdown", "deflation_confidence", "promotion_target_annual_sharpe"):
         assert t[key] == base[key]
     for key, val in pt.PAPER_SELECTION_GATES.items():       # nur lockern, nie verschärfen
