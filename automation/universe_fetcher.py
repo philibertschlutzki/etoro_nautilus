@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -241,6 +242,60 @@ def _is_delisted(item: dict) -> bool:
     return bool(_meta_field(item, "IsDelisted", "isDelisted"))
 
 
+# Version des 24h-Filters; steht als ``round_the_clock_filter_version`` im Instrument-Map. Eine höhere Version
+# löst einen erneuten Abgleich aus, der vorher aufgenommene Einträge entfernt, die den Filter nicht bestehen.
+ROUND_THE_CLOCK_FILTER_VERSION = 2
+ROUND_THE_CLOCK_FILTER_KEY = "round_the_clock_filter_version"
+_STABLECOINS = frozenset({"USDC", "USDT", "DAI", "TUSD", "BUSD", "USDP", "PYUSD", "FDUSD"})
+_PRECIOUS_FX_VARIANT = re.compile(r"^(GOLD|SILVER)[A-Z]{3}$")
+
+
+def is_round_the_clock_spot(item: dict, asset_class: str | None) -> bool:
+    """Nur Spot-Instrumente, die der Bot sinnvoll handeln kann: die eToro-Metadaten enthalten daneben Hunderte
+    Terminkontrakte (CME-Micros, ``CL.JUL20``), interne/eingestellte Instrumente (``.old``, „Experimental“) und
+    dasselbe Underlying in mehreren Quote-Währungen (``BTC/EUR``, ``GOLDEUR``) — 2026-10-10 waren von 1515
+    aufgenommenen Instrumenten etwa 80 % solche Einträge."""
+    if _meta_field(item, "IsInternalInstrument", "isInternalInstrument"):
+        return False
+    if _meta_field(item, "HasExpirationDate", "hasExpirationDate"):
+        return False
+    source = _meta_field(item, "PriceSource", "priceSource")
+    if source is not None and str(source).strip().lower() != "etoro":
+        return False
+    symbol = str(_meta_field(item, "SymbolFull", "symbolFull") or "").strip().upper()
+    if not symbol or "." in symbol or "_" in symbol:
+        return False
+    if asset_class == "crypto":
+        name = str(_meta_field(item, "InstrumentDisplayName", "instrumentDisplayName") or "")
+        if "/" in name or symbol in _STABLECOINS:
+            return False
+    if asset_class == "commodity" and _PRECIOUS_FX_VARIANT.match(symbol):
+        return False
+    return True
+
+
+def round_the_clock_sync_due(instrument_map_data: dict) -> bool:
+    """Abgleich nötig, solange der Stempel fehlt oder der Filter seither verschärft wurde."""
+    return (not instrument_map_data.get(ROUND_THE_CLOCK_STAMP)
+            or int(instrument_map_data.get(ROUND_THE_CLOCK_FILTER_KEY) or 0) < ROUND_THE_CLOCK_FILTER_VERSION)
+
+
+def prune_round_the_clock_entries(existing_map: dict, meta_lookup: dict[str, dict],
+                                  asset_classes: tuple[str, ...]) -> dict[str, dict]:
+    """Entfernt Einträge der ``asset_classes``, deren Metadaten den Spot-Filter nicht bestehen, und gibt sie zurück.
+    Einträge ohne Metadaten bleiben unangetastet."""
+    wanted = set(asset_classes)
+    removed: dict[str, dict] = {}
+    for uid in list(existing_map):
+        entry = existing_map[uid] or {}
+        item = meta_lookup.get(uid)
+        if item is None or entry.get("asset_class") not in wanted:
+            continue
+        if not is_round_the_clock_spot(item, entry.get("asset_class")):
+            removed[uid] = existing_map.pop(uid)
+    return removed
+
+
 def resolve_round_the_clock_symbols(existing_map: dict, meta_lookup: dict[str, dict],
                                     asset_classes: tuple[str, ...]) -> dict[str, dict]:
     """Neue ``instrument_map``-Einträge ``{uid: {...}}`` für jedes Metadaten-Instrument der ``asset_classes``,
@@ -253,7 +308,7 @@ def resolve_round_the_clock_symbols(existing_map: dict, meta_lookup: dict[str, d
         if uid in existing_map or _is_delisted(item):
             continue
         asset_class = _classify_instrument_metadata(item)
-        if asset_class not in wanted:
+        if asset_class not in wanted or not is_round_the_clock_spot(item, asset_class):
             continue
         symbol_full = str(_meta_field(item, "SymbolFull", "symbolFull") or "").strip()
         symbol = f"{symbol_full}.ETORO"
@@ -491,6 +546,13 @@ async def run_fetch(
 
     rtc_synced = False
     if round_the_clock and meta_lookup is not None:
+        removed = prune_round_the_clock_entries(existing_map, meta_lookup, round_the_clock)
+        if removed:
+            removed_ids = set(removed)
+            universe[:] = [u for u in universe if str(u.get("etoro_id", "")) not in removed_ids]
+            logger.info(f"[24H] {len(removed)} Terminkontrakte/interne/Quote-Währungs-Varianten entfernt: "
+                        f"{sorted(e.get('symbol') or '' for e in removed.values())[:40]}")
+            rtc_synced = True
         added = resolve_round_the_clock_symbols(existing_map, meta_lookup, round_the_clock)
         for uid, entry in added.items():
             existing_map[uid] = entry
@@ -501,8 +563,9 @@ async def run_fetch(
                 by_class[entry["asset_class"]] = by_class.get(entry["asset_class"], 0) + 1
             logger.info(f"[24H] {len(added)} rund um die Uhr handelbare Instrumente aufgenommen: {by_class}")
         newly_mapped += len(added)
-        if not instrument_map_data.get(ROUND_THE_CLOCK_STAMP):
+        if round_the_clock_sync_due(instrument_map_data):
             instrument_map_data[ROUND_THE_CLOCK_STAMP] = datetime.now(timezone.utc).isoformat()
+            instrument_map_data[ROUND_THE_CLOCK_FILTER_KEY] = ROUND_THE_CLOCK_FILTER_VERSION
             rtc_synced = True
 
     reclassified = (_reclassify_existing_entries(existing_map, meta_lookup or {})
