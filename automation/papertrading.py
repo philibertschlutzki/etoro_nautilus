@@ -195,6 +195,11 @@ PAPER_TRAILING_TP = {"trailing_tp_activation_atr": 0.5, "trailing_tp_trail_atr":
                      "trailing_tp_min_lock_spread_mult": 2.0}
 
 
+# Demo-Bot: so viele Katalog-Stundenkerzen wärmen die Indikatoren beim Start vor (längste Standard-Periode:
+# EMA 100; Aktien liefern nur ~7 Session-Kerzen je Tag).
+PAPER_WARMUP_BARS = 400
+
+
 def paper_strategy_defaults(base_dir: Path | None = None) -> dict:
     """``strategy_defaults.json``-Overlay: ``PAPER_TRAILING_TP`` für jede Strategie der Basis-Config."""
     import json

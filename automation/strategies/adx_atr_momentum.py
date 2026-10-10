@@ -57,6 +57,7 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
         self.trailing_stop = 0.0
 
     def on_start(self):
+        super().on_start()  # REQUIRED (siehe HourlyStrategyBase-Moduldocstring)
         self._log.info(
             f"Starte ADX+ATR Momentum Strategie auf {self.instrument_id}", LogColor.GREEN
         )
