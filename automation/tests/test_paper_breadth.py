@@ -201,3 +201,31 @@ def test_trailing_tp_exit_over_a_price_path():
     assert fired[4] and "Trailing Take-Profit LONG" in fired[4]
     off = SimpleNamespace(**{**vars(fake), "config": SimpleNamespace(trailing_tp_activation_atr=None)})
     assert HourlyStrategyBase._trailing_tp_lock(off, pos, 90.0) is None
+
+
+def _phase1_fetch_called(tmp_path, monkeypatch, imap: dict) -> bool:
+    import json
+    import logging
+    from unittest.mock import AsyncMock
+
+    from automation import daily_orchestrator as do
+    imap_path = tmp_path / "instrument_map.json"
+    imap_path.write_text(json.dumps(imap), "utf-8")
+    universe_path = tmp_path / "universe.json"
+    universe_path.write_text("{}", "utf-8")  # frische mtime: die 6-h-Sperre der Zusatz-Symbole griffe
+    fresh = {"fetched_at": datetime.now(timezone.utc).isoformat(), "universe": [{"symbol": "AAPL.ETORO", "etoro_id": "1"}]}
+    fetch = AsyncMock(return_value=True)
+    monkeypatch.setattr(do, "INSTRUMENT_MAP_PATH", imap_path)
+    monkeypatch.setattr(do, "UNIVERSE_PATH", universe_path)
+    monkeypatch.setattr(do, "_load_universe_file", lambda log: fresh)
+    monkeypatch.setattr(uf, "run_fetch", fetch)
+    monkeypatch.setattr(uf, "load_extra_symbols", lambda *a, **k: [])
+    monkeypatch.setattr(uf, "load_instrument_map", lambda *a, **k: {})
+    do.phase1_universe_and_mapping(logging.getLogger("t"), api_key="k", user_key="u")
+    return fetch.called
+
+
+def test_phase1_fetches_round_the_clock_even_when_universe_is_fresh(tmp_path, monkeypatch):
+    assert _phase1_fetch_called(tmp_path, monkeypatch, {"instruments": {}})
+    assert not _phase1_fetch_called(tmp_path, monkeypatch,
+                                    {"instruments": {}, uf.ROUND_THE_CLOCK_STAMP: "2026-10-10T18:00:00+00:00"})

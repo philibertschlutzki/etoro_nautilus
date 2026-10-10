@@ -79,6 +79,12 @@ CATALOG_SCHEMA_VERSION = 2
 INTRABAR_PATH_SYNTHETIC = "synthetic_ohlc_adverse_first"
 INTRABAR_PATH_OBSERVED = "observed"
 
+# Kerzen ohne Volumen (eToro liefert für Krypto kein ``volume``): eine Quote-Größe 0 ergibt ein
+# L1-Buch ohne Liquidität, und der simulierte Handelsplatz lehnt jede Order mit "no market" ab
+# (Krypto: 0 Füllungen bei 825 Orders, Paper-Selektion 2026-10-10). Stattdessen eine große
+# synthetische Top-of-Book-Größe; ``volume_available=false`` bleibt als Kennzeichnung stehen.
+SYNTHETIC_TOB_SIZE = 1_000_000_000.0
+
 # Issue #1330 (GH #1224) Fix Punkt 2: deterministische, monoton steigende, kollisionsfreie
 # Sub-Intervall-Offsets als Konstante im Modul, kein Literal in der Schleife. Die
 # Trigger-Reihenfolge ist FEST und UNBEDINGT (Sperrvermerk #7 in Issue #1246): das adverse
@@ -486,7 +492,7 @@ def _candles_to_arrow_table(
     ts_inits:   list[int]   = []
     bar_interval_col: list[int] = []
 
-    _ZERO_SIZE = _encode_qty_fsb16(0.0, size_prec)
+    _NO_VOLUME_SIZE = _encode_qty_fsb16(SYNTHETIC_TOB_SIZE, size_prec)
     min_ts_ns = int(start_dt.timestamp() * 1e9)
 
     # ── Pass 1: parsen, plausibilisieren, chronologisch sortieren ─────────────
@@ -584,12 +590,12 @@ def _candles_to_arrow_table(
         roles.append((high, candle_start_ns + int(span_ns * _INTRABAR_OFFSET_HIGH_FRAC)))
         roles.append((close, candle_end_ns - 1))
 
-        if volume is not None:
+        if volume is not None and volume > 0:
             volume_seen_any = True
             size_bytes_for_row = _encode_qty_fsb16(volume / len(roles), size_prec)
         else:
             volume_missing_any = True
-            size_bytes_for_row = _ZERO_SIZE
+            size_bytes_for_row = _NO_VOLUME_SIZE
 
         for price, ts_ns in roles:
             bid_prices.append(_encode_fsb16(price, price_prec))
