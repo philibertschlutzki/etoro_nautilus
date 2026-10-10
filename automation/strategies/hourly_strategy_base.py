@@ -210,6 +210,59 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     trailing_tp_activation_atr: float | None = None
     trailing_tp_trail_atr: float = 0.5
     trailing_tp_min_lock_spread_mult: float = 2.0
+    # Indikator-Vorwärmung beim Start: die letzten ``catalog_warmup_bars`` Stundenkerzen aus dem Parquet-Katalog
+    # laufen ohne Orders durch ``on_bar``. 0 ⇒ aus (Default); ohne Vorwärmung setzt jeder Bot-Neustart das Warm-up
+    # auf null und die Strategien warten bis zu 100 Stunden (EMA 100) auf ihr erstes Signal.
+    catalog_warmup_bars: int = 0
+
+
+_CATALOG_ROOT = Path(__file__).resolve().parents[2] / "data" / "nautilus"
+_HOUR_NS = 3_600_000_000_000
+# Zustand der Signal-Logik, der nach der Vorwärmung auf den Startwert zurückgesetzt wird: ohne Orders gibt es
+# keine Position, ein in der Vorwärmung gesetztes Signal würde sonst den ersten echten Einstieg blockieren.
+_WARMUP_SIGNAL_STATE = ("current_signal", "bars_since_last_signal", "_reversal_in_progress",
+                        "current_position", "entry_price", "trailing_stop")
+
+
+def load_catalog_hourly_bars(instrument_id_str: str, n_bars: int, *, catalog_root: Path | None = None,
+                             now_ns: int | None = None) -> list[tuple[int, float, float, float, float]]:
+    """Die letzten ``n_bars`` abgeschlossenen Stundenkerzen ``(ts_close_ns, open, high, low, close)`` aus den
+    O/L/H/C-Quote-Ticks des OneHour-Katalogs (Mittelkurs). Leer, wenn keine Daten lesbar sind."""
+    from automation.catalog_paths import decode_fsb16_price, resolve_quote_tick_files
+    files = resolve_quote_tick_files(catalog_root or _CATALOG_ROOT, instrument_id_str, interval="OneHour")
+    if not files or n_bars <= 0:
+        return []
+    candles: dict[int, list[float]] = {}
+    for f in files:
+        table = pq.read_table(str(f), columns=["ts_event", "bid_price", "ask_price"])
+        ts_col = table.column("ts_event").to_pylist()
+        bids = table.column("bid_price").to_pylist()
+        asks = table.column("ask_price").to_pylist()
+        for ts, b, a in sorted(zip(ts_col, bids, asks), key=lambda r: r[0]):
+            mid = (decode_fsb16_price(b) + decode_fsb16_price(a)) / 2.0
+            if mid <= 0:
+                continue
+            key = int(ts) // _HOUR_NS
+            c = candles.get(key)
+            if c is None:
+                candles[key] = [mid, mid, mid, mid]
+            else:
+                c[1] = max(c[1], mid)
+                c[2] = min(c[2], mid)
+                c[3] = mid
+    out = [((k + 1) * _HOUR_NS, *v) for k, v in sorted(candles.items())]
+    if now_ns is not None:
+        out = [row for row in out if row[0] <= now_ns]
+    return out[-n_bars:]
+
+
+def forex_weekend_closed(ts_ns: int) -> bool:
+    """Devisenmarkt geschlossen (Freitag 17:00 bis Sonntag 17:00 New Yorker Zeit). eToro lehnt Orders dann ab;
+    die Kurse laufen trotzdem weiter und ergeben flache Stundenkerzen."""
+    from zoneinfo import ZoneInfo
+    t = datetime.fromtimestamp(ts_ns / 1e9, tz=ZoneInfo("America/New_York"))
+    wd = t.weekday()            # Montag 0 … Sonntag 6
+    return wd == 5 or (wd == 4 and t.hour >= 17) or (wd == 6 and t.hour < 17)
 
 
 def compute_trailing_tp_lock(
@@ -624,6 +677,9 @@ class HourlyStrategyBase(Strategy):
         if getattr(self, "trend_filter_period", 0) > 0 and getattr(self, "trend_filter_sma", None) is not None:
             self._warmup_trend_filter()
 
+        if int(getattr(self.config, "catalog_warmup_bars", 0) or 0) > 0:
+            self._warmup_from_catalog(int(self.config.catalog_warmup_bars))
+
         # Issue #717 (GR-04) — Reconnect-Reconciliation: eine bereits offene Position (Reconnect
         # INNERHALB desselben Prozesses, oder ein Cache, der Positionen über einen Neustart hinweg
         # bewahrt) hat einen verlorenen In-Memory-_bars_in_position-Zähler (#714-Root-Cause).
@@ -780,6 +836,55 @@ class HourlyStrategyBase(Strategy):
             f"[{self.instrument_id}] GR-04 Close-Request empfangen (reason={reason}) — schliesse."
         )
         self._close_position_base(positions[0])
+
+    def submit_order(self, order, *args, **kwargs):
+        """Während der Katalog-Vorwärmung geht keine Order hinaus."""
+        if getattr(self, "_warming_up", False):
+            return None
+        return super().submit_order(order, *args, **kwargs)
+
+    def _warmup_from_catalog(self, n_bars: int) -> int:
+        """Spielt die letzten ``n_bars`` Katalog-Stundenkerzen durch ``on_bar`` (Session-Gate, Indikatoren,
+        Signal-Logik), ohne Orders, ohne Evidenz-Ledger und ohne Session-Telemetrie. Nur ohne offene Position;
+        danach steht der Signal-Zustand wieder auf seinem Startwert. Gibt die Zahl gespielter Kerzen zurück."""
+        try:
+            if self.cache.positions_open(instrument_id=self.instrument_id):
+                return 0
+            instrument = self.cache.instrument(self.instrument_id)
+            prec = int(getattr(instrument, "price_precision", 5) or 5)
+            rows = load_catalog_hourly_bars(str(self.instrument_id), n_bars, now_ns=self.clock.timestamp_ns())
+        except Exception as e:
+            self._log.warning(f"[{self.instrument_id}] Katalog-Vorwärmung nicht möglich: {e}")
+            return 0
+        if not rows:
+            self._log.warning(f"[{self.instrument_id}] Katalog-Vorwärmung: keine Stundenkerzen im Katalog.")
+            return 0
+        snapshot = {k: getattr(self, k) for k in _WARMUP_SIGNAL_STATE if hasattr(self, k)}
+        saved = {k: self.__dict__[k] for k in ("_session_bar_observer", "_session_telemetry_live")
+                 if k in self.__dict__}
+        self._session_bar_observer = None
+        self._session_telemetry_live = False
+        self._warming_up = True
+        played = 0
+        try:
+            for ts, o, h, low, c in rows:
+                bar = Bar(bar_type=self.bar_type, open=Price(o, prec), high=Price(h, prec), low=Price(low, prec),
+                          close=Price(c, prec), volume=Quantity(1.0, 0), ts_event=int(ts), ts_init=int(ts))
+                self.on_bar(bar)
+                played += 1
+        except Exception as e:
+            self._log.warning(f"[{self.instrument_id}] Katalog-Vorwärmung nach {played} Kerzen abgebrochen: {e}")
+        finally:
+            self._warming_up = False
+            for key in ("_session_bar_observer", "_session_telemetry_live"):
+                if key in saved:
+                    self.__dict__[key] = saved[key]
+                else:
+                    self.__dict__.pop(key, None)
+            for key, value in snapshot.items():
+                setattr(self, key, value)
+        self._log.info(f"[{self.instrument_id}] Katalog-Vorwärmung: {played} Stundenkerzen gespielt.")
+        return played
 
     def _warmup_trend_filter(self):
 
@@ -1312,6 +1417,11 @@ class HourlyStrategyBase(Strategy):
         von Trailing-Stop, Zeit-Exit oder ATR-Update in `_check_exits_and_update` blockieren."""
         max_cap = getattr(self.config, "max_trades_cap", None)
         if max_cap is not None and self._executed_trades >= max_cap:
+            return False
+        if getattr(self, "_warming_up", False):
+            return False
+        if (_read_instrument_asset_class(str(self.instrument_id)) == "FOREX"
+                and forex_weekend_closed(self.clock.timestamp_ns())):
             return False
         return True
 

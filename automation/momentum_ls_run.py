@@ -307,9 +307,10 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     # Demo-Inkubation: Trailing-Take-Profit wie in der Paper-Auswahl, falls die eingefrorenen Parameter ihn
     # (noch) nicht tragen (vor der Einführung ausgewählte Paare). Nie im Live-/Echtgeld-Pfad.
     if bot_spec.get("stage") == INCUBATING:
-        from automation.papertrading import PAPER_TRAILING_TP
+        from automation.papertrading import PAPER_TRAILING_TP, PAPER_WARMUP_BARS
         for key, value in PAPER_TRAILING_TP.items():
             cfg_kwargs.setdefault(key, value)
+        cfg_kwargs.setdefault("catalog_warmup_bars", PAPER_WARMUP_BARS)
     # Issue #1361 (GH #1257) — Session-Gate: dasselbe Fenster (Börsen-Lokalzeit), das der Backtest-Runner
     # aus backtest.json auflöst (session_windows.resolve_session_window) — live verwirft die Strategie
     # Extended-Hours-Bars, wie der Backtest Ticks/Füllbars ausserhalb der Session nie sieht. Nie aus dem
