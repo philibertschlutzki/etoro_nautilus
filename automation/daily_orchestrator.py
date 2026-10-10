@@ -406,6 +406,31 @@ def _phase2d_depth_fetch(log: logging.Logger, universe_result: dict, api_key: st
         result["hist_filled"] = []
 
 
+def _phase2e_oneday_full_window(log: logging.Logger, universe_result: dict, api_key: str, user_key: str,
+                                result: dict) -> None:
+    """Phase 2e (nur mit OneDay, z. B. ``--papertrading``) — volles OneDay-API-Fenster für Symbole, deren
+    OneDay-Datei fehlt oder auf den Phase-2d-Zeitraum (~12 Monate) gekürzt ist. Ohne diesen Schritt verwirft
+    die Paper-Auswahl auf der Tagesachse neue Symbole als Spätstarter. Schreibt ``result['oneday_filled']``;
+    Fehler werden geloggt, nie geworfen."""
+    result["oneday_filled"] = []
+    try:
+        from automation.api_backfiller import _load_etoro_id_map as _load_id_map_2e
+        from automation.historical_fetcher import oneday_full_window_due, run_oneday_full_window
+        due = sorted(item["symbol"] for item in universe_result.get("universe", [])
+                     if item.get("symbol") and oneday_full_window_due(item["symbol"]))
+        due = list(dict.fromkeys(due))
+        if not due:
+            log.info("[Phase 2e] Alle Symbole haben das volle OneDay-Fenster.")
+            return
+        log.info(f"[Phase 2e] Volles OneDay-Fenster für {len(due)} Symbole: {due}")
+        filled = asyncio.run(run_oneday_full_window(api_key, user_key, _load_id_map_2e(UNIVERSE_PATH), due))
+        result["oneday_filled"] = sorted(filled)
+        log.info(f"[Phase 2e] OneDay-Fenster gespeichert: {len(filled)} Symbole.")
+        emit_json_event(log, "PHASE2E_COMPLETE", {"due_count": len(due), "filled_count": len(filled)})
+    except Exception as e:
+        log.error(f"[Phase 2e] OneDay-Fenster Fehler: {e}\n{traceback.format_exc()}")
+
+
 def phase2_data_acquisition(
     log: logging.Logger,
     universe_result: dict,
@@ -506,6 +531,8 @@ def phase2_data_acquisition(
         result["hist_filled"] = []
     else:
         _phase2d_depth_fetch(log, universe_result, api_key, user_key, result)
+        if with_oneday:
+            _phase2e_oneday_full_window(log, universe_result, api_key, user_key, result)
 
     emit_json_event(log, "PHASE2_COMPLETE", {
         "merged_instruments": result["merged_count"],

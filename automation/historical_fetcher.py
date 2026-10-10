@@ -1385,6 +1385,19 @@ def oneday_span_days(symbol: str, quote_tick_path: Path | None = None) -> dict:
             "oneday_effective_span_days": float((newest - oldest).days + 1)}
 
 
+def oneday_full_window_due(symbol: str, quote_tick_path: Path | None = None) -> bool:
+    """``True``, solange für ``symbol`` das volle OneDay-API-Fenster (1000 Kerzen) noch nicht im Katalog liegt:
+    kein registriertes OneDay-Fenster, keine OneDay-Datei oder eine lokale Datei, die jünger beginnt als das
+    registrierte Fenster (z. B. vom Phase-2d-Abruf auf ~12 Monate gekürzt). Ein gespeichertes Fenster
+    erfüllt die Bedingung danach dauerhaft, auch bei jungen Instrumenten mit weniger als 1000 Kerzen."""
+    win = ((_load_inception_bounds().get(symbol) or {}).get("window") or {}).get(ONEDAY) or {}
+    oldest_window = str(win.get("window_oldest_utc") or "")[:10]
+    oldest_local = oneday_span_days(symbol, quote_tick_path).get("oneday_oldest_utc")
+    if not oldest_window or not oldest_local:
+        return True
+    return oldest_local > oldest_window
+
+
 async def fetch_oneday_full_window(
     session, etoro_id: str, symbol: str, price_prec: int, size_prec: int, *, api_key: str, user_key: str,
     now: datetime | None = None, fetch_chunk=None,
