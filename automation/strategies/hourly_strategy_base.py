@@ -201,6 +201,38 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # ``session_windows.resolve_session_window`` — Backtest-Runner und Live-Bot lösen es über dieselbe
     # Funktion auf (Issue #1361 baut darauf den Live-Session-Gate). Nicht im Suchraum.
     session_window: str | None = None
+    # Trailing-Take-Profit (bot-seitig; eToro kennt nur einen Trailing-Stop-Loss). Sobald der bestmögliche
+    # Schlusskurs seit Einstieg mindestens ``trailing_tp_activation_atr`` · ATR (und das Doppelte der
+    # Mindest-Sicherung) im Gewinn liegt, wird ein Gewinn gesichert: Exit, wenn der Schlusskurs unter
+    # max(Hoch − ``trailing_tp_trail_atr`` · ATR, Einstieg + ``trailing_tp_min_lock_spread_mult`` · Spread)
+    # fällt (Short gespiegelt). None ⇒ aus (Default, Produktionsverhalten unverändert); der Broker-Stop
+    # (SL:-Tag) und der ATR-Trailing-Stop bleiben in jedem Fall aktiv.
+    trailing_tp_activation_atr: float | None = None
+    trailing_tp_trail_atr: float = 0.5
+    trailing_tp_min_lock_spread_mult: float = 2.0
+
+
+def compute_trailing_tp_lock(
+    entry_price: float,
+    peak_price: float,
+    atr_value: float,
+    side: str,
+    activation_atr: float,
+    trail_atr: float,
+    min_lock_bps: float,
+) -> float | None:
+    """Gesicherter Mindest-Ausstiegskurs des Trailing-Take-Profits oder ``None``, solange er nicht aktiv ist.
+    ``peak_price`` ist der beste Schlusskurs seit Einstieg (Long: Hoch, Short: Tief). Reine Funktion."""
+    if entry_price <= 0 or atr_value <= 0:
+        return None
+    sign = 1.0 if side == "LONG" else -1.0
+    gain = sign * (peak_price - entry_price)
+    floor = entry_price * float(min_lock_bps) / 10_000.0
+    if gain < float(activation_atr) * atr_value or gain < 2.0 * floor:
+        return None
+    if side == "LONG":
+        return max(peak_price - float(trail_atr) * atr_value, entry_price + floor)
+    return min(peak_price + float(trail_atr) * atr_value, entry_price - floor)
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
@@ -398,6 +430,7 @@ class HourlyStrategyBase(Strategy):
         # _in_position bleibt jetzt waehrend eines laufenden (asynchronen) Exit-Versuchs True,
         # darf also nie mehr eine Neuverankerung des Trailing-Stops ausloesen koennen.
         self._trailing_initialised: bool = False
+        self._ttp_peak: float | None = None   # bester Schlusskurs seit Einstieg (Trailing-Take-Profit)
         self._pending_cancels: set = set()
         # Issue #836 — Fortsetzungs-Zustand eines ausgeloesten, aber noch nicht bestaetigten Exits.
         # Wird ausschliesslich in on_position_closed() auf None zurueckgesetzt (der einzige Ort, der
@@ -981,6 +1014,7 @@ class HourlyStrategyBase(Strategy):
                 self._trailing_stop_side = None
                 self._bars_in_position = 0
             self._trailing_initialised = False
+            self._ttp_peak = None
             self._exit_pending = None
             self._exit_pending_kind = None
             self._exit_pending_bars = 0
@@ -1123,6 +1157,14 @@ class HourlyStrategyBase(Strategy):
 
         exit_kind = ExitReason.TRAILING_STOP if exit_reason is not None else None
 
+        # Exit condition 1b: Trailing-Take-Profit (opt-in) — sichert einen kleinen Gewinn, bevor der weitere
+        # ATR-Trailing-Stop greift.
+        if exit_reason is None:
+            ttp = self._trailing_tp_lock(pos, close)
+            if ttp is not None:
+                exit_reason = ttp
+                exit_kind = ExitReason.PROFIT_TARGET
+
         if exit_kind == ExitReason.TRAILING_STOP:
             # Issue #1054/#1203 (Katalog #1196-1221) — Ankerpreis UND Stopdistanz ZUM AUSLOESE-
             # ZEITPUNKT (vor jeder Fill-Latenz), damit backtest_runner._finalize_round_trip die
@@ -1169,6 +1211,31 @@ class HourlyStrategyBase(Strategy):
             self._update_dyn_tp_order()
 
         return False
+
+    def _trailing_tp_lock(self, pos, close: float) -> str | None:
+        """Schreibt das beste Schlusskurs-Extremum fort und liefert die Exit-Meldung, wenn der Trailing-Take-
+        Profit greift (sonst ``None``)."""
+        activation = getattr(self.config, "trailing_tp_activation_atr", None)
+        if not activation or not self._exit_atr.initialized:
+            return None
+        side = "LONG" if pos.side == PositionSide.LONG else "SHORT"
+        if self._ttp_peak is None:
+            self._ttp_peak = close
+        self._ttp_peak = max(self._ttp_peak, close) if side == "LONG" else min(self._ttp_peak, close)
+        try:
+            entry = float(pos.avg_px_open)
+        except (TypeError, ValueError):
+            return None
+        min_lock_bps = (float(getattr(self.config, "trailing_tp_min_lock_spread_mult", 2.0))
+                        * resolve_spread_bps_model(str(self.instrument_id)))
+        lock = compute_trailing_tp_lock(
+            entry, self._ttp_peak, self._effective_atr_value(self._exit_atr.value, close), side,
+            float(activation), float(getattr(self.config, "trailing_tp_trail_atr", 0.5)), min_lock_bps)
+        if lock is None:
+            return None
+        if (side == "LONG" and close <= lock) or (side == "SHORT" and close >= lock):
+            return f"Trailing Take-Profit {side} @ {close:.4f} (Sicherung {lock:.4f}, Bestkurs {self._ttp_peak:.4f})"
+        return None
 
     def _exit_close_watchdog(self, bar: Bar) -> None:
         """Issue #836 — erzwingt den Markt-Close, falls seit dem Auslösen des Exits
@@ -1801,6 +1868,7 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_price = None
         self._trailing_stop_side = None
         self._take_profit_price = None
+        self._ttp_peak = None
         # Issue #897 Fix 1 — Kurs-Extremum-Anker wird AUSSCHLIESSLICH hier auf den Entry-Preis
         # initialisiert (analog _trailing_initialised, #837).
         self._position_extreme = float(event.avg_px_open)

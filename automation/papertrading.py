@@ -188,12 +188,31 @@ PAPER_SELECTION_GATES = {
     # Gewinner übrig. Die Forward-Evidenz (Bonferroni über max_concurrent) bleibt die Multiple-Testing-Korrektur.
     "deflated_selection": False,
 }
+# Trailing-Take-Profit im Paper-Betrieb (Auswahl UND Demo-Bot): ab 0,5 ATR Gewinn wird gesichert, Ausstieg bei
+# 0,3 ATR Rücklauf vom Bestkurs, mindestens 2 × Spread über dem Einstieg. Kleine, häufige Gewinne statt
+# seltener grosser; Broker-Stop und ATR-Trailing-Stop bleiben unverändert.
+PAPER_TRAILING_TP = {"trailing_tp_activation_atr": 0.5, "trailing_tp_trail_atr": 0.3,
+                     "trailing_tp_min_lock_spread_mult": 2.0}
+
+
+def paper_strategy_defaults(base_dir: Path | None = None) -> dict:
+    """``strategy_defaults.json``-Overlay: ``PAPER_TRAILING_TP`` für jede Strategie der Basis-Config."""
+    import json
+    path = (base_dir or (config_profile.BASE_CONFIG_DIR)) / "strategy_defaults.json"
+    try:
+        names = [k for k in (json.loads(path.read_text("utf-8")) or {}) if not k.startswith("_")]
+    except (OSError, ValueError):
+        names = []
+    return {name: dict(PAPER_TRAILING_TP) for name in names}
+
+
 PAPER_MAX_CONCURRENT = 40      # gleichzeitige Inkubations-Paare; das Gesamtbudget (max_total_exposure_fraction) bleibt
 
 
 def daily_profile_spec(depth_days: float) -> dict:
     wf, min_bars = derive_walk_forward_daily(depth_days)
-    return {"tournament.json": dict(PAPER_SELECTION_GATES), "backtest.json": {"bar_axis": "OneDay", "max_handelstage": 5,
+    return {"tournament.json": dict(PAPER_SELECTION_GATES), "strategy_defaults.json": paper_strategy_defaults(),
+            "backtest.json": {"bar_axis": "OneDay", "max_handelstage": 5,
                               "walk_forward": {**wf, "data_history_days": max(int(depth_days), 1)}},
             "optimizer.json": {"time_box_bars": 5.0, "gate1_buffer_days": 0, "champion_enabled": False,
                                "diagnostic_writeback_enabled": False,

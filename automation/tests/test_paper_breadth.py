@@ -135,3 +135,69 @@ def test_paper_selection_has_room_and_no_deflated_winner_filter():
     assert pt.PAPER_MAX_CONCURRENT >= 40
     assert pt.PAPER_SELECTION_GATES["deflated_selection"] is False
     assert pt.daily_profile_spec(1400.0)["tournament.json"]["deflated_selection"] is False
+
+
+def test_trailing_tp_lock_long_and_short():
+    from automation.strategies.hourly_strategy_base import compute_trailing_tp_lock as lock
+    # nicht aktiv: Gewinn 0,4 ATR < 0,5 ATR
+    assert lock(100.0, 100.4, 1.0, "LONG", 0.5, 0.3, 6.0) is None
+    # aktiv: Bestkurs 101, Sicherung max(101 - 0,3, 100 + 0,06) = 100,7
+    assert abs(lock(100.0, 101.0, 1.0, "LONG", 0.5, 0.3, 6.0) - 100.7) < 1e-9
+    # Mindest-Sicherung über dem Einstieg greift, wenn der Rücklauf grösser wäre als der Gewinn
+    assert abs(lock(100.0, 100.6, 1.0, "LONG", 0.5, 2.0, 6.0) - 100.06) < 1e-9
+    # Spread zu gross für den Gewinn ⇒ nicht aktiv
+    assert lock(100.0, 100.6, 1.0, "LONG", 0.5, 0.3, 40.0) is None
+    assert abs(lock(100.0, 99.0, 1.0, "SHORT", 0.5, 0.3, 6.0) - 99.3) < 1e-9
+
+
+def test_trailing_tp_config_off_by_default_on_in_paper():
+    from automation import papertrading as pt
+    from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
+    assert "trailing_tp_activation_atr" in HourlyStrategyConfig.__struct_fields__
+    assert HourlyStrategyConfig(instrument_id="X.ETORO", bar_type="b").trailing_tp_activation_atr is None
+    sd = pt.daily_profile_spec(1400.0)["strategy_defaults.json"]
+    assert sd and all(v == pt.PAPER_TRAILING_TP for v in sd.values())
+    assert "SmaCrossoverStrategy" in sd
+
+
+def test_round_the_clock_resolution():
+    existing = {"1": {"symbol": "BTC.ETORO", "asset_class": "crypto"}}
+    meta = {
+        "1": {"SymbolFull": "BTC", "InstrumentTypeID": 10},
+        "2": {"SymbolFull": "ETH", "InstrumentTypeID": 10},
+        "3": {"SymbolFull": "EURUSD", "InstrumentTypeID": 1},
+        "4": {"SymbolFull": "GOLD", "InstrumentTypeID": 2},
+        "5": {"SymbolFull": "AAPL", "InstrumentTypeID": 5},
+        "6": {"SymbolFull": "SPX500", "InstrumentTypeID": 4},
+        "7": {"SymbolFull": "OLDCOIN", "InstrumentTypeID": 10, "IsDelisted": True},
+        "8": {"SymbolFull": "BTC", "InstrumentTypeID": 10},
+    }
+    out = uf.resolve_round_the_clock_symbols(existing, meta, ("crypto", "forex", "commodity"))
+    assert {v["symbol"]: v["asset_class"] for v in out.values()} == {
+        "ETH.ETORO": "crypto", "EURUSD.ETORO": "forex", "GOLD.ETORO": "commodity"}
+    assert out["3"]["price_precision"] == 5
+
+
+def test_round_the_clock_config(tmp_path):
+    f = tmp_path / "rtc.json"
+    f.write_text('{"enabled": true, "asset_classes": ["crypto", "index", "forex"]}')
+    assert uf.load_round_the_clock_classes(f) == ("crypto", "forex")
+    f.write_text('{"enabled": false, "asset_classes": ["crypto"]}')
+    assert uf.load_round_the_clock_classes(f) == ()
+    assert uf.load_round_the_clock_classes() == ("crypto", "forex", "commodity")
+
+
+def test_trailing_tp_exit_over_a_price_path():
+    from types import SimpleNamespace
+    from nautilus_trader.model.enums import PositionSide
+    from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+    cfg = SimpleNamespace(trailing_tp_activation_atr=0.5, trailing_tp_trail_atr=0.3,
+                          trailing_tp_min_lock_spread_mult=2.0)
+    fake = SimpleNamespace(config=cfg, _exit_atr=SimpleNamespace(initialized=True, value=1.0), _ttp_peak=None,
+                           instrument_id="NOPE.ETORO", _effective_atr_value=lambda atr, price: atr)
+    pos = SimpleNamespace(side=PositionSide.LONG, avg_px_open=100.0)
+    fired = [HourlyStrategyBase._trailing_tp_lock(fake, pos, c) for c in (100.2, 100.6, 101.2, 101.0, 100.85)]
+    assert fired[:4] == [None, None, None, None]          # Bestkurs 101,2 ⇒ Sicherung 100,9
+    assert fired[4] and "Trailing Take-Profit LONG" in fired[4]
+    off = SimpleNamespace(**{**vars(fake), "config": SimpleNamespace(trailing_tp_activation_atr=None)})
+    assert HourlyStrategyBase._trailing_tp_lock(off, pos, 90.0) is None

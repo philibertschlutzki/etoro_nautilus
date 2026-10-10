@@ -87,6 +87,7 @@ def _username(monkeypatch, tmp_path):
     # Ohne volatile Zusatz-Symbole: diese Tests prüfen nur Klassifikation und Metadaten-Abruf.
     import automation.universe_fetcher as _uf
     monkeypatch.setattr(_uf, "EXTRA_SYMBOLS_PATH", tmp_path / "keine_extras.json")
+    monkeypatch.setattr(_uf, "ROUND_THE_CLOCK_PATH", tmp_path / "kein_24h.json")
 
 
 @pytest.mark.asyncio

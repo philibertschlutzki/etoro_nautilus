@@ -1,0 +1,9 @@
+{
+  "_schema": {
+    "description": "Rund um die Uhr handelbare eToro-Instrumente automatisch ins Universum aufnehmen (Paper-Trading: mehr Handelsstunden, mehr Trades). universe_fetcher nimmt jedes Instrument der eToro-Metadaten auf, dessen Anlageklasse in asset_classes steht (Krypto 24/7, Devisen und Rohstoffe 24/5), und trägt es in instrument_map.json ein. Indizes fehlen bewusst: sie haben keinen Kosten-Bucket in backtest.json und würden im Backtest abgewiesen. Als delisted markierte Instrumente werden übersprungen.",
+    "enabled": "true/false",
+    "asset_classes": "Teilmenge von crypto, forex, commodity"
+  },
+  "enabled": true,
+  "asset_classes": ["crypto", "forex", "commodity"]
+}
