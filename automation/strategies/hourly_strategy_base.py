@@ -838,10 +838,22 @@ class HourlyStrategyBase(Strategy):
         self._close_position_base(positions[0])
 
     def submit_order(self, order, *args, **kwargs):
-        """Während der Katalog-Vorwärmung geht keine Order hinaus."""
+        """Während der Katalog-Vorwärmung geht keine Order hinaus. Krypto-Shorts gehen nie hinaus: eToro lehnt
+        das Eröffnen von Sell-Positionen auf Krypto ab (errorCode 747); im Backtest gilt dieselbe Regel, damit
+        die Auswahl keine Short-Gewinne zählt, die live nicht möglich sind."""
         if getattr(self, "_warming_up", False):
             return None
+        if self._is_blocked_crypto_short(order):
+            self._log.info(f"[{self.instrument_id}] SHORT_BLOCKED: eToro erlaubt keine Krypto-Shorts.")
+            return None
         return super().submit_order(order, *args, **kwargs)
+
+    def _is_blocked_crypto_short(self, order) -> bool:
+        if getattr(order, "side", None) != OrderSide.SELL or getattr(order, "is_reduce_only", False):
+            return False
+        if _read_instrument_asset_class(str(order.instrument_id)) != "CRYPTO":
+            return False
+        return not self.cache.positions_open(instrument_id=order.instrument_id, side=PositionSide.LONG)
 
     def _warmup_from_catalog(self, n_bars: int) -> int:
         """Spielt die letzten ``n_bars`` Katalog-Stundenkerzen durch ``on_bar`` (Session-Gate, Indikatoren,
@@ -1799,6 +1811,11 @@ class HourlyStrategyBase(Strategy):
         if price <= 0:
             return None
 
+        # Katalog-Vorwärmung: historische Kerzen, kein Entry — still verwerfen, sonst prüfen Spread-Gate und
+        # Trade-Cap jedes Replay-Signal gegen den aktuellen Live-Quote und fluten das Log.
+        if getattr(self, "_warming_up", False):
+            return None
+
         # Issue #715 (GR-02) — Pre-Trade-Spread-Gate: vor JEDER Order den effektiven Spread aus
         # dem aktuellen QuoteTick prüfen; Signal bei Überschreitung verwerfen + strukturiert loggen.
         # Kein QuoteTick verfügbar (z. B. Cold-Start) ⇒ Gate inaktiv (fail-open, kein erfundener Wert).
@@ -1833,10 +1850,14 @@ class HourlyStrategyBase(Strategy):
         # _check_exits_and_update hätte auch Trailing-Stop/Zeit-Exit/ATR-Update mitgesperrt und
         # jede zu diesem Zeitpunkt offene Position bis Datenreihenende gehalten (#836/#837-Klasse).
         if not self._entry_allowed():
-            self._log.warning(
-                f"[{self.instrument_id}] MAX_TRADES_CAP_REJECT: {self._executed_trades} Trades "
-                f"erreicht (Limit: {self.config.max_trades_cap})."
-            )
+            max_cap = getattr(self.config, "max_trades_cap", None)
+            if max_cap is not None and self._executed_trades >= max_cap:
+                self._log.warning(
+                    f"[{self.instrument_id}] MAX_TRADES_CAP_REJECT: {self._executed_trades} Trades "
+                    f"erreicht (Limit: {max_cap})."
+                )
+            else:
+                self._log.info(f"[{self.instrument_id}] ENTRY_BLOCKED: Devisenmarkt am Wochenende geschlossen.")
             return None
 
         trade_amount_usd_cfg = getattr(self.config, "trade_amount_usd", None)

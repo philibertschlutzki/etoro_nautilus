@@ -15,7 +15,8 @@ from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.identifiers import ClientId, InstrumentId, Venue
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.enums import AssetClass
+from nautilus_trader.model.instruments import Cfd
 from nautilus_trader.model.objects import Price, Quantity
 
 from automation.adapters.instrument_map import ETORO_INSTRUMENTS
@@ -202,19 +203,20 @@ class EToroDataClient(LiveMarketDataClient):
             # However, eToro Equities are by-amount and have size_prec=2.
             is_crypto = size_prec >= 8
 
-            # For Equities (size_prec=2), we want size_inc_val to still be 1.0 because of the by-amount routing!
-            if size_prec >= 5:
-                size_inc_val = round(10 ** (-size_prec), size_prec)
-            else:
-                size_inc_val = 1.0
+            # Bruchstücke wie im Backtest (create_mock_instrument: Cfd mit size_increment 10^-size_prec). Equity hat
+            # immer size_increment 1: 2 % des Kontos (~200 USD) ergaben bei BTC 0,0024 Stück, abgerundet 0, und die
+            # Order fiel still weg. eToro handelt by-amount (Amount = Menge × Kurs), Bruchstücke sind dort normal.
+            size_inc_val = round(10 ** (-size_prec), size_prec) if size_prec > 0 else 1.0
 
-            inst = Equity(
+            inst = Cfd(
                 instrument_id=instr_id,
                 raw_symbol=instr_id.symbol,
-                currency=USD,
+                asset_class=AssetClass.EQUITY,
+                quote_currency=USD,
                 price_precision=price_prec,
+                size_precision=size_prec,
                 price_increment=Price(price_incr, precision=price_prec),
-                lot_size=Quantity(size_inc_val, precision=size_prec),
+                size_increment=Quantity(size_inc_val, precision=size_prec),
                 ts_event=ts,
                 ts_init=ts,
             )

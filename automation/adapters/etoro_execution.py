@@ -79,6 +79,33 @@ _PNL_BASE: dict[str, str] = {
 _WS_URL = "wss://ws.etoro.com/ws"
 
 
+def order_rejection_reason(order_info: dict) -> str | None:
+    """Liest eine Order-Info-Antwort (``GET /trading/info/<env>/orders/{orderId}``). eToro nimmt einen
+    Market-POST mit 2xx an und lehnt erst danach ab (z. B. ``statusID 4``, ``errorCode 747`` "opening
+    position is disallowed for Sell positions of this instrument"). Gibt den Ablehnungsgrund zurück,
+    sonst ``None``."""
+    if not isinstance(order_info, dict):
+        return None
+    data = order_info
+    for key in ("order", "Order", "orderInfo"):
+        if isinstance(data.get(key), dict):
+            data = data[key]
+            break
+    low = {str(k).lower(): v for k, v in data.items()}
+    try:
+        status_id = int(low.get("statusid", 0) or 0)
+    except (TypeError, ValueError):
+        status_id = 0
+    try:
+        error_code = int(low.get("errorcode", 0) or 0)
+    except (TypeError, ValueError):
+        error_code = 0
+    if status_id != 4 and error_code == 0:
+        return None
+    message = str(low.get("errormessage") or "").strip()
+    return f"etoro_order_status_{status_id}_error_{error_code}: {message}".rstrip(": ")
+
+
 def extract_open_position_ids(pnl_data: dict) -> set[str]:
     """Issue #717 (GR-04) — reine Parsing-Funktion: extrahiert die Menge offener eToro-
     PositionIDs aus einem PnL-REST-Response-Body (dieselbe Struktur/Feld-Fallbacks wie
@@ -1340,6 +1367,8 @@ class EToroExecutionClient(LiveExecutionClient):
                     found = await self._reconcile_via_pnl(order, req_id, order_id)
                     if found:
                         return
+                    if await self._reject_if_venue_refused(order, order_id):
+                        return
             except Exception:
                 pass
 
@@ -1371,6 +1400,36 @@ class EToroExecutionClient(LiveExecutionClient):
             self._log.warning(
                 f"[Diagnostic] PnL fetch failed: {exc}", LogColor.YELLOW
             )
+
+    async def _reject_if_venue_refused(self, order: object, order_id: str) -> bool:
+        """Fragt den Order-Status bei eToro ab und meldet eine nachträgliche Ablehnung als REJECTED,
+        damit der Bot die Order nicht dauerhaft für ACCEPTED hält."""
+        if not order_id:
+            return False
+        url = f"{self._pnl_base.rsplit('/pnl', 1)[0]}/orders/{order_id}"
+        async with self._session.get(url, headers=self._make_headers()) as resp:
+            if resp.status != 200:
+                return False
+            reason = order_rejection_reason(await resp.json())
+        if reason is None:
+            return False
+        cached = self._cache.order(order.client_order_id)
+        if cached is not None and cached.is_closed:
+            return True
+        await self._state.delete(order.client_order_id.value)
+        self._log.warning(
+            f"eToro hat {order.client_order_id.value} ({order.instrument_id}, {order.side.name}) "
+            f"abgelehnt: {reason}",
+            LogColor.YELLOW,
+        )
+        self.generate_order_rejected(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            reason=reason[:500],
+            ts_event=self._clock.timestamp_ns(),
+        )
+        return True
 
     async def _reconcile_via_pnl(
         self, order: object, req_id: str, order_id: str
