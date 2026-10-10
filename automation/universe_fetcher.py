@@ -220,6 +220,51 @@ def resolve_extra_symbols(existing_map: dict, meta_lookup: dict[str, dict], symb
     return out
 
 
+ROUND_THE_CLOCK_PATH = _THIS_DIR / "config" / "round_the_clock_universe.json"
+ROUND_THE_CLOCK_STAMP = "round_the_clock_synced_utc"
+_ROUND_THE_CLOCK_CLASSES = ("crypto", "forex", "commodity")
+
+
+def load_round_the_clock_classes(path: Path | None = None) -> tuple[str, ...]:
+    """Anlageklassen, deren Instrumente rund um die Uhr handelbar ins Universum kommen
+    (``config/round_the_clock_universe.json``); fehlt die Datei oder ist ``enabled`` falsch ⇒ leer."""
+    try:
+        raw = json.loads(Path(path or ROUND_THE_CLOCK_PATH).read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return ()
+    if not raw.get("enabled"):
+        return ()
+    return tuple(c for c in (raw.get("asset_classes") or []) if c in _ROUND_THE_CLOCK_CLASSES)
+
+
+def _is_delisted(item: dict) -> bool:
+    return bool(_meta_field(item, "IsDelisted", "isDelisted"))
+
+
+def resolve_round_the_clock_symbols(existing_map: dict, meta_lookup: dict[str, dict],
+                                    asset_classes: tuple[str, ...]) -> dict[str, dict]:
+    """Neue ``instrument_map``-Einträge ``{uid: {...}}`` für jedes Metadaten-Instrument der ``asset_classes``,
+    das noch nicht im Map steht (weder per ID noch per Symbol). Ohne ``SymbolFull`` oder als delisted markiert
+    ⇒ übersprungen."""
+    wanted = set(asset_classes)
+    known = {str((e or {}).get("symbol") or "").upper() for e in existing_map.values()}
+    out: dict[str, dict] = {}
+    for uid, item in sorted(meta_lookup.items()):
+        if uid in existing_map or _is_delisted(item):
+            continue
+        asset_class = _classify_instrument_metadata(item)
+        if asset_class not in wanted:
+            continue
+        symbol_full = str(_meta_field(item, "SymbolFull", "symbolFull") or "").strip()
+        symbol = f"{symbol_full}.ETORO"
+        if not symbol_full or symbol.upper() in known:
+            continue
+        known.add(symbol.upper())
+        pp, sp = _precisions_for(symbol, asset_class)
+        out[uid] = {"symbol": symbol, "asset_class": asset_class, "price_precision": pp, "size_precision": sp}
+    return out
+
+
 def get_etoro_metadata():
     """Fetch eToro metadata with caching and retries."""
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -382,8 +427,10 @@ async def run_fetch(
     known_symbols = {str((e or {}).get("symbol") or "").upper() for e in existing_map.values()}
     extras_missing = [s for s in extra_symbols if f"{s}.ETORO" not in known_symbols]
 
+    round_the_clock = load_round_the_clock_classes()
+
     meta_lookup: dict[str, dict] | None = None
-    if unknown_instruments or needs_reclassification or extras_missing:
+    if unknown_instruments or needs_reclassification or extras_missing or round_the_clock:
         if unknown_instruments:
             logger.info(f"Found {len(unknown_instruments)} unknown instrument IDs. Attempting to resolve...")
         metadata = get_etoro_metadata()
@@ -442,10 +489,26 @@ async def run_fetch(
             logger.info(f"[VOLATIL] {entry['symbol']} ({uid}, {entry['asset_class']}) ins Universum aufgenommen.")
         newly_mapped += len(added)
 
+    rtc_synced = False
+    if round_the_clock and meta_lookup is not None:
+        added = resolve_round_the_clock_symbols(existing_map, meta_lookup, round_the_clock)
+        for uid, entry in added.items():
+            existing_map[uid] = entry
+            universe.append({"etoro_id": uid, "symbol": entry["symbol"], "raw_name": entry["symbol"].split(".")[0]})
+        if added:
+            by_class: dict[str, int] = {}
+            for entry in added.values():
+                by_class[entry["asset_class"]] = by_class.get(entry["asset_class"], 0) + 1
+            logger.info(f"[24H] {len(added)} rund um die Uhr handelbare Instrumente aufgenommen: {by_class}")
+        newly_mapped += len(added)
+        if not instrument_map_data.get(ROUND_THE_CLOCK_STAMP):
+            instrument_map_data[ROUND_THE_CLOCK_STAMP] = datetime.now(timezone.utc).isoformat()
+            rtc_synced = True
+
     reclassified = (_reclassify_existing_entries(existing_map, meta_lookup or {})
                     if needs_reclassification else 0)
 
-    if newly_mapped or reclassified:
+    if newly_mapped or reclassified or rtc_synced:
         with open(instrument_map_path, "w", encoding="utf-8") as f:
             json.dump(instrument_map_data, f, indent=2, ensure_ascii=False)
         if newly_mapped:
