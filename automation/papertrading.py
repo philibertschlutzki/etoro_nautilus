@@ -207,6 +207,10 @@ def paper_strategy_defaults(base_dir: Path | None = None) -> dict:
 
 
 PAPER_MAX_CONCURRENT = 40      # gleichzeitige Inkubations-Paare; das Gesamtbudget (max_total_exposure_fraction) bleibt
+# Eigenes Kontingent für rund um die Uhr handelbare Klassen (Krypto, Devisen, Rohstoffe): am 2026-10-10 waren alle
+# 40 Plätze von Aktien-Paaren belegt, 145 eligible Devisen- und 94 Krypto-Paare bekamen keinen Platz.
+PAPER_ROUND_THE_CLOCK_GROUP = "round_the_clock"
+PAPER_ROUND_THE_CLOCK_SLOTS = 40
 
 
 def daily_profile_spec(depth_days: float) -> dict:

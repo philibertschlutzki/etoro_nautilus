@@ -32,7 +32,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from automation.optimizer.manifest import write_json_atomic
 from automation.optimizer.sequential import (
@@ -97,7 +97,12 @@ def incubation_config(tournament_cfg: Mapping[str, Any] | None) -> dict[str, Any
 
 def bonferroni_threshold_for(cfg: Mapping[str, Any]) -> float:
     """Die je Prüfzeitpunkt und Kandidat geforderte PSR der aufgelösten Inkubations-Config."""
-    return bonferroni_threshold(float(cfg["confidence"]), int(cfg["k_max"]), int(cfg["max_concurrent"]))
+    return bonferroni_threshold(float(cfg["confidence"]), int(cfg["k_max"]), total_slots(cfg))
+
+
+def total_slots(cfg: Mapping[str, Any]) -> int:
+    """``max_concurrent`` plus alle Gruppen-Kontingente (``group_slots``)."""
+    return int(cfg["max_concurrent"]) + sum(int(n) for n in (cfg.get("group_slots") or {}).values())
 
 
 def pair_key(strategy: str, symbol: str) -> str:
@@ -320,17 +325,36 @@ def _oos_psr(winner: Mapping[str, Any]) -> float | None:
     return None
 
 
+def _pair_symbol(key: str) -> str:
+    return key.split("/", 1)[1] if "/" in key else key
+
+
 def select_incubation_candidates(
     winners: Mapping[str, Mapping[str, Any]], *, max_concurrent: int, already_active: Iterable[str] = (),
-    exclude: Iterable[str] = (),
+    exclude: Iterable[str] = (), slot_group: Callable[[str], str | None] | None = None,
+    group_slots: Mapping[str, int] | None = None,
 ) -> list[tuple[str, str, Mapping[str, Any]]]:
     """Paare aus den Tournament-Gewinnern (``{symbol: {strategy, oos_eligible, oos_psr|deflated_psr, ...}}``),
     die die Eligibility-Gates bestehen, sortiert nach deflationierter OOS-PSR (absteigend), aufgefüllt bis
     ``max_concurrent`` aktive Inkubationen. Bereits aktive Paare (``already_active``) zählen mit; ``exclude``
-    (bereits live oder zurückgezogen) belegt keinen freien Platz."""
+    (bereits live oder zurückgezogen) belegt keinen freien Platz.
+
+    ``slot_group``/``group_slots``: eigene Kontingente zusätzlich zu ``max_concurrent`` — ein Symbol, dessen
+    ``slot_group(symbol)`` in ``group_slots`` steht, belegt nur Plätze seiner Gruppe (Paper: rund um die Uhr
+    handelbare Klassen, sonst blieben alle Plätze von Aktien-Paaren besetzt)."""
+    group_slots = dict(group_slots or {})
+
+    def pool(symbol: str) -> str | None:
+        group = slot_group(symbol) if slot_group is not None else None
+        return group if group in group_slots else None
+
     active = set(already_active)
     excluded = set(exclude)
-    free = max(0, int(max_concurrent) - len(active))
+    caps = {None: int(max_concurrent), **{g: int(n) for g, n in group_slots.items()}}
+    used = {g: 0 for g in caps}
+    for key in active:
+        used[pool(_pair_symbol(key))] += 1
+    free = {g: max(0, caps[g] - used[g]) for g in caps}
     rows = []
     for symbol, w in (winners or {}).items():
         if not w or w.get("oos_eligible") is not True:
@@ -341,7 +365,13 @@ def select_incubation_candidates(
         score = _oos_psr(w)
         rows.append((-(float(score) if score is not None else -1.0), w.get("strategy"), symbol, w))
     rows.sort(key=lambda r: (r[0], r[1], r[2]))
-    return [(strategy, symbol, w) for _, strategy, symbol, w in rows[:free]]
+    picked = []
+    for _, strategy, symbol, w in rows:
+        g = pool(symbol)
+        if free[g] > 0:
+            free[g] -= 1
+            picked.append((strategy, symbol, w))
+    return picked
 
 
 def write_incubation_record(strategy: str, symbol: str, params: Mapping[str, Any], *,
@@ -389,6 +419,7 @@ def run_incubation_cycle(
     resolve_params, deployment_decision_fn=None, now: datetime | None = None,
     ledger_dir: Path = INCUBATION_DIR, live_ledger_dir: Path | None = None, psr_fn=None,
     distribution_trips: Mapping[str, Any] | None = None, inc_cfg: Mapping[str, Any] | None = None,
+    slot_group: Callable[[str], str | None] | None = None,
 ) -> CycleResult:
     """Ein täglicher Zyklus:
 
@@ -402,12 +433,13 @@ def run_incubation_cycle(
        ``resolve_params(strategy, symbol)`` — ``live_params.resolve_live_params``).
 
     ``inc_cfg``: bereits aufgelöste Inkubations-Config (z. B. das Paper-Overlay mit mehr Plätzen); ohne sie gilt
-    ``incubation_config(tournament_cfg)``."""
+    ``incubation_config(tournament_cfg)``. ``inc_cfg['group_slots']`` + ``slot_group``: eigene Kontingente je
+    Gruppe (siehe ``select_incubation_candidates``); die Bonferroni-Schwelle zählt alle Plätze."""
     cfg = dict(inc_cfg) if inc_cfg is not None else incubation_config(tournament_cfg)
     now = now or datetime.now(timezone.utc)
     live_ledger_dir = Path(live_ledger_dir) if live_ledger_dir is not None else Path(ledger_dir) / "live"
     gate_fn = deployment_decision_fn or (lambda *_a: {"admitted": None})
-    seq_kwargs = dict(k_max=int(cfg["k_max"]), n_concurrent=int(cfg["max_concurrent"]),
+    seq_kwargs = dict(k_max=int(cfg["k_max"]), n_concurrent=total_slots(cfg),
                       confidence=float(cfg["confidence"]), psr_fn=psr_fn)
     evaluated: list[dict] = []
 
@@ -476,7 +508,8 @@ def run_incubation_cycle(
     active = [pair_key(s, y) for s, y in stages.pairs_in(INCUBATING)]
     done = [pair_key(s, y) for s, y in stages.pairs_in(LIVE_SMALL, LIVE_FULL, RETIRED)]
     for strategy, symbol, _w in select_incubation_candidates(
-            winners, max_concurrent=int(cfg["max_concurrent"]), already_active=active, exclude=done):
+            winners, max_concurrent=int(cfg["max_concurrent"]), already_active=active, exclude=done,
+            slot_group=slot_group, group_slots=cfg.get("group_slots")):
         params = resolve_params(strategy, symbol)
         record = write_incubation_record(strategy, symbol, params, directory=ledger_dir, now=now,
                                          source={"oos_psr": _oos_psr(_w)})

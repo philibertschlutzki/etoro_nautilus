@@ -271,3 +271,38 @@ def test_prune_removes_earlier_non_spot_entries_but_keeps_unknown_ones():
     removed = uf.prune_round_the_clock_entries(existing, meta, ("crypto", "forex", "commodity"))
     assert set(removed) == {"2", "6"}
     assert set(existing) == {"1", "99", "50"}
+
+
+def test_round_the_clock_group_has_own_slots():
+    winners = {f"S{i:02d}.ETORO": {"strategy": "Strat", "oos_eligible": True, "oos_metrics": {"psr": 0.9}}
+               for i in range(5)}
+    winners.update({f"C{i:02d}.ETORO": {"strategy": "Strat", "oos_eligible": True, "oos_metrics": {"psr": 0.6}}
+                    for i in range(5)})
+    group = lambda s: "rtc" if s.startswith("C") else None  # noqa: E731
+    active = [f"Old/S{i}.ETORO" for i in range(3)]          # Aktien-Kontingent voll
+    picked = inc.select_incubation_candidates(winners, max_concurrent=3, already_active=active,
+                                              slot_group=group, group_slots={"rtc": 2})
+    assert [s for _, s, _ in picked] == ["C00.ETORO", "C01.ETORO"]
+    # ohne Kontingent bleibt alles beim Alten: keine freien Plätze
+    assert inc.select_incubation_candidates(winners, max_concurrent=3, already_active=active) == []
+
+
+def test_bonferroni_counts_group_slots():
+    cfg = inc.incubation_config({"incubation": {"enabled": True}})
+    cfg["max_concurrent"] = 40
+    base = inc.bonferroni_threshold_for(cfg)
+    cfg["group_slots"] = {"round_the_clock": 40}
+    assert inc.total_slots(cfg) == 80
+    assert inc.bonferroni_threshold_for(cfg) > base
+
+
+def test_round_the_clock_slot_group_reads_instrument_map(tmp_path):
+    import json
+    from automation import daily_orchestrator as do
+    p = tmp_path / "instrument_map.json"
+    p.write_text(json.dumps({"instruments": {
+        "1": {"symbol": "BTC.ETORO", "asset_class": "crypto"},
+        "2": {"symbol": "EURUSD.ETORO", "asset_class": "forex"},
+        "3": {"symbol": "AAPL.ETORO", "asset_class": "equity"}}}))
+    g = do._round_the_clock_slot_group(p)
+    assert (g("BTC.ETORO"), g("EURUSD.ETORO"), g("AAPL.ETORO")) == ("round_the_clock", "round_the_clock", None)
