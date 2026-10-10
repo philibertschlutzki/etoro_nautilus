@@ -228,4 +228,46 @@ def _phase1_fetch_called(tmp_path, monkeypatch, imap: dict) -> bool:
 def test_phase1_fetches_round_the_clock_even_when_universe_is_fresh(tmp_path, monkeypatch):
     assert _phase1_fetch_called(tmp_path, monkeypatch, {"instruments": {}})
     assert not _phase1_fetch_called(tmp_path, monkeypatch,
-                                    {"instruments": {}, uf.ROUND_THE_CLOCK_STAMP: "2026-10-10T18:00:00+00:00"})
+                                    {"instruments": {}, uf.ROUND_THE_CLOCK_STAMP: "2026-10-10T18:00:00+00:00",
+                                     uf.ROUND_THE_CLOCK_FILTER_KEY: uf.ROUND_THE_CLOCK_FILTER_VERSION})
+    # Stempel aus PR 1316 ohne Filterversion: erneuter Abgleich, damit Terminkontrakte wieder herausfallen.
+    assert _phase1_fetch_called(tmp_path, monkeypatch,
+                                {"instruments": {}, uf.ROUND_THE_CLOCK_STAMP: "2026-10-10T16:16:57+00:00"})
+
+
+def _spot(sym, type_id=10, name=None, **extra):
+    return {"SymbolFull": sym, "InstrumentTypeID": type_id, "InstrumentDisplayName": name or sym,
+            "IsInternalInstrument": False, "HasExpirationDate": False, "PriceSource": "eToro", **extra}
+
+
+def test_round_the_clock_keeps_only_tradable_spot_instruments():
+    meta = {
+        "1": _spot("SOL", name="Solana"),
+        "2": _spot("BTC.JAN26", name="Micro Bitcoin Jan 26 Future", PriceSource="CME"),
+        "3": _spot("GIGA.old", IsInternalInstrument=True),
+        "4": _spot("BTCEUR", name="Bitcoin/Euro"),
+        "5": _spot("USDT", name="Tether"),
+        "6": _spot("CL.JUL20", 2, "Crude Oil Future July 20", HasExpirationDate=True),
+        "7": _spot("OIL", 2, "Crude Oil"),
+        "8": _spot("GOLDEUR", 2, "Gold/Euro"),
+        "9": _spot("EURJPY", 1, "EUR/JPY"),
+        "10": _spot("EURUSD.MAR27", 1, "EUR/USD Mar 27", PriceSource="CME"),
+        "11": _spot("DOGE", name="Dogecoin", IsInternalInstrument=True),
+    }
+    out = uf.resolve_round_the_clock_symbols({}, meta, ("crypto", "forex", "commodity"))
+    assert sorted(v["symbol"] for v in out.values()) == ["EURJPY.ETORO", "OIL.ETORO", "SOL.ETORO"]
+
+
+def test_prune_removes_earlier_non_spot_entries_but_keeps_unknown_ones():
+    existing = {
+        "1": {"symbol": "SOL.ETORO", "asset_class": "crypto"},
+        "2": {"symbol": "BTC.JAN26.ETORO", "asset_class": "crypto"},
+        "6": {"symbol": "CL.JUL20.ETORO", "asset_class": "commodity"},
+        "99": {"symbol": "XYZ.ETORO", "asset_class": "crypto"},
+        "50": {"symbol": "PSN.US.ETORO", "asset_class": "equity"},
+    }
+    meta = {"1": _spot("SOL"), "2": _spot("BTC.JAN26", PriceSource="CME"),
+            "6": _spot("CL.JUL20", 2, HasExpirationDate=True), "50": _spot("PSN.US", 5)}
+    removed = uf.prune_round_the_clock_entries(existing, meta, ("crypto", "forex", "commodity"))
+    assert set(removed) == {"2", "6"}
+    assert set(existing) == {"1", "99", "50"}

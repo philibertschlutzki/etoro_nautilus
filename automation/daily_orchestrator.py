@@ -260,14 +260,14 @@ def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key
         if _missing and _extras_fetch_due(UNIVERSE_PATH):
             log.info(f"[Phase 1] {len(_missing)} volatile Zusatz-Symbole noch nicht im Instrument-Map — Fetch.")
             needs_fetch = True
-        from automation.universe_fetcher import ROUND_THE_CLOCK_STAMP, load_round_the_clock_classes
+        from automation.universe_fetcher import load_round_the_clock_classes, round_the_clock_sync_due
         # Ohne 6-h-Sperre: der Stempel im Instrument-Map verhindert Wiederholungen.
         if not needs_fetch and load_round_the_clock_classes():
             try:
-                _stamped = bool((json.loads(INSTRUMENT_MAP_PATH.read_text("utf-8")) or {}).get(ROUND_THE_CLOCK_STAMP))
+                _due = round_the_clock_sync_due(json.loads(INSTRUMENT_MAP_PATH.read_text("utf-8")) or {})
             except (OSError, ValueError):
-                _stamped = False
-            if not _stamped:
+                _due = True
+            if _due:
                 log.info("[Phase 1] Rund um die Uhr handelbare Instrumente noch nicht aufgenommen — Fetch.")
                 needs_fetch = True
 
