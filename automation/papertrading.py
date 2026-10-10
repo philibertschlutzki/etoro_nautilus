@@ -184,8 +184,11 @@ PAPER_SELECTION_GATES = {
     "oos_min_psr": 0.5,
     "min_profit_factor": 1.0, "oos_min_profit_factor": 1.0,
     "oos_min_expectancy": 0.0, "min_expectancy": 0.0,
+    # Ohne Deflated-Sortino-Zusatzschwelle: sie liess am 2026-10-10 von 259 eligiblen Paaren nur 9 Symbol-
+    # Gewinner übrig. Die Forward-Evidenz (Bonferroni über max_concurrent) bleibt die Multiple-Testing-Korrektur.
+    "deflated_selection": False,
 }
-PAPER_MAX_CONCURRENT = 20      # gleichzeitige Inkubations-Paare; das Gesamtbudget (max_total_exposure_fraction) bleibt
+PAPER_MAX_CONCURRENT = 40      # gleichzeitige Inkubations-Paare; das Gesamtbudget (max_total_exposure_fraction) bleibt
 
 
 def daily_profile_spec(depth_days: float) -> dict:

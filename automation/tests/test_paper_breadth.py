@@ -128,3 +128,10 @@ def test_phase2e_fetches_only_due_symbols(monkeypatch):
     universe = {"universe": [{"symbol": "OLD.ETORO"}, {"symbol": "MARA.ETORO"}, {"symbol": "MARA.ETORO"}]}
     do._phase2e_oneday_full_window(logging.getLogger("t"), universe, "k", "u", result)
     assert seen["symbols"] == ["MARA.ETORO"] and result["oneday_filled"] == ["MARA.ETORO"]
+
+
+def test_paper_selection_has_room_and_no_deflated_winner_filter():
+    from automation import papertrading as pt
+    assert pt.PAPER_MAX_CONCURRENT >= 40
+    assert pt.PAPER_SELECTION_GATES["deflated_selection"] is False
+    assert pt.daily_profile_spec(1400.0)["tournament.json"]["deflated_selection"] is False
