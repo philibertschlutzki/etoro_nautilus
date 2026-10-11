@@ -11,6 +11,9 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 class VolatilityBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     bb_period: int = 20
     bb_std_dev: float = 2.0
+    # EBC-H3 Anhang B: Short-Entry nur explizit. Das Exit-Signal ("MOMENTUM LOST") eröffnet sonst bei flacher Position
+    # (nach Trailing-Stop-/Zeit-Exit) unbeabsichtigt einen Short.
+    allow_short: bool = False
 
 
 class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
@@ -92,6 +95,10 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
             self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None
             return
+        if not self.config.allow_short:
+            # Das Exit-Signal eröffnet nie eine Gegenposition (EBC-H3 Anhang B).
+            self.current_signal = None
+            return
         if len(self.cache.positions_open(instrument_id=self.instrument_id)) >= self.config.max_open_positions:
             return
         qty = self._compute_quantity(bar)
@@ -107,6 +114,12 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
+
+    def on_position_closed(self, event) -> None:
+        # EBC-H3 Anhang B: nach Trailing-Stop-/Zeit-Exit bleibt current_signal sonst auf "BUY" hängen und das Exit-Signal
+        # eröffnet bei flacher Position einen Short (und ein Re-Entry bliebe gesperrt).
+        super().on_position_closed(event)
+        self.current_signal = None
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
