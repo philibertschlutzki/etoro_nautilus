@@ -17,7 +17,7 @@ __pycache__/
 # OS generated files
 .DS_Store
 .vscode/reports/
-reports/
+#reports/
 automation/.env
 
 # Patch artifacts
