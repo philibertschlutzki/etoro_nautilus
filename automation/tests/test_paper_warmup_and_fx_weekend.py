@@ -98,3 +98,22 @@ def test_warmup_lets_the_first_live_bar_trade_and_sends_no_orders_during_replay(
     # Erster Live-Tick 00:30, erste Live-Stunde schliesst 01:00: eine Order aus der Vorwärmung wäre schon beim
     # ersten Tick gefüllt worden.
     assert warm["first_fill"].startswith("2026-10-06 01:00")
+
+
+def test_compute_quantity_is_silent_during_warmup():
+    """Replay-Signale dürfen weder Spread-Gate noch Trade-Cap gegen den Live-Quote prüfen (Log-Flut)."""
+    from types import SimpleNamespace
+
+    logged: list[str] = []
+    log = SimpleNamespace(warning=lambda m, *a: logged.append(m), info=lambda m, *a: logged.append(m),
+                          error=lambda m, *a: logged.append(m))
+    quote = SimpleNamespace(bid_price=90.0, ask_price=110.0)  # 2000 bps Spread
+    stub = SimpleNamespace(
+        instrument_id="TESTCOIN.ETORO",
+        cache=SimpleNamespace(instrument=lambda _i: object(), quote_tick=lambda _i: quote),
+        _log=log,
+        _warming_up=True,
+    )
+    bar = SimpleNamespace(close=100.0)
+    assert hsb.HourlyStrategyBase._compute_quantity(stub, bar) is None
+    assert logged == []
