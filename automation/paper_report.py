@@ -58,7 +58,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = PROJECT_ROOT / "data" / "state" / "paper_report_state.json"
 ALERTS_PATH = PROJECT_ROOT / "logs" / "paper_report_alerts.log"
-REPORT_DIR = PROJECT_ROOT / "logs" / "reports"
+REPORT_DIR = PROJECT_ROOT / "logs" / "paper_reports"   # nicht logs/reports/: "reports/" steht in .gitignore
 INCUBATION_DIR = PROJECT_ROOT / "data" / "state" / "incubation"
 BOT_LOCK = PROJECT_ROOT / "data" / "state" / "incubation_bot.lock"
 PNL_URLS = {"demo": "https://public-api.etoro.com/api/v1/trading/info/demo/pnl",
@@ -81,6 +81,16 @@ def _first(item: dict, *keys, default=None):
     return default
 
 
+def _number(value) -> float | None:
+    """Zahl aus einem Feld, das eToro je nach Endpunkt als Zahl oder als Objekt (``{"pnL": 0.28, ...}``) liefert."""
+    if isinstance(value, dict):
+        value = _first(value, "pnL", "pnl", "PnL", "profit", "netProfit")
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_positions(pnl: dict) -> dict[str, dict]:
     """``{position_id: details}`` aus einer PnL-Antwort (dieselben Feld-Fallbacks wie demo_order_check)."""
     data = pnl.get("clientPortfolio", pnl)
@@ -95,7 +105,7 @@ def parse_positions(pnl: dict) -> dict[str, dict]:
             "amount": _first(item, "Amount", "amount", "InvestedAmount", "investedAmount"),
             "open_rate": _first(item, "OpenRate", "openRate"),
             "open_time": _first(item, "OpenDateTime", "openDateTime", "OpenTimestamp"),
-            "pnl": _first(item, "NetProfit", "netProfit", "unrealizedPnL", "UnrealizedPnL", "Profit", "profit"),
+            "pnl": _number(_first(item, "NetProfit", "netProfit", "unrealizedPnL", "UnrealizedPnL", "Profit", "profit")),
         }
     return out
 
@@ -118,8 +128,9 @@ def _fmt_position(pid: str, d: dict, names: dict[int, str]) -> str:
     parts = [f"{side} {sym}", f"Position {pid}"]
     if d.get("amount") is not None:
         parts.append(f"{float(d['amount']):.2f} USD")
-    if d.get("pnl") is not None:
-        parts.append(f"PnL {float(d['pnl']):+.2f}")
+    pnl = _number(d.get("pnl"))      # auch alte Zustandsdateien mit Objekt-PnL
+    if pnl is not None:
+        parts.append(f"PnL {pnl:+.2f}")
     return ", ".join(parts)
 
 
@@ -207,7 +218,7 @@ def build_events(state: dict, positions: dict[str, dict], credit: float, *, now:
         now - datetime.fromisoformat(last_summary) >= timedelta(hours=summary_hours))
     new_state = dict(state, positions=positions, last_credit=credit, last_error_count=errors)
     if due:
-        total_pnl = sum(float(v["pnl"]) for v in positions.values() if v.get("pnl") is not None)
+        total_pnl = sum(_number(v.get("pnl")) or 0.0 for v in positions.values())
         trades = state.get("trades_since_summary", 0) + len(opened) + len(closed)
         bars = ", ".join(f"{k}: {n} Bars" for k, n in ledgers.items()) or "noch keine Evidenz"
         bot_txt = {True: "läuft", False: "läuft NICHT", None: "unbekannt (keine Sperrdatei)"}[bot]
@@ -256,6 +267,54 @@ def write_outputs(lines: list[str], now: datetime, *, alerts_path: Path | None =
         f.write("\n".join(f"- {ln}" for ln in lines) + "\n")
 
 
+def render_markdown(positions: dict[str, dict], credit: float, *, now: datetime, names: dict[int, str],
+                    bot: bool | None, ledgers: dict[str, int], errors: int, recent_events: list[str]) -> str:
+    """Lesbarer Momentaufnahme-Bericht (keine Keys, keine Konto-IDs)."""
+    bot_txt = {True: "läuft", False: "läuft NICHT", None: "unbekannt"}[bot]
+    total_pnl = sum(_number(v.get("pnl")) or 0.0 for v in positions.values())
+    invested = sum(_number(v.get("amount")) or 0.0 for v in positions.values())
+    out = ["# Paper-Trading-Bericht", "", f"Stand: {now.strftime('%Y-%m-%d %H:%M UTC')} (Spielgeld-Konto, keine Evidenz)", "",
+           "| Kennzahl | Wert |", "|---|---|",
+           f"| Freies Guthaben | {credit:.2f} USD |",
+           f"| Investiert | {invested:.2f} USD in {len(positions)} Position(en) |",
+           f"| Unrealisierter PnL | {total_pnl:+.2f} USD |",
+           f"| Bot | {bot_txt} |",
+           f"| Fehlerzeilen im heutigen Bot-Log | {errors} |",
+           f"| Paare mit Evidenz-Ledger | {len(ledgers)} |", ""]
+    out += ["## Offene Positionen", ""]
+    if positions:
+        out += ["| Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |", "|---|---|---|---|---|"]
+        for v in positions.values():
+            sym = names.get(v.get("instrument_id", 0), f"Instrument {v.get('instrument_id')}")
+            side = "Long" if v.get("is_buy") in (True, 1) else ("Short" if v.get("is_buy") in (False, 0) else "?")
+            amt, pnl = _number(v.get("amount")), _number(v.get("pnl"))
+            out.append(f"| {sym} | {side} | {'-' if amt is None else f'{amt:.2f}'} | {v.get('open_rate') or '-'} | "
+                       f"{'-' if pnl is None else f'{pnl:+.2f}'} |")
+    else:
+        out.append("Keine offene Position.")
+    out += ["", "## Letzte Ereignisse", ""]
+    out += [f"- {ln}" for ln in recent_events] or ["Keine."]
+    return "\n".join(out) + "\n"
+
+
+def recent_events(alerts_path: Path | None = None, limit: int = 30) -> list[str]:
+    try:
+        lines = (alerts_path or ALERTS_PATH).read_text("utf-8").splitlines()
+    except OSError:
+        return []
+    return [ln for ln in lines if ln.strip()][-limit:]
+
+
+def write_snapshot(text: str, report_dir: Path | None = None) -> Path:
+    report_dir = report_dir or REPORT_DIR
+    report_dir.mkdir(parents=True, exist_ok=True)
+    path = report_dir / "paper_report_latest.md"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, "utf-8")
+    tmp.replace(path)
+    return path
+
+
 def run(*, force_summary: bool = False, now: datetime | None = None, fetch=fetch_pnl, environ=None) -> int:
     environ = environ if environ is not None else os.environ
     now = now or datetime.now(timezone.utc)
@@ -286,6 +345,8 @@ def run(*, force_summary: bool = False, now: datetime | None = None, fetch=fetch
         load_state(), positions, credit, now=now, names=instrument_names(), bot=bot_running(),
         ledgers=ledger_counts(), errors=errors, force_summary=force_summary)
     write_outputs(lines, now)
+    write_snapshot(render_markdown(positions, credit, now=now, names=instrument_names(), bot=bot_running(),
+                                   ledgers=ledger_counts(), errors=errors, recent_events=recent_events()))
     save_state(new_state)
     if lines:
         print("\n".join(lines))
@@ -305,6 +366,8 @@ def cron_help() -> str:
         "                    " + CRON_LINE.format(root=PROJECT_ROOT, python=python),
         "  4. Kontrolle:   crontab -l ; grep CRON /var/log/syslog | tail ; tail -f logs/paper_report_cron.log",
         f"  Ergebnisse:     {ALERTS_PATH}  (Ereignisse), {REPORT_DIR}/ (Tagesbericht)",
+        "  Berichte ins Repo: stündlich  5 * * * * cd {root} && flock -n /tmp/paper_report_publish.lock "
+        "{python} -m automation.paper_report_publish >> logs/paper_report_publish.log 2>&1".format(root=PROJECT_ROOT, python=python),
         f"  Push (optional): {NTFY_ENV}=https://ntfy.sh/<geheimes-thema> in .env eintragen",
     ])
 

@@ -77,3 +77,25 @@ def test_push_failure_never_raises():
 def test_cron_help_names_flock_and_absolute_paths():
     text = pr.cron_help()
     assert "flock -n" in text and "*/15" in text and str(pr.PROJECT_ROOT) in text
+
+
+def test_object_pnl_from_etoro_does_not_crash_and_is_flattened():
+    pnl = {"clientPortfolio": {"credit": 9777.24, "positions": [
+        {"positionID": 1, "instrumentID": 100000, "isBuy": True, "amount": 199.56, "openRate": 82942.5,
+         "unrealizedPnL": {"pnL": 0.28, "closeRate": 83058.7}}]}}
+    positions = pr.parse_positions(pnl)
+    assert positions["1"]["pnl"] == 0.28
+    # auch ein alter Zustand mit Objekt-PnL darf die Formatierung nicht abstürzen lassen
+    assert "PnL +0.28" in pr._fmt_position("1", {"instrument_id": 1, "is_buy": True, "amount": 1,
+                                                  "pnl": {"pnL": 0.28}}, {1: "BTC"})
+
+
+def test_markdown_snapshot_has_positions_and_no_secrets(tmp_path):
+    now = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
+    positions = {"1": {"instrument_id": 1, "is_buy": True, "amount": 199.56, "open_rate": 82942.5, "pnl": 0.28}}
+    text = pr.render_markdown(positions, 9777.24, now=now, names={1: "BTC"}, bot=True, ledgers={"a": 3}, errors=0,
+                              recent_events=["x ERÖFFNET Long BTC"])
+    assert "| BTC | Long | 199.56 | 82942.5 | +0.28 |" in text and "9777.24" in text
+    path = pr.write_snapshot(text, tmp_path)
+    assert path.name == "paper_report_latest.md" and path.read_text("utf-8") == text
+    assert pr.REPORT_DIR.name == "paper_reports"     # nicht im per .gitignore ausgeschlossenen reports/
