@@ -1,0 +1,123 @@
+{
+ "hypothesis": "H1",
+ "prompt_version": "1.0.0",
+ "repo_commit": "5f737ed495e70eab85b2dbbb7673eb7369c428ce",
+ "preregistration_sha256": "38c6e23397e9bff9cfe28aea8981bc49f3efbd2f31ac508043df16375dc69086",
+ "preregistration_sha256_regenerated_file": "d8a9a488d11e61623144c2b4257de54024e3a91a9cd821463f497f27222e0bc4",
+ "period": {
+  "stage_a_oos": [
+   "2024-12-23",
+   "2026-10-12"
+  ],
+  "stage_b": null
+ },
+ "universe": {
+  "n_total": 466,
+  "n_after_cost_filter": 426,
+  "by_class": {
+   "K1": 353,
+   "K2": 48,
+   "K3": 10,
+   "K4": 15,
+   "K5": 0
+  }
+ },
+ "predictions": [
+  {
+   "id": "P1.1",
+   "metric": "delta_sharpe_Bplus_minus_A1",
+   "value": 1.5258931674250718,
+   "ci90": [
+    0.6805315492315006,
+    2.3784854455774833
+   ],
+   "threshold": "point>0 and ci_low>-0.20",
+   "passed": true
+  },
+  {
+   "id": "P1.2",
+   "metric": "PBO(A1) median / Spearman rho",
+   "value": {
+    "pbo": 0.525974025974026,
+    "rho": 0.00863909925142936
+   },
+   "ci90": [
+    -0.016778536757748888,
+    0.03455887897581041
+   ],
+   "threshold": "PBO>=0.50 and rho<=0.10",
+   "passed": true
+  },
+  {
+   "id": "P1.3",
+   "metric": "SR_netto je Regime (B+ vs A1)",
+   "value": {
+    "regimes_B+_pos": 3,
+    "regimes_A1_pos": 3
+   },
+   "ci90": null,
+   "threshold": "SR(B+)>0 in >=3 of 4 and A1 not",
+   "passed": false
+  },
+  {
+   "id": "P1.4",
+   "metric": "Spearman(Tages-Score, Stunden-Netto)",
+   "value": 0.06824769433465086,
+   "ci90": null,
+   "threshold": "-0.10<=rho<=0.10",
+   "passed": true
+  },
+  {
+   "id": "P1.5",
+   "metric": "eligible unter Null / beobachtet",
+   "value": 1.1719753086419755,
+   "ci90": [
+    0.1759656652360515,
+    0.23390557939914164
+   ],
+   "threshold": ">=0.80",
+   "passed": true
+  },
+  {
+   "id": "P1.6",
+   "metric": "Klassen mit B+ >= A1 (Anteil Instrumente mit positiver Expectancy)",
+   "value": {
+    "classes_Bplus_ge_A1": 2,
+    "of": 4
+   },
+   "ci90": null,
+   "threshold": "Mehrheit",
+   "passed": false
+  }
+ ],
+ "stage_c": {
+  "status": "NICHT_GESTARTET (wartet auf Freigabe)",
+  "n_fills": 0,
+  "slippage_bps_by_class": {},
+  "fees_bps_by_class": {}
+ },
+ "verdict": "BESTAETIGT",
+ "verdict_scope": "vorlaeufig, nur Stufe A",
+ "reasons": [
+  "P1.1: dSR(B+ - A1) = 1.53 (90%-KI 0.68 .. 2.38); B+ SR 2.02 vs A1 SR 0.49 (A0 0.60).",
+  "P1.2: PBO(A1) Median 0.526 ueber 464 Symbole; Rangpersistenz rho = 0.009 (n=3988).",
+  "Verdikt gilt vorlaeufig: nur Stufe A; Stufe B (>=30 Handelstage Forward) und Stufe C (Demo-Kalibrierung) nicht ausgefuehrt.",
+  "Einschraenkungen: Survivorship (nur heute handelbare Instrumente), Stichprobe ~21 Monate mit ueberwiegend Aufwaertsregime (Beta zu gleichgewichtetem Aktienindex siehe metrics.json), Kosten aus Rueckfallwerten."
+ ],
+ "protocol_deviations": [
+  "ACCOUNT: Der API-Key traegt nur Real-Scopes; es wird kein /demo/-Endpunkt genutzt. Stufe C (falls freigegeben) liefe ueber die per automation/account_guard.py abgesicherten /real/-Pfade des Paper-Kontos (realCid = ETORO_PAPER_ACCOUNT_CID, Pruefung per GET /api/v1/me vor jeder Order). In Stufe A werden keine Orders gesendet.",
+  "ISOLATION: Konto-Isolation Variante (b) (disjunkte Instrumente zum laufenden Bot + Verwaltung je positionId); Stufe C bis zur Freigabe nicht gestartet.",
+  "DATEN: Tageskerzen direkt per API gelesen und als CSV gespeichert (experiments/ebc/api.py, build_universe.py) statt historical_fetcher/Nautilus-Katalog; Kerzendefinition = UTC-Tag (fromDate), unfertige Kerze des Abrufdatums verworfen; oneday_definition-Messlauf nicht ausgefuehrt. Rundungsfehler (Low > Open etc.) durch Klemmen bereinigt.",
+  "UNIVERSUM: Ziehung = Kandidaten je Schicht zufaellig mischen (Seed 20261011), der Reihe nach laden, die ersten n mit bestandener Qualitaetspruefung; PriceSource-Filter nur fuer Nicht-Aktien/ETF (bei Aktien traegt PriceSource den Boersennamen); US = ExchangeID 4/5; Krypto 'Top 30' = aelteste Listings (kleinste ID); nur 10 Spot-Rohstoffe und 16 Indizes verfuegbar; 13 Instrumente mit Letztkerze vor 2026-09-25 (veraltet/delistet) nach der Ziehung entfernt, nicht nachgezogen.",
+  "KOSTEN: Stichprobe der Spreads am Wochenende (Maerkte ausser Krypto geschlossen) nicht repraesentativ -> Rueckfallwerte der backtest.json; Indizes mit DEFAULT (Spread 4, Slippage 2 bps). Slippage/Finanzierung/Kommission nicht aus Stufe C gemessen. Hintergrund-Sampler sammelt Spreads fuer spaetere Rekalibrierung.",
+  "ROUTE R: eigener Harness (Anhang-A-Stil, experiments/ebc/route_r.py) statt backtest_runner.run_single_backtest_worker: EXTERNAL-Tagesbars (Bar-Zeitstempel = Folgekerze + 1 ns) plus O/L/H/C-Quote-Ticks, bar_execution=False, Spread im Tick 0 (Kosten explizit in costs.py), Sizing-Cap-Korrektur deaktiviert, Katastrophen-Stop-Fill auf das Stop-Niveau (min/max mit Open) korrigiert, Notional 2 % von 1 Mio. USD je Lauf (Rendite je Trade unabhaengig von der Groesse).",
+  "ARCHETYPEN: ATR20 als Wilder-Rekursion (alpha = 1/20, mit der ersten True Range gesaet) in den Klassen und in Route V identisch; Stop-/Zeitstopp-Mechanik der Basisklasse (Anker = Entry-Fill, Ratsche mit trailing_min_atr_frac 0,5, Zeitstopp ueber Bar-Zaehler: Exit nach H Schlusskursen, Ausfuehrung zum naechsten Open).",
+  "ARM A0/A1: Emulation statt 5-Tage-Neuauswahl-Laeufen: feste Default-Parameter (strategy_defaults.json + PAPER_TRAILING_TP, max_handelstage 5) => eine durchgehende Route-R-Laufzeit je (Instrument, Strategie); IS-Score = t-Statistik der Netto-Trade-Rendite (Exit-Tag im IS-Fenster, mind. 3 Trades), Gates im OOS-Fenster (>= 8 Trades, PF >= 1, Expectancy >= 0, t >= 0,5, PSR(Tagesreihe) >= 0,5), Platzvergabe nach OOS-PSR (40 Aktien/Index- plus 40 Rund-um-die-Uhr-Plaetze), Retire ungueltig gewordener Paare ohne offene Position (nie wieder gewaehlt). Max-Drawdown-Gate (0,3) und Deflated-Selection nicht abgebildet (PAPER_SELECTION_GATES: deflated_selection false). Turnier-Treue gegen echten backtest_runner --momentum-Lauf NICHT geprueft.",
+  "ARM A2: nicht gerechnet (optional laut Protokoll; 72 Konfigurationen/Symbol nicht im Zeitrahmen).",
+  "ARM A: Kapazitaet 30 gleichzeitige Positionen (wie B), Notional 2 % der Equity; A-Shorts auf Aktien/ETF/Krypto in A1 verworfen, in A0 beibehalten (Krypto-Shorts blockt die Basisklasse).",
+  "KOSTENFILTER q = c_RT / ATR20_bps (Median der letzten 250 Tage, statisch zum Datenende); q <= 0,10.",
+  "NULLMODELL (P1.5): zirkulaere Verschiebung der Trade-Positionsreihe um 20-230 Handelstage, Auswertung der Gates zum letzten Auswahltag; Replikate-Zahl siehe null_gate_calibration.json.",
+  "ACHSENBRUCH (P1.4): Stundendaten nur API-Fenster (1000 Stundenkerzen), siehe axis_break.csv.",
+  "STUFE B/C: nicht ausgefuehrt (Stufe B >= 30 Handelstage, Stufe C erst nach Freigabe); Folgearbeit."
+ ]
+}

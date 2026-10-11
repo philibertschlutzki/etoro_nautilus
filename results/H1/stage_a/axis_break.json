@@ -1,0 +1,9 @@
+{
+ "n_pairs": 45,
+ "n_evaluable": 45,
+ "spearman_daily_score_vs_hourly_net": 0.06824769433465086,
+ "median_hourly_net_total_bps": -505.78814638359535,
+ "share_negative": 0.7555555555555555,
+ "P1_4_passed": true,
+ "note": "Stundenfenster = API-Limit (~1000 Kerzen, ~60 Handelstage Aktien / ~42 Tage Krypto); Netto-Summe ueber alle Trades des Fensters, Default-Parameter + PAPER_TRAILING_TP, Zeitbox 7 Bars"
+}
