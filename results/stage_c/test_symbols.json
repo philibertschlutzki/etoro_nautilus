@@ -1,0 +1,49 @@
+{
+ "written": "2026-10-11T14:36:36.299361+00:00",
+ "excluded_bot_instruments": 68,
+ "pool_by_class": {
+  "K1": 330,
+  "K2": 30,
+  "K3": 6,
+  "K4": 16,
+  "K5": 32
+ },
+ "planned": {
+  "c4": [
+   "CPNG",
+   "DG.US",
+   "RBLX",
+   "ASML.NV",
+   "VOO",
+   "PINS",
+   "NFLX",
+   "KTOS",
+   "OTIS",
+   "ADBE",
+   "NKE",
+   "GET.PA",
+   "PALL",
+   "PMVP",
+   "BARK",
+   "FISV",
+   "GDOT",
+   "VALE",
+   "CAT",
+   "SGH.ASX",
+   "8TRA.DE",
+   "KTN.DE",
+   "CXAI",
+   "KESKOB.HE",
+   "APO",
+   "QXO",
+   "CCL",
+   "SONY",
+   "SNAP",
+   "HUBS"
+  ],
+  "c1": [
+   "EURUSD"
+  ]
+ },
+ "hinweis": "Diese Symbole werden nur vom EBC-Stufe-C-Skript gehandelt; der Bot-Thread sollte sie ausschliessen."
+}
