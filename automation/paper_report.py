@@ -7,7 +7,7 @@ keine Zusammenfassung fällig ist.
 
 Ausgabe
   * Ereignisse + Zusammenfassungen: ``logs/paper_report_alerts.log`` (eine Zeile je Ereignis) und stdout.
-  * Bericht: ``logs/reports/paper_report_<JJJJMMTT>.md`` (angehängt).
+  * Bericht: ``data/paper_reports/paper_report_<JJJJMMTT>.md`` und ``paper_report_latest.md`` (angehängt).
   * Zustand: ``data/state/paper_report_state.json`` (bekannte Positionen, Zeit der letzten Zusammenfassung).
   * Optional Push aufs Handy: ``PAPER_REPORT_NTFY_URL`` in ``.env`` (z. B. ``https://ntfy.sh/<geheimes-thema>``);
     ohne die Variable wird nichts nach aussen gesendet.
@@ -58,7 +58,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = PROJECT_ROOT / "data" / "state" / "paper_report_state.json"
 ALERTS_PATH = PROJECT_ROOT / "logs" / "paper_report_alerts.log"
-REPORT_DIR = PROJECT_ROOT / "logs" / "paper_reports"   # nicht logs/reports/: "reports/" steht in .gitignore
+REPORT_DIR = PROJECT_ROOT / "data" / "paper_reports"   # ausserhalb des Git-Arbeitsbaums (data/ ist ignoriert); veröffentlicht wird nach logs/paper_reports/ im Klon
 INCUBATION_DIR = PROJECT_ROOT / "data" / "state" / "incubation"
 BOT_LOCK = PROJECT_ROOT / "data" / "state" / "incubation_bot.lock"
 PNL_URLS = {"demo": "https://public-api.etoro.com/api/v1/trading/info/demo/pnl",
@@ -389,7 +389,7 @@ def cron_help() -> str:
         "                    SHELL=/bin/bash",
         "                    " + CRON_LINE.format(root=PROJECT_ROOT, python=python),
         "  4. Kontrolle:   crontab -l ; grep CRON /var/log/syslog | tail ; tail -f logs/paper_report_cron.log",
-        f"  Ergebnisse:     {ALERTS_PATH}  (Ereignisse), {REPORT_DIR}/ (Tagesbericht)",
+        f"  Ergebnisse:     {ALERTS_PATH}  (Ereignisse), {REPORT_DIR}/ (Berichte, stündlich nach logs/paper_reports/ im Repo)",
         "  Berichte ins Repo: stündlich  5 * * * * cd {root} && flock -n /tmp/paper_report_publish.lock "
         "{python} -m automation.paper_report_publish >> logs/paper_report_publish.log 2>&1".format(root=PROJECT_ROOT, python=python),
         f"  Push (optional): {NTFY_ENV}=https://ntfy.sh/<geheimes-thema> in .env eintragen",
