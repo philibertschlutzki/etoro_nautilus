@@ -23,6 +23,7 @@ with open("automation/config/instrument_map.json", "r") as f:
     _imap = json.load(f)
     ETORO_INSTRUMENTS = _imap.get("instruments", {})
 from automation.momentum_ls_allocator import MomentumLSAllocator
+from automation.process_diagnostics import install_crash_diagnostics
 from automation.live_risk import LiveCircuitBreakerWatchdog, LiveShutdownCoordinator
 from automation.live_equity_state import (
     DEFAULT_DAILY_LOSS_TZ, HWM_PATH, HwmEnvironmentMismatch, PersistentEquityState,
@@ -357,6 +358,7 @@ def _on_trip(decision, allocator: MomentumLSAllocator) -> None:
 
 
 def main():
+    install_crash_diagnostics(logger)   # faulthandler + Start-/Ende-/Signal-Zeilen für stille Prozessenden
     parser = argparse.ArgumentParser()
     parser.add_argument("--universe", default="data/universe/momentum_ls.json")
     parser.add_argument("--tournament", default=None,
