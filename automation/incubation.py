@@ -414,12 +414,20 @@ def _set_look(stages: DeploymentStages, strategy: str, symbol: str, idx: int, **
     write_json_atomic(stages.path, stages.data)
 
 
+INELIGIBLE_REASON = "ineligible_in_selection"
+
+
+def _retired_as_ineligible(entry: Mapping[str, Any]) -> bool:
+    history = entry.get("history") or []
+    return entry.get("stage") == RETIRED and bool(history) and history[-1].get("reason") == INELIGIBLE_REASON
+
+
 def run_incubation_cycle(
     stages: DeploymentStages, *, winners: Mapping[str, Mapping[str, Any]], tournament_cfg: Mapping[str, Any],
     resolve_params, deployment_decision_fn=None, now: datetime | None = None,
     ledger_dir: Path = INCUBATION_DIR, live_ledger_dir: Path | None = None, psr_fn=None,
     distribution_trips: Mapping[str, Any] | None = None, inc_cfg: Mapping[str, Any] | None = None,
-    slot_group: Callable[[str], str | None] | None = None,
+    slot_group: Callable[[str], str | None] | None = None, keep_symbols: Iterable[str] = (),
 ) -> CycleResult:
     """Ein täglicher Zyklus:
 
@@ -434,7 +442,11 @@ def run_incubation_cycle(
 
     ``inc_cfg``: bereits aufgelöste Inkubations-Config (z. B. das Paper-Overlay mit mehr Plätzen); ohne sie gilt
     ``incubation_config(tournament_cfg)``. ``inc_cfg['group_slots']`` + ``slot_group``: eigene Kontingente je
-    Gruppe (siehe ``select_incubation_candidates``); die Bonferroni-Schwelle zählt alle Plätze."""
+    Gruppe (siehe ``select_incubation_candidates``); die Bonferroni-Schwelle zählt alle Plätze.
+
+    ``inc_cfg['retire_ineligible']`` (nur Paper): ein ``INCUBATING``-Paar, das in der aktuellen Auswahl nicht mehr
+    Gewinner seines Symbols oder nicht mehr eligible ist, wird ``RETIRED`` (Grund ``INELIGIBLE_REASON``) und kann
+    später wieder ausgewählt werden; Symbole in ``keep_symbols`` (offene Position) bleiben stehen."""
     cfg = dict(inc_cfg) if inc_cfg is not None else incubation_config(tournament_cfg)
     now = now or datetime.now(timezone.utc)
     live_ledger_dir = Path(live_ledger_dir) if live_ledger_dir is not None else Path(ledger_dir) / "live"
@@ -449,6 +461,17 @@ def run_incubation_cycle(
             stages.transition(strategy, symbol, RETIRED, reason="distribution_trigger", now=now)
             evaluated.append({"pair": pair_key(strategy, symbol), "decision": "RETIRE",
                               "reason": "Verteilungs-Auslöser (#1362)"})
+
+    retire_ineligible = bool(cfg.get("retire_ineligible")) and bool(winners)
+    if retire_ineligible:
+        keep = set(keep_symbols or ())
+        for strategy, symbol in stages.pairs_in(INCUBATING):
+            w = winners.get(symbol) or {}
+            if symbol in keep or (w.get("strategy") == strategy and w.get("oos_eligible") is True):
+                continue
+            stages.transition(strategy, symbol, RETIRED, reason=INELIGIBLE_REASON, now=now)
+            evaluated.append({"pair": pair_key(strategy, symbol), "decision": "RETIRE",
+                              "reason": "nicht mehr eligible in der aktuellen Auswahl"})
 
     for strategy, symbol in stages.pairs_in(INCUBATING):
         entry = stages.entry(strategy, symbol)
@@ -506,14 +529,15 @@ def run_incubation_cycle(
 
     started: list[dict] = []
     active = [pair_key(s, y) for s, y in stages.pairs_in(INCUBATING)]
-    done = [pair_key(s, y) for s, y in stages.pairs_in(LIVE_SMALL, LIVE_FULL, RETIRED)]
+    done = [pair_key(s, y) for s, y in stages.pairs_in(LIVE_SMALL, LIVE_FULL, RETIRED)
+            if not (retire_ineligible and _retired_as_ineligible(stages.entry(s, y)))]
     for strategy, symbol, _w in select_incubation_candidates(
             winners, max_concurrent=int(cfg["max_concurrent"]), already_active=active, exclude=done,
             slot_group=slot_group, group_slots=cfg.get("group_slots")):
         params = resolve_params(strategy, symbol)
         record = write_incubation_record(strategy, symbol, params, directory=ledger_dir, now=now,
                                          source={"oos_psr": _oos_psr(_w)})
-        if stages.stage(strategy, symbol) is None:
+        if stages.stage(strategy, symbol) in (None, RETIRED):
             stages.transition(strategy, symbol, CANDIDATE, reason="incubation_selection", now=now)
         stages.transition(strategy, symbol, INCUBATING, reason="incubation_start",
                           params_sha256=record["params_sha256"], now=now, extra={"last_look_index": 0})

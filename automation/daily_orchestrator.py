@@ -1505,12 +1505,21 @@ def phase5b_incubation(
                 (strategy, symbol), records, tournament_cfg, live_param_sources=live_param_sources).to_dict()
 
         stages = inc.DeploymentStages(paths["stages"])
+        keep_symbols: set[str] = set()
+        if inc_cfg.get("retire_ineligible"):
+            open_symbols = _open_position_symbols(log)
+            if open_symbols is None:
+                # Ohne Positionsliste kein Rückzug: ein Paar mit offener Position verlöre sonst seine Strategie.
+                inc_cfg = {**inc_cfg, "retire_ineligible": False}
+            else:
+                keep_symbols = open_symbols
         cycle = inc.run_incubation_cycle(
             stages, winners=winners, tournament_cfg=tournament_cfg,
             resolve_params=lambda strategy, symbol: resolve_live_params(strategy, symbol, *live_param_sources),
             deployment_decision_fn=_gate, now=now, ledger_dir=paths["dir"], live_ledger_dir=paths["live_dir"],
             distribution_trips=inc.read_distribution_trips(paths["trips"]), inc_cfg=inc_cfg,
-            slot_group=_round_the_clock_slot_group() if inc_cfg.get("group_slots") else None)
+            slot_group=_round_the_clock_slot_group() if inc_cfg.get("group_slots") else None,
+            keep_symbols=keep_symbols)
         emit_json_event(log, "INCUBATION_CYCLE", {
             **cycle.to_dict(), "threshold": inc.bonferroni_threshold_for(inc_cfg),
             "stages": {k: v.get("stage") for k, v in stages.data.items()}})
@@ -1615,6 +1624,29 @@ def _round_the_clock_slot_group(instrument_map_path: Path | None = None):
     return lambda symbol: PAPER_ROUND_THE_CLOCK_GROUP if symbol in rtc else None
 
 
+def _open_position_symbols(log: logging.Logger, *, fetch=None, environ=None) -> set[str] | None:
+    """Symbole mit offener eToro-Position im Paper-Konto (``None``, wenn die Abfrage nicht möglich ist)."""
+    from automation.account_guard import verify_paper_account
+    from automation.adapters.etoro_execution import net_open_positions
+    from automation.adapters.instrument_map import ETORO_INSTRUMENTS
+    from automation.paper_report import fetch_pnl
+    environ = environ if environ is not None else os.environ
+    api_key, user_key = environ.get("ETORO_API_KEY", ""), environ.get("ETORO_USER_KEY", "")
+    if not api_key or not user_key:
+        log.warning("[PAPERTRADING] Offene Positionen unbekannt (Keys fehlen) — kein Rückzug nicht-eligibler Paare.")
+        return None
+    try:
+        env_name = verify_paper_account(api_key, user_key, environ=environ)
+        data = (fetch or fetch_pnl)(api_key, user_key, env_name)
+    except Exception as exc:  # noqa: BLE001 — defensiv, die Inkubation darf daran nicht scheitern
+        log.warning(f"[PAPERTRADING] Offene Positionen unbekannt ({exc}) — kein Rückzug nicht-eligibler Paare.")
+        return None
+    symbols = {ETORO_INSTRUMENTS[eid] for eid, e in net_open_positions(data).items()
+               if e["units"] and eid in ETORO_INSTRUMENTS}
+    log.info(f"[PAPERTRADING] Offene Positionen (Paare bleiben stehen): {sorted(symbols) or 'keine'}")
+    return symbols
+
+
 def _papertrading_inc_cfg(log: logging.Logger) -> dict:
     """Inkubations-Config mit enabled=True. Die Kandidaten-Auswahl läuft auf der Tagesachse (OneDay, ~4 Jahre
     Historie, eigenes Overlay), weil 60 Tage Stundendaten keinen Kandidaten durch die OOS-Gates bringen. Der Bot
@@ -1637,6 +1669,7 @@ def _papertrading_inc_cfg(log: logging.Logger) -> dict:
     cfg["enabled"] = True
     cfg["max_concurrent"] = max(int(cfg["max_concurrent"]), PAPER_MAX_CONCURRENT)
     cfg["group_slots"] = {PAPER_ROUND_THE_CLOCK_GROUP: PAPER_ROUND_THE_CLOCK_SLOTS}
+    cfg["retire_ineligible"] = True
     cfg["walk_forward"] = {**cfg["walk_forward"], **plan["walk_forward"]}
     cfg["selection_config_dir"] = str(overlay)
     return cfg
