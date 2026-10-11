@@ -1,0 +1,246 @@
+{
+ "P24": {
+  "b": -0.3427949322850374,
+  "b_ci90": [
+   -0.41073973695896504,
+   -0.2739927186263068
+  ],
+  "a": -0.3363414981310165,
+  "r2": 0.05178410914693243,
+  "b_ln_N": -0.20120450831637016,
+  "n_draws": 2402,
+  "n_draws_sr_pos": 1274,
+  "n_subportfolios": 1203,
+  "rho_bar_within": {
+   "K1": 0.024313921784504835,
+   "K2": 0.03160866089336936,
+   "K3": 0.037364004740955255,
+   "K4": 0.05812211651496708
+  },
+  "rho_bar_between": 0.006014383991963112,
+  "n_eff_growth_50_to_all_stocks": 0.7093776688328326,
+  "n_all_stocks": 984,
+  "passed": false,
+  "refuted": true
+ },
+ "P25": {
+  "variants": {
+   "EN": {
+    "sr": 1.3890230849193121,
+    "sr_confirmation": 2.137866697906086,
+    "maxdd": -0.2038924679838754,
+    "cvar5": -0.023484805697466613,
+    "turnover_pa": 24.403602556547398,
+    "cost_share": 0.03650324035310559,
+    "mean_gross_exposure": 0.5837699197523248,
+    "n_trades": 2047,
+    "ann_ret": 0.2222240767503544
+   },
+   "RP": {
+    "sr": 1.5450463538094945,
+    "sr_confirmation": 2.0141503313354843,
+    "maxdd": -0.15838995350365007,
+    "cvar5": -0.022587533716483737,
+    "turnover_pa": 24.26307370285245,
+    "cost_share": 0.02267496361309751,
+    "mean_gross_exposure": 0.5948828785503901,
+    "n_trades": 1726,
+    "ann_ret": 0.24029939649408052
+   },
+   "FR": {
+    "sr": 1.3213087034423616,
+    "sr_confirmation": 1.882838105142632,
+    "maxdd": -0.22160628099134685,
+    "cvar5": -0.025525615581316524,
+    "turnover_pa": 24.26701207816981,
+    "cost_share": 0.022365244559830355,
+    "mean_gross_exposure": 0.5985095146820253,
+    "n_trades": 1589,
+    "ann_ret": 0.23133544870308786
+   },
+   "QK": {
+    "sr": 1.3125510453000813,
+    "sr_confirmation": 2.1504466563794464,
+    "maxdd": -0.15157218357082394,
+    "cvar5": -0.026838102258059233,
+    "turnover_pa": 20.380173123859024,
+    "cost_share": 0.02291387241121068,
+    "mean_gross_exposure": 0.49705631657348326,
+    "n_trades": 1342,
+    "ann_ret": 0.23084268202968697
+   }
+  },
+  "delta_RP_minus_EN": {
+   "point": 0.15602326889018236,
+   "lo": -0.15752144385224529,
+   "hi": 0.46137667085288403,
+   "block": 9,
+   "B": 5000
+  },
+  "delta_EN_minus_RP": {
+   "point": -0.15602326889018236,
+   "lo": -0.46137667085288403,
+   "hi": 0.15752144385224534,
+   "block": 9,
+   "B": 5000
+  },
+  "delta_RP_minus_EN_confirmation": {
+   "point": -0.12371636657060181,
+   "lo": -0.5281092273046065,
+   "hi": 0.23887576401074523,
+   "block": 7,
+   "B": 5000
+  },
+  "passed": false,
+  "refuted": false
+ },
+ "H2_portfolio": {
+  "hstar": {
+   "K1": 10,
+   "K2": 3,
+   "K3": 1,
+   "K4": 3,
+   "K5": 1
+  },
+  "sr_h2_full": 1.385936205009577,
+  "sr_h2_confirmation": 1.6844477473147257,
+  "sr_statusquo_full": 1.030296397492135,
+  "sr_statusquo_confirmation": 1.5682005439390632,
+  "maxdd_h2": -0.1592922579557748,
+  "maxdd_sq": -0.06652754238903633,
+  "delta_confirmation": {
+   "point": 0.11624720337566252,
+   "lo": -1.1123369400385668,
+   "hi": 1.397392691054515,
+   "block": 7,
+   "B": 5000
+  },
+  "delta_full": {
+   "point": 0.35563980751744184,
+   "lo": -0.3995148016933939,
+   "hi": 1.1257180781655898,
+   "block": 9,
+   "B": 5000
+  },
+  "n_trades_h2": 2584,
+  "n_trades_sq": 11987
+ },
+ "P26": {
+  "mc": {
+   "n1_sr1.0": {
+    "threshold": 0.9980769230769231,
+    "promotion_rate": 0.0524,
+    "false_promotion_rate": 0.0524
+   },
+   "n1_sr2.0": {
+    "threshold": 0.9980769230769231,
+    "promotion_rate": 0.146,
+    "false_promotion_rate": 0.146
+   },
+   "n1_sr3.0": {
+    "threshold": 0.9980769230769231,
+    "promotion_rate": 0.3344,
+    "false_promotion_rate": 0.3344
+   },
+   "n1_sr4.0": {
+    "threshold": 0.9980769230769231,
+    "promotion_rate": 0.5945,
+    "false_promotion_rate": 0.5945
+   },
+   "n80_sr1.0": {
+    "threshold": 0.9999759615384616,
+    "promotion_rate": 0.0016666666666666668,
+    "false_promotion_rate": 0.12366666666666666
+   },
+   "n80_sr2.0": {
+    "threshold": 0.9999759615384616,
+    "promotion_rate": 0.009941666666666666,
+    "false_promotion_rate": 0.5406666666666666
+   },
+   "n80_sr3.0": {
+    "threshold": 0.9999759615384616,
+    "promotion_rate": 0.046283333333333336,
+    "false_promotion_rate": 0.98
+   },
+   "n80_sr4.0": {
+    "threshold": 0.9999759615384616,
+    "promotion_rate": 0.15639583333333335,
+    "false_promotion_rate": 1.0
+   }
+  },
+  "ratio_n1_over_n80_promotion": {
+   "sr1.0": 31.439999999999998,
+   "sr2.0": 14.68566638725901,
+   "sr3.0": 7.225063017644939,
+   "sr4.0": 3.80125216464633
+  },
+  "passed": true,
+  "empirical_portfolio_first_promote_look": null,
+  "empirical_subportfolios": {
+   "n_evaluated": 1010,
+   "n_promoted": 1
+  }
+ },
+ "regimes": [
+  {
+   "regime": "R1",
+   "n_days": 413,
+   "SR_H2": 2.2086708977584704,
+   "mean_daily_bps_H2": 12.562841387136345,
+   "SR_StatusQuoMath": 1.3200047865742845,
+   "mean_daily_bps_StatusQuoMath": 3.8285472304744577,
+   "SR_EN": 2.7136102191514118,
+   "mean_daily_bps_EN": 16.32969403314296,
+   "SR_RP": 2.5531225586424457,
+   "mean_daily_bps_RP": 15.244806068997391
+  },
+  {
+   "regime": "R2",
+   "n_days": 315,
+   "SR_H2": 1.6848960758542206,
+   "mean_daily_bps_H2": 10.254138598777958,
+   "SR_StatusQuoMath": 1.0723595542605486,
+   "mean_daily_bps_StatusQuoMath": 3.9187669731092765,
+   "SR_EN": 0.838572967073945,
+   "mean_daily_bps_EN": 5.977663916505424,
+   "SR_RP": 1.3647665592284315,
+   "mean_daily_bps_RP": 9.03428310327098
+  },
+  {
+   "regime": "R3",
+   "n_days": 19,
+   "SR_H2": 1.1622227544967023,
+   "mean_daily_bps_H2": 4.7068470400428986,
+   "SR_StatusQuoMath": 3.9685500660216704,
+   "mean_daily_bps_StatusQuoMath": 8.808922591916343,
+   "SR_EN": 2.571451407663044,
+   "mean_daily_bps_EN": 5.983719382573973,
+   "SR_RP": 2.7451608211749137,
+   "mean_daily_bps_RP": 8.113975858665825
+  },
+  {
+   "regime": "R4",
+   "n_days": 91,
+   "SR_H2": -3.3262143791981162,
+   "mean_daily_bps_H2": -19.017560857353228,
+   "SR_StatusQuoMath": -0.5643242465749081,
+   "mean_daily_bps_StatusQuoMath": -1.95127277847093,
+   "SR_EN": -2.8410650545080585,
+   "mean_daily_bps_EN": -14.846000484972171,
+   "SR_RP": -2.4774020927419707,
+   "mean_daily_bps_RP": -14.342429921747762
+  },
+  {
+   "regime": "top5pct_abs_index_ret",
+   "n_days": 42,
+   "SR_H2": -3.7279116049167444,
+   "mean_daily_bps_H2": -36.486620684782984,
+   "SR_StatusQuoMath": -1.7812437808705828,
+   "mean_daily_bps_StatusQuoMath": -9.093518581106435,
+   "SR_EN": -3.0382356692163794,
+   "mean_daily_bps_EN": -32.32100465582528,
+   "SR_RP": -3.0622708564747274,
+   "mean_daily_bps_RP": -32.171385441597856
+  }
+ ]
+}

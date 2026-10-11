@@ -1,0 +1,12 @@
+{
+ "signals": [
+  "M",
+  "S_MOM",
+  "S_REV",
+  "T",
+  "V"
+ ],
+ "h_le5_all_upper_ci_negative": false,
+ "h10_20_majority_negative": false,
+ "passed": false
+}
