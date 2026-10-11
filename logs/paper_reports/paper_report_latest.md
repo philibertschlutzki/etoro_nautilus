@@ -1,13 +1,13 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-11 14:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-11 15:45 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 9619.58 USD |
 | Investiert | 355.66 USD in 2 Position(en) |
-| Unrealisierter PnL | +1.36 USD |
-| Bot | läuft NICHT |
+| Unrealisierter PnL | +1.15 USD |
+| Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 3 |
 | Paare mit Evidenz-Ledger | 0 |
 
@@ -15,8 +15,8 @@ Stand: 2026-10-11 14:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| INJ.ETORO | Long | 156.10 | 7.682 | +1.20 |
-| BTC.ETORO | Long | 199.56 | 82942.5 | +0.16 |
+| BTC.ETORO | Long | 199.56 | 82942.5 | +0.93 |
+| INJ.ETORO | Long | 156.10 | 7.682 | +0.22 |
 
 ## Letzte Ereignisse
 
@@ -34,3 +34,5 @@ Stand: 2026-10-11 14:30 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-11 14:24 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 14:24 UTC ZUSAMMENFASSUNG Guthaben 9619.58 USD, 2 offene Position(en) (PnL +0.61), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft NICHT, Ledger: noch keine Evidenz.
 - 2026-10-11 14:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
+- 2026-10-11 14:45 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
+- 2026-10-11 15:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
