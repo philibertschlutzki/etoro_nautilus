@@ -188,6 +188,23 @@ PAPER_SELECTION_GATES = {
     # Gewinner übrig. Die Forward-Evidenz (Bonferroni über max_concurrent) bleibt die Multiple-Testing-Korrektur.
     "deflated_selection": False,
 }
+# Die Produktions-tournament.json verlangt für ``oos_eligible`` nur min_trades, max_drawdown und oos_min_alpha_tstat;
+# Profit-Faktor und Expectancy (netto nach Gebühren) wären ohne diesen Zusatz reine Telemetrie. Am 2026-10-11 war
+# BTC/AdxAtrMomentum mit OOS-Profit-Faktor 0,39 und negativer Expectancy "eligible" und handelte live.
+PAPER_REQUIRED_GATES = ("min_profit_factor", "min_expectancy")
+
+
+def paper_eligible_requires_all(base_dir: Path | None = None) -> list[str]:
+    """``eligible_requires_all`` der Basis-tournament.json plus ``PAPER_REQUIRED_GATES``."""
+    import json
+    path = (base_dir or (config_profile.BASE_CONFIG_DIR)) / "tournament.json"
+    try:
+        base = list((json.loads(path.read_text("utf-8")) or {}).get("eligible_requires_all") or [])
+    except (OSError, ValueError):
+        base = ["min_trades", "max_drawdown", "oos_min_alpha_tstat"]
+    return base + [g for g in PAPER_REQUIRED_GATES if g not in base]
+
+
 # Trailing-Take-Profit im Paper-Betrieb (Auswahl UND Demo-Bot): ab 0,5 ATR Gewinn wird gesichert, Ausstieg bei
 # 0,3 ATR Rücklauf vom Bestkurs, mindestens 2 × Spread über dem Einstieg. Kleine, häufige Gewinne statt
 # seltener grosser; Broker-Stop und ATR-Trailing-Stop bleiben unverändert.
@@ -220,7 +237,8 @@ PAPER_ROUND_THE_CLOCK_SLOTS = 40
 
 def daily_profile_spec(depth_days: float) -> dict:
     wf, min_bars = derive_walk_forward_daily(depth_days)
-    return {"tournament.json": dict(PAPER_SELECTION_GATES), "strategy_defaults.json": paper_strategy_defaults(),
+    return {"tournament.json": {**PAPER_SELECTION_GATES, "eligible_requires_all": paper_eligible_requires_all()},
+            "strategy_defaults.json": paper_strategy_defaults(),
             "backtest.json": {"bar_axis": "OneDay", "max_handelstage": 5,
                               "walk_forward": {**wf, "data_history_days": max(int(depth_days), 1)}},
             "optimizer.json": {"time_box_bars": 5.0, "gate1_buffer_days": 0, "champion_enabled": False,
