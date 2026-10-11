@@ -34,3 +34,10 @@ automation/.env
 
 # Issue #1381 — materialisierte Config-Profil-Overlays (python -m automation.optimizer.config_profile materialize <profil>)
 automation/config_*/
+
+# EBC-Experiment: erzeugte Konfigurationen, Rohdaten und Zwischenstaende (nicht committen)
+/cfg_A/
+/cfg_B/
+/cfg_H/
+/data/ebc/
+/.env
