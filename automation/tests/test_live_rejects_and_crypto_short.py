@@ -78,3 +78,84 @@ def test_live_instruments_allow_fractional_units_like_the_backtest():
     # 2 % von ~10.000 USD bei 83.000 USD/BTC: muss eine handelbare Menge > 0 ergeben
     assert float(btc.make_qty(199.0 / 83016.51)) > 0
     assert float(by_symbol["CAT.ETORO"].size_increment) == 0.01
+
+
+def test_crypto_round_trip_fee_is_two_percent_and_others_keep_the_global_commission():
+    from automation.backtest_runner import resolve_commission_bps, _read_default_round_trip_cost_bps
+    from automation.strategies.hourly_strategy_base import resolve_commission_bps_model
+
+    assert resolve_commission_bps("CRYPTO", 1.0) == 200.0
+    assert resolve_commission_bps("EQUITY", 1.0) == 1.0
+    assert resolve_commission_bps("FOREX", 1.0) == 1.0
+    assert resolve_commission_bps_model("BTC.ETORO") == 200.0
+    assert resolve_commission_bps_model("CAT.ETORO") == 1.0
+    assert _read_default_round_trip_cost_bps("BTC.ETORO") >= 200.0
+
+
+def test_crypto_trailing_take_profit_never_locks_below_the_fees():
+    from automation.strategies.hourly_strategy_base import (
+        compute_trailing_tp_lock, resolve_commission_bps_model, resolve_spread_bps_model)
+
+    min_lock_bps = 2.0 * resolve_spread_bps_model("BTC.ETORO") + resolve_commission_bps_model("BTC.ETORO")
+    entry, atr = 100.0, 0.5
+    # +3 %: unter 2× Mindest-Lock (4,6 %), Trailing-TP bleibt aus statt einen Verlust nach Gebühren zu sichern
+    assert compute_trailing_tp_lock(entry, 103.0, atr, "LONG", 0.5, 0.3, min_lock_bps) is None
+    lock = compute_trailing_tp_lock(entry, 106.0, atr, "LONG", 0.5, 0.3, min_lock_bps)
+    assert lock is not None and lock >= entry * (1 + 230 / 10_000)
+
+
+_PNL_WITH_BTC = {"clientPortfolio": {"positions": [
+    {"positionID": 3602662774, "instrumentID": 100000, "isBuy": True, "units": 0.002406,
+     "openRate": 82942.5, "amount": 199.56, "stopLossRate": 74646.58},
+], "credit": 9777.24}}
+
+
+def test_net_open_positions_reads_the_live_btc_position():
+    from automation.adapters.etoro_execution import net_open_positions
+
+    net = net_open_positions(_PNL_WITH_BTC)
+    assert net["100000"]["units"] == 0.002406
+    assert net["100000"]["avg_px"] == 82942.5
+    assert net["100000"]["position_ids"] == ["3602662774"]
+    assert net_open_positions({"clientPortfolio": {"positions": []}}) == {}
+
+
+def test_open_etoro_position_becomes_a_position_report_at_start():
+    import asyncio
+
+    from nautilus_trader.model.enums import PositionSide as PS
+    from nautilus_trader.model.identifiers import AccountId
+
+    from automation.adapters import etoro_execution as ex
+    from automation.backtest_runner import create_mock_instrument
+
+    class _Resp:
+        status = 200
+
+        async def json(self):
+            return _PNL_WITH_BTC
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    btc = create_mock_instrument("BTC.ETORO", price_precision=2, size_precision=8)
+    fake = SimpleNamespace(
+        _dry_run=False,
+        _session=SimpleNamespace(get=lambda *a, **k: _Resp()),
+        _pnl_base="https://x/api/v1/trading/info/real/pnl",
+        _make_headers=lambda: {},
+        _clock=SimpleNamespace(timestamp_ns=lambda: 1),
+        _cache=SimpleNamespace(instrument=lambda iid: btc if str(iid) == "BTC.ETORO" else None),
+        _log=MagicMock(),
+        account_id=AccountId("ETORO-REAL-001"),
+    )
+    reports = asyncio.run(ex.EToroExecutionClient.generate_position_status_reports(fake))
+    assert len(reports) == 1
+    rep = reports[0]
+    assert str(rep.instrument_id) == "BTC.ETORO"
+    assert rep.position_side == PS.LONG
+    assert float(rep.quantity) == 0.002406
+    assert float(rep.avg_px_open) == 82942.5

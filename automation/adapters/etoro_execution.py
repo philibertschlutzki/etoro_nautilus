@@ -10,6 +10,7 @@ import time
 import uuid
 import random
 from contextlib import suppress
+from decimal import Decimal
 from typing import Literal
 
 import aiohttp
@@ -19,6 +20,8 @@ __all__ = ["EToroExecutionClient"]
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.common.providers import InstrumentProvider
+from nautilus_trader.core.uuid import UUID4
+from nautilus_trader.execution.reports import PositionStatusReport
 from nautilus_trader.execution.messages import (
     BatchCancelOrders,
     CancelAllOrders,
@@ -42,12 +45,13 @@ from nautilus_trader.model.identifiers import (
     AccountId,
     ClientId,
     ClientOrderId,
+    InstrumentId,
     PositionId,
     TradeId,
     Venue,
     VenueOrderId,
 )
-from nautilus_trader.model.objects import AccountBalance, Money, Price
+from nautilus_trader.model.objects import AccountBalance, Money, Price, Quantity
 
 from automation import bar_axis
 from automation.adapters.etoro_rate_limiter import _RateLimiter
@@ -104,6 +108,35 @@ def order_rejection_reason(order_info: dict) -> str | None:
         return None
     message = str(low.get("errormessage") or "").strip()
     return f"etoro_order_status_{status_id}_error_{error_code}: {message}".rstrip(": ")
+
+
+def net_open_positions(pnl_data: dict) -> dict[str, dict]:
+    """Fasst die offenen eToro-Positionen je eToro-InstrumentID netto zusammen (NETTING-Konto): ``{eid:
+    {"units": signiert, "avg_px": gewichteter Öffnungskurs, "position_ids": [...]}}``. Rein, deterministisch."""
+    data = pnl_data.get("clientPortfolio", pnl_data) if isinstance(pnl_data, dict) else {}
+    out: dict[str, dict] = {}
+    for item in data.get("Positions", data.get("positions", [])) or []:
+        low = {str(k).lower(): v for k, v in item.items()}
+        eid = low.get("instrumentid")
+        try:
+            units = float(low.get("units") or 0.0)
+            rate = float(low.get("openrate") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if eid is None or units <= 0:
+            continue
+        is_buy = low.get("isbuy", True)
+        if isinstance(is_buy, str):
+            is_buy = is_buy.lower() == "true"
+        entry = out.setdefault(str(eid), {"units": 0.0, "notional": 0.0, "position_ids": []})
+        entry["units"] += units if is_buy else -units
+        entry["notional"] += units * rate
+        if low.get("positionid") is not None:
+            entry["position_ids"].append(str(low["positionid"]))
+    for entry in out.values():
+        notional, units_abs = entry.pop("notional"), abs(entry["units"])
+        entry["avg_px"] = notional / units_abs if units_abs > 0 else 0.0
+    return out
 
 
 def extract_open_position_ids(pnl_data: dict) -> set[str]:
@@ -207,8 +240,47 @@ class EToroExecutionClient(LiveExecutionClient):
     async def generate_trade_reports(self, *args, **kwargs) -> list:
         return []
 
-    async def generate_position_status_reports(self, *args, **kwargs) -> list:
-        return []
+    async def generate_position_status_reports(self, command=None, *args, **kwargs) -> list:
+        """Offene eToro-Positionen als Nautilus-Positionsberichte: beim Start übernimmt die Reconciliation sie
+        (externe Order), damit eine nach einem Neustart weiterlaufende Position wieder vom Bot-Stop, dem
+        Trailing-Take-Profit und dem Exposure-Deckel erfasst wird und nicht ein zweites Mal gekauft wird."""
+        if self._dry_run or self._session is None:
+            return []
+        try:
+            async with self._session.get(self._pnl_base, headers=self._make_headers()) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+        except Exception as exc:
+            self._log.warning(f"Positionsberichte: PnL-Abfrage fehlgeschlagen: {exc}", LogColor.YELLOW)
+            return []
+        wanted = getattr(command, "instrument_id", None)
+        ts = self._clock.timestamp_ns()
+        reports = []
+        for eid, entry in net_open_positions(data).items():
+            symbol = ETORO_INSTRUMENTS.get(eid)
+            if symbol is None or entry["units"] == 0:
+                continue
+            instrument_id = InstrumentId.from_str(str(symbol))
+            if wanted is not None and instrument_id != wanted:
+                continue
+            instrument = self._cache.instrument(instrument_id)
+            if instrument is None:
+                continue
+            reports.append(PositionStatusReport(
+                account_id=self.account_id,
+                instrument_id=instrument_id,
+                position_side=PositionSide.LONG if entry["units"] > 0 else PositionSide.SHORT,
+                quantity=Quantity(abs(entry["units"]), instrument.size_precision),
+                report_id=UUID4(),
+                ts_last=ts,
+                ts_init=ts,
+                avg_px_open=Decimal(str(entry["avg_px"])) if entry["avg_px"] else None,
+            ))
+            self._log.info(
+                f"Offene eToro-Position übernommen: {instrument_id} units={entry['units']} "
+                f"avg_px={entry['avg_px']} posIds={entry['position_ids']}", LogColor.BLUE)
+        return reports
 
     async def generate_fill_reports(self, *args, **kwargs) -> list:
         return []
@@ -824,6 +896,9 @@ class EToroExecutionClient(LiveExecutionClient):
                 is_close, etoro_pos_id = True, await self._state.get(
                     str(pos.opening_order_id)
                 )
+                if not etoro_pos_id:
+                    # Beim Start übernommene Position (externe Order ohne gespeicherte positionId).
+                    etoro_pos_id = await self._lookup_open_position_id(order.instrument_id)
 
         self.generate_order_submitted(
             strategy_id=order.strategy_id,
@@ -1400,6 +1475,21 @@ class EToroExecutionClient(LiveExecutionClient):
             self._log.warning(
                 f"[Diagnostic] PnL fetch failed: {exc}", LogColor.YELLOW
             )
+
+    async def _lookup_open_position_id(self, instrument_id) -> str | None:
+        eid = self._instrument_to_etoro.get(str(instrument_id))
+        if eid is None or self._session is None:
+            return None
+        try:
+            async with self._session.get(self._pnl_base, headers=self._make_headers()) as resp:
+                if resp.status != 200:
+                    return None
+                entry = net_open_positions(await resp.json()).get(str(eid))
+        except Exception:
+            return None
+        if not entry or not entry["position_ids"]:
+            return None
+        return entry["position_ids"][0]
 
     async def _reject_if_venue_refused(self, order: object, order_id: str) -> bool:
         """Fragt den Order-Status bei eToro ab und meldet eine nachträgliche Ablehnung als REJECTED,

@@ -217,7 +217,7 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
 
 
 _CATALOG_ROOT = Path(__file__).resolve().parents[2] / "data" / "nautilus"
-_HOUR_NS = 3_600_000_000_000
+_HOUR_NS = bar_axis.HOURLY_INTERVAL_NS
 # Zustand der Signal-Logik, der nach der Vorwärmung auf den Startwert zurückgesetzt wird: ohne Orders gibt es
 # keine Position, ein in der Vorwärmung gesetztes Signal würde sonst den ersten echten Einstieg blockieren.
 _WARMUP_SIGNAL_STATE = ("current_signal", "bars_since_last_signal", "_reversal_in_progress",
@@ -229,7 +229,7 @@ def load_catalog_hourly_bars(instrument_id_str: str, n_bars: int, *, catalog_roo
     """Die letzten ``n_bars`` abgeschlossenen Stundenkerzen ``(ts_close_ns, open, high, low, close)`` aus den
     O/L/H/C-Quote-Ticks des OneHour-Katalogs (Mittelkurs). Leer, wenn keine Daten lesbar sind."""
     from automation.catalog_paths import decode_fsb16_price, resolve_quote_tick_files
-    files = resolve_quote_tick_files(catalog_root or _CATALOG_ROOT, instrument_id_str, interval="OneHour")
+    files = resolve_quote_tick_files(catalog_root or _CATALOG_ROOT, instrument_id_str, interval=bar_axis.LIVE_AXIS)
     if not files or n_bars <= 0:
         return []
     candles: dict[int, list[float]] = {}
@@ -327,10 +327,24 @@ def _read_spread_cfg() -> dict:
         _spread_cfg_cache = {
             "by_asset_class": data.get("spread_bps_by_asset_class") or {},
             "by_symbol": data.get("spread_bps_by_symbol") or {},
+            "commission_bps": float(data.get("commission_bps", 0.0) or 0.0),
+            "commission_by_asset_class": data.get("commission_bps_by_asset_class") or {},
         }
     except (OSError, ValueError):
-        _spread_cfg_cache = {"by_asset_class": {}, "by_symbol": {}}
+        _spread_cfg_cache = {"by_asset_class": {}, "by_symbol": {}, "commission_bps": 0.0,
+                             "commission_by_asset_class": {}}
     return _spread_cfg_cache
+
+
+def resolve_commission_bps_model(instrument_id_str: str) -> float:
+    """Round-Trip-Gebühr (bps) eines Instruments: ``commission_bps_by_asset_class`` (z. B. eToro-Krypto 1 % je
+    Seite = 200) vor dem globalen ``commission_bps`` aus backtest.json."""
+    cfg = _read_spread_cfg()
+    by_class = cfg.get("commission_by_asset_class") or {}
+    asset_class_key = _read_instrument_asset_class(instrument_id_str)
+    if asset_class_key in by_class:
+        return float(by_class[asset_class_key])
+    return float(cfg.get("commission_bps", 0.0))
 
 
 def _read_instrument_asset_class(instrument_id_str: str) -> str:
@@ -1343,8 +1357,11 @@ class HourlyStrategyBase(Strategy):
             entry = float(pos.avg_px_open)
         except (TypeError, ValueError):
             return None
+        # Mindestens Gebühren plus Spread-Puffer sichern: bei eToro-Krypto (1 % je Seite) wäre ein Lock von
+        # 2× Spread nach Gebühren ein Verlust.
         min_lock_bps = (float(getattr(self.config, "trailing_tp_min_lock_spread_mult", 2.0))
-                        * resolve_spread_bps_model(str(self.instrument_id)))
+                        * resolve_spread_bps_model(str(self.instrument_id))
+                        + resolve_commission_bps_model(str(self.instrument_id)))
         lock = compute_trailing_tp_lock(
             entry, self._ttp_peak, self._effective_atr_value(self._exit_atr.value, close), side,
             float(activation), float(getattr(self.config, "trailing_tp_trail_atr", 0.5)), min_lock_bps)

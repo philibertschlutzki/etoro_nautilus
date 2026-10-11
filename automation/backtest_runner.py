@@ -2788,6 +2788,23 @@ def _read_period_returns_cap() -> int:
 _default_round_trip_cost_bps_cache: dict[str, float] = {}
 
 
+_commission_by_asset_class_cache: dict | None = None
+
+
+def resolve_commission_bps(asset_class_key: str, default_bps: float) -> float:
+    """Round-Trip-Gebühr (bps) für eine Asset-Klasse aus ``backtest.json['commission_bps_by_asset_class']``,
+    sonst ``default_bps`` (globales ``commission_bps``). Gecached; fehlt die Datei/der Schlüssel ⇒ Default."""
+    global _commission_by_asset_class_cache
+    if _commission_by_asset_class_cache is None:
+        try:
+            with open(config_dir() / "backtest.json", "r", encoding="utf-8") as f:
+                _commission_by_asset_class_cache = dict(json.load(f).get("commission_bps_by_asset_class") or {})
+        except (OSError, ValueError, TypeError):
+            _commission_by_asset_class_cache = {}
+    value = _commission_by_asset_class_cache.get(str(asset_class_key or "").upper())
+    return float(value) if value is not None else float(default_bps)
+
+
 def _read_default_round_trip_cost_bps(inst_id_str: str | None = None) -> float:
     """Issue #684/#775 — Config-abgeleiteter DEFAULT-Round-Trip-Kostenwert (bps), Single Source of
     Truth mit dem realen Kostenmodell (``backtest.json``: ``commission_bps`` +
@@ -2823,6 +2840,7 @@ def _read_default_round_trip_cost_bps(inst_id_str: str | None = None) -> float:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             commission_bps = float(data.get("commission_bps", 1.0))
+            commission_by_asset_class = data.get("commission_bps_by_asset_class") or {}
             spread_by_asset_class = data.get("spread_bps_by_asset_class") or {}
             spread_by_symbol = data.get("spread_bps_by_symbol") or {}
             if inst_id_str:
@@ -2830,6 +2848,9 @@ def _read_default_round_trip_cost_bps(inst_id_str: str | None = None) -> float:
                 has_symbol_override = bool(inst_id_str in spread_by_symbol)
                 if spread_by_asset_class and not has_symbol_override:
                     asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
+                if commission_by_asset_class:
+                    commission_bps = float(commission_by_asset_class.get(
+                        _resolve_asset_class_for_symbol(inst_id_str), commission_bps))
                 # Issue #1366 — derselbe gemessene Spread-Floor wie im Worker (Kalibrierungs-Cache).
                 from automation.optimizer.calibration import read_calibrated_spread_cache
                 from automation.optimizer.manifest import PERSISTENT_CACHE_ROOT
@@ -7632,6 +7653,9 @@ def run_single_backtest_worker(
                     or slippage_bps_by_asset_class or slippage_bps_p50_by_asset_class):
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
+            # Gebühr je Asset-Klasse (eToro-Krypto: 1 % je Seite, live am 2026-10-11 gemessen) statt des globalen
+            # commission_bps; geht über extract_metrics in die PnL und in round_trip_cost_bps ein.
+            commission_bps = resolve_commission_bps(asset_class_key, commission_bps)
 
             # Issue #956 (Katalog D, P0) — physikalische Tick-Untergrenze VOR der Konfig-Auflösung
             # berechnen: ein $2-Micro-Cap mit $0.01-Tick hat eine Round-Trip-Untergrenze von 50bps,
