@@ -1,0 +1,136 @@
+{
+ "hypothesis": "H3",
+ "protocol_doc": "manuals/ebc/EBC_H3.md",
+ "protocol_doc_sha256": "20bc329eda98b20b99e080be241c76cbae9ad810babb6770a1639428461a9666",
+ "protocol_docs_sha256": {
+  "H1": "82f28ffa6d4d5e2c5726774035754d425e79b739e41e8ee06b4ddeea22df833c",
+  "H2": "b0bfcf429cda76287c40e0af9a8818cfb20e0093141f14fd1fbb78c41561b9c7",
+  "H3": "20bc329eda98b20b99e080be241c76cbae9ad810babb6770a1639428461a9666"
+ },
+ "repo_commit": "5f737ed495e70eab85b2dbbb7673eb7369c428ce",
+ "seed": 20261011,
+ "written_utc": "2026-10-11T13:09:26.198145+00:00",
+ "universe": {
+  "n": 466,
+  "sha256": "ab8863f9fce81cd3a75e1acf644e8e00573443c1265a3e85b56323aa362b90fc",
+  "by_class": {
+   "K1": 357,
+   "K2": 50,
+   "K3": 10,
+   "K4": 16,
+   "K5": 33
+  }
+ },
+ "data": {
+  "source": "eToro API candles/desc/OneDay/1000 (direkt, CSV)",
+  "last_candle_utc": "2026-10-12",
+  "n_calendar_days": 1088
+ },
+ "comparison_period": {
+  "start": "2024-12-23",
+  "end": "2026-10-12",
+  "g_start": 617,
+  "rule": "erster Tag, an dem mind. ein Instrument 867 Kalendertage Historie hat"
+ },
+ "cost_model": {
+  "rule": "Spread/Slippage je Klasse aus backtest.json-Rueckfallwerten (Wochenende, Maerkte geschlossen: keine repraesentative Messung); Krypto 200 bps Kommission",
+  "spread_bps": {
+   "EQUITY": 3.0,
+   "FOREX": 1.5,
+   "COMMODITY": 5.0,
+   "INDEX": 4.0,
+   "CRYPTO": 15.0
+  },
+  "slippage_bps_per_side": {
+   "EQUITY": 1.5,
+   "FOREX": 0.75,
+   "COMMODITY": 2.5,
+   "INDEX": 2.0,
+   "CRYPTO": 7.5
+  },
+  "commission_rt_bps": {
+   "EQUITY": 0.0,
+   "FOREX": 0.0,
+   "COMMODITY": 0.0,
+   "INDEX": 0.0,
+   "CRYPTO": 200.0
+  },
+  "financing_bps_per_day": {
+   "short": 0.79,
+   "long": {
+    "EQUITY": 0.0,
+    "FOREX": 0.79,
+    "COMMODITY": 0.79,
+    "INDEX": 0.79,
+    "CRYPTO": 0.0
+   }
+  }
+ },
+ "results_viewed_before_registration": "nein; ausser Route-R/V-Paritaet (Trade-Ebene) und Anzahl der Trades je Strategie",
+ "git_head": "5f737ed495e70eab85b2dbbb7673eb7369c428ce",
+ "parameters": {
+  "primary": [
+   "P3.1: CVaR5(S1) um >= 20 % besser als S0 und untere 90%-KI-Grenze von Expectancy(S1)-Expectancy(S0) > -2 bps",
+   "P3.2: Delta_M > 0, Delta_T < 0, Delta_V < 0 und Interaktion Delta_M - (Delta_T+Delta_V)/2 mit unterer 90%-KI-Grenze > 0",
+   "P3.3: Expectancy_Z1,Aktien < 0 und (Expectancy_Z2 > 0 oder MaxDD-Reduktion >= 15 % bei dSR >= 0)"
+  ],
+  "refutation": "S0 bei CVaR5 und Expectancy besser als S1 (untere KI-Grenzen > 0), oder TTP-Interaktion umgekehrt (obere KI-Grenze < 0), oder Z1 > Z2 (untere KI-Grenze > 0)",
+  "factors": {
+   "S": [
+    "S0",
+    "S1",
+    "S2"
+   ],
+   "P": [
+    "P0",
+    "P1",
+    "P2",
+    "P3"
+   ],
+   "Z": [
+    "Z0",
+    "Z1",
+    "Z2",
+    "Z3"
+   ],
+   "H": [
+    1,
+    3,
+    5,
+    10,
+    20,
+    40
+   ]
+  },
+  "pairing": "Eintrags-gepaart: Signale = steigende Flanke der Entry-Bedingung, jedes Signal unabhaengig unter jeder Variante verfolgt",
+  "s1_semantics": "Distanz D = k*ATR20 beim Einstieg fix; Long: Stop = hoechstes Hoch seit Einstieg - D, Trigger bei Low <= Stop (Pruefung vor dem Hoch-Update des Tages), Fill = min(Open, Stop)",
+  "p3_semantics": "50 % bei +1R (R = k*ATR20 beim Einstieg), Limit-Fill zum Level bzw. Open bei Gap",
+  "shortability": "Stufe C4 nicht gelaufen: alle nicht-Krypto-Instrumente als leerverkaufbar angenommen (Obergrenze fuer Z1/Z2)",
+  "bootstrap": {
+   "cluster": "Kalendermonat der Einstiege",
+   "B": 5000,
+   "level": 0.9,
+   "seed": 20261011
+  }
+ },
+ "protocol_deviations": [
+  "ACCOUNT: Der API-Key traegt nur Real-Scopes; es wird kein /demo/-Endpunkt genutzt. Stufe C (falls freigegeben) liefe ueber die per automation/account_guard.py abgesicherten /real/-Pfade des Paper-Kontos (realCid = ETORO_PAPER_ACCOUNT_CID, Pruefung per GET /api/v1/me vor jeder Order). In Stufe A werden keine Orders gesendet.",
+  "ISOLATION: Konto-Isolation Variante (b) (disjunkte Instrumente zum laufenden Bot + Verwaltung je positionId); Stufe C bis zur Freigabe nicht gestartet.",
+  "DATEN: Tageskerzen direkt per API gelesen und als CSV gespeichert (experiments/ebc/api.py, build_universe.py) statt historical_fetcher/Nautilus-Katalog; Kerzendefinition = UTC-Tag (fromDate), unfertige Kerze des Abrufdatums verworfen; oneday_definition-Messlauf nicht ausgefuehrt. Rundungsfehler (Low > Open etc.) durch Klemmen bereinigt.",
+  "UNIVERSUM: Ziehung = Kandidaten je Schicht zufaellig mischen (Seed 20261011), der Reihe nach laden, die ersten n mit bestandener Qualitaetspruefung; PriceSource-Filter nur fuer Nicht-Aktien/ETF (bei Aktien traegt PriceSource den Boersennamen); US = ExchangeID 4/5; Krypto 'Top 30' = aelteste Listings (kleinste ID); nur 10 Spot-Rohstoffe und 16 Indizes verfuegbar; 13 Instrumente mit Letztkerze vor 2026-09-25 (veraltet/delistet) nach der Ziehung entfernt, nicht nachgezogen.",
+  "KOSTEN: Stichprobe der Spreads am Wochenende (Maerkte ausser Krypto geschlossen) nicht repraesentativ -> Rueckfallwerte der backtest.json; Indizes mit DEFAULT (Spread 4, Slippage 2 bps). Slippage/Finanzierung/Kommission nicht aus Stufe C gemessen. Hintergrund-Sampler sammelt Spreads fuer spaetere Rekalibrierung.",
+  "ROUTE R: eigener Harness (Anhang-A-Stil, experiments/ebc/route_r.py) statt backtest_runner.run_single_backtest_worker: EXTERNAL-Tagesbars (Bar-Zeitstempel = Folgekerze + 1 ns) plus O/L/H/C-Quote-Ticks, bar_execution=False, Spread im Tick 0 (Kosten explizit in costs.py), Sizing-Cap-Korrektur deaktiviert, Katastrophen-Stop-Fill auf das Stop-Niveau (min/max mit Open) korrigiert, Notional 2 % von 1 Mio. USD je Lauf (Rendite je Trade unabhaengig von der Groesse).",
+  "ARCHETYPEN: ATR20 als Wilder-Rekursion (alpha = 1/20, mit der ersten True Range gesaet) in den Klassen und in Route V identisch; Stop-/Zeitstopp-Mechanik der Basisklasse (Anker = Entry-Fill, Ratsche mit trailing_min_atr_frac 0,5, Zeitstopp ueber Bar-Zaehler: Exit nach H Schlusskursen, Ausfuehrung zum naechsten Open).",
+  "ARM A0/A1: Emulation statt 5-Tage-Neuauswahl-Laeufen: feste Default-Parameter (strategy_defaults.json + PAPER_TRAILING_TP, max_handelstage 5) => eine durchgehende Route-R-Laufzeit je (Instrument, Strategie); IS-Score = t-Statistik der Netto-Trade-Rendite (Exit-Tag im IS-Fenster, mind. 3 Trades), Gates im OOS-Fenster (>= 8 Trades, PF >= 1, Expectancy >= 0, t >= 0,5, PSR(Tagesreihe) >= 0,5), Platzvergabe nach OOS-PSR (40 Aktien/Index- plus 40 Rund-um-die-Uhr-Plaetze), Retire ungueltig gewordener Paare ohne offene Position (nie wieder gewaehlt). Max-Drawdown-Gate (0,3) und Deflated-Selection nicht abgebildet (PAPER_SELECTION_GATES: deflated_selection false). Turnier-Treue gegen echten backtest_runner --momentum-Lauf NICHT geprueft.",
+  "ARM A2: nicht gerechnet (optional laut Protokoll; 72 Konfigurationen/Symbol nicht im Zeitrahmen).",
+  "ARM A: Kapazitaet 30 gleichzeitige Positionen (wie B), Notional 2 % der Equity; A-Shorts auf Aktien/ETF/Krypto in A1 verworfen, in A0 beibehalten (Krypto-Shorts blockt die Basisklasse).",
+  "KOSTENFILTER q = c_RT / ATR20_bps (Median der letzten 250 Tage, statisch zum Datenende); q <= 0,10.",
+  "NULLMODELL (P1.5): zirkulaere Verschiebung der Trade-Positionsreihe um 20-230 Handelstage, Auswertung der Gates zum letzten Auswahltag; Replikate-Zahl siehe null_gate_calibration.json.",
+  "ACHSENBRUCH (P1.4): Stundendaten nur API-Fenster (1000 Stundenkerzen), siehe axis_break.csv.",
+  "STUFE B/C: nicht ausgefuehrt (Stufe B >= 30 Handelstage, Stufe C erst nach Freigabe); Folgearbeit.",
+  "H3 §7.1: Stunden-Zusatzauswertung der 14 Repo-Strategien (S0 vs S1 auf Intrabar-Ticks) nur auf einer Stichprobe, siehe stop_summary_hourly.csv, falls vorhanden.",
+  "H3 §7.3-7.4: siehe timebox.csv / leaks_real_data.csv; Leerverkaufbarkeit (C4) und Finanzierung (C3) nicht gemessen -> Annahmen: alle Nicht-Krypto-Instrumente leerverkaufbar, Finanzierung 0,79 bps/Tag.",
+  "H3 S1/P3: Intrabar-Reihenfolge innerhalb einer Kerze unbekannt: Stop-Pruefung vor dem Hoch/Tief-Update des Tages (konservativ), Teilschliessung zum Zielniveau (Limit).",
+  "H3 Stufen B/C (TSL-Feldtest, Stop-Slippage, Finanzierung, Leerverkaufbarkeit, Teilschliessung) nicht ausgefuehrt: P3.1 kann nach Protokoll nur durch Stufe C abgeschwaecht werden."
+ ]
+}
