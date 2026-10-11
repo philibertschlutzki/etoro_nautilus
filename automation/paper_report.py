@@ -315,6 +315,30 @@ def write_snapshot(text: str, report_dir: Path | None = None) -> Path:
     return path
 
 
+PUBLISH_EVERY_HOURS = 1.0
+PUBLISH_ENV = "PAPER_REPORT_PUBLISH"        # "0" schaltet den Git-Push der Berichte ab
+
+
+def maybe_publish(state: dict, now: datetime, *, environ=None, publisher=None,
+                  every_hours: float = PUBLISH_EVERY_HOURS) -> dict:
+    """Pusht die Berichte höchstens einmal je ``every_hours`` (der 15-Minuten-Cron reicht, kein zweiter Cron-Eintrag).
+    Fehler brechen den Report nie ab; der Zeitstempel wird nur nach Erfolg oder 'nichts Neues' gesetzt."""
+    environ = environ if environ is not None else os.environ
+    if str(environ.get(PUBLISH_ENV, "1")).strip() == "0":
+        return state
+    last = state.get("last_publish")
+    if last and now - datetime.fromisoformat(last) < timedelta(hours=every_hours):
+        return state
+    try:
+        if publisher is None:
+            from automation.paper_report_publish import publish as publisher
+        publisher(branch=environ.get("PAPER_REPORT_GIT_BRANCH") or "main", now=now)
+    except Exception as exc:  # noqa: BLE001
+        print(f"HINWEIS: Berichts-Push fehlgeschlagen: {exc}", file=sys.stderr)
+        return state
+    return dict(state, last_publish=now.isoformat())
+
+
 def run(*, force_summary: bool = False, now: datetime | None = None, fetch=fetch_pnl, environ=None) -> int:
     environ = environ if environ is not None else os.environ
     now = now or datetime.now(timezone.utc)
@@ -347,7 +371,7 @@ def run(*, force_summary: bool = False, now: datetime | None = None, fetch=fetch
     write_outputs(lines, now)
     write_snapshot(render_markdown(positions, credit, now=now, names=instrument_names(), bot=bot_running(),
                                    ledgers=ledger_counts(), errors=errors, recent_events=recent_events()))
-    save_state(new_state)
+    save_state(maybe_publish(new_state, now, environ=environ))
     if lines:
         print("\n".join(lines))
         push(lines, environ.get(NTFY_ENV))

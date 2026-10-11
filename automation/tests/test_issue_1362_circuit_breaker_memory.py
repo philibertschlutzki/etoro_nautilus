@@ -283,3 +283,22 @@ def test_tournament_metrics_parse_the_trade_return_fields():
     from automation.optimizer.parsing import TournamentMetrics
     fields = TournamentMetrics.__dataclass_fields__
     assert {"oos_trade_return_bps_mean", "oos_trade_return_bps_std", "oos_trade_return_bps_n"} <= set(fields)
+
+
+def test_invested_amount_is_not_counted_as_daily_loss():
+    """Der Adapter meldet nur das freie Guthaben: zwei offene Positionen (355,66 USD) dürfen den Tagesverlust nicht
+    auf 3,6 % treiben (Breaker-Trip 2026-10-11 bei -0,04 % echtem Ergebnis)."""
+    from types import SimpleNamespace
+    from automation.live_risk import LiveCircuitBreakerWatchdog
+
+    pos = [SimpleNamespace(quantity=0.002406, avg_px_open=82942.5), SimpleNamespace(quantity=20.32, avg_px_open=7.682)]
+    node = SimpleNamespace(
+        portfolio=SimpleNamespace(equity=lambda venue: {"USD": 9619.58}, unrealized_pnls=lambda venue: {"USD": 0.07}),
+        cache=SimpleNamespace(positions_open=lambda: pos))
+    wd = LiveCircuitBreakerWatchdog(node, venue="ETORO")
+    equity = wd._read_equity()
+    assert abs(equity - (9619.58 + 0.002406 * 82942.5 + 20.32 * 7.682 + 0.07)) < 1e-6
+    assert 1.0 - equity / 9978.80 < 0.001
+    # nicht lesbare Positionen: Tick überspringen statt mit falscher Equity zu entscheiden
+    node.cache = SimpleNamespace(positions_open=lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    assert wd._read_equity() is None

@@ -411,3 +411,19 @@ def test_flatten_policy_always_flattens_and_unknown_opening_order_is_unprotected
     assert effective_shutdown_policy("flatten", []) == "flatten"
     assert effective_shutdown_policy(None, []) == "keep"
     assert effective_shutdown_policy("keep", ["P1"]) == "flatten"
+
+
+def test_shutdown_keeps_adopted_external_position_and_flatten_reads_strategy_ids_method():
+    """Per Reconciliation übernommene Position (strategy_id EXTERNAL) gilt als vom eToro-Stop geschützt: 'keep'
+    bleibt 'keep'. Und 'flatten' liest Trader.strategy_ids auch als Methode (NautilusTrader), statt zu scheitern."""
+    from automation import live_risk
+
+    adopted = SimpleNamespace(id="BTC-EXTERNAL", opening_order_id="O-1", strategy_id=SimpleNamespace(value="EXTERNAL"))
+    own = SimpleNamespace(id="X-1", opening_order_id="O-2", strategy_id=SimpleNamespace(value="S1"))
+    cache = SimpleNamespace(positions_open=lambda: [adopted, own], order=lambda oid: None)
+    assert live_risk.open_positions_missing_broker_stop(cache) == ["X-1"]
+    exits = []
+    node = SimpleNamespace(trader=SimpleNamespace(strategy_ids=lambda: ["S1", "S2"], market_exit_strategy=exits.append))
+    assert live_risk._trader_strategy_ids(node) == ["S1", "S2"]
+    node.trader.strategy_ids = ["S3"]
+    assert live_risk._trader_strategy_ids(node) == ["S3"]

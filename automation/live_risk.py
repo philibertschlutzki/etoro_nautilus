@@ -221,6 +221,22 @@ def _has_broker_stop_tag(tags) -> bool:
     return False
 
 
+EXTERNAL_STRATEGY_ID = "EXTERNAL"
+
+
+def _trader_strategy_ids(node) -> list:
+    """``Trader.strategy_ids`` ist in NautilusTrader eine Methode (in Test-Doubles ein Attribut)."""
+    ids = node.trader.strategy_ids
+    return list(ids() if callable(ids) else ids)
+
+
+def _is_adopted_external(pos) -> bool:
+    """Per Reconciliation übernommene eToro-Position (nach einem Neustart): ihre Eröffnungs-Order steht nicht im Cache,
+    der Broker-Stop liegt aber bei eToro (jede Bot-Order setzt StopLossRate). Ein Neustart soll sie nicht verkaufen
+    (eToro-Gebühr 1 % je Seite); der Bot nimmt sie nach dem Start wieder in sein Stop-/Trailing-Management auf."""
+    return str(getattr(getattr(pos, "strategy_id", None), "value", getattr(pos, "strategy_id", ""))) == EXTERNAL_STRATEGY_ID
+
+
 def open_positions_missing_broker_stop(cache) -> list[str]:
     """Issue #1358 Fix Punkt 2 / #1359 — IDs offener Positionen OHNE Broker-Stop. Eine Position trägt
     einen Broker-Stop, wenn ihre Eröffnungs-Order einen ``SL:<pct>``-Tag mit pct > 0 hatte (der
@@ -238,6 +254,8 @@ def open_positions_missing_broker_stop(cache) -> list[str]:
             order = cache.order(pos.opening_order_id)
         except Exception:
             order = None
+        if _is_adopted_external(pos):
+            continue
         if order is None or not _has_broker_stop_tag(getattr(order, "tags", None)):
             missing.append(str(getattr(pos, "id", pos)))
     return missing
@@ -348,7 +366,7 @@ class LiveShutdownCoordinator:
                 logger.exception("[LiveShutdown] Event-Emission fehlgeschlagen.")
         if effective == SHUTDOWN_POLICY_FLATTEN:
             try:
-                for strategy_id in list(self._node.trader.strategy_ids):
+                for strategy_id in _trader_strategy_ids(self._node):
                     try:
                         self._node.trader.market_exit_strategy(strategy_id)
                     except Exception:
@@ -442,12 +460,31 @@ class LiveCircuitBreakerWatchdog:
         if not equity_by_currency:
             return None
         try:
-            # Issue #999 — bei genau einer Waehrung (der Regelfall fuer diesen Bot) eindeutig; bei
-            # mehreren die Summe der Einzel-Money-Betraege (konservative Naeherung ohne FX-Konversion
-            # — der Bot handelt aktuell auf einer Quote-Waehrung je Konfiguration).
-            return sum(float(v) for v in equity_by_currency.values())
+            cash = sum(float(v) for v in equity_by_currency.values())
         except (TypeError, ValueError):
             logger.exception("[LiveCircuitBreaker] Equity-Werte nicht in float konvertierbar.")
+            return None
+        # Der eToro-Adapter meldet als Kontostand nur das freie Guthaben (``credit``): offene Positionen sind darin
+        # bereits abgezogen. Ohne Zuschlag zählte jede investierte Position als Verlust (3,6 % "Tagesverlust" bei
+        # -0,04 % echtem Ergebnis, Breaker-Trip 2026-10-11). Equity = Guthaben + investierter Betrag + unrealisierter PnL.
+        invested = self._open_positions_value(venue_arg)
+        if invested is None:
+            return None
+        return cash + invested
+
+    def _open_positions_value(self, venue_arg) -> float | None:
+        """Investierter Betrag (Stück x Einstiegskurs) plus unrealisierter PnL der offenen Positionen; ``None``,
+        wenn nicht lesbar (dann wird der Tick übersprungen statt mit falscher Equity zu entscheiden)."""
+        try:
+            positions_open = getattr(getattr(self._node, "cache", None), "positions_open", None)
+            positions = list(positions_open()) if positions_open is not None else []   # Test-Doubles ohne Positionen
+            invested = sum(abs(float(p.quantity)) * float(p.avg_px_open) for p in positions)
+            if not positions:
+                return 0.0
+            unrealized = self._node.portfolio.unrealized_pnls(venue_arg) or {}
+            return invested + sum(float(v) for v in unrealized.values())
+        except Exception:
+            logger.exception("[LiveCircuitBreaker] Wert der offenen Positionen nicht lesbar (Tick uebersprungen).")
             return None
 
     def _tick(self) -> None:
@@ -548,7 +585,7 @@ class LiveCircuitBreakerWatchdog:
         # Versuch zu flatten als GAR keiner.
         def _do_flatten_and_stop():
             try:
-                for strategy_id in list(self._node.trader.strategy_ids):
+                for strategy_id in _trader_strategy_ids(self._node):
                     try:
                         self._node.trader.market_exit_strategy(strategy_id)
                     except Exception:

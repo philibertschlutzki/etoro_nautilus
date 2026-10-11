@@ -59,7 +59,7 @@ def test_run_is_read_only_and_fail_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(pr, "PROJECT_ROOT", tmp_path)       # Bot-Log/Ledger/Sperrdatei nicht aus dem echten Repo lesen
     monkeypatch.setattr(pr, "BOT_LOCK", tmp_path / "none.lock")
     monkeypatch.setattr(pr, "INCUBATION_DIR", tmp_path / "inc")
-    env = {"ETORO_API_KEY": "k", "ETORO_USER_KEY": "u"}
+    env = {"ETORO_API_KEY": "k", "ETORO_USER_KEY": "u", "PAPER_REPORT_PUBLISH": "0"}
     assert pr.run(environ={**env, "ETORO_ENV": "real"}, fetch=lambda *a: _pnl()) == 2
     assert pr.run(environ={"ETORO_ENV": "demo"}, fetch=lambda *a: _pnl()) == 2
     def boom(*a): raise pr.ReportError("offline")
@@ -99,3 +99,18 @@ def test_markdown_snapshot_has_positions_and_no_secrets(tmp_path):
     path = pr.write_snapshot(text, tmp_path)
     assert path.name == "paper_report_latest.md" and path.read_text("utf-8") == text
     assert pr.REPORT_DIR.name == "paper_reports"     # nicht im per .gitignore ausgeschlossenen reports/
+
+
+def test_maybe_publish_hourly_and_never_raises():
+    calls = []
+    pub = lambda **kw: calls.append(kw)
+    state = pr.maybe_publish({}, NOW, environ={}, publisher=pub)
+    assert len(calls) == 1 and state["last_publish"] == NOW.isoformat()
+    assert pr.maybe_publish(state, NOW + timedelta(minutes=30), environ={}, publisher=pub) == state
+    assert len(calls) == 1                                           # noch nicht fällig
+    later = pr.maybe_publish(state, NOW + timedelta(hours=1), environ={}, publisher=pub)
+    assert len(calls) == 2 and later["last_publish"] != state["last_publish"]
+    assert pr.maybe_publish({}, NOW, environ={"PAPER_REPORT_PUBLISH": "0"}, publisher=pub) == {} and len(calls) == 2
+
+    def boom(**kw): raise RuntimeError("kein Netz")
+    assert pr.maybe_publish({}, NOW, environ={}, publisher=boom) == {}  # kein last_publish => nächster Lauf versucht erneut
