@@ -15,6 +15,8 @@ class FlashCrashReversalConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     rsi_period: int = 14
     rsi_oversold: float = 25.0
     rsi_overbought: float = 70.0
+    # EBC-H3 Anhang B: Short-Entry nur explizit (das Erholungssignal eröffnete sonst bei blockiertem Entry einen Short).
+    allow_short: bool = False
 
 
 class FlashCrashReversalStrategy(HourlyStrategyBase):
@@ -60,8 +62,9 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
                 f"[{self.instrument_id}] FLASH CRASH DETECTED | "
                 f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
             )
-            self.current_signal = "BUY"
-            self._on_buy_signal(bar)
+            # Zustand erst setzen, nachdem tatsächlich eine Entry-Order abgesetzt wurde (EBC-H3 Anhang B).
+            if self._on_buy_signal(bar):
+                self.current_signal = "BUY"
 
         elif (is_recovery or is_overbought or is_mean_reversion) and self.current_signal == "BUY":
             self._log.info(
@@ -73,19 +76,20 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
 
     # ── Order helpers ──────────────────────────────────────────────────────────
 
-    def _on_buy_signal(self, bar: Bar) -> None:
+    def _on_buy_signal(self, bar: Bar) -> bool:
+        """``True``, wenn eine Entry-Order abgesetzt wurde."""
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.LONG:
-                return
+                return False
             self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
-            return
+            return False
         if len(self.cache.positions_open(instrument_id=self.instrument_id)) >= self.config.max_open_positions:
-            return
+            return False
         qty = self._compute_quantity(bar)
         if qty is None:
-            return
+            return False
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
@@ -94,6 +98,7 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             tags=self._entry_order_tags(bar),
         )
         self.submit_order(order)
+        return True
 
     def _on_sell_signal(self, bar: Bar) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -102,6 +107,10 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
+            return
+        if not self.config.allow_short:
+            # Das Erholungs-/Exit-Signal eröffnet nie eine Gegenposition (EBC-H3 Anhang B).
+            self.current_signal = None
             return
         if len(self.cache.positions_open(instrument_id=self.instrument_id)) >= self.config.max_open_positions:
             return
