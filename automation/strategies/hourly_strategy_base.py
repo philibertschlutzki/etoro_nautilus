@@ -1092,7 +1092,8 @@ class HourlyStrategyBase(Strategy):
         # lassen. `_ruined` bleibt einmal gesetzt fuer den Rest des Backtests (kein "Erholen").
         if self._ruined:
             return True
-        current_equity = self._get_current_balance()
+        allocator_equity = self.allocator.risk_equity() if self.allocator is not None else None
+        current_equity = allocator_equity if allocator_equity is not None else self._get_current_balance()
         if self._initial_equity is None:
             if current_equity > 0:
                 self._initial_equity = current_equity

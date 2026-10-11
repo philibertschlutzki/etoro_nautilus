@@ -564,6 +564,12 @@ def main():
         },
     )
 
+    # Risikorechnung (Verlust-Stopp, Exposure-Deckel, Positionsgrösse) liest Guthaben und offene Positionen direkt von
+    # eToro statt aus dem Bot-Gedächtnis (automation/account_view.py).
+    from automation.account_view import EToroAccountView
+    account_view = EToroAccountView(api_key, user_key, api_environment, log=logger)
+    allocator.set_account_view(account_view)
+
     node = TradingNode(config=config)
     node.add_data_client_factory("ETORO_WS_CLIENT", EToroLiveDataClientFactory)
     node.add_exec_client_factory("ETORO", EToroLiveExecClientFactory)
@@ -649,6 +655,7 @@ def main():
         day_key_fn=lambda now: exchange_day_key(now, daily_loss_tz),
         distribution_refs=distribution_refs,
         n_min_round_trips=live_risk_cfg.get("circuit_breaker_n_min_round_trips", 30),
+        account_view=account_view,
     )
     watchdog.start()
 
