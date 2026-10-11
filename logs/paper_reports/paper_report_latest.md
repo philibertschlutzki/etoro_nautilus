@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-11 22:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-11 23:15 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 9619.58 USD |
-| Investiert | 355.66 USD in 2 Position(en) |
-| Unrealisierter PnL | +2.04 USD |
+| Freies Guthaben | 9774.96 USD |
+| Investiert | 199.56 USD in 1 Position(en) |
+| Unrealisierter PnL | +1.54 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 3 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,8 +15,7 @@ Stand: 2026-10-11 22:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| BTC.ETORO | Long | 199.56 | 82942.5 | +1.19 |
-| INJ.ETORO | Long | 156.10 | 7.682 | +0.85 |
+| BTC.ETORO | Long | 199.56 | 82942.5 | +1.54 |
 
 ## Letzte Ereignisse
 
@@ -43,3 +42,5 @@ Stand: 2026-10-11 22:00 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-11 17:15 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 17:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 18:30 UTC ZUSAMMENFASSUNG Guthaben 9619.58 USD, 2 offene Position(en) (PnL +6.86), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-11 22:15 UTC GESCHLOSSEN Long INJ.ETORO, Position 3602666415, 156.10 USD, PnL +0.85 (zuletzt gesehen)
+- 2026-10-11 22:45 UTC ZUSAMMENFASSUNG Guthaben 9774.96 USD, 1 offene Position(en) (PnL +1.57), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
