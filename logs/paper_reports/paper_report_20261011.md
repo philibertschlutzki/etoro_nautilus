@@ -9,3 +9,4 @@
 - 2026-10-11 17:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 17:15 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 17:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
+- 2026-10-11 18:30 UTC ZUSAMMENFASSUNG Guthaben 9619.58 USD, 2 offene Position(en) (PnL +6.86), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
