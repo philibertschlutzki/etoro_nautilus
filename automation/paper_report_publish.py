@@ -1,4 +1,4 @@
-"""Veröffentlicht die Paper-Trading-Berichte (``logs/paper_reports/*.md``) per Git in dieses Repository.
+"""Veröffentlicht die Paper-Trading-Berichte (``data/paper_reports/*.md``, im Klon unter ``logs/paper_reports/``) per Git in dieses Repository.
 
 Läuft per Cron (stündlich) NEBEN ``paper_report``. Es arbeitet in einem eigenen, schlanken Klon
 (``PAPER_REPORT_REPO_DIR``, Standard ``~/etoro_nautilus_reports``) und rührt Arbeitsverzeichnis, Bot-Checkout und
@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_DIR = PROJECT_ROOT / "logs" / "paper_reports"
+SOURCE_DIR = PROJECT_ROOT / "data" / "paper_reports"
 TARGET_REL = Path("logs") / "paper_reports"
 DEFAULT_CLONE = Path.home() / "etoro_nautilus_reports"
 CREDENTIAL_HELPER = "!gh auth git-credential"
