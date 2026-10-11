@@ -1,0 +1,42 @@
+{
+ "SmaCrossoverStrategy": {
+  "n": 8915,
+  "exp_bps": -4.4,
+  "hit": 0.49
+ },
+ "MeanReversionStrategy": {
+  "n": 3208,
+  "exp_bps": 16.4,
+  "hit": 0.508
+ },
+ "DynamicBreakoutStrategy": {
+  "n": 6013,
+  "exp_bps": -31.4,
+  "hit": 0.458
+ },
+ "TrendPullbackStrategy": {
+  "n": 23753,
+  "exp_bps": 7.4,
+  "hit": 0.504
+ },
+ "AdxAtrMomentumStrategy": {
+  "n": 26663,
+  "exp_bps": 1.4,
+  "hit": 0.461
+ },
+ "SqueezeBreakoutStrategy": {
+  "n": 1194,
+  "exp_bps": 18.1,
+  "hit": 0.48
+ },
+ "DonchianRegimeBreakoutStrategy": {
+  "n": 7465,
+  "exp_bps": 4.7,
+  "hit": 0.492
+ },
+ "Rsi2ReversionStrategy": {
+  "n": 23073,
+  "exp_bps": 9.6,
+  "hit": 0.502
+ }
+}
