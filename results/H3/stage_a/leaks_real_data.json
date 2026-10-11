@@ -1,0 +1,89 @@
+{
+ "VBP": {
+  "original": {
+   "n_positions": 5836,
+   "n_short": 2397,
+   "short_share": 0.410726525017135,
+   "exp_bps": -38.68189975145143,
+   "std_bps": 251.38211105594775,
+   "total_bps": -225747.56694947055,
+   "short_exp_bps": -31.207098354462424,
+   "short_total_bps": -74803.41475564643,
+   "exits": {
+    "n/a": 5836
+   }
+  },
+  "gepatcht": {
+   "n_positions": 4324,
+   "n_short": 0,
+   "short_share": 0.0,
+   "exp_bps": -39.775660739504865,
+   "std_bps": 239.0566611527059,
+   "total_bps": -171989.95703761902,
+   "short_exp_bps": null,
+   "short_total_bps": 0.0,
+   "exits": {
+    "n/a": 4324
+   }
+  },
+  "n_instruments": 101
+ },
+ "FCR": {
+  "original": {
+   "n_positions": 5074,
+   "n_short": 0,
+   "short_share": 0.0,
+   "exp_bps": -24.15069728639982,
+   "std_bps": 192.1445917196195,
+   "total_bps": -122540.63803119268,
+   "short_exp_bps": null,
+   "short_total_bps": 0.0,
+   "exits": {
+    "n/a": 5074
+   }
+  },
+  "gepatcht": {
+   "n_positions": 5074,
+   "n_short": 0,
+   "short_share": 0.0,
+   "exp_bps": -24.15069728639982,
+   "std_bps": 192.1445917196195,
+   "total_bps": -122540.63803119268,
+   "short_exp_bps": null,
+   "short_total_bps": 0.0,
+   "exits": {
+    "n/a": 5074
+   }
+  },
+  "n_instruments": 101
+ },
+ "FCR_blockiert": {
+  "original": {
+   "n_positions": 4002,
+   "n_short": 514,
+   "short_share": 0.12843578210894552,
+   "exp_bps": -19.704814806065084,
+   "std_bps": 195.58484388886194,
+   "total_bps": -78858.66885387247,
+   "short_exp_bps": -23.232937420549877,
+   "short_total_bps": -11941.729834162637,
+   "exits": {
+    "n/a": 4002
+   }
+  },
+  "gepatcht": {
+   "n_positions": 3861,
+   "n_short": 0,
+   "short_share": 0.0,
+   "exp_bps": -18.664289481544806,
+   "std_bps": 196.33245432849571,
+   "total_bps": -72062.8216882445,
+   "short_exp_bps": null,
+   "short_total_bps": 0.0,
+   "exits": {
+    "n/a": 3861
+   }
+  },
+  "n_instruments": 101
+ }
+}

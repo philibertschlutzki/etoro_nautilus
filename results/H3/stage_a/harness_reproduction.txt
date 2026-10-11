@@ -1,0 +1,21 @@
+# Reproduktion Anhang A (unveraenderter Code, Commit 5f737ed) und gepatcht (Anhang B)
+## original: --strategy vbp --seeds 1 2 3
+{'strategy': 'vbp', 'seed': 1, 'max_daily_trades': 5, 'positions': 158, 'long_entries': 79, 'short_entries': 79, 'exit_reasons': {'TRAILING_STOP': 111, 'TIME_BOX': 47}}
+{'strategy': 'vbp', 'seed': 2, 'max_daily_trades': 5, 'positions': 154, 'long_entries': 77, 'short_entries': 77, 'exit_reasons': {'TRAILING_STOP': 104, 'TIME_BOX': 50}}
+{'strategy': 'vbp', 'seed': 3, 'max_daily_trades': 5, 'positions': 154, 'long_entries': 77, 'short_entries': 77, 'exit_reasons': {'TIME_BOX': 54, 'TRAILING_STOP': 100}}
+## gepatcht: --strategy vbp --seeds 1 2 3
+{'strategy': 'vbp', 'seed': 1, 'max_daily_trades': 5, 'positions': 89, 'long_entries': 89, 'short_entries': 0, 'exit_reasons': {'TRAILING_STOP': 66, 'TIME_BOX': 23}}
+{'strategy': 'vbp', 'seed': 2, 'max_daily_trades': 5, 'positions': 87, 'long_entries': 87, 'short_entries': 0, 'exit_reasons': {'TRAILING_STOP': 63, 'TIME_BOX': 24}}
+{'strategy': 'vbp', 'seed': 3, 'max_daily_trades': 5, 'positions': 93, 'long_entries': 93, 'short_entries': 0, 'exit_reasons': {'TIME_BOX': 28, 'TRAILING_STOP': 65}}
+## original: --strategy fcr --seeds 1 2
+{'strategy': 'fcr', 'seed': 1, 'max_daily_trades': 5, 'positions': 102, 'long_entries': 102, 'short_entries': 0, 'exit_reasons': {'TIME_BOX': 14, 'SIGNAL_REVERSAL': 14, 'TRAILING_STOP': 70, 'DISASTER_STOP': 4}}
+{'strategy': 'fcr', 'seed': 2, 'max_daily_trades': 5, 'positions': 126, 'long_entries': 126, 'short_entries': 0, 'exit_reasons': {'SIGNAL_REVERSAL': 24, 'TRAILING_STOP': 77, 'TIME_BOX': 23, 'DISASTER_STOP': 2}}
+## gepatcht: --strategy fcr --seeds 1 2
+{'strategy': 'fcr', 'seed': 1, 'max_daily_trades': 5, 'positions': 102, 'long_entries': 102, 'short_entries': 0, 'exit_reasons': {'TIME_BOX': 14, 'SIGNAL_REVERSAL': 14, 'TRAILING_STOP': 70, 'DISASTER_STOP': 4}}
+{'strategy': 'fcr', 'seed': 2, 'max_daily_trades': 5, 'positions': 126, 'long_entries': 126, 'short_entries': 0, 'exit_reasons': {'SIGNAL_REVERSAL': 24, 'TRAILING_STOP': 77, 'TIME_BOX': 23, 'DISASTER_STOP': 2}}
+## original: --strategy fcr --seeds 1 2 --max-daily-trades 1
+{'strategy': 'fcr', 'seed': 1, 'max_daily_trades': 1, 'positions': 79, 'long_entries': 65, 'short_entries': 14, 'exit_reasons': {'TIME_BOX': 8, 'SIGNAL_REVERSAL': 11, 'TRAILING_STOP': 56, 'DISASTER_STOP': 4}}
+{'strategy': 'fcr', 'seed': 2, 'max_daily_trades': 1, 'positions': 93, 'long_entries': 76, 'short_entries': 17, 'exit_reasons': {'SIGNAL_REVERSAL': 14, 'TRAILING_STOP': 63, 'TIME_BOX': 15, 'DISASTER_STOP': 1}}
+## gepatcht: --strategy fcr --seeds 1 2 --max-daily-trades 1
+{'strategy': 'fcr', 'seed': 1, 'max_daily_trades': 1, 'positions': 77, 'long_entries': 77, 'short_entries': 0, 'exit_reasons': {'TIME_BOX': 8, 'SIGNAL_REVERSAL': 11, 'TRAILING_STOP': 54, 'DISASTER_STOP': 4}}
+{'strategy': 'fcr', 'seed': 2, 'max_daily_trades': 1, 'positions': 88, 'long_entries': 88, 'short_entries': 0, 'exit_reasons': {'SIGNAL_REVERSAL': 15, 'TRAILING_STOP': 58, 'TIME_BOX': 14, 'DISASTER_STOP': 1}}
