@@ -460,12 +460,31 @@ class LiveCircuitBreakerWatchdog:
         if not equity_by_currency:
             return None
         try:
-            # Issue #999 — bei genau einer Waehrung (der Regelfall fuer diesen Bot) eindeutig; bei
-            # mehreren die Summe der Einzel-Money-Betraege (konservative Naeherung ohne FX-Konversion
-            # — der Bot handelt aktuell auf einer Quote-Waehrung je Konfiguration).
-            return sum(float(v) for v in equity_by_currency.values())
+            cash = sum(float(v) for v in equity_by_currency.values())
         except (TypeError, ValueError):
             logger.exception("[LiveCircuitBreaker] Equity-Werte nicht in float konvertierbar.")
+            return None
+        # Der eToro-Adapter meldet als Kontostand nur das freie Guthaben (``credit``): offene Positionen sind darin
+        # bereits abgezogen. Ohne Zuschlag zählte jede investierte Position als Verlust (3,6 % "Tagesverlust" bei
+        # -0,04 % echtem Ergebnis, Breaker-Trip 2026-10-11). Equity = Guthaben + investierter Betrag + unrealisierter PnL.
+        invested = self._open_positions_value(venue_arg)
+        if invested is None:
+            return None
+        return cash + invested
+
+    def _open_positions_value(self, venue_arg) -> float | None:
+        """Investierter Betrag (Stück x Einstiegskurs) plus unrealisierter PnL der offenen Positionen; ``None``,
+        wenn nicht lesbar (dann wird der Tick übersprungen statt mit falscher Equity zu entscheiden)."""
+        try:
+            positions_open = getattr(getattr(self._node, "cache", None), "positions_open", None)
+            positions = list(positions_open()) if positions_open is not None else []   # Test-Doubles ohne Positionen
+            invested = sum(abs(float(p.quantity)) * float(p.avg_px_open) for p in positions)
+            if not positions:
+                return 0.0
+            unrealized = self._node.portfolio.unrealized_pnls(venue_arg) or {}
+            return invested + sum(float(v) for v in unrealized.values())
+        except Exception:
+            logger.exception("[LiveCircuitBreaker] Wert der offenen Positionen nicht lesbar (Tick uebersprungen).")
             return None
 
     def _tick(self) -> None:
