@@ -1,0 +1,32 @@
+{
+ "ts_utc": "2026-10-11T12:31:23.543137+00:00",
+ "me_realCid_matches_pinned": true,
+ "me_keys": [
+  "avatarUrl",
+  "dateOfBirth",
+  "demoCid",
+  "firstName",
+  "gcid",
+  "language",
+  "lastName",
+  "middleName",
+  "playerLevel",
+  "realCid",
+  "scopes",
+  "username"
+ ],
+ "api_environment": "real",
+ "clone_head": "5f737ed495e70eab85b2dbbb7673eb7369c428ce",
+ "expected_head": "5f737ed495e70eab85b2dbbb7673eb7369c428ce",
+ "head_ok": true,
+ "clone": "~/ebc_exp",
+ "branch": "ebc/exp",
+ "venv": "Produktions-venv ~/etoro_nautilus/venv nur als Interpreter (lesend)",
+ "isolation": {
+  "variant": "b",
+  "rule": "disjunkte Instrumente zum Bot (Whitelist), Verwaltung je positionId",
+  "bot_whitelist_symbols": 68,
+  "stage_c": "nicht gestartet; keine Orders"
+ },
+ "smoke_tests": "siehe tests/test_ebc_archetypes.py"
+}

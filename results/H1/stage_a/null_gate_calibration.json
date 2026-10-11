@@ -1,0 +1,16 @@
+{
+ "selection_day": 20738,
+ "n_symbols": 466,
+ "observed_eligible": 81,
+ "observed_fraction": 0.17381974248927037,
+ "null_fraction_mean": 0.20371244635193134,
+ "null_fraction_ci90": [
+  0.1759656652360515,
+  0.23390557939914164
+ ],
+ "ratio_null_over_observed": 1.1719753086419755,
+ "replicates": 200,
+ "threshold": 0.8,
+ "P1_5_passed": true,
+ "note": "Gates: >=8 Trades, PF>=1, Expectancy>=0, t>=0,5 (PSR>=0,5 aequivalent zu Sharpe>=0, in Expectancy enthalten); Replikat 0 = beobachtet"
+}
