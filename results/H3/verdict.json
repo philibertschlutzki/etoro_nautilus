@@ -1,0 +1,219 @@
+{
+ "hypothesis": "H3",
+ "prompt_version": "1.0.0",
+ "repo_commit": "5f737ed495e70eab85b2dbbb7673eb7369c428ce",
+ "preregistration_sha256": "4e635ea6084615954e606564f1e7f0d4c70ea27c649c430f4ec9f81dce4110b2",
+ "period": {
+  "stage_a_oos": [
+   "2024-12-23",
+   "2026-10-12"
+  ],
+  "stage_b": null
+ },
+ "universe": {
+  "n_total": 466,
+  "n_after_cost_filter": 426,
+  "by_class": {
+   "K1": 353,
+   "K2": 48,
+   "K3": 10,
+   "K4": 15,
+   "K5": 0
+  }
+ },
+ "predictions": [
+  {
+   "id": "P3.1",
+   "metric": "CVaR5-Verbesserung S1 vs S0; Delta-Expectancy S1-S0 (bps)",
+   "value": {
+    "cvar5_improvement": 0.10635283153774769,
+    "delta_expectancy_bps": -54.800928287913486
+   },
+   "ci90": {
+    "cvar5_improvement": [
+     0.09106183740771046,
+     0.12273801093535319
+    ],
+    "delta_expectancy": [
+     -78.55320381430066,
+     -32.49035984851762
+    ]
+   },
+   "threshold": "CVaR5 >= 20 % besser und untere KI-Grenze Delta-Expectancy > -2 bps",
+   "passed": false
+  },
+  {
+   "id": "P3.2",
+   "metric": "TTP P1: Delta je Archetyp (bps) und Interaktion",
+   "value": {
+    "M": -0.07926316541986826,
+    "T": -100.57666295467457,
+    "V": -10.165624307334854,
+    "interaction": 55.291880465584846
+   },
+   "ci90": {
+    "interaction": [
+     15.683609580823216,
+     94.95313139085675
+    ],
+    "M": [
+     -2.440495218156773,
+     2.550910516642504
+    ],
+    "T": [
+     -153.5482328093421,
+     -47.56558625222036
+    ],
+    "V": [
+     -47.55399685632705,
+     26.033546843984677
+    ]
+   },
+   "threshold": "Delta_M > 0, Delta_T < 0, Delta_V < 0, Interaktion untere Grenze > 0",
+   "passed": false
+  },
+  {
+   "id": "P3.3",
+   "metric": "Short-Expectancy Aktien Z1/Z2 (bps); MaxDD-Reduktion Z2 vs Z0; dSR",
+   "value": {
+    "Z1": -80.55728730402079,
+    "Z2": -62.11588751545742,
+    "maxdd_reduction": 0.16482761192932383,
+    "dSR": -0.17062828525980822
+   },
+   "ci90": {
+    "Z1": [
+     -127.00703138350303,
+     -27.975001134229863
+    ],
+    "Z2": [
+     -102.85159009207209,
+     -16.284439858668755
+    ],
+    "dSR": [
+     -1.0441993828921052,
+     0.6268243116322364
+    ]
+   },
+   "threshold": "Z1 < 0 und (Z2 > 0 oder MaxDD-Reduktion >= 15 % bei dSR >= 0)",
+   "passed": false
+  },
+  {
+   "id": "P3.4",
+   "metric": "Short-Anteil VBP original/gepatcht; Std Netto-Rendite",
+   "value": {
+    "vbp_short_share_original": 0.410726525017135,
+    "vbp_short_share_patched": 0.0,
+    "fcr_short_share_original_blocked": 0.12843578210894552,
+    "fcr_short_share_original": 0.0,
+    "vbp_std_original": 251.38211105594775,
+    "vbp_std_patched": 239.0566611527059,
+    "vbp_exp_original": -38.68189975145143,
+    "vbp_exp_patched": -39.775660739504865,
+    "fcr_blocked_exp_original": -19.704814806065084,
+    "fcr_blocked_exp_patched": -18.664289481544806,
+    "passed": true
+   },
+   "ci90": null,
+   "threshold": "Anteil > 0 reproduziert; Patch verbessert Expectancy oder senkt Varianz",
+   "passed": true
+  },
+  {
+   "id": "P3.5",
+   "metric": "optimale Zeitbox (Tage)",
+   "value": {
+    "T": 20,
+    "M": 1,
+    "V": 40
+   },
+   "ci90": null,
+   "threshold": "T >= 10, M <= 5",
+   "passed": true
+  },
+  {
+   "id": "P3.6",
+   "metric": "nativer TSL-Feldname",
+   "value": null,
+   "ci90": null,
+   "threshold": "Demo-Test C1",
+   "passed": null,
+   "status": "nicht gemessen (Stufe C gesperrt)"
+  },
+  {
+   "id": "P3.7",
+   "metric": "Finanzierung gemessen",
+   "value": null,
+   "ci90": null,
+   "threshold": "Abweichung > 50 % von 0,79",
+   "passed": null,
+   "status": "nicht gemessen (Stufe C gesperrt)"
+  }
+ ],
+ "stage_c": {
+  "status": "NICHT_GESTARTET (wartet auf Freigabe)",
+  "n_fills": 0
+ },
+ "verdict": "UNENTSCHIEDEN",
+ "verdict_scope": "vorlaeufig, nur Stufe A",
+ "reasons": [
+  "P3.1 nicht erfuellt: S1 verbessert CVaR5 nur um 10.6 % (< 20 %) und verschlechtert die Expectancy um 55 bps (KI [-79; -32]).",
+  "P3.2 nicht erfuellt: Delta_M = -0.08 bps (nicht > 0), Delta_T = -101, Delta_V = -10; die Interaktion ist aber positiv (55 bps, KI [16; 95]).",
+  "P3.3 nicht erfuellt: Z1-Aktien-Short -81 bps, Z2 -62 bps (beide negativ); MaxDD-Reduktion 16.5 %, aber dSR(Z2-Z0) -0.17.",
+  "Kein Widerlegungskriterium 2.3 erfuellt. Stufe C (TSL-Feld, Stop-Slippage, Finanzierung, Leerverkaufbarkeit, Teilschliessung) und Stufe B nicht ausgefuehrt."
+ ],
+ "protocol_deviations": [
+  "ACCOUNT: Der API-Key traegt nur Real-Scopes; es wird kein /demo/-Endpunkt genutzt. Stufe C (falls freigegeben) liefe ueber die per automation/account_guard.py abgesicherten /real/-Pfade des Paper-Kontos (realCid = ETORO_PAPER_ACCOUNT_CID, Pruefung per GET /api/v1/me vor jeder Order). In Stufe A werden keine Orders gesendet.",
+  "ISOLATION: Konto-Isolation Variante (b) (disjunkte Instrumente zum laufenden Bot + Verwaltung je positionId); Stufe C bis zur Freigabe nicht gestartet.",
+  "DATEN: Tageskerzen direkt per API gelesen und als CSV gespeichert (experiments/ebc/api.py, build_universe.py) statt historical_fetcher/Nautilus-Katalog; Kerzendefinition = UTC-Tag (fromDate), unfertige Kerze des Abrufdatums verworfen; oneday_definition-Messlauf nicht ausgefuehrt. Rundungsfehler (Low > Open etc.) durch Klemmen bereinigt.",
+  "UNIVERSUM: Ziehung = Kandidaten je Schicht zufaellig mischen (Seed 20261011), der Reihe nach laden, die ersten n mit bestandener Qualitaetspruefung; PriceSource-Filter nur fuer Nicht-Aktien/ETF (bei Aktien traegt PriceSource den Boersennamen); US = ExchangeID 4/5; Krypto 'Top 30' = aelteste Listings (kleinste ID); nur 10 Spot-Rohstoffe und 16 Indizes verfuegbar; 13 Instrumente mit Letztkerze vor 2026-09-25 (veraltet/delistet) nach der Ziehung entfernt, nicht nachgezogen.",
+  "KOSTEN: Stichprobe der Spreads am Wochenende (Maerkte ausser Krypto geschlossen) nicht repraesentativ -> Rueckfallwerte der backtest.json; Indizes mit DEFAULT (Spread 4, Slippage 2 bps). Slippage/Finanzierung/Kommission nicht aus Stufe C gemessen. Hintergrund-Sampler sammelt Spreads fuer spaetere Rekalibrierung.",
+  "ROUTE R: eigener Harness (Anhang-A-Stil, experiments/ebc/route_r.py) statt backtest_runner.run_single_backtest_worker: EXTERNAL-Tagesbars (Bar-Zeitstempel = Folgekerze + 1 ns) plus O/L/H/C-Quote-Ticks, bar_execution=False, Spread im Tick 0 (Kosten explizit in costs.py), Sizing-Cap-Korrektur deaktiviert, Katastrophen-Stop-Fill auf das Stop-Niveau (min/max mit Open) korrigiert, Notional 2 % von 1 Mio. USD je Lauf (Rendite je Trade unabhaengig von der Groesse).",
+  "ARCHETYPEN: ATR20 als Wilder-Rekursion (alpha = 1/20, mit der ersten True Range gesaet) in den Klassen und in Route V identisch; Stop-/Zeitstopp-Mechanik der Basisklasse (Anker = Entry-Fill, Ratsche mit trailing_min_atr_frac 0,5, Zeitstopp ueber Bar-Zaehler: Exit nach H Schlusskursen, Ausfuehrung zum naechsten Open).",
+  "ARM A0/A1: Emulation statt 5-Tage-Neuauswahl-Laeufen: feste Default-Parameter (strategy_defaults.json + PAPER_TRAILING_TP, max_handelstage 5) => eine durchgehende Route-R-Laufzeit je (Instrument, Strategie); IS-Score = t-Statistik der Netto-Trade-Rendite (Exit-Tag im IS-Fenster, mind. 3 Trades), Gates im OOS-Fenster (>= 8 Trades, PF >= 1, Expectancy >= 0, t >= 0,5, PSR(Tagesreihe) >= 0,5), Platzvergabe nach OOS-PSR (40 Aktien/Index- plus 40 Rund-um-die-Uhr-Plaetze), Retire ungueltig gewordener Paare ohne offene Position (nie wieder gewaehlt). Max-Drawdown-Gate (0,3) und Deflated-Selection nicht abgebildet (PAPER_SELECTION_GATES: deflated_selection false). Turnier-Treue gegen echten backtest_runner --momentum-Lauf NICHT geprueft.",
+  "ARM A2: nicht gerechnet (optional laut Protokoll; 72 Konfigurationen/Symbol nicht im Zeitrahmen).",
+  "ARM A: Kapazitaet 30 gleichzeitige Positionen (wie B), Notional 2 % der Equity; A-Shorts auf Aktien/ETF/Krypto in A1 verworfen, in A0 beibehalten (Krypto-Shorts blockt die Basisklasse).",
+  "KOSTENFILTER q = c_RT / ATR20_bps (Median der letzten 250 Tage, statisch zum Datenende); q <= 0,10.",
+  "NULLMODELL (P1.5): zirkulaere Verschiebung der Trade-Positionsreihe um 20-230 Handelstage, Auswertung der Gates zum letzten Auswahltag; Replikate-Zahl siehe null_gate_calibration.json.",
+  "ACHSENBRUCH (P1.4): Stundendaten nur API-Fenster (1000 Stundenkerzen), siehe axis_break.csv.",
+  "STUFE B/C: nicht ausgefuehrt (Stufe B >= 30 Handelstage, Stufe C erst nach Freigabe); Folgearbeit.",
+  "H3 §7.1: Stunden-Zusatzauswertung der 14 Repo-Strategien (S0 vs S1 auf Intrabar-Ticks) nur auf einer Stichprobe, siehe stop_summary_hourly.csv, falls vorhanden.",
+  "H3 §7.3-7.4: siehe timebox.csv / leaks_real_data.csv; Leerverkaufbarkeit (C4) und Finanzierung (C3) nicht gemessen -> Annahmen: alle Nicht-Krypto-Instrumente leerverkaufbar, Finanzierung 0,79 bps/Tag.",
+  "H3 S1/P3: Intrabar-Reihenfolge innerhalb einer Kerze unbekannt: Stop-Pruefung vor dem Hoch/Tief-Update des Tages (konservativ), Teilschliessung zum Zielniveau (Limit).",
+  "H3 Stufen B/C (TSL-Feldtest, Stop-Slippage, Finanzierung, Leerverkaufbarkeit, Teilschliessung) nicht ausgefuehrt: P3.1 kann nach Protokoll nur durch Stufe C abgeschwaecht werden."
+ ],
+ "tsl": {
+  "field_effective": null,
+  "distance_fixed_in_price": null,
+  "stop_slippage_bps_p50": null,
+  "status": "nicht gemessen"
+ },
+ "ttp_delta_bps": {
+  "T": -100.57666295467457,
+  "M": -0.07926316541986826,
+  "V": -10.165624307334854,
+  "interaction_ci90": [
+   15.683609580823216,
+   94.95313139085675
+  ]
+ },
+ "shorts": {
+  "expectancy_bps": {
+   "Z1_equity": -80.55728730402079,
+   "Z2_equity": -62.11588751545742
+  },
+  "maxdd_change": -0.16482761192932383,
+  "shortable_share_equity": null
+ },
+ "financing_bps_per_day": "Annahme 0,79 (nicht gemessen)",
+ "leaks": {
+  "vbp_short_share_original": 0.410726525017135,
+  "vbp_short_share_patched": 0.0,
+  "fcr_short_share_original": 0.0,
+  "fcr_short_share_original_blocked_entries": 0.12843578210894552
+ },
+ "optimal_timebox_days": {
+  "T": 20,
+  "M": 1,
+  "V": 40
+ }
+}

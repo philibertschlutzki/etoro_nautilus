@@ -1,0 +1,323 @@
+{
+ "hypothesis": "H2",
+ "prompt_version": "1.0.0",
+ "repo_commit": "5f737ed495e70eab85b2dbbb7673eb7369c428ce",
+ "preregistration_sha256": "1074b501b7e086e8bf8bdd220854ad0658d218bceeed385d7924899a01267437",
+ "period": {
+  "stage_a_oos": [
+   "2024-12-23",
+   "2026-10-12"
+  ],
+  "discovery_confirmation_split_note": "Entdeckung = erste 2/3 ab Kalendertag 250, Bestaetigung = letztes Drittel",
+  "stage_b": null
+ },
+ "universe": {
+  "n_total": 466,
+  "n_after_cost_filter": 426,
+  "by_class": {
+   "K1": 353,
+   "K2": 48,
+   "K3": 10,
+   "K4": 15,
+   "K5": 0
+  }
+ },
+ "predictions": [
+  {
+   "id": "P2.1",
+   "metric": "argmax_h SR_netto (Entdeckung) je Klasse; SR(argmax)-SR(1) (Bestaetigung)",
+   "value": {
+    "K1": 10,
+    "K2": 3,
+    "K3": 1,
+    "K4": 3
+   },
+   "ci90": {
+    "K1": [
+     -0.903340408884801,
+     0.9862803854295689
+    ],
+    "K2": [
+     -0.9684274905761243,
+     0.8620752659270158
+    ],
+    "K3": [
+     0.0,
+     0.0
+    ],
+    "K4": [
+     -1.2987017644823644,
+     0.7432041102923811
+    ]
+   },
+   "threshold": "argmax>=5 in >=3 von 4 Klassen und KI-Untergrenze>0",
+   "passed": false
+  },
+  {
+   "id": "P2.2",
+   "metric": "Krypto Netto-Expectancy je Signal/h",
+   "value": {
+    "signals": [
+     "M",
+     "S_MOM",
+     "S_REV",
+     "T",
+     "V"
+    ],
+    "h_le5_all_upper_ci_negative": false,
+    "h10_20_majority_negative": false,
+    "passed": false
+   },
+   "ci90": null,
+   "threshold": "h<=5 obere KI-Grenze<0 fuer alle Signale; h in {10,20} Mehrheit<0",
+   "passed": false
+  },
+  {
+   "id": "P2.3",
+   "metric": "Stundenachse h=7 Bars Netto-Expectancy",
+   "value": {
+    "FX": {
+     "S_MOM": -0.9994905274989797,
+     "S_REV": -4.272364106278985
+    },
+    "Rohstoffe": {
+     "S_MOM": -7.942567861992535,
+     "S_REV": -6.341505461647443
+    },
+    "Krypto": {
+     "S_MOM": -18.821807131363656,
+     "S_REV": -98.5111331443729
+    },
+    "Aktien": {
+     "S_MOM": -0.9648909382669745,
+     "S_REV": 6.061421924651015
+    }
+   },
+   "ci90": null,
+   "threshold": "<0 fuer FX/Rohstoffe/Krypto; Aktien nur positiv bei IC>=0,10",
+   "passed": false
+  },
+  {
+   "id": "P2.4",
+   "metric": "Steigung b in ln SR_P = a + b ln N_eff",
+   "value": -0.3427949322850374,
+   "ci90": [
+    -0.41073973695896504,
+    -0.2739927186263068
+   ],
+   "threshold": "b in [0,30;0,70], R2>=0,60, Zuwachs N_eff(50->alle Aktien) < 15 %",
+   "passed": false,
+   "extra": {
+    "r2": 0.05178410914693243,
+    "n_eff_growth": 0.7093776688328326
+   }
+  },
+  {
+   "id": "P2.5",
+   "metric": "SR(RP)-SR(EN)",
+   "value": 0.15602326889018236,
+   "ci90": [
+    -0.15752144385224529,
+    0.46137667085288403
+   ],
+   "threshold": ">=0,10, untere KI-Grenze>0, MaxDD(RP)<=MaxDD(EN)",
+   "passed": false
+  },
+  {
+   "id": "P2.6",
+   "metric": "Promotionswahrscheinlichkeit n=1 / n=80 bei SR 2,0",
+   "value": 14.68566638725901,
+   "ci90": null,
+   "threshold": ">=10",
+   "passed": true
+  }
+ ],
+ "stage_c": {
+  "status": "NICHT_GESTARTET (wartet auf Freigabe)",
+  "n_fills": 0
+ },
+ "verdict": "WIDERLEGT",
+ "verdict_scope": "vorlaeufig, nur Stufe A",
+ "reasons": [
+  "Formal erfuellt: Widerlegungskriterium 2.3(b) (b = -0.34 < 0,15 bzw. R2 = 0.05 < 0,30). Kriterien (a) und (c) nicht erfuellt.",
+  "Einschraenkung zu P2.4: Die vorregistrierte Log-Regression laeuft nur ueber Ziehungen mit SR_P > 0; bei mittleren Teilportfolio-Sharpes um 0 (Entdeckungsperiode) erzeugt das eine Auswahlverzerrung (negatives b). Der Mittelwert SR_P steigt dennoch mit N (Aktien: 0,02 bei N=5 auf 0,25 bei N=984). Schwellen wurden nicht veraendert.",
+  "P2.1: argmax (Entdeckung) K1 10, K2 3, K3 1, K4 3; nur K1 >= 5, KI-Untergrenze jeweils <= 0.",
+  "Stufe B (Forward-Shadow) und Stufe C (Kostenmessung) nicht ausgefuehrt."
+ ],
+ "protocol_deviations": [
+  "ACCOUNT: Der API-Key traegt nur Real-Scopes; es wird kein /demo/-Endpunkt genutzt. Stufe C (falls freigegeben) liefe ueber die per automation/account_guard.py abgesicherten /real/-Pfade des Paper-Kontos (realCid = ETORO_PAPER_ACCOUNT_CID, Pruefung per GET /api/v1/me vor jeder Order). In Stufe A werden keine Orders gesendet.",
+  "ISOLATION: Konto-Isolation Variante (b) (disjunkte Instrumente zum laufenden Bot + Verwaltung je positionId); Stufe C bis zur Freigabe nicht gestartet.",
+  "DATEN: Tageskerzen direkt per API gelesen und als CSV gespeichert (experiments/ebc/api.py, build_universe.py) statt historical_fetcher/Nautilus-Katalog; Kerzendefinition = UTC-Tag (fromDate), unfertige Kerze des Abrufdatums verworfen; oneday_definition-Messlauf nicht ausgefuehrt. Rundungsfehler (Low > Open etc.) durch Klemmen bereinigt.",
+  "UNIVERSUM: Ziehung = Kandidaten je Schicht zufaellig mischen (Seed 20261011), der Reihe nach laden, die ersten n mit bestandener Qualitaetspruefung; PriceSource-Filter nur fuer Nicht-Aktien/ETF (bei Aktien traegt PriceSource den Boersennamen); US = ExchangeID 4/5; Krypto 'Top 30' = aelteste Listings (kleinste ID); nur 10 Spot-Rohstoffe und 16 Indizes verfuegbar; 13 Instrumente mit Letztkerze vor 2026-09-25 (veraltet/delistet) nach der Ziehung entfernt, nicht nachgezogen.",
+  "KOSTEN: Stichprobe der Spreads am Wochenende (Maerkte ausser Krypto geschlossen) nicht repraesentativ -> Rueckfallwerte der backtest.json; Indizes mit DEFAULT (Spread 4, Slippage 2 bps). Slippage/Finanzierung/Kommission nicht aus Stufe C gemessen. Hintergrund-Sampler sammelt Spreads fuer spaetere Rekalibrierung.",
+  "ROUTE R: eigener Harness (Anhang-A-Stil, experiments/ebc/route_r.py) statt backtest_runner.run_single_backtest_worker: EXTERNAL-Tagesbars (Bar-Zeitstempel = Folgekerze + 1 ns) plus O/L/H/C-Quote-Ticks, bar_execution=False, Spread im Tick 0 (Kosten explizit in costs.py), Sizing-Cap-Korrektur deaktiviert, Katastrophen-Stop-Fill auf das Stop-Niveau (min/max mit Open) korrigiert, Notional 2 % von 1 Mio. USD je Lauf (Rendite je Trade unabhaengig von der Groesse).",
+  "ARCHETYPEN: ATR20 als Wilder-Rekursion (alpha = 1/20, mit der ersten True Range gesaet) in den Klassen und in Route V identisch; Stop-/Zeitstopp-Mechanik der Basisklasse (Anker = Entry-Fill, Ratsche mit trailing_min_atr_frac 0,5, Zeitstopp ueber Bar-Zaehler: Exit nach H Schlusskursen, Ausfuehrung zum naechsten Open).",
+  "ARM A0/A1: Emulation statt 5-Tage-Neuauswahl-Laeufen: feste Default-Parameter (strategy_defaults.json + PAPER_TRAILING_TP, max_handelstage 5) => eine durchgehende Route-R-Laufzeit je (Instrument, Strategie); IS-Score = t-Statistik der Netto-Trade-Rendite (Exit-Tag im IS-Fenster, mind. 3 Trades), Gates im OOS-Fenster (>= 8 Trades, PF >= 1, Expectancy >= 0, t >= 0,5, PSR(Tagesreihe) >= 0,5), Platzvergabe nach OOS-PSR (40 Aktien/Index- plus 40 Rund-um-die-Uhr-Plaetze), Retire ungueltig gewordener Paare ohne offene Position (nie wieder gewaehlt). Max-Drawdown-Gate (0,3) und Deflated-Selection nicht abgebildet (PAPER_SELECTION_GATES: deflated_selection false). Turnier-Treue gegen echten backtest_runner --momentum-Lauf NICHT geprueft.",
+  "ARM A2: nicht gerechnet (optional laut Protokoll; 72 Konfigurationen/Symbol nicht im Zeitrahmen).",
+  "ARM A: Kapazitaet 30 gleichzeitige Positionen (wie B), Notional 2 % der Equity; A-Shorts auf Aktien/ETF/Krypto in A1 verworfen, in A0 beibehalten (Krypto-Shorts blockt die Basisklasse).",
+  "KOSTENFILTER q = c_RT / ATR20_bps (Median der letzten 250 Tage, statisch zum Datenende); q <= 0,10.",
+  "NULLMODELL (P1.5): zirkulaere Verschiebung der Trade-Positionsreihe um 20-230 Handelstage, Auswertung der Gates zum letzten Auswahltag; Replikate-Zahl siehe null_gate_calibration.json.",
+  "ACHSENBRUCH (P1.4): Stundendaten nur API-Fenster (1000 Stundenkerzen), siehe axis_break.csv.",
+  "STUFE B/C: nicht ausgefuehrt (Stufe B >= 30 Handelstage, Stufe C erst nach Freigabe); Folgearbeit.",
+  "H2 §7.2: Klassenportfolio = Mittel der drei Archetypen-Teilportfolios (je Archetyp ein Event-Portfolio, 2 % Notional, <= 30 Positionen); Zeitstopp h wirkt als Obergrenze fuer alle drei Archetypen, die uebrigen Exits unveraendert.",
+  "H2 §7.2 Diagnose: S_MOM/S_REV mit Open-to-Open-Renditen und gestaffelten Teilportfolios (Gewicht 1/h), Kosten je Positionsaenderung (c_RT/2 je Einheit), Fenster-Erwartung = Brutto minus anteilige Umschichtungskosten; h*_theo mit mittlerem IC ueber h.",
+  "H2 §7.4 (P2.3): Stundenachse nur auf einer geschichteten Stichprobe mit Stundenhistorie (API-Fenster); siehe hourly_axis.csv.",
+  "H2 §7.5: Teilportfolio = (Instrument, Archetyp); Gewichtung invers zur Volatilitaet der Entdeckungsperiode; log-Regression nur ueber Ziehungen mit SR_P > 0.",
+  "H2 §7.6 QK: 1/4-Kelly je Klasse aus der trailing-252-Tage-EN-Klassenrendite, verteilt auf 30 Plaetze, gedeckelt auf 2xRP (die Vorschrift laesst die Verteilung offen).",
+  "H2 §7.7: Monte-Carlo mit n_paths=10000 (n=1) bzw. 3000 (n=80, Speicher); empirisch: wöchentliche sequential_decision ueber die letzten 26 Wochen der Bestaetigungsperiode auf Tagesrenditen (Look = 5 Bars).",
+  "H2 §8/§9: H2-Portfolio-Forward-Shadow und Stufe C nicht ausgefuehrt."
+ ],
+ "optimal_holding_days_by_class": {
+  "K1_aktien_etf": 10,
+  "K2_fx": 3,
+  "K3_rohstoffe": 1,
+  "K4_indizes": 3,
+  "K5_krypto": null
+ },
+ "measured_ic_by_class_and_h": {
+  "K1": {
+   "S_MOM": {
+    "1": -0.00016772540041866117,
+    "2": -0.000561488948383475,
+    "3": -0.00037232361762237504,
+    "5": -0.00020280792649883007,
+    "10": 0.0009809640151070746,
+    "20": 0.001649309235457331,
+    "40": -0.007392386809365713
+   },
+   "S_REV": {
+    "1": 0.00921855380604725,
+    "2": 0.012193230360551687,
+    "3": 0.011353132592113064,
+    "5": 0.01233469656432689,
+    "10": 0.006522562742282527,
+    "20": 0.009987529555936556,
+    "40": 0.007909799305665696
+   }
+  },
+  "K2": {
+   "S_MOM": {
+    "1": -0.00617017698836273,
+    "2": -0.008374688743186177,
+    "3": -0.00989502725815236,
+    "5": -0.016070804389660354,
+    "10": -0.01873644590258829,
+    "20": -0.002354158832079926,
+    "40": 0.007151730103866691
+   },
+   "S_REV": {
+    "1": -0.0013480663894402463,
+    "2": -0.0013776542131875365,
+    "3": -0.0005565334196199099,
+    "5": 0.0009923491673981097,
+    "10": 0.009307847547377573,
+    "20": 0.01928002260039227,
+    "40": -0.004242956731683551
+   }
+  },
+  "K3": {
+   "S_MOM": {
+    "1": -0.011136656859818567,
+    "2": -0.020879026709733767,
+    "3": -0.033001517560469,
+    "5": -0.05235417749509992,
+    "10": -0.07671475945316637,
+    "20": -0.04700421345387147,
+    "40": -0.02382409915453282
+   },
+   "S_REV": {
+    "1": -0.019792529264371486,
+    "2": -0.020399388391073733,
+    "3": -0.01692557038048708,
+    "5": -0.004226698435182979,
+    "10": 0.01719943812264772,
+    "20": 0.026126059307615072,
+    "40": -0.005993060002354911
+   }
+  },
+  "K4": {
+   "S_MOM": {
+    "1": -0.023997420792080216,
+    "2": -0.03528030967301015,
+    "3": -0.040721745187343936,
+    "5": -0.04651130510763159,
+    "10": -0.07216311735598432,
+    "20": -0.09653678160292355,
+    "40": -0.12408960992220311
+   },
+   "S_REV": {
+    "1": -0.0012658069419968305,
+    "2": 0.0012521759432990113,
+    "3": 0.008865834945362985,
+    "5": 0.02315669570302656,
+    "10": 0.02687797768274542,
+    "20": 0.0645114491698473,
+    "40": 0.06755667671261938
+   }
+  },
+  "K5": {
+   "S_MOM": {
+    "1": 0.02188915931303696,
+    "2": 0.028249302278649097,
+    "3": 0.03453244222236591,
+    "5": 0.04349091099936644,
+    "10": 0.055010085232872694,
+    "20": 0.06742743367369246,
+    "40": 0.04117587477380175
+   },
+   "S_REV": {
+    "1": -0.013439211169699383,
+    "2": -0.013564506213349333,
+    "3": -0.012603408089514035,
+    "5": -0.003550014210737797,
+    "10": 0.0011217009996039083,
+    "20": -0.0011297071728451984,
+    "40": -0.003749722442147736
+   }
+  }
+ },
+ "breadth": {
+  "b": -0.3427949322850374,
+  "b_ci90": [
+   -0.41073973695896504,
+   -0.2739927186263068
+  ],
+  "r2": 0.05178410914693243,
+  "rho_bar_within": {
+   "K1": 0.024313921784504835,
+   "K2": 0.03160866089336936,
+   "K3": 0.037364004740955255,
+   "K4": 0.05812211651496708
+  },
+  "rho_bar_between": 0.006014383991963112
+ },
+ "sizing": {
+  "EN": {
+   "sr": 1.3890230849193121,
+   "maxdd": -0.2038924679838754
+  },
+  "RP": {
+   "sr": 1.5450463538094945,
+   "maxdd": -0.15838995350365007
+  },
+  "FR": {
+   "sr": 1.3213087034423616,
+   "maxdd": -0.22160628099134685
+  },
+  "QK": {
+   "sr": 1.3125510453000813,
+   "maxdd": -0.15157218357082394
+  }
+ },
+ "measured_costs_bps": {
+  "spread_p50": "Rueckfallwerte (siehe costs_calibration.json)",
+  "fees_rt": {
+   "CRYPTO": 200.0
+  },
+  "slippage_side": "Rueckfallwerte",
+  "financing_day": {
+   "long": "0,79 CFD-Klassen",
+   "short": 0.79
+  }
+ }
+}

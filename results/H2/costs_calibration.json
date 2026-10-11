@@ -1,0 +1,51 @@
+{
+ "rule": "Spread/Slippage je Klasse aus backtest.json-Rueckfallwerten (Wochenende, Maerkte geschlossen: keine repraesentative Messung); Krypto 200 bps Kommission",
+ "per_class": {
+  "EQUITY": {
+   "n": 357,
+   "spread_model_bps": 3.0,
+   "slippage_side_bps": 1.5,
+   "commission_rt_bps": 0.0,
+   "c_rt_bps": 6.0,
+   "measured_snapshot_spread_p50_median_bps": 6.009414749774875,
+   "measured_n": 357
+  },
+  "FOREX": {
+   "n": 50,
+   "spread_model_bps": 1.5,
+   "slippage_side_bps": 0.75,
+   "commission_rt_bps": 0.0,
+   "c_rt_bps": 3.0,
+   "measured_snapshot_spread_p50_median_bps": 1.141515772905521,
+   "measured_n": 50
+  },
+  "COMMODITY": {
+   "n": 10,
+   "spread_model_bps": 5.0,
+   "slippage_side_bps": 2.5,
+   "commission_rt_bps": 0.0,
+   "c_rt_bps": 10.0,
+   "measured_snapshot_spread_p50_median_bps": 30.08601912856158,
+   "measured_n": 10
+  },
+  "INDEX": {
+   "n": 16,
+   "spread_model_bps": 4.0,
+   "slippage_side_bps": 2.0,
+   "commission_rt_bps": 0.0,
+   "c_rt_bps": 8.0,
+   "measured_snapshot_spread_p50_median_bps": 2.545140686846655,
+   "measured_n": 16
+  },
+  "CRYPTO": {
+   "n": 33,
+   "spread_model_bps": 15.0,
+   "slippage_side_bps": 7.5,
+   "commission_rt_bps": 200.0,
+   "c_rt_bps": 230.0,
+   "measured_snapshot_spread_p50_median_bps": 4.795711997547198,
+   "measured_n": 33
+  }
+ },
+ "snapshots_note": "Wochenend-Snapshot(s), siehe data/ebc/spreads.jsonl (nicht committet)"
+}

@@ -1,0 +1,188 @@
+{
+ "mc": {
+  "n1_sr1.0": {
+   "threshold": 0.9980769230769231,
+   "promotion_rate": 0.0524,
+   "false_promotion_rate": 0.0524
+  },
+  "n1_sr2.0": {
+   "threshold": 0.9980769230769231,
+   "promotion_rate": 0.146,
+   "false_promotion_rate": 0.146
+  },
+  "n1_sr3.0": {
+   "threshold": 0.9980769230769231,
+   "promotion_rate": 0.3344,
+   "false_promotion_rate": 0.3344
+  },
+  "n1_sr4.0": {
+   "threshold": 0.9980769230769231,
+   "promotion_rate": 0.5945,
+   "false_promotion_rate": 0.5945
+  },
+  "n80_sr1.0": {
+   "threshold": 0.9999759615384616,
+   "promotion_rate": 0.0016666666666666668,
+   "false_promotion_rate": 0.12366666666666666
+  },
+  "n80_sr2.0": {
+   "threshold": 0.9999759615384616,
+   "promotion_rate": 0.009941666666666666,
+   "false_promotion_rate": 0.5406666666666666
+  },
+  "n80_sr3.0": {
+   "threshold": 0.9999759615384616,
+   "promotion_rate": 0.046283333333333336,
+   "false_promotion_rate": 0.98
+  },
+  "n80_sr4.0": {
+   "threshold": 0.9999759615384616,
+   "promotion_rate": 0.15639583333333335,
+   "false_promotion_rate": 1.0
+  }
+ },
+ "ratio_n1_over_n80_promotion": {
+  "sr1.0": 31.439999999999998,
+  "sr2.0": 14.68566638725901,
+  "sr3.0": 7.225063017644939,
+  "sr4.0": 3.80125216464633
+ },
+ "passed": true,
+ "empirical_portfolio_decisions": [
+  {
+   "look": 1,
+   "decision": "CONTINUE",
+   "psr": null
+  },
+  {
+   "look": 2,
+   "decision": "CONTINUE",
+   "psr": null
+  },
+  {
+   "look": 3,
+   "decision": "CONTINUE",
+   "psr": null
+  },
+  {
+   "look": 4,
+   "decision": "CONTINUE",
+   "psr": 0.6548735584279766
+  },
+  {
+   "look": 5,
+   "decision": "CONTINUE",
+   "psr": 0.740752753992294
+  },
+  {
+   "look": 6,
+   "decision": "CONTINUE",
+   "psr": 0.8030543671902274
+  },
+  {
+   "look": 7,
+   "decision": "CONTINUE",
+   "psr": 0.8172713421393163
+  },
+  {
+   "look": 8,
+   "decision": "CONTINUE",
+   "psr": 0.8122986107856958
+  },
+  {
+   "look": 9,
+   "decision": "CONTINUE",
+   "psr": 0.8061917538631789
+  },
+  {
+   "look": 10,
+   "decision": "CONTINUE",
+   "psr": 0.8324473748920495
+  },
+  {
+   "look": 11,
+   "decision": "CONTINUE",
+   "psr": 0.84992855510976
+  },
+  {
+   "look": 12,
+   "decision": "CONTINUE",
+   "psr": 0.8325718287543873
+  },
+  {
+   "look": 13,
+   "decision": "CONTINUE",
+   "psr": 0.8512375692716367
+  },
+  {
+   "look": 14,
+   "decision": "CONTINUE",
+   "psr": 0.8192467844986346
+  },
+  {
+   "look": 15,
+   "decision": "CONTINUE",
+   "psr": 0.8464773167220206
+  },
+  {
+   "look": 16,
+   "decision": "CONTINUE",
+   "psr": 0.8599485802649784
+  },
+  {
+   "look": 17,
+   "decision": "CONTINUE",
+   "psr": 0.8965808779775477
+  },
+  {
+   "look": 18,
+   "decision": "CONTINUE",
+   "psr": 0.8965825192810299
+  },
+  {
+   "look": 19,
+   "decision": "CONTINUE",
+   "psr": 0.918304971835803
+  },
+  {
+   "look": 20,
+   "decision": "CONTINUE",
+   "psr": 0.9276657371049284
+  },
+  {
+   "look": 21,
+   "decision": "CONTINUE",
+   "psr": 0.9053113139340798
+  },
+  {
+   "look": 22,
+   "decision": "CONTINUE",
+   "psr": 0.8789006504464527
+  },
+  {
+   "look": 23,
+   "decision": "CONTINUE",
+   "psr": 0.9089630193873932
+  },
+  {
+   "look": 24,
+   "decision": "CONTINUE",
+   "psr": 0.8998633076172433
+  },
+  {
+   "look": 25,
+   "decision": "CONTINUE",
+   "psr": 0.9177209612234419
+  },
+  {
+   "look": 26,
+   "decision": "EXHAUSTED",
+   "psr": 0.9146848042871976
+  }
+ ],
+ "empirical_portfolio_first_promote_look": null,
+ "empirical_subportfolios": {
+  "n_evaluated": 1010,
+  "n_promoted": 1
+ }
+}
