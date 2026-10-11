@@ -75,6 +75,9 @@ class MomentumLSAllocator:
         # automation/live_risk.py). Default: kein Drawdown bekannt, Breaker nicht ausgeloest.
         self._current_drawdown: float | None = None
         self._breaker_tripped: bool = False
+        # Kontosicht direkt von eToro (automation/account_view.py): Equity, Exposure und offene Positionen für die
+        # Risikorechnung. ``None`` = Alt-Verhalten (nur Nautilus-Cache), z. B. in Backtests und Tests.
+        self._account_view = None
 
     @property
     def max_symbol_exposure_fraction(self) -> float:
@@ -84,6 +87,17 @@ class MomentumLSAllocator:
         ``get_allocation`` bereits zur Bemessung verwendet, statt einer zweiten, unabhaengig
         gepflegten Konstante (#1014/#1166-Klasse)."""
         return self._max_symbol_exposure_fraction
+
+    def set_account_view(self, view) -> None:
+        """Aktiviert die Risikorechnung auf Basis der direkt von eToro gelesenen Positionen (siehe account_view)."""
+        self._account_view = view
+
+    def risk_equity(self) -> float | None:
+        """Konto-Equity von eToro (Guthaben + Investiertes + unrealisierter PnL); ``None`` ohne Kontosicht/Stand."""
+        if self._account_view is None:
+            return None
+        snap = self._account_view.snapshot()
+        return None if snap is None else snap.equity
 
     def update_risk_state(self, *, current_drawdown: float | None = None, tripped: bool | None = None) -> None:
         """Vom ``LiveCircuitBreakerWatchdog`` (automation/live_risk.py) periodisch aufgerufen. Trennt
@@ -118,6 +132,19 @@ class MomentumLSAllocator:
         if cache.positions_open(instrument_id=instrument_id):
             return 0.0
 
+        snap = None
+        if self._account_view is not None:
+            # Risikorechnung auf Kontoebene direkt von eToro: fail-closed, wenn der Kontostand nicht lesbar ist.
+            snap = self._account_view.snapshot()
+            if snap is None:
+                logger.warning(f"[RISK] Kontostand von eToro nicht lesbar — kein Einstieg für {instrument_id}.")
+                return 0.0
+            from automation.adapters.instrument_map import ETORO_INSTRUMENTS
+            eid = next((int(k) for k, v in ETORO_INSTRUMENTS.items() if v == str(instrument_id)), None)
+            if eid is not None and snap.positions_in(eid):
+                return 0.0      # eToro zeigt bereits eine Position in diesem Instrument (Cache evtl. veraltet/fremd)
+            account_balance = snap.equity   # Bemessungsgrundlage ist die Equity, nicht das schrumpfende freie Guthaben
+
         if account_balance is None or account_balance <= 0:
             return 0.0
 
@@ -138,6 +165,12 @@ class MomentumLSAllocator:
                 else:
                     open_notional += notional
 
+        if snap is not None:
+            # Das Konto zählt: alle offenen eToro-Positionen (auch fremde/nicht übernommene) belegen das Budget;
+            # der Bot-Cache liefert nur die Untergrenze für gerade gefüllte, noch nicht abgerufene Positionen.
+            open_count = max(open_count, len(snap.positions))
+            open_notional = max(0.0 if notional_unknown else open_notional, snap.notional)
+            notional_unknown = False
         if notional_unknown:
             open_exposure_fraction = min(1.0, open_count * self._max_symbol_exposure_fraction)
         else:
@@ -167,6 +200,8 @@ class MomentumLSAllocator:
         w_new *= psi
 
         allocation = w_new * account_balance
+        if snap is not None:
+            allocation = min(allocation, 0.98 * max(snap.credit, 0.0))     # nie mehr als das freie Guthaben
 
         # Apply floor: eToro minimum order is $10, so $11 buffer is used.
         if allocation < _MIN_ORDER_USD:
