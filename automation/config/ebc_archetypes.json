@@ -1,0 +1,16 @@
+{
+  "_schema": {
+    "description": "EBC-H1: Spezifikation der Tagesachsen-Archetypen T/M/V (paper-only). Wird von keinem Produktionspfad gelesen; dokumentiert die in den Experimenten (results/H1) verwendeten Parameter und das Overlay, mit dem sie gefahren werden. strategies.json/strategy_defaults.json bleiben unveraendert (paper_strategy_defaults wuerde sonst PAPER_TRAILING_TP auf die Archetypen legen, was EBC-H3 fuer T und V als schaedlich misst).",
+    "overlay": "backtest.json: bar_axis=OneDay, max_handelstage=60 (Zeitstopp T bis 60 Tage), KEIN trailing_tp_*; Seitenregel: Aktien/ETF/Krypto nur long (allow_short=false), FX/Rohstoffe/Indizes beidseitig"
+  },
+  "archetypes": {
+    "T": {"strategy_module": "automation.strategies.ebc_trend", "strategy_class": "EbcTrendStrategy", "config_class": "EbcTrendConfig",
+          "params": {"lookback": 50, "exit_lookback": 20, "atr_period": 20, "atr_trailing_multiplier": 3.0, "max_bars_in_trade": 60}},
+    "M": {"strategy_module": "automation.strategies.ebc_pullback", "strategy_class": "EbcPullbackStrategy", "config_class": "EbcPullbackConfig",
+          "params": {"rsi_period": 2, "rsi_threshold": 10.0, "trend_period": 200, "exit_sma_period": 5, "atr_period": 20, "atr_trailing_multiplier": 3.0, "max_bars_in_trade": 5}},
+    "V": {"strategy_module": "automation.strategies.ebc_squeeze", "strategy_class": "EbcSqueezeStrategy", "config_class": "EbcSqueezeConfig",
+          "params": {"squeeze_bars": 5, "bb_period": 20, "bb_std_dev": 2.0, "kc_period": 20, "kc_multiplier": 1.5, "atr_period": 20, "atr_trailing_multiplier": 2.5, "max_bars_in_trade": 20}}
+  },
+  "universe_filter": {"cost_quotient_max": 0.10, "definition": "q = (spread_p50 + commission_rt + 2*slippage) / median(ATR20 in bps, 250 Tage)"},
+  "sizing": {"notional_fraction": 0.02, "max_positions": 30}
+}
