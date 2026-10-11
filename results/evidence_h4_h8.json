@@ -1,0 +1,568 @@
+{
+ "quelle": "results/H1 (Arm B+), results/H2, results/H3",
+ "notional": 0.02,
+ "slots": 30,
+ "bplus_trades": {
+  "alle": {
+   "n": 1141,
+   "mean_bps": 283.622805061533,
+   "median_bps": 45.71550429091898,
+   "hit": 0.523225241016652,
+   "avg_win_bps": 1281.293084549945,
+   "avg_loss_bps": -811.2469685682133,
+   "profit_factor": 1.7332883844835298,
+   "equity_pp": 64.72272411504183,
+   "median_hold_days": 7.0
+  },
+  "M": {
+   "n": 624,
+   "mean_bps": 147.16423894879048,
+   "median_bps": 158.30717428003726,
+   "hit": 0.6266025641025641,
+   "avg_win_bps": 586.6263443027758,
+   "avg_loss_bps": -590.3022125250645,
+   "profit_factor": 1.667661826947152,
+   "equity_pp": 18.366097020809054,
+   "median_hold_days": 5.0
+  },
+  "T": {
+   "n": 365,
+   "mean_bps": 492.1371175369401,
+   "median_bps": -375.4384050601495,
+   "hit": 0.3972602739726027,
+   "avg_win_bps": 2749.222618244583,
+   "avg_loss_bps": -995.4874170203699,
+   "profit_factor": 1.8202014448114658,
+   "equity_pp": 35.92600958019663,
+   "median_hold_days": 26.0
+  },
+  "V": {
+   "n": 152,
+   "mean_bps": 343.1124182248732,
+   "median_bps": -259.46383187502374,
+   "hit": 0.40131578947368424,
+   "avg_win_bps": 2244.6523148929073,
+   "avg_loss_bps": -931.5461938273254,
+   "profit_factor": 1.6152253706978295,
+   "equity_pp": 10.430617514036145,
+   "median_hold_days": 24.0
+  }
+ },
+ "ausreisser": {
+  "top_1pct_trades_share_of_net": 0.422258636812398,
+  "top_2pct_trades_share_of_net": 0.6899693508873511,
+  "top_5pct_trades_share_of_net": 1.1480723214843516,
+  "top_10pct_trades_share_of_net": 1.5592559676337978,
+  "n_trades_net_ge_2000bps": 97,
+  "share_of_net_from_trades_ge_2000bps": 1.4612050081123429
+ },
+ "verluste": {
+  "gross_losses_equity_pp": -88.26367018022161,
+  "net_total_equity_pp": 64.72272411504183,
+  "by_strategy_reason": [
+   {
+    "strategy": "T",
+    "reason": "DISASTER_STOP",
+    "n": 72,
+    "equity_pp": -22.445279753916356,
+    "share_of_gross_losses": 0.2542980561321136
+   },
+   {
+    "strategy": "T",
+    "reason": "TRAILING_STOP",
+    "n": 98,
+    "equity_pp": -15.534800221473164,
+    "share_of_gross_losses": 0.17600446695399538
+   },
+   {
+    "strategy": "M",
+    "reason": "DISASTER_STOP",
+    "n": 37,
+    "equity_pp": -11.6167993790071,
+    "share_of_gross_losses": 0.1316147329392408
+   },
+   {
+    "strategy": "M",
+    "reason": "TIME_BOX",
+    "n": 117,
+    "equity_pp": -11.556640723716782,
+    "share_of_gross_losses": 0.13093315403857325
+   },
+   {
+    "strategy": "V",
+    "reason": "DISASTER_STOP",
+    "n": 33,
+    "equity_pp": -10.184078021978024,
+    "share_of_gross_losses": 0.11538244445516047
+   },
+   {
+    "strategy": "V",
+    "reason": "TRAILING_STOP",
+    "n": 45,
+    "equity_pp": -5.80575109294454,
+    "share_of_gross_losses": 0.06577735869231405
+   },
+   {
+    "strategy": "T",
+    "reason": "SIGNAL",
+    "n": 48,
+    "equity_pp": -5.771608086760627,
+    "share_of_gross_losses": 0.06539052902486199
+   },
+   {
+    "strategy": "M",
+    "reason": "SIGNAL",
+    "n": 72,
+    "equity_pp": -3.3285230201459854,
+    "share_of_gross_losses": 0.03771113316894283
+   },
+   {
+    "strategy": "V",
+    "reason": "TIME_BOX",
+    "n": 13,
+    "equity_pp": -0.9643116127347582,
+    "share_of_gross_losses": 0.010925351401836949
+   },
+   {
+    "strategy": "M",
+    "reason": "TRAILING_STOP",
+    "n": 3,
+    "equity_pp": -0.7467238324713135,
+    "share_of_gross_losses": 0.008460149356429567
+   },
+   {
+    "strategy": "M",
+    "reason": "DATA_END",
+    "n": 4,
+    "equity_pp": -0.25939614832682995,
+    "share_of_gross_losses": 0.0029388778848328046
+   },
+   {
+    "strategy": "T",
+    "reason": "DATA_END",
+    "n": 2,
+    "equity_pp": -0.04975828674613307,
+    "share_of_gross_losses": 0.0005637459516982906
+   }
+  ]
+ },
+ "katastrophen_stop": {
+  "n": 142,
+  "share_of_trades": 0.12445223488168274,
+  "share_of_gross_losses": 0.5012952335265148,
+  "equity_pp": -44.246157154901475,
+  "median_net_bps": -1506.0000000000002,
+  "median_hold_days_by_strategy": {
+   "M": 3.0,
+   "T": 6.0,
+   "V": 8.0
+  },
+  "n_by_strategy": {
+   "M": 37,
+   "T": 72,
+   "V": 33
+  },
+  "hinweis": "Median ~ -1506 bps = Deckel disaster_stop_max_pct 0,15 plus Kosten (experiments/ebc/sim.py DS_MAX)"
+ },
+ "katastrophen_stop_mechanik": {
+  "share_trades_cap_binds": 0.9439088518843121,
+  "median_atr20_bps": {
+   "alle": 594.059405940594,
+   "ds_exits": 769.2307692307693,
+   "andere": 566.0377358490566
+  },
+  "median_ds_distance_in_atr": {
+   "alle": 2.525,
+   "ds_exits": 1.9499999999999997
+  },
+  "trailing_distance_in_atr": {
+   "T": 3.0,
+   "M": 3.0,
+   "V": 2.5
+  },
+  "by_atr_quintile": [
+   {
+    "quintil": 0,
+    "n": 240,
+    "median_atr20_bps": 297.029702970297,
+    "ds_rate": 0.020833333333333332,
+    "mean_net_bps": 74.47754005892278,
+    "equity_pp": 3.574921922828294
+   },
+   {
+    "quintil": 1,
+    "n": 218,
+    "median_atr20_bps": 465.1162790697674,
+    "ds_rate": 0.05045871559633028,
+    "mean_net_bps": 191.57006617051516,
+    "equity_pp": 8.352454885034462
+   },
+   {
+    "quintil": 2,
+    "n": 243,
+    "median_atr20_bps": 594.059405940594,
+    "ds_rate": 0.10699588477366255,
+    "mean_net_bps": 476.3970535347362,
+    "equity_pp": 23.15289680178818
+   },
+   {
+    "quintil": 3,
+    "n": 218,
+    "median_atr20_bps": 705.8823529411765,
+    "ds_rate": 0.12844036697247707,
+    "mean_net_bps": 318.3498801521988,
+    "equity_pp": 13.88005477463587
+   },
+   {
+    "quintil": 4,
+    "n": 222,
+    "median_atr20_bps": 967.741935483871,
+    "ds_rate": 0.32432432432432434,
+    "mean_net_bps": 355.008912854843,
+    "equity_pp": 15.76239573075503
+   }
+  ],
+  "h3_ds_whipsaw_K1": {
+   "T": {
+    "n_ds_exits": 796,
+    "ds_whipsaw_rate": 0.4849246231155774
+   },
+   "M": {
+    "n_ds_exits": 144,
+    "ds_whipsaw_rate": 0.5833333333333334
+   },
+   "V": {
+    "n_ds_exits": 96,
+    "ds_whipsaw_rate": 0.5520833333333329
+   }
+  },
+  "hinweis": "Der Deckel 15 % stammt aus der Stundenachse (3 x Stopdistanz); auf Tageskerzen bindet er fast immer und legt den intrabar ausgefuehrten Katastrophen-Stop naeher an den Einstieg als den Trailing-Stop (k x ATR)."
+ },
+ "zeitstopp": {
+  "M_SIGNAL": {
+   "n": 435,
+   "mean_bps": 469.90483631216574,
+   "median_bps": 341.24982115889037,
+   "hit": 0.8344827586206897,
+   "avg_win_bps": 608.9565258857356,
+   "avg_loss_bps": -231.14743195458232,
+   "profit_factor": 13.282240655005412,
+   "equity_pp": 40.88172075915842,
+   "median_hold_days": 4.0
+  },
+  "M_TIME_BOX": {
+   "n": 139,
+   "mean_bps": -363.32737254682263,
+   "median_bps": -305.51586874663815,
+   "hit": 0.15827338129496402,
+   "avg_win_bps": 330.94085611707146,
+   "avg_loss_bps": -493.87353520157194,
+   "profit_factor": 0.12600026268245873,
+   "equity_pp": -10.10050095680167,
+   "median_hold_days": 7.0
+  },
+  "T_SIGNAL": {
+   "n": 72,
+   "mean_bps": 147.30868278213268,
+   "median_bps": -337.9122404499203,
+   "hit": 0.3333333333333333,
+   "avg_win_bps": 1644.3443997548618,
+   "avg_loss_bps": -601.2091757042319,
+   "profit_factor": 1.3675310243134127,
+   "equity_pp": 2.1212450320627103,
+   "median_hold_days": 33.0
+  },
+  "T_TIME_BOX": {
+   "n": 30,
+   "mean_bps": 4509.590017277991,
+   "median_bps": 3166.7699222931396,
+   "hit": 1.0,
+   "avg_win_bps": 4509.590017277991,
+   "avg_loss_bps": null,
+   "profit_factor": null,
+   "equity_pp": 27.05754010366795,
+   "median_hold_days": 91.0
+  },
+  "V_TIME_BOX": {
+   "n": 58,
+   "mean_bps": 1763.435976754117,
+   "median_bps": 1081.614022091028,
+   "hit": 0.7758620689655172,
+   "avg_win_bps": 2380.018771453613,
+   "avg_loss_bps": -370.8890818210609,
+   "profit_factor": 22.21291194693339,
+   "equity_pp": 20.45585733034776,
+   "median_hold_days": 29.0
+  }
+ },
+ "klassen": {
+  "K1": {
+   "n": 1064,
+   "mean_bps": 302.9942614830647,
+   "median_bps": 53.358742056043745,
+   "hit": 0.5244360902255639,
+   "avg_win_bps": 1355.9489826439042,
+   "avg_loss_bps": -858.1692452516161,
+   "profit_factor": 1.7424249665009364,
+   "equity_pp": 64.47717884359616,
+   "median_hold_days": 7.0
+  },
+  "K2": {
+   "n": 53,
+   "mean_bps": -26.739111765179874,
+   "median_bps": -12.919086595493198,
+   "hit": 0.4528301886792453,
+   "avg_win_bps": 130.94942259833059,
+   "avg_loss_bps": -157.23996779015403,
+   "profit_factor": 0.6892136742744358,
+   "equity_pp": -0.28343458471090666,
+   "median_hold_days": 7.0
+  },
+  "K3": {
+   "n": 16,
+   "mean_bps": 153.82070542586726,
+   "median_bps": 181.33501373900134,
+   "hit": 0.6875,
+   "avg_win_bps": 364.1102372039213,
+   "avg_loss_bps": -308.8162644858518,
+   "profit_factor": 2.5939129960731915,
+   "equity_pp": 0.4922262573627752,
+   "median_hold_days": 7.0
+  },
+  "K4": {
+   "n": 8,
+   "mean_bps": 22.970999246121792,
+   "median_bps": 62.56186790711473,
+   "hit": 0.5,
+   "avg_win_bps": 291.11010235388835,
+   "avg_loss_bps": -245.1681038616448,
+   "profit_factor": 1.1873897859004119,
+   "equity_pp": 0.03675359879379487,
+   "median_hold_days": 5.0
+  }
+ },
+ "kapazitaet_naeherung": {
+  "mean": 26.099137931034484,
+  "median": 27.0,
+  "p90": 32.0,
+  "share_days_ge_28": 0.46336206896551724,
+  "share_days_ge_30": 0.2435344827586207,
+  "hinweis": "Trade-Indizes je Instrument, am Datenende ausgerichtet; Feiertagskalender nicht abgeglichen. Exakte Zahl verworfener Kandidaten liefert erst EBC-H4 P4.4."
+ },
+ "tagesrenditen": {
+  "n_days": 471,
+  "ann_vol": 0.16753195780752278,
+  "maxdd": -0.15421329707034878,
+  "maxdd_from": "2025-01-03",
+  "maxdd_to": "2025-04-09",
+  "sum_worst_5pct_days_pp": -57.82559982332853,
+  "sum_best_5pct_days_pp": 58.17758952383259,
+  "sum_all_days_pp": 63.114092175108446,
+  "corr_A1_Bplus": 0.6788606248484788
+ },
+ "h3_stop_summary_S0P0_K1": {
+  "T": {
+   "whipsaw_share_all_stop_exits": 0.04766020496357575,
+   "n_stop_exits": 8099,
+   "expectancy_bps": 197.44694294015486
+  },
+  "M": {
+   "whipsaw_share_all_stop_exits": 0.298932384341637,
+   "n_stop_exits": 281,
+   "expectancy_bps": 49.2233771024702
+  },
+  "V": {
+   "whipsaw_share_all_stop_exits": 0.06973684210526315,
+   "n_stop_exits": 760,
+   "expectancy_bps": 97.1140415086119
+  },
+  "alle": {
+   "whipsaw_share_all_stop_exits": 0.057221006564551424,
+   "n_stop_exits": 9140,
+   "expectancy_bps": 138.13867303488485
+  }
+ },
+ "h3_zeitbox": [
+  {
+   "archetyp": "T",
+   "h": 1,
+   "sr_netto": 0.4892368602437608,
+   "n_trades": 10309,
+   "expectancy_bps": 5.031209136967728
+  },
+  {
+   "archetyp": "T",
+   "h": 3,
+   "sr_netto": 0.728860735501225,
+   "n_trades": 5435,
+   "expectancy_bps": 21.058160334852232
+  },
+  {
+   "archetyp": "T",
+   "h": 5,
+   "sr_netto": 0.7186423668510332,
+   "n_trades": 3770,
+   "expectancy_bps": 31.232733081427124
+  },
+  {
+   "archetyp": "T",
+   "h": 10,
+   "sr_netto": 1.2099582069762669,
+   "n_trades": 2259,
+   "expectancy_bps": 100.45045784964299
+  },
+  {
+   "archetyp": "T",
+   "h": 20,
+   "sr_netto": 1.24638862141534,
+   "n_trades": 1407,
+   "expectancy_bps": 176.04721882817114
+  },
+  {
+   "archetyp": "T",
+   "h": 40,
+   "sr_netto": 1.069287208912817,
+   "n_trades": 1014,
+   "expectancy_bps": 213.21974237865106
+  },
+  {
+   "archetyp": "M",
+   "h": 1,
+   "sr_netto": 1.0941396975967737,
+   "n_trades": 7842,
+   "expectancy_bps": 13.81227302510798
+  },
+  {
+   "archetyp": "M",
+   "h": 3,
+   "sr_netto": 1.0702039573209317,
+   "n_trades": 5117,
+   "expectancy_bps": 29.87643153552217
+  },
+  {
+   "archetyp": "M",
+   "h": 5,
+   "sr_netto": 0.9646030871494921,
+   "n_trades": 4301,
+   "expectancy_bps": 34.4086655326822
+  },
+  {
+   "archetyp": "M",
+   "h": 10,
+   "sr_netto": 0.8418405915565265,
+   "n_trades": 3931,
+   "expectancy_bps": 33.62218010530347
+  },
+  {
+   "archetyp": "M",
+   "h": 20,
+   "sr_netto": 0.843413912295355,
+   "n_trades": 3914,
+   "expectancy_bps": 33.90869551324677
+  },
+  {
+   "archetyp": "M",
+   "h": 40,
+   "sr_netto": 0.843413912295355,
+   "n_trades": 3914,
+   "expectancy_bps": 33.90869551324677
+  },
+  {
+   "archetyp": "V",
+   "h": 1,
+   "sr_netto": 0.510949671246004,
+   "n_trades": 2142,
+   "expectancy_bps": 8.257046358385262
+  },
+  {
+   "archetyp": "V",
+   "h": 3,
+   "sr_netto": 0.7377340485149636,
+   "n_trades": 1764,
+   "expectancy_bps": 21.800203833069098
+  },
+  {
+   "archetyp": "V",
+   "h": 5,
+   "sr_netto": 0.25581495294870443,
+   "n_trades": 1623,
+   "expectancy_bps": 10.387435649652508
+  },
+  {
+   "archetyp": "V",
+   "h": 10,
+   "sr_netto": 0.6831412824585555,
+   "n_trades": 1399,
+   "expectancy_bps": 49.5091671792339
+  },
+  {
+   "archetyp": "V",
+   "h": 20,
+   "sr_netto": 0.3791468498068128,
+   "n_trades": 1104,
+   "expectancy_bps": 36.554292561322335
+  },
+  {
+   "archetyp": "V",
+   "h": 40,
+   "sr_netto": 1.0121320714961448,
+   "n_trades": 872,
+   "expectancy_bps": 149.82693041328173
+  }
+ ],
+ "h2_breite": {
+  "rho_bar_within": {
+   "K1": 0.024313921784504835,
+   "K2": 0.03160866089336936,
+   "K3": 0.037364004740955255,
+   "K4": 0.05812211651496708
+  },
+  "rho_bar_between": 0.006014383991963112,
+  "n_eff_ceiling_K1": 41.128700209823656,
+  "mean_sr_p_aktien": {
+   "5": 0.01681961449360954,
+   "10": 0.09130938890957087,
+   "20": 0.13681616895610904,
+   "50": 0.21275853510156387,
+   "100": 0.1915613295317508,
+   "200": 0.20062507320421333,
+   "984": 0.25416441858210037
+  },
+  "mean_sr_p_alle": {
+   "5": -0.1022399599521847,
+   "9": 0.005769190412333361,
+   "19": -0.010578994019692502,
+   "50": -0.08147679284870037,
+   "100": -0.12811627309321658,
+   "200": -0.12673153745271332,
+   "1203": -0.14448219642843724
+  },
+  "hinweis": "N_eff = N/(1+(N-1)*rho) naehert sich 1/rho: mehr Aktien mit denselben Archetypen heben die Sharpe kaum ueber N_eff ~ 1/rho hinaus; neue, wenig korrelierte Signale heben die Decke."
+ },
+ "h2_sizing": [
+  {
+   "variante": "EN",
+   "sr": 1.3890230849193121,
+   "maxdd": -0.2038924679838754,
+   "n_trades": 2047
+  },
+  {
+   "variante": "RP",
+   "sr": 1.5450463538094945,
+   "maxdd": -0.15838995350365007,
+   "n_trades": 1726
+  },
+  {
+   "variante": "FR",
+   "sr": 1.3213087034423616,
+   "maxdd": -0.22160628099134685,
+   "n_trades": 1589
+  },
+  {
+   "variante": "QK",
+   "sr": 1.3125510453000813,
+   "maxdd": -0.15157218357082394,
+   "n_trades": 1342
+  }
+ ]
+}
