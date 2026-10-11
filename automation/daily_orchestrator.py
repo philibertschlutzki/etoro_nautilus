@@ -171,8 +171,11 @@ def cleanup_old_logs(log_dir: Path, max_age_days: int = LOG_RETENTION_D) -> None
         return
     cutoff_ts = time.time() - max_age_days * 86400
     deleted   = 0
+    from automation.log_budget import is_protected
     for f in log_dir.glob("*.log*"):
         try:
+            if is_protected(f, log_dir):  # Error-/Alert-Logs bleiben (Platzbudget: automation/log_budget.py)
+                continue
             if f.stat().st_mtime < cutoff_ts:
                 f.unlink()
                 deleted += 1

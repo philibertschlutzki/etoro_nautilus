@@ -66,6 +66,8 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+from automation.bot_logging import install_bot_logging, log_fatal_signals  # noqa: E402
+from automation.log_budget import enforce_log_budget  # noqa: E402
 
 def _build_strategy_registry(strategies_cfg_path: str) -> dict[str, tuple[str, str, str]]:
     """Baut {strategy_class: (module, class, config_class)} aus strategies.json (active=true)."""
@@ -370,6 +372,9 @@ def main():
                              "INCUBATING-Paare aus --tournament (incubation_whitelist.json) — NUR im "
                              "Demo-Environment, eigene Sperre und eigenes Risikogedächtnis.")
     args = parser.parse_args()
+    install_bot_logging("logs", logger=logger)
+    log_fatal_signals(logger)
+    enforce_log_budget("logs")
 
     # Issue #1368 — INCUBATING läuft nie im real-Environment: Prüfung vor jedem weiteren Schritt.
     if args.incubation:
