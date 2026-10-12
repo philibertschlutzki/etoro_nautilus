@@ -86,9 +86,10 @@ def verify_account():
     set_environment()
     pinned = os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip()
     if ENV_MODE == "demo":   # Demo-Modus: ausschliesslich /demo/-Pfade; Erreichbarkeit per demo/pnl (/me kann bei Demo-Keys 403 liefern)
-        s, _ = _req(PNL)
-        if s != 200:
-            raise Refused(f"Demo-pnl nicht erreichbar (HTTP {s}) - Key ohne Demo-Scope?")
+        try:
+            get(PNL)                       # mit Backoff bei 429/5xx
+        except RuntimeError as e:
+            raise Refused(f"Demo-pnl nicht erreichbar ({e}) - Key ohne Demo-Scope oder Rate-Limit?")
         return "demo"
     if not pinned:
         raise Refused("ETORO_PAPER_ACCOUNT_CID nicht gesetzt (real-Modus verlangt die angeheftete Paper-Konto-ID)")

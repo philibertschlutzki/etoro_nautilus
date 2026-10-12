@@ -107,6 +107,7 @@ def test_whoami_scrubs_secrets():
 def test_demo_mode_paths_and_confirmation(monkeypatch):
     monkeypatch.setenv("ETORO_PAPER_ACCOUNT_CID", "123")
     monkeypatch.setattr(guard, "_req", lambda *a, **k: (200, {}))
+    monkeypatch.setattr(guard, "get", lambda url, tries=6: {})
     guard.FORCE_ENV[0] = "demo"
     try:
         assert guard.verify_account() == "demo"
