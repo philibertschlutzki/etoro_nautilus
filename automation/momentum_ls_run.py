@@ -500,6 +500,7 @@ def main():
         max_symbol_exposure_fraction=max_symbol_exposure,
         dd_halt_fraction=live_risk_cfg.get("dd_halt_fraction", 0.10),
         psi_min=live_risk_cfg.get("psi_min", 0.2),
+        min_equity_entry_usd=live_risk_cfg.get("min_equity_entry_usd", 0.0),
         # Issue #1368 — LIVE_SMALL-Paare handeln mit ``capital_fraction_small`` der regulären Allokation
         # (Phase 5 stempelt ``capital_fraction`` in den Whitelist-Eintrag; ohne Stempel 1,0).
         symbol_capital_fractions={

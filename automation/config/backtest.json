@@ -39,7 +39,7 @@
   "commission_bps_by_asset_class": {"CRYPTO": 200.0, "EQUITY": 10.0},
   "spread_bps_by_asset_class": {
     "CRYPTO": 15.0,
-    "EQUITY": 3.0,
+    "EQUITY": 7.0,
     "FOREX": 1.5,
     "COMMODITY": 5.0,
     "DEFAULT": 4.0
@@ -104,6 +104,7 @@
     "on_shutdown": "keep",
     "live_bot_stop_timeout_s": 120,
     "bot_capital_usd": 100000.0,
+    "min_equity_entry_usd": 1000.0,
     "daily_loss_halt_fraction": 0.03,
     "daily_loss_tz": "America/New_York",
     "circuit_breaker_n_min_round_trips": 30

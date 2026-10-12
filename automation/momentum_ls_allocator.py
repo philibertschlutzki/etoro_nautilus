@@ -56,6 +56,7 @@ class MomentumLSAllocator:
         dd_halt_fraction: float = _DEFAULT_DD_HALT_FRACTION,
         psi_min: float = _DEFAULT_PSI_MIN,
         symbol_capital_fractions: dict[str, float] | None = None,
+        min_equity_entry_usd: float = 0.0,
     ):
         """
         Initialize the allocator with the full list of universe symbols.
@@ -71,6 +72,9 @@ class MomentumLSAllocator:
             str(k): min(1.0, max(0.0, float(v))) for k, v in (symbol_capital_fractions or {}).items()}
         self._dd_halt_fraction = float(dd_halt_fraction)
         self._psi_min = float(psi_min)
+        # eToro berechnet für Aktien eine Pauschale von ca. 1 USD je Order (öffnen und schließen): kleine Aktien-
+        # Einstiege (z. B. Rest vor dem Gesamtdeckel) sind relativ sehr teuer. 0 = aus.
+        self._min_equity_entry_usd = max(0.0, float(min_equity_entry_usd))
 
         # Issue #999 Fix Punkt 2 — vom Circuit-Breaker-Watchdog aktualisierter Zustand (siehe
         # automation/live_risk.py). Default: kein Drawdown bekannt, Breaker nicht ausgeloest.
@@ -218,6 +222,15 @@ class MomentumLSAllocator:
             else:
                 logger.info(f"[RISK] {instrument_id}: eToro-Mindestbetrag {needed:.0f} USD passt nicht ins Budget "
                             f"(Allokation {allocation:.0f} USD) — übersprungen.")
+                return 0.0
+
+        # Aktien-Mindestgröße (Pauschale ca. 2 USD Round-Trip): kleinere Einstiege werden übersprungen, nie hochgesetzt
+        # (Hochsetzen würde Drawdown-Dämpfer und Gesamtdeckel aushebeln).
+        if self._min_equity_entry_usd > 0.0 and allocation < self._min_equity_entry_usd:
+            from automation.strategies.hourly_strategy_base import _read_instrument_asset_class
+            if str(_read_instrument_asset_class(str(instrument_id)) or "").upper() == "EQUITY":
+                logger.info(f"[RISK] {instrument_id}: Aktien-Einstieg {allocation:.0f} USD < Mindestgröße "
+                            f"{self._min_equity_entry_usd:.0f} USD (Pauschalgebühr) — übersprungen.")
                 return 0.0
 
         # Apply floor: eToro minimum order is $10, so $11 buffer is used.
