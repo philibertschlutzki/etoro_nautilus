@@ -21,8 +21,9 @@ Der Bot nutzt ausschliesslich `/demo/`, solange `ETORO_PAPER_ACCOUNT_CID` in `.e
 2. Bot-Dienst stoppen (die Positionen im Demo-Konto bleiben, nichts wird geschlossen):
    `systemctl --user stop etoro-paper-bot.service`
 3. Hochwasserstand und Tagesbasis des alten Kontos zurücksetzen. Sonst rechnet der Tagesverlust-Stopp (3 %) heute mit der
-   Tagesbasis des alten Kontos (ca. 9'950 USD) und wäre bis Mitternacht UTC blind:
-   `venv/bin/python3 automation/momentum_ls_run.py --reset-hwm`
+   Tagesbasis des alten Kontos (ca. 9'950 USD) und wäre bis Mitternacht UTC blind. Der Inkubations-Bot nutzt
+   `data/state/incubation_equity_state.json`; ohne `--incubation` trifft der Reset die falsche Datei und bewirkt nichts:
+   `venv/bin/python3 automation/momentum_ls_run.py --incubation --reset-hwm`
 4. In `.env` die Zeile `ETORO_PAPER_ACCOUNT_CID=…` entfernen oder mit `#` auskommentieren. `ETORO_ENV=demo` bleibt.
    Keine Schlüssel in Chats oder Commits.
 5. Bot starten: `systemctl --user start etoro-paper-bot.service`
