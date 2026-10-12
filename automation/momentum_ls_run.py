@@ -44,6 +44,8 @@ from automation.incubation import (
 
 # Issue #1368 (GH #1265) — Exit-Code, wenn eine Inkubation in einem anderen als dem Demo-Environment starten soll.
 EXIT_INCUBATION_NOT_DEMO = 6
+# Der Key gehört nicht zum angehefteten Paper-Konto (ETORO_PAPER_ACCOUNT_CID): braucht einen Menschen, kein Neustart-Zyklus.
+EXIT_PAPER_ACCOUNT_MISMATCH = 7
 
 # Das Konto ist fest das eToro-Demo-Konto (10k USD Paper-Trading); Orders werden dort wirklich platziert
 # (``--dry-run`` bleibt als reiner CLI-Schalter). ETORO_ENV/ETORO_DRY_RUN/ETORO_CONFIRM_LIVE sind KEINE
@@ -512,7 +514,7 @@ def main():
         api_environment = verify_paper_account(api_key, user_key)
     except PaperAccountError as exc:
         logger.critical(f"[PAPER-KONTO] {exc}")
-        sys.exit(1)
+        sys.exit(EXIT_PAPER_ACCOUNT_MISMATCH)
     dry_run = True if args.dry_run else ETORO_EXECUTION["dry_run"]
     if args.incubation and not args.dry_run:
         # Issue #1368 — die Inkubation handelt im Demo-Konto (environment == "demo" ist oben erzwungen):
