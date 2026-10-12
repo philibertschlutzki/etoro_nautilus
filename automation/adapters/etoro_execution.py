@@ -112,9 +112,24 @@ def order_rejection_reason(order_info: dict) -> str | None:
     return f"etoro_order_status_{status_id}_error_{error_code}: {message}".rstrip(": ")
 
 
+def _open_time_ns(value) -> int | None:
+    """eToro-Öffnungszeit (``2026-10-11T08:00:00.463Z``) als UTC-Nanosekunden; ``None``, wenn nicht lesbar."""
+    if not value:
+        return None
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.replace(microsecond=0).timestamp()) * 1_000_000_000 + dt.microsecond * 1_000   # ganzzahlig, ohne Float-Rauschen
+    except (TypeError, ValueError):
+        return None
+
+
 def net_open_positions(pnl_data: dict) -> dict[str, dict]:
     """Fasst die offenen eToro-Positionen je eToro-InstrumentID netto zusammen (NETTING-Konto): ``{eid:
-    {"units": signiert, "avg_px": gewichteter Öffnungskurs, "position_ids": [...]}}``. Rein, deterministisch."""
+    {"units": signiert, "avg_px": gewichteter Öffnungskurs, "position_ids": [...], "opened_ns": frühester Einstieg}}``
+    (``opened_ns`` fehlt, wenn eToro keine lesbare Öffnungszeit liefert). Rein, deterministisch."""
     data = pnl_data.get("clientPortfolio", pnl_data) if isinstance(pnl_data, dict) else {}
     out: dict[str, dict] = {}
     for item in data.get("Positions", data.get("positions", [])) or []:
@@ -135,6 +150,9 @@ def net_open_positions(pnl_data: dict) -> dict[str, dict]:
         entry["notional"] += units * rate
         if low.get("positionid") is not None:
             entry["position_ids"].append(str(low["positionid"]))
+        opened_ns = _open_time_ns(low.get("opendatetime") or low.get("opentimestamp"))
+        if opened_ns is not None and (entry.get("opened_ns") is None or opened_ns < entry["opened_ns"]):
+            entry["opened_ns"] = opened_ns        # frühester Einstieg der netto zusammengefassten Positionen
     for entry in out.values():
         notional, units_abs = entry.pop("notional"), abs(entry["units"])
         entry["avg_px"] = notional / units_abs if units_abs > 0 else 0.0
@@ -275,7 +293,9 @@ class EToroExecutionClient(LiveExecutionClient):
                 position_side=PositionSide.LONG if entry["units"] > 0 else PositionSide.SHORT,
                 quantity=Quantity(abs(entry["units"]), instrument.size_precision),
                 report_id=UUID4(),
-                ts_last=ts,
+                # Echter Einstiegszeitpunkt statt "jetzt": Nautilus setzt daraus ts_opened der übernommenen Position, und
+                # die Strategie rehydriert damit ihren Bar-Zähler (Zeit-Exit trotz Neustarts, GR-04).
+                ts_last=min(entry.get("opened_ns") or ts, ts),
                 ts_init=ts,
                 avg_px_open=Decimal(str(entry["avg_px"])) if entry["avg_px"] else None,
             ))
