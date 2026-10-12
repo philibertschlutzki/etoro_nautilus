@@ -371,7 +371,8 @@ def run(*, force_summary: bool = False, now: datetime | None = None, fetch=fetch
     write_outputs(lines, now)
     write_snapshot(render_markdown(positions, credit, now=now, names=instrument_names(), bot=bot_running(),
                                    ledgers=ledger_counts(), errors=errors, recent_events=recent_events()))
-    save_state(maybe_publish(new_state, now, environ=environ))
+    from automation.paper_weekly_report import maybe_write_weekly
+    save_state(maybe_publish(maybe_write_weekly(new_state, now), now, environ=environ))
     if lines:
         print("\n".join(lines))
         push(lines, environ.get(NTFY_ENV))
