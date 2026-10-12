@@ -103,7 +103,7 @@
     "poll_interval_s": 30.0,
     "on_shutdown": "keep",
     "live_bot_stop_timeout_s": 120,
-    "bot_capital_usd": 10000.0,
+    "bot_capital_usd": 100000.0,
     "daily_loss_halt_fraction": 0.03,
     "daily_loss_tz": "America/New_York",
     "circuit_breaker_n_min_round_trips": 30
