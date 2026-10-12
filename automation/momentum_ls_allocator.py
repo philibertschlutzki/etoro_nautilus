@@ -17,6 +17,7 @@ _DEFAULT_MAX_SYMBOL_EXPOSURE_FRACTION = 0.10
 _DEFAULT_DD_HALT_FRACTION = 0.10
 _DEFAULT_PSI_MIN = 0.2
 _MIN_ORDER_USD = 11.0
+_MAX_MIN_NOTIONAL_FRACTION = 0.15     # eine Position mit erzwungenem Mindestbetrag darf höchstens 15 % der Equity belegen
 
 
 def _position_notional(pos) -> float | None:
@@ -202,6 +203,22 @@ class MomentumLSAllocator:
         allocation = w_new * account_balance
         if snap is not None:
             allocation = min(allocation, 0.98 * max(snap.credit, 0.0))     # nie mehr als das freie Guthaben
+
+        # eToro-Mindestbetrag je Instrument (Forex 1000 USD): anheben, wenn Gesamtbudget, freies Guthaben und
+        # Konzentrationsgrenze es zulassen, sonst überspringen (statt stündlich eine abgelehnte Order zu senden).
+        from automation.min_position import min_notional
+        from automation.strategies.hourly_strategy_base import _read_instrument_asset_class
+        needed = min_notional(str(instrument_id), _read_instrument_asset_class(str(instrument_id)))
+        if needed > 0.0 and allocation < needed:
+            target = needed * 1.01
+            free_cash = 0.98 * max(snap.credit, 0.0) if snap is not None else float("inf")
+            if (target <= remaining_fraction * account_balance * psi
+                    and target <= _MAX_MIN_NOTIONAL_FRACTION * account_balance and target <= free_cash):
+                allocation = target
+            else:
+                logger.info(f"[RISK] {instrument_id}: eToro-Mindestbetrag {needed:.0f} USD passt nicht ins Budget "
+                            f"(Allokation {allocation:.0f} USD) — übersprungen.")
+                return 0.0
 
         # Apply floor: eToro minimum order is $10, so $11 buffer is used.
         if allocation < _MIN_ORDER_USD:

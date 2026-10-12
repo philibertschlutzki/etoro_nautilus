@@ -919,6 +919,19 @@ class EToroExecutionClient(LiveExecutionClient):
 
         etoro_id = int(self._instrument_to_etoro.get(str(order.instrument_id), "0"))
 
+        if is_close and not etoro_pos_id:
+            # Kein offener eToro-Eintrag für dieses Instrument: nichts zu schliessen (sonst HTTP 400 auf ".../None").
+            self._log.warning(f"[{order.instrument_id}] Close ohne offene eToro-Position — Order abgelehnt.")
+            await self._state.delete(order.client_order_id.value)
+            self.generate_order_rejected(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                reason="no_open_position",
+                ts_event=ts,
+            )
+            return
+
         if is_close:
             payload = self._build_close_payload(etoro_id)
             url = f"{self._rest_base}/market-close-orders/positions/{etoro_pos_id}"
@@ -1519,6 +1532,8 @@ class EToroExecutionClient(LiveExecutionClient):
             reason=reason[:500],
             ts_event=self._clock.timestamp_ns(),
         )
+        from automation.min_position import learn_from_rejection
+        learn_from_rejection(str(order.instrument_id), reason)
         return True
 
     async def _reconcile_via_pnl(
