@@ -1,0 +1,1 @@
+- 2026-10-12 00:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3602662774, 199.56 USD, PnL +1.76 (zuletzt gesehen)
