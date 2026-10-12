@@ -4,7 +4,8 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import costs
 OUT = "results/stage_c"
-fills = list(csv.DictReader(open(f"{OUT}/fills.csv"))) if os.path.exists(f"{OUT}/fills.csv") else []
+SINCE = sys.argv[1] if len(sys.argv) > 1 else "2026-10-12T17:29"     # Demo-Konto ab hier (davor: altes Testkonto)
+fills = [r for r in csv.DictReader(open(f"{OUT}/fills.csv")) if r["submit_ts"] >= SINCE] if os.path.exists(f"{OUT}/fills.csv") else []
 mon = list(csv.DictReader(open(f"{OUT}/position_fees_daily.csv"))) if os.path.exists(f"{OUT}/position_fees_daily.csv") else []
 CLS = {"K1": "EQUITY", "K2": "FOREX", "K3": "COMMODITY", "K4": "INDEX", "K5": "CRYPTO"}
 sl = collections.defaultdict(list); fee = collections.defaultdict(list)
@@ -14,7 +15,7 @@ for f in fills:
     c = CLS[f["klasse"]]
     s = (px - ask) / ask * 1e4 if f["side"] == "BUY" else (bid - px) / bid * 1e4          # positiv = ungünstig
     sl[c].append(s)
-    if f["fees_usd"] != "": fee[c].append(float(f["fees_usd"]) / amt * 1e4)
+    if f["fees_usd"] != "": fee[c].append(float(f["fees_usd"]) / amt * 1e4)   # Achtung: Long-Aktie flach 1 USD je Order -> bps haengen vom Betrag ab
 fin = collections.defaultdict(list)
 byp = collections.defaultdict(list)
 for m in mon:
@@ -28,7 +29,11 @@ for pid, rows in byp.items():
     d_fee = (float(b["total_fees"] or 0) + float(b["total_external_fees"] or 0)) - (float(a["total_fees"] or 0) + float(a["total_external_fees"] or 0))
     fin[(CLS[a["klasse"]], "long" if a["side"] == "BUY" else "short")].append(d_fee / float(a["amount"]) * 1e4 / days)
 rej = list(csv.DictReader(open(f"{OUT}/rejections.csv"))) if os.path.exists(f"{OUT}/rejections.csv") else []
-res = {"rejections": dict(collections.Counter((r["klasse"], r["error_code"]) .__str__() for r in rej)), "slippage_bps_side": {}, "fees_bps_open": {}, "financing_bps_per_day": {}, "flags": []}
+fee_usd = collections.defaultdict(list)
+for f in fills:
+    if f["fill_px"] and f["fees_usd"] != "":
+        fee_usd[(CLS[f["klasse"]], f["side"], f["amount_usd"])].append(float(f["fees_usd"]))
+res = {"fees_usd_by_class_side_amount": {" / ".join(k): dict(n=len(v), mean=float(np.mean(v))) for k, v in fee_usd.items()}, "rejections": dict(collections.Counter((r["klasse"], r["error_code"]) .__str__() for r in rej)), "slippage_bps_side": {}, "fees_bps_open": {}, "financing_bps_per_day": {}, "flags": []}
 for c, v in sl.items():
     mean = float(np.mean(v)); model = costs.FALLBACK_SLIP[c]
     res["slippage_bps_side"][c] = dict(n=len(v), mean=mean, p50=float(np.median(v)), model=model)

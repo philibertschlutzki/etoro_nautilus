@@ -98,8 +98,8 @@ def open_order(g: guard.Gate, r, amount, is_buy, extra=None, tag=""):
         from automation.adapters.etoro_execution import order_rejection_reason
         try:
             info = guard.get(f"{guard.ORDER_INFO}/{oid}"); rej = order_rejection_reason(info)
-        except Exception as e:
-            rej = f"orderinfo_error:{e}"
+        except Exception as e:             # Order-Info nicht lesbar (404/429): KEINE Ablehnung annehmen, Position per pnl suchen
+            print("Order-Info nicht lesbar:", str(e)[:120]); rej = None
     pos = new_position(before, iid) if not rej else None
     if rej:
         append("rejections.csv", ["ts", "order_id", "instrument", "klasse", "side", "amount_usd", "status_id", "error_code", "message", "tag"],
