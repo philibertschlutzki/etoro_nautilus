@@ -79,3 +79,5 @@
 - 2026-10-12 20:00 UTC GESCHLOSSEN Long Instrument 1872, Position 3616907158, 49.99 USD, PnL +0.00 (zuletzt gesehen)
 - 2026-10-12 20:00 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 20:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 21:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 21:45 UTC ZUSAMMENFASSUNG Guthaben 125467.66 USD, 6 offene Position(en) (PnL -1.41), 21 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.

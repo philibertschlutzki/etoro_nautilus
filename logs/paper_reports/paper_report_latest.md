@@ -1,31 +1,29 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 20:45 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-12 22:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 125467.66 USD |
 | Investiert | 2344.98 USD in 6 Position(en) |
-| Unrealisierter PnL | -0.21 USD |
+| Unrealisierter PnL | -1.60 USD |
 | Bot | läuft |
-| Fehlerzeilen im heutigen Bot-Log | 22 |
+| Fehlerzeilen im heutigen Bot-Log | 24 |
 | Paare mit Evidenz-Ledger | 0 |
 
 ## Offene Positionen
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| GOOG.ETORO | Long | 24.99 | 349.22 | -0.02 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | -0.05 |
-| NZDUSD.ETORO | Short | 1010.00 | 0.55867 | -0.02 |
-| ETH.ETORO | Long | 100.00 | 2516.87 | +0.13 |
+| GOOG.ETORO | Long | 24.99 | 349.22 | -0.01 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +0.14 |
+| NZDUSD.ETORO | Short | 1010.00 | 0.55867 | -0.42 |
+| ETH.ETORO | Long | 100.00 | 2516.87 | -1.17 |
 | CAT.ETORO | Long | 100.00 | 800.63 | -0.08 |
-| INTC.ETORO | Short | 100.00 | 101.38 | -0.17 |
+| INTC.ETORO | Short | 100.00 | 101.38 | -0.06 |
 
 ## Letzte Ereignisse
 
-- 2026-10-12 17:35 UTC GESCHLOSSEN Long Instrument 10817, Position 3603998078, 50.00 USD, PnL +0.00 (zuletzt gesehen)
-- 2026-10-12 17:35 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 17:35 UTC ZUSAMMENFASSUNG Guthaben 27402.30 USD, 11 offene Position(en) (PnL +5418.50), 36 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 166862054, 69.70 USD, PnL +805.14 (zuletzt gesehen)
 - 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 168438709, 91.00 USD, PnL +1005.00 (zuletzt gesehen)
@@ -54,3 +52,5 @@ Stand: 2026-10-12 20:45 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-12 20:00 UTC GESCHLOSSEN Long Instrument 1872, Position 3616907158, 49.99 USD, PnL +0.00 (zuletzt gesehen)
 - 2026-10-12 20:00 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 20:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 21:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 21:45 UTC ZUSAMMENFASSUNG Guthaben 125467.66 USD, 6 offene Position(en) (PnL -1.41), 21 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
