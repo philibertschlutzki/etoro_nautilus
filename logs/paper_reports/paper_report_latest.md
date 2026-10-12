@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 11:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-12 12:45 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 9573.67 USD |
+| Freies Guthaben | 9573.38 USD |
 | Investiert | 395.41 USD in 2 Position(en) |
-| Unrealisierter PnL | -3.46 USD |
+| Unrealisierter PnL | -5.22 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 2 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,8 +15,8 @@ Stand: 2026-10-12 11:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| BTC.ETORO | Long | 197.67 | 84041.4 | -1.61 |
-| INJ.ETORO | Long | 197.74 | 8.025 | -1.85 |
+| BTC.ETORO | Long | 197.67 | 84041.4 | -2.98 |
+| INJ.ETORO | Long | 197.74 | 8.025 | -2.24 |
 
 ## Letzte Ereignisse
 
