@@ -63,3 +63,13 @@ def test_market_hours():
     mon = dt.datetime(2026, 10, 12, 15, 0, tzinfo=dt.timezone.utc)      # 11:00 New York
     assert guard.market_open("K5", sat) and not guard.market_open("K1", sat) and not guard.market_open("K2", sat)
     assert guard.market_open("K1", mon) and guard.market_open("K2", mon)
+
+
+def test_cfd_classes_blocked_by_default_and_fx_minimum(monkeypatch):
+    monkeypatch.setattr(guard, "verify_account", lambda: "1")
+    monkeypatch.setattr(guard, "positions", lambda pnl=None: [])
+    monkeypatch.setattr(guard, "market_open", lambda k, now=None: True)
+    g = mk()
+    with pytest.raises(guard.Refused): g.check_open(8, 20, True, "K2")        # K2 nicht freigegeben
+    g.classes = ("K1", "K2", "K5")
+    with pytest.raises(guard.Refused): g.check_open(8, 50, True, "K2")        # FX-Mindestbetrag 1000 USD, Cap wird nicht erhoeht

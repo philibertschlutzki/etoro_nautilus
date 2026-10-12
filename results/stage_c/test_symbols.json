@@ -1,11 +1,11 @@
 {
- "written": "2026-10-11T14:36:36.299361+00:00",
+ "written": "2026-10-12T04:03:07.406422+00:00",
  "excluded_bot_instruments": 68,
  "pool_by_class": {
   "K1": 330,
-  "K2": 30,
-  "K3": 6,
-  "K4": 16,
+  "K2": 0,
+  "K3": 0,
+  "K4": 0,
   "K5": 32
  },
  "planned": {
@@ -42,7 +42,11 @@
    "HUBS"
   ],
   "c1": [
-   "EURUSD"
+   "GOOG"
+  ],
+  "classes": [
+   "K1",
+   "K5"
   ]
  },
  "hinweis": "Diese Symbole werden nur vom EBC-Stufe-C-Skript gehandelt; der Bot-Thread sollte sie ausschliessen."

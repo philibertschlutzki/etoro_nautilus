@@ -17,6 +17,8 @@ PNL = f"{BASE}/trading/info/real/pnl"
 ORDER_INFO = f"{BASE}/trading/info/real/orders"
 CAPS = {"c1": 50.0, "c4": 20.0, "c5": 50.0, "c2": 100.0, "c3": 100.0}
 MAX_TEST_POSITIONS = 20
+DEFAULT_CLASSES = ('K1', 'K5')          # FX/Rohstoffe/Indizes: eToro lehnt kleine Betraege ab (FX < 1000 USD); nur mit --classes
+MIN_AMOUNT_USD = {'K2': 1000.0}          # vom Bot beobachtet (2026-10-11 21:00 UTC); K3/K4 unbekannt -> Ablehnung wird als Messwert verbucht
 
 
 class Refused(RuntimeError):
@@ -94,6 +96,7 @@ def market_open(klasse: str, now: dt.datetime | None = None) -> bool:
 class Gate:
     def __init__(self, live: bool, confirm_cid: str | None, excluded_ids: set[int], state_path: str, phase: str, log):
         self.live, self.confirm, self.excluded, self.state_path, self.phase, self.log = live, confirm_cid, set(excluded_ids), state_path, phase, log
+        self.classes = DEFAULT_CLASSES
         self.state = json.load(open(state_path)) if os.path.exists(state_path) else {"positions": {}}
 
     def save(self):
@@ -102,6 +105,8 @@ class Gate:
 
     def check_open(self, instrument_id: int, amount: float, is_buy: bool, klasse: str):
         cap = CAPS[self.phase]
+        if klasse not in getattr(self, 'classes', DEFAULT_CLASSES): raise Refused(f'Klasse {klasse} in diesem Lauf nicht freigegeben (--classes)')
+        if amount < MIN_AMOUNT_USD.get(klasse, 0.0): raise Refused(f'Mindestbetrag {MIN_AMOUNT_USD[klasse]} USD fuer {klasse} > Betrag {amount} (Caps werden nicht erhoeht)')
         if amount > cap: raise Refused(f"Betrag {amount} > Limit {cap} ({self.phase})")
         if int(instrument_id) in self.excluded: raise Refused(f"Instrument {instrument_id} wird vom Bot gehandelt (Whitelist)")
         if klasse == "K5" and not is_buy: raise Refused("Krypto nur long")

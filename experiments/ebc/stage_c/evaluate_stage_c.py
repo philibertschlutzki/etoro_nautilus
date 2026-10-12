@@ -27,7 +27,8 @@ for pid, rows in byp.items():
     if days < 0.9: continue
     d_fee = (float(b["total_fees"] or 0) + float(b["total_external_fees"] or 0)) - (float(a["total_fees"] or 0) + float(a["total_external_fees"] or 0))
     fin[(CLS[a["klasse"]], "long" if a["side"] == "BUY" else "short")].append(d_fee / float(a["amount"]) * 1e4 / days)
-res = {"slippage_bps_side": {}, "fees_bps_open": {}, "financing_bps_per_day": {}, "flags": []}
+rej = list(csv.DictReader(open(f"{OUT}/rejections.csv"))) if os.path.exists(f"{OUT}/rejections.csv") else []
+res = {"rejections": dict(collections.Counter((r["klasse"], r["error_code"]) .__str__() for r in rej)), "slippage_bps_side": {}, "fees_bps_open": {}, "financing_bps_per_day": {}, "flags": []}
 for c, v in sl.items():
     mean = float(np.mean(v)); model = costs.FALLBACK_SLIP[c]
     res["slippage_bps_side"][c] = dict(n=len(v), mean=mean, p50=float(np.median(v)), model=model)

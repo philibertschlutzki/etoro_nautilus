@@ -82,13 +82,20 @@ def open_order(g: guard.Gate, r, amount, is_buy, extra=None, tag=""):
     if not g.live:
         return None
     oid = find_key(body, "orderid")
-    rej = None
-    if oid:
+    rej = None; info = {}
+    if status not in (200, 201):
+        rej = f"http_{status}: {json.dumps(body)[:200]}"
+    elif oid:
         time.sleep(2)
         from automation.adapters.etoro_execution import order_rejection_reason
-        try: rej = order_rejection_reason(guard.get(f"{guard.ORDER_INFO}/{oid}"))
-        except Exception as e: rej = f"orderinfo_error:{e}"
-    pos = new_position(before, iid) if (status in (200, 201) and not rej) else None
+        try:
+            info = guard.get(f"{guard.ORDER_INFO}/{oid}"); rej = order_rejection_reason(info)
+        except Exception as e:
+            rej = f"orderinfo_error:{e}"
+    pos = new_position(before, iid) if not rej else None
+    if rej:
+        append("rejections.csv", ["ts", "order_id", "instrument", "klasse", "side", "amount_usd", "status_id", "error_code", "message", "tag"],
+               [now(), oid, iid, r["klasse"], "BUY" if is_buy else "SELL", amount, find_key(info, "statusid"), find_key(info, "errorcode"), rej, tag])
     fees = (pos.get("totalFees", 0) + pos.get("totalExternalFees", 0)) if pos else ""
     append("fills.csv", ["order_id", "position_id", "instrument", "klasse", "side", "submit_ts", "bid", "ask", "fill_px", "units", "amount_usd", "fees_usd", "overnight_fees_usd", "http", "rejection", "tag"],
            [oid, pos["positionID"] if pos else "", iid, r["klasse"], "BUY" if is_buy else "SELL", submit_ts, bid, ask, pos["openRate"] if pos else "", pos["units"] if pos else "", amount, fees, 0, status, rej or "", tag])
@@ -115,10 +122,11 @@ def monitor():
     state = json.load(open(f"{OUT}/state.json")) if os.path.exists(f"{OUT}/state.json") else {"positions": {}}
     ids = [v["instrument"] for v in state["positions"].values()]
     rt = rates(ids) if ids else {}
-    for pid, meta in state["positions"].items():
+    for pid, meta in list(state["positions"].items()):
         p = g_pos.get(pid)
         if not p:
-            append("position_fees_daily.csv", ["ts", "position_id", "instrument", "klasse", "status"], [now(), pid, meta["instrument"], meta["klasse"], "nicht mehr offen"]); continue
+            append("position_fees_daily.csv", ["ts", "position_id", "instrument", "klasse", "status"], [now(), pid, meta["instrument"], meta["klasse"], "nicht mehr offen"])
+            state["positions"].pop(pid, None); json.dump(state, open(f"{OUT}/state.json", "w"), indent=1); continue
         bid, ask = rt.get(meta["instrument"], ("", ""))
         row = [now(), pid, meta["instrument"], meta["klasse"], "BUY" if p["isBuy"] else "SELL", p["units"], p["openRate"], p.get("stopLossRate"), p.get("isTslEnabled"),
                p.get("totalFees"), p.get("totalExternalFees"), p.get("amount"), bid, ask, meta.get("tag", "")]
@@ -136,6 +144,7 @@ def main():
     ap.add_argument("--whitelist", default=os.path.expanduser("~/etoro_nautilus/data/state/incubation_whitelist.json"))
     ap.add_argument("--bot-map", default=os.path.expanduser("~/etoro_nautilus/automation/config/instrument_map.json"))
     ap.add_argument("--n", type=int, default=30)
+    ap.add_argument("--classes", default="K1,K5", help="freigegebene Klassen (Standard K1,K5; K2 braucht >= 1000 USD und wird bei kleineren Caps verweigert)")
     a = ap.parse_args()
     guard.load_env()
     acct = guard.verify_account()
@@ -145,13 +154,14 @@ def main():
     excl = guard.bot_excluded_ids(a.whitelist, a.bot_map)
     ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2"}[a.phase]
     g = guard.Gate(a.live, a.confirm_account, excl, f"{OUT}/state.json", ph, lambda m: print(m))
-    pool = candidates(a, excl)
+    g.classes = tuple(a.classes.split(','))
+    pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes]
     rnd = random.Random(SEED)
     eq = [r for r in pool if r["klasse"] == "K1" and guard.market_open("K1")]
     if a.phase == "plan":
         cls = {k: len([r for r in pool if r["klasse"] == k]) for k in ("K1", "K2", "K3", "K4", "K5")}
         sel = {"c4": [r["symbol"] for r in rnd.sample([r for r in pool if r["klasse"] == "K1"], min(a.n, len(pool)))],
-               "c1": [r["symbol"] for r in pool if r["klasse"] == "K2"][:1]}
+               "c1": [r["symbol"] for r in pool if r["klasse"] == "K1"][:1], "classes": list(g.classes)}
         os.makedirs(OUT, exist_ok=True)
         json.dump({"written": now(), "excluded_bot_instruments": len(excl), "pool_by_class": cls, "planned": sel,
                    "hinweis": "Diese Symbole werden nur vom EBC-Stufe-C-Skript gehandelt; der Bot-Thread sollte sie ausschliessen."}, open(f"{OUT}/test_symbols.json", "w"), indent=1)
@@ -170,14 +180,14 @@ def main():
                 print("uebersprungen:", r["symbol"], e)
             time.sleep(1.1)
     elif a.phase == "c1":
-        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)
+        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)   # K2 nur wenn per --classes freigegeben
         if r is None: print("kein geeignetes Instrument/Markt geschlossen"); return
         bid, ask = rates([int(r["etoro_id"])])[int(r["etoro_id"])]
         sl = round(ask * 0.985, 5)
         open_order(g, r, 50.0, True, {"IsTslEnabled": True, "StopLossRate": sl}, tag="c1_IsTslEnabled")
         open_order(g, r, 50.0, True, {"IsTrailingStop": True, "StopLossRate": sl}, tag="c1_IsTrailingStop")
     elif a.phase == "c5":
-        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)
+        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)   # K2 nur wenn per --classes freigegeben
         if r is None: print("kein geeignetes Instrument/Markt geschlossen"); return
         res = open_order(g, r, 50.0, True, tag="c5")
         if res and res[0]:
@@ -188,7 +198,7 @@ def main():
             json.dump({"opened_units": res[0]["units"], "deducted": half, "remaining": rest[0]["units"] if rest else 0,
                        "fees_after": (rest[0].get("totalFees"), rest[0].get("totalExternalFees")) if rest else None}, open(f"{OUT}/partial_close.json", "w"), indent=1)
     elif a.phase == "fin":
-        plan = [("K1", True), ("K2", True), ("K2", False), ("K3", True), ("K3", False), ("K4", True), ("K4", False)]
+        plan = [(k, b) for k in g.classes for b in ((True,) if k == "K5" else (True, False))]
         for k, buy in plan:
             r = next((x for x in pool if x["klasse"] == k and guard.market_open(k)), None)
             if r is None: print("kein Instrument/Markt geschlossen fuer", k, buy); continue
