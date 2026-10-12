@@ -5,6 +5,15 @@ Der Bot nutzt ausschliesslich `/demo/`, solange `ETORO_PAPER_ACCOUNT_CID` in `.e
 `api_environment()` liefert ohne Konto-ID immer `demo`). Eine gesetzte Konto-ID schaltet auf `/real/` um, aber nur, wenn
 `GET /api/v1/me` genau diese Kennung liefert. Die Zeile darf deshalb NIE auf die Kennung des echten Kontos zeigen.
 
+## Vorher prüfen: fremde Positionen im Demo-Konto (Stand 2026-10-12 17:33 UTC)
+
+- 1 GOOG-Long über ca. 9'999 USD, heute 17:13 UTC eröffnet, weder vom Bot noch aus Stage C geplant: ca. 57 % der Equity.
+  Der Bot zählt sie in Exposure (Deckel 60 %) und Verlustschutz (3 % Tagesverlust) mit. Er könnte dann kaum noch
+  einsteigen, und ein Kursrückgang von ca. 5 % auf GOOG löst den Tagesverlust-Stopp aus. Vor dem Start schliessen
+  oder bewusst belassen.
+- 11 Altpositionen auf Instrument 1053 (alle long, 2021/22, zusammen ca. 1'140 USD, ca. 6,6 % der Equity): unkritisch,
+  dürfen bleiben.
+
 ## Reihenfolge (alles auf dem Gerät, Phili führt es aus)
 
 1. Code holen (enthält Exit 7 statt Neustartschleife, falls #1346 gemergt ist):
