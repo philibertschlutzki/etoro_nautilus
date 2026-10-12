@@ -117,3 +117,7 @@ def test_demo_mode_paths_and_confirmation(monkeypatch):
     finally:
         guard.FORCE_ENV[0] = None
         guard.set_environment()
+
+
+def test_feeprobe_cap_1000():
+    assert guard.CAPS["fp"] == 1000.0

@@ -9,6 +9,7 @@ Phasen:  plan | c4 | c1 | c5 | fin | monitor | closeall
   fin      kleine Positionen je Klasse/Seite fuer Finanzierungsmessung (<= 100 USD); danach taeglich 'monitor'
   monitor  rein lesend: protokolliert Gebuehren-/Stop-Felder aller eigenen Testpositionen
   w8ben    EIN Long-Kauf (10 USD) einer liquiden US-Aktie, sofort wieder schliessen: Ausgabe 'W-8BEN: frei' / 'W-8BEN: gesperrt (768)' / 'unklar: <errorCode>'
+  feeprobe je 1 Long (200/500/1000 USD) einer liquiden US-Aktie, sofort voll schliessen, Gebuehr open/close getrennt (Tabelle)
   closeall schliesst alle eigenen Testpositionen per positionId
 """
 from __future__ import annotations
@@ -184,7 +185,7 @@ def pick_instrument(pool, symbols, g):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "w8ben"])
+    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "w8ben", "feeprobe"])
     ap.add_argument("--live", action="store_true", help="Orders wirklich senden (Standard: Dry-Run)")
     ap.add_argument("--confirm-account", default=None, help="muss gleich ETORO_PAPER_ACCOUNT_CID sein")
     ap.add_argument("--whitelist", default=os.path.expanduser("~/etoro_nautilus/data/state/incubation_whitelist.json"))
@@ -204,7 +205,7 @@ def main():
     if a.phase == "monitor":
         return monitor()
     excl = guard.bot_excluded_ids(a.whitelist, a.bot_map)
-    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "w8ben": "w8"}[a.phase]
+    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "w8ben": "w8", "feeprobe": "fp"}[a.phase]
     g = guard.Gate(a.live, a.confirm_account, excl, state_file(), ph, lambda m: print(m))
     g.classes = tuple(a.classes.split(','))
     g.fx_max_exposure = a.fx_max_exposure
@@ -233,6 +234,48 @@ def main():
         else:
             code = next((w for w in (rej or "").replace(":", " ").split() if w.startswith("error_")), "unbekannt")
             print(f"unklar: {code} {rej}")
+        return
+    if a.phase == "feeprobe":
+        r = next((x for x in pool if x["klasse"] == "K1" and x["symbol"] in LIQUID_US and guard.market_open("K1")), None)
+        if r is None:
+            print("feeprobe nicht moeglich: keine liquide US-Aktie im Pool (Bot/offene Position) oder US-Markt geschlossen"); return
+        print("feeprobe auf", r["symbol"], "- Long 200/500/1000 USD, jeweils sofort voll geschlossen")
+        rows_fp = []
+        for amt in (200.0, 500.0, 1000.0):
+            try:
+                res = open_order(g, r, amt, True, tag=f"feeprobe{int(amt)}")
+            except guard.Refused as e:
+                print("verweigert:", e); break
+            if not g.live:
+                continue
+            pos, rej = res
+            if not pos:
+                print(f"{amt:.0f} USD: keine Position ({rej})"); continue
+            open_fee = float(pos.get("totalFees") or 0) + float(pos.get("totalExternalFees") or 0)
+            try: close_position(g, pos["positionID"])
+            except Exception as e: print("FEHLER beim Schliessen:", e, "- closeall --env", guard.ENV_MODE); break
+            rows_fp.append(dict(amount=amt, position_id=pos["positionID"], units=pos["units"], open_rate=pos["openRate"], open_fee=open_fee))
+            time.sleep(6)
+        if not g.live:
+            print("DRY-RUN: kein Ergebnis"); return
+        time.sleep(5)
+        hist = {str(h["positionId"]): h for h in guard.get(f"{guard.BASE}/trading/info/trade/history?minDate={dt.date.today().isoformat()}&page=1&pageSize=50")}
+        out = []
+        for x in rows_fp:
+            h = hist.get(str(x["position_id"]))
+            if h:
+                gross = x["units"] * (h["closeRate"] - x["open_rate"])
+                total = round(gross - h["netProfit"], 4)
+                x.update(close_rate=h["closeRate"], net_profit=h["netProfit"], hist_fees=h.get("fees"), implied_total_fee=total, close_fee=round(total - x["open_fee"], 4))
+            out.append(x)
+        os.makedirs(OUT, exist_ok=True)
+        with open(f"{OUT}/feeprobe.csv", "w", newline="") as f:
+            cols = ["amount", "position_id", "units", "open_rate", "open_fee", "close_rate", "net_profit", "hist_fees", "implied_total_fee", "close_fee"]
+            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader(); w.writerows(out)
+        print(f"\n{'USD':>6} {'open_fee':>9} {'open_bps':>9} {'close_fee':>10} {'close_bps':>10} {'total':>7}  (impl. aus Brutto-PnL minus netProfit; hist_fees)")
+        for x in out:
+            cf = x.get("close_fee"); a_ = x["amount"]
+            print(f"{a_:6.0f} {x['open_fee']:9.2f} {x['open_fee']/a_*1e4:9.1f} {('%.2f' % cf) if cf is not None else 'n/a':>10} {('%.1f' % (cf/a_*1e4)) if cf is not None else 'n/a':>10} {x.get('implied_total_fee','n/a')}  hist={x.get('hist_fees')}")
         return
     if a.phase == "plan":
         cls = {k: len([r for r in pool if r["klasse"] == k]) for k in ("K1", "K2", "K3", "K4", "K5")}
