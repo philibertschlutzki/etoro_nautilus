@@ -1,0 +1,11 @@
+{
+ "ts": "2026-10-11T14:36:36.926058+00:00",
+ "n_positions": 2,
+ "fees_bps_open_position": {
+  "CRYPTO_long": {
+   "n": 2,
+   "mean": 100.07821178405433
+  }
+ },
+ "note": "Gebuehren seit Eroeffnung (Eroeffnungsgebuehr + Finanzierung bisher); Slippage ist ohne Quote zum Sendezeitpunkt nicht ableitbar."
+}
