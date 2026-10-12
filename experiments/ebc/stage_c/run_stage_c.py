@@ -138,16 +138,20 @@ def recover(g):
     g.save()
 
 
+def state_file():
+    return f"{OUT}/state.json" if guard.ENV_MODE == "real" else f"{OUT}/state_{guard.ENV_MODE}.json"
+
+
 def monitor():
     g_pos = {str(p["positionID"]): p for p in guard.positions()}
-    state = json.load(open(f"{OUT}/state.json")) if os.path.exists(f"{OUT}/state.json") else {"positions": {}}
+    state = json.load(open(state_file())) if os.path.exists(state_file()) else {"positions": {}}
     ids = [v["instrument"] for v in state["positions"].values()]
     rt = rates(ids) if ids else {}
     for pid, meta in list(state["positions"].items()):
         p = g_pos.get(pid)
         if not p:
             append("position_fees_daily.csv", ["ts", "position_id", "instrument", "klasse", "status"], [now(), pid, meta["instrument"], meta["klasse"], "nicht mehr offen"])
-            state["positions"].pop(pid, None); json.dump(state, open(f"{OUT}/state.json", "w"), indent=1); continue
+            state["positions"].pop(pid, None); json.dump(state, open(state_file(), "w"), indent=1); continue
         bid, ask = rt.get(meta["instrument"], ("", ""))
         row = [now(), pid, meta["instrument"], meta["klasse"], "BUY" if p["isBuy"] else "SELL", p["units"], p["openRate"], p.get("stopLossRate"), p.get("isTslEnabled"),
                p.get("totalFees"), p.get("totalExternalFees"), p.get("amount"), bid, ask, meta.get("tag", "")]
@@ -191,7 +195,7 @@ def main():
         return monitor()
     excl = guard.bot_excluded_ids(a.whitelist, a.bot_map)
     ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "w8ben": "w8"}[a.phase]
-    g = guard.Gate(a.live, a.confirm_account, excl, f"{OUT}/state.json", ph, lambda m: print(m))
+    g = guard.Gate(a.live, a.confirm_account, excl, state_file(), ph, lambda m: print(m))
     g.classes = tuple(a.classes.split(','))
     g.fx_max_exposure = a.fx_max_exposure
     us_hint = (lambda r: '.' not in r['symbol'])
