@@ -96,3 +96,23 @@ def test_recover_adopts_pending_by_order_id(monkeypatch, tmp_path):
 
 def test_w8ben_phase_cap_is_10():
     assert guard.CAPS["w8"] == 10.0
+
+
+def test_whoami_scrubs_secrets():
+    import whoami
+    out = whoami.scrub({"x-api-key": "abc", "name": "n", "nested": [{"accessToken": "t", "v": 1}]})
+    assert out["x-api-key"] == "<entfernt>" and out["nested"][0]["accessToken"] == "<entfernt>" and out["nested"][0]["v"] == 1
+
+
+def test_demo_mode_paths_and_confirmation(monkeypatch):
+    monkeypatch.setenv("ETORO_PAPER_ACCOUNT_CID", "123")
+    monkeypatch.setattr(guard, "_req", lambda *a, **k: (200, {}))
+    guard.FORCE_ENV[0] = "demo"
+    try:
+        assert guard.verify_account() == "demo"
+        assert guard.EXEC.endswith("/execution/demo") and "/demo/pnl" in guard.PNL
+        with pytest.raises(guard.Refused): mk(live=True, confirm="123").post(guard.EXEC + "/x", {})
+        assert mk(live=True, confirm="demo").post(guard.EXEC + "/x", {})[0] == 200
+    finally:
+        guard.FORCE_ENV[0] = None
+        guard.set_environment()

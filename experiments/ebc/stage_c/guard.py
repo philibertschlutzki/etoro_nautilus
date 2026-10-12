@@ -12,9 +12,24 @@ import uuid
 from zoneinfo import ZoneInfo
 
 BASE = "https://public-api.etoro.com/api/v1"
-EXEC = f"{BASE}/trading/execution"                     # per account_guard: /real/-Pfad nur fuer das angeheftete Paper-Konto
+# Pfade je Umgebung: mit ETORO_PAPER_ACCOUNT_CID -> /real/ (nur fuer das angeheftete Paper-Konto, per /me geprueft);
+# ohne -> /demo/ (Key mit Demo-Scope, Demo-Konto). Wird in set_environment() gesetzt.
+EXEC = f"{BASE}/trading/execution"
 PNL = f"{BASE}/trading/info/real/pnl"
 ORDER_INFO = f"{BASE}/trading/info/real/orders"
+ENV_MODE = "real"
+
+
+FORCE_ENV = [None]        # "demo" | "real" | None (aus ETORO_PAPER_ACCOUNT_CID abgeleitet)
+
+
+def set_environment():
+    global EXEC, PNL, ORDER_INFO, ENV_MODE
+    use_real = bool(os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip()) if FORCE_ENV[0] is None else FORCE_ENV[0] == "real"
+    if use_real:
+        ENV_MODE, EXEC, PNL, ORDER_INFO = "real", f"{BASE}/trading/execution", f"{BASE}/trading/info/real/pnl", f"{BASE}/trading/info/real/orders"
+    else:
+        ENV_MODE, EXEC, PNL, ORDER_INFO = "demo", f"{BASE}/trading/execution/demo", f"{BASE}/trading/info/demo/pnl", f"{BASE}/trading/info/demo/orders"
 CAPS = {"w8": 10.0, "c1": 50.0, "c4": 20.0, "c5": 50.0, "c2": 100.0, "c3": 100.0}
 MAX_TEST_POSITIONS = 20
 DEFAULT_CLASSES = ('K1', 'K5')          # FX/Rohstoffe/Indizes: eToro lehnt kleine Betraege ab (FX < 1000 USD); nur mit --classes
@@ -68,9 +83,15 @@ def get(url, tries=6):
 
 def verify_account():
     """GET /me muss die angeheftete Paper-Konto-ID liefern, sonst Abbruch (fail-closed)."""
+    set_environment()
     pinned = os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip()
+    if ENV_MODE == "demo":   # Demo-Modus: ausschliesslich /demo/-Pfade; Erreichbarkeit per demo/pnl (/me kann bei Demo-Keys 403 liefern)
+        s, _ = _req(PNL)
+        if s != 200:
+            raise Refused(f"Demo-pnl nicht erreichbar (HTTP {s}) - Key ohne Demo-Scope?")
+        return "demo"
     if not pinned:
-        raise Refused("ETORO_PAPER_ACCOUNT_CID nicht gesetzt")
+        raise Refused("ETORO_PAPER_ACCOUNT_CID nicht gesetzt (real-Modus verlangt die angeheftete Paper-Konto-ID)")
     me = get(f"{BASE}/me")
     if str(me.get("realCid", "")) != pinned:
         raise Refused("/me liefert nicht das Paper-Konto - Abbruch")
@@ -155,6 +176,7 @@ class Gate:
         if not self.live:
             self.log(f"DRYRUN POST {url.replace(EXEC, '.../execution')} {json.dumps(payload)}")
             return 200, {"dryrun": True}
-        if self.confirm != os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip():
+        expected = "demo" if ENV_MODE == "demo" else os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip()
+        if self.confirm != expected:
             raise Refused("--confirm-account stimmt nicht mit ETORO_PAPER_ACCOUNT_CID ueberein")
         return _req(url, "POST", payload)
