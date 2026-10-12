@@ -1,28 +1,26 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 15:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-12 16:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 9377.03 USD |
+| Freies Guthaben | 9376.14 USD |
 | Investiert | 590.47 USD in 3 Position(en) |
-| Unrealisierter PnL | -9.46 USD |
+| Unrealisierter PnL | -6.84 USD |
 | Bot | läuft |
-| Fehlerzeilen im heutigen Bot-Log | 3 |
+| Fehlerzeilen im heutigen Bot-Log | 5 |
 | Paare mit Evidenz-Ledger | 0 |
 
 ## Offene Positionen
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| CVNA.ETORO | Short | 195.06 | 63.32 | +1.73 |
-| BTC.ETORO | Long | 197.67 | 84041.4 | -2.86 |
-| INJ.ETORO | Long | 197.74 | 8.025 | -8.33 |
+| CVNA.ETORO | Short | 195.06 | 63.32 | +2.83 |
+| BTC.ETORO | Long | 197.67 | 84041.4 | -3.51 |
+| INJ.ETORO | Long | 197.74 | 8.025 | -6.16 |
 
 ## Letzte Ereignisse
 
-- 2026-10-11 13:45 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 14:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 14:24 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 14:24 UTC ZUSAMMENFASSUNG Guthaben 9619.58 USD, 2 offene Position(en) (PnL +0.69), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft NICHT, Ledger: noch keine Evidenz.
 - 2026-10-11 14:24 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
@@ -51,3 +49,5 @@ Stand: 2026-10-12 15:00 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-12 11:15 UTC ZUSAMMENFASSUNG Guthaben 9573.67 USD, 2 offene Position(en) (PnL -3.36), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 14:00 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 14:15 UTC ERÖFFNET Short CVNA.ETORO, Position 3603778653, 195.06 USD, PnL -0.55
+- 2026-10-12 15:15 UTC ZUSAMMENFASSUNG Guthaben 9376.14 USD, 3 offene Position(en) (PnL -8.60), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-12 15:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.

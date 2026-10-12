@@ -10,3 +10,5 @@
 - 2026-10-12 11:15 UTC ZUSAMMENFASSUNG Guthaben 9573.67 USD, 2 offene Position(en) (PnL -3.36), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 14:00 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 14:15 UTC ERÖFFNET Short CVNA.ETORO, Position 3603778653, 195.06 USD, PnL -0.55
+- 2026-10-12 15:15 UTC ZUSAMMENFASSUNG Guthaben 9376.14 USD, 3 offene Position(en) (PnL -8.60), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-12 15:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
