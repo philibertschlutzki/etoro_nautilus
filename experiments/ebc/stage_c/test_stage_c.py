@@ -17,6 +17,7 @@ def test_dry_run_never_posts(monkeypatch):
 
 
 def test_live_requires_matching_confirmation(monkeypatch):
+    monkeypatch.setattr(guard, "ENV", "real")
     monkeypatch.setenv("ETORO_PAPER_ACCOUNT_CID", "123")
     monkeypatch.setattr(guard, "_req", lambda *a, **k: (200, {}))
     with pytest.raises(guard.Refused):
@@ -82,3 +83,12 @@ def test_cfd_classes_blocked_by_default_and_fx_minimum(monkeypatch):
     g.state["positions"] = {str(i): {"klasse": "K2", "amount": 1010} for i in range(4)}
     g.fx_max_exposure = 1.0
     with pytest.raises(guard.Refused): g.check_open(9, 1010, True, "K2")      # max. 4 FX-Testpositionen
+
+
+def test_demo_is_default_and_never_real():
+    assert guard.ENV == "demo" and guard.EXEC.endswith("/execution/demo") and "/real/" not in guard.PNL and "/real/" not in guard.ORDER_INFO
+
+
+def test_demo_confirm_must_be_demo(monkeypatch):
+    monkeypatch.setattr(guard, "ENV", "demo")
+    with pytest.raises(guard.Refused): mk(live=True, confirm="48264806").post(guard.EXEC + "/x", {})

@@ -12,9 +12,13 @@ import uuid
 from zoneinfo import ZoneInfo
 
 BASE = "https://public-api.etoro.com/api/v1"
-EXEC = f"{BASE}/trading/execution"                     # per account_guard: /real/-Pfad nur fuer das angeheftete Paper-Konto
-PNL = f"{BASE}/trading/info/real/pnl"
-ORDER_INFO = f"{BASE}/trading/info/real/orders"
+# Standard seit 2026-10-12: Demo-Konto (Phili). Der neue Key erreicht ueber /real/ Philis ECHTES Konto -> /real/ nur mit STAGE_C_ENV=real
+# (Altkonto 48264806 mit angeheftetem ETORO_PAPER_ACCOUNT_CID), nie als Standard.
+ENV = os.environ.get("STAGE_C_ENV", "demo")
+if ENV not in ("demo", "real"): raise SystemExit("STAGE_C_ENV muss demo oder real sein")
+EXEC = f"{BASE}/trading/execution" + ("/demo" if ENV == "demo" else "")
+PNL = f"{BASE}/trading/info/{ENV}/pnl"
+ORDER_INFO = f"{BASE}/trading/info/{ENV}/orders"
 CAPS = {"c1": 50.0, "c4": 20.0, "c5": 50.0, "c2": 100.0, "c3": 100.0, "h4": 50.0, "h6": 20.0}
 MAX_TEST_POSITIONS = 20
 DEFAULT_CLASSES = ('K1', 'K5')          # FX/Rohstoffe/Indizes: eToro lehnt kleine Betraege ab (FX < 1000 USD); nur mit --classes
@@ -56,6 +60,10 @@ def get(url):
 
 def verify_account():
     """GET /me muss die angeheftete Paper-Konto-ID liefern, sonst Abbruch (fail-closed)."""
+    if ENV == "demo":
+        d = get(PNL).get("clientPortfolio")                     # Demo-Endpunkt muss antworten; /real/ wird in diesem Modus nie angesprochen
+        if d is None: raise Refused("Demo-PnL nicht lesbar - Abbruch")
+        return "demo"
     pinned = os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip()
     if not pinned:
         raise Refused("ETORO_PAPER_ACCOUNT_CID nicht gesetzt")
@@ -142,6 +150,7 @@ class Gate:
         if not self.live:
             self.log(f"DRYRUN POST {url.replace(EXEC, '.../execution')} {json.dumps(payload)}")
             return 200, {"dryrun": True}
-        if self.confirm != os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip():
-            raise Refused("--confirm-account stimmt nicht mit ETORO_PAPER_ACCOUNT_CID ueberein")
+        expected = "demo" if ENV == "demo" else os.environ.get("ETORO_PAPER_ACCOUNT_CID", "").strip()
+        if self.confirm != expected:
+            raise Refused(f"--confirm-account stimmt nicht ueberein (erwartet: {'demo' if ENV == 'demo' else 'ETORO_PAPER_ACCOUNT_CID'})")
         return _req(url, "POST", payload)
