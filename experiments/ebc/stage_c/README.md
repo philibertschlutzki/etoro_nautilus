@@ -16,3 +16,6 @@ eToro lehnt FX-Positionen < 1000 USD ab (Bot-Beobachtung 2026-10-11). Standard d
 ### FX-Finanzierung (Entscheidung Phili 2026-10-12: 1010 USD)
 Nur Phase `fin`, Betrag genau 1010 USD, höchstens 4 FX-Testpositionen (z. B. 1 Long + 1 Short je Paar, 2 Paare), Handelszeit-/Wochenend-Prüfung unverändert. Aufruf: `run_stage_c.py fin --live --confirm-account 48264806 --classes K1,K2,K5 --fx-max-exposure <Anteil>`.
 **Achtung:** Die Exposure-Grenze der Testpositionen ist standardmäßig 4 % des Kontos – eine 1010-USD-Position sind aber ~10 %, 2 Positionen ~20 %, 4 Positionen ~40 % (brutto; Long/Short-Paare netto ~0). Mit dem Standard wird FX deshalb verweigert, bis `--fx-max-exposure` bewusst gesetzt wird (z. B. 0.20 für 1 Long + 1 Short).
+
+## Voraussetzung für h4/h6 (Stand 2026-10-12)
+eToro lehnt US-Aktien-Käufe im Paper-Konto mit „User is blocked by W-8BEN from opening position“ ab (Bot-Log: PYPL, ASTS, MSTR); ein Aktien-Short (CVNA) wurde ausgeführt, GOLD mit error_720 (Mindestbetrag) abgelehnt. `h4` und `h6` sind US-Aktien/ETF-Longs und liefern bis zur Klärung des W-8BEN-Formulars nur Ablehnungen (`results/stage_c/rejections.csv`), also kein Messergebnis. Erst W-8BEN prüfen, dann h4/h6 starten.
