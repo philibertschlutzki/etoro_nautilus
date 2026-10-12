@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Paper-Wochenbericht (schreibt und veröffentlicht den Bericht)
+ConditionPathExists=%h/etoro_nautilus/automation/paper_weekly_report.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+ExecStart=%h/etoro_nautilus/venv/bin/python -m automation.paper_weekly_report --write
+ExecStart=%h/etoro_nautilus/venv/bin/python -m automation.paper_report_publish
+StandardOutput=append:%h/etoro_nautilus/logs/paper_weekly.log
+StandardError=append:%h/etoro_nautilus/logs/paper_weekly.log

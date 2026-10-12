@@ -1,7 +1,7 @@
 """Wochenbericht: Fills aus Logs werden FIFO zu Round-Trips gepaart, Gebühren modelliert, Datei höchstens wöchentlich."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from automation import paper_weekly_report as pw
 
@@ -47,11 +47,8 @@ def test_logged_commission_wins_and_duplicates_are_dropped(tmp_path):
     assert round(trips[0].fee, 2) == 1.00
 
 
-def test_render_and_weekly_file_written_once(tmp_path):
+def test_write_weekly_creates_file_for_the_iso_week(tmp_path):
     _log(tmp_path, _line("2026-10-11T01:00:00Z", "A.ETORO", "BUY", 1, 10, "a"),
          _line("2026-10-11T02:00:00Z", "A.ETORO", "SELL", 1, 12, "b"))
-    state = pw.maybe_write_weekly({}, NOW, report_dir=tmp_path / "r", log_dir=tmp_path)
-    files = list((tmp_path / "r").glob("paper_weekly_2026-W*.md"))
-    assert len(files) == 1 and "Round-Trips" in files[0].read_text("utf-8") and state["last_weekly"]
-    again = pw.maybe_write_weekly(state, NOW + timedelta(days=3), report_dir=tmp_path / "r2", log_dir=tmp_path)
-    assert again == state and not (tmp_path / "r2").exists()
+    path = pw.write_weekly(NOW, report_dir=tmp_path / "r", log_dir=tmp_path)
+    assert path.name == "paper_weekly_2026-W42.md" and "Round-Trips" in path.read_text("utf-8")

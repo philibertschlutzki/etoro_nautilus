@@ -5,13 +5,14 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 dest="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$dest"
-for f in etoro-paper-bot.service etoro-ops-guard.service etoro-ops-guard.timer; do
+for f in etoro-paper-bot.service etoro-ops-guard.service etoro-ops-guard.timer etoro-paper-weekly.service etoro-paper-weekly.timer; do
   install -m 0644 "$here/$f" "$dest/$f"
   echo "installiert: $dest/$f"
 done
 systemctl --user daemon-reload
 systemctl --user enable --now etoro-ops-guard.timer
+systemctl --user enable --now etoro-paper-weekly.timer
 echo
-echo "Wächter-Timer aktiv. Bot-Dienst installiert, aber NICHT gestartet."
+echo "Wächter-Timer und Wochenbericht-Timer (Montag 06:00 UTC) aktiv. Bot-Dienst installiert, aber NICHT gestartet."
 echo "Linger (Dienste laufen auch ohne Anmeldung/nach Neustart) ist: $(loginctl show-user "$USER" -p Linger --value 2>/dev/null || echo unbekannt)"
 echo "Falls 'no': einmalig  sudo loginctl enable-linger $USER"

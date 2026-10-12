@@ -8,9 +8,9 @@ Gebühren: steht im Log eine Kommission > 0, wird sie genommen. Sonst gilt das M
 (``commission_bps_by_asset_class``, eToro-Krypto 1 % je Seite = 200 bps Round-Trip). Der Spread steckt in den
 Fill-Preisen und ist nicht extra ausgewiesen.
 
-Aufruf: ``python -m automation.paper_weekly_report [--days 7]``. ``paper_report`` ruft ihn bei jedem Lauf auf, schreibt
-aber höchstens einmal je 7 Tage eine neue Datei ``paper_weekly_<Jahr>-W<Woche>.md`` nach ``data/paper_reports/``
-(der stündliche Push veröffentlicht sie nach ``logs/paper_reports/``).
+Aufruf: ``python -m automation.paper_weekly_report [--days 7] [--write]``. Wöchentlich läuft er über den systemd-User-Timer
+``etoro-paper-weekly.timer`` (kein cron): ``--write`` legt ``paper_weekly_<Jahr>-W<Woche>.md`` nach ``data/paper_reports/``,
+danach veröffentlicht ``automation.paper_report_publish`` sie nach ``logs/paper_reports/``.
 """
 from __future__ import annotations
 
@@ -197,27 +197,27 @@ def build(days: int = 7, *, now: datetime | None = None, log_dir: Path = LOG_DIR
     return render([t for t in trips if t.closed >= start], open_qty, classes, start=start, end=now)
 
 
-def maybe_write_weekly(state: dict, now: datetime, *, report_dir: Path | None = None, log_dir: Path = LOG_DIR) -> dict:
-    """Schreibt höchstens alle 7 Tage einen Wochenbericht; Fehler brechen den Aufrufer nie ab."""
-    last = state.get("last_weekly")
-    if last and now - datetime.fromisoformat(last) < ONE_WEEK:
-        return state
-    try:
-        year, week, _ = now.isocalendar()
-        target = (report_dir or REPORT_DIR)
-        target.mkdir(parents=True, exist_ok=True)
-        (target / f"paper_weekly_{year}-W{week:02d}.md").write_text(build(7, now=now, log_dir=log_dir), "utf-8")
-    except Exception as exc:  # noqa: BLE001
-        print(f"HINWEIS: Wochenbericht fehlgeschlagen: {exc}", file=sys.stderr)
-        return state
-    return dict(state, last_weekly=now.isoformat())
+def write_weekly(now: datetime | None = None, *, report_dir: Path | None = None, log_dir: Path = LOG_DIR,
+                 days: int = 7) -> Path:
+    """Schreibt ``paper_weekly_<Jahr>-W<Woche>.md`` (überschreibt die Datei derselben Woche)."""
+    now = now or datetime.now(timezone.utc)
+    year, week, _ = now.isocalendar()
+    target = report_dir or REPORT_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    path = target / f"paper_weekly_{year}-W{week:02d}.md"
+    path.write_text(build(days, now=now, log_dir=log_dir), "utf-8")
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Paper-Wochenbericht (nur lesend)")
     parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--write", action="store_true", help="Datei nach data/paper_reports/ schreiben statt drucken")
     args = parser.parse_args(argv)
-    print(build(args.days))
+    if args.write:
+        print(f"geschrieben: {write_weekly(days=args.days)}")
+    else:
+        print(build(args.days))
     return 0
 
 

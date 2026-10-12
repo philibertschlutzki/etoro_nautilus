@@ -76,3 +76,10 @@ Danach startet der Orchestrator den Bot wieder selbst per `Popen`. Der Wächter-
 - Der Dienst startet nur, wenn `data/state/incubation_whitelist.json` existiert (`ConditionPathExists`).
 - Nach einem Circuit-Breaker-Stopp (Exit 3) oder `Bot läuft bereits` (Exit 4) bleibt der Dienst `failed`: Ursache im Journal und im
   Fehler-Log des Wächters prüfen, dann `systemctl --user reset-failed etoro-paper-bot.service` und bewusst neu starten.
+
+## Wochenbericht (systemd-Timer, kein cron)
+
+`deploy/systemd/install.sh` installiert und aktiviert zusätzlich `etoro-paper-weekly.timer` (Montag 06:00 UTC,
+`Persistent=true` holt einen verpassten Lauf nach). Der Dienst schreibt `data/paper_reports/paper_weekly_<Jahr>-W<Woche>.md`
+und veröffentlicht ihn nach `logs/paper_reports/`. Prüfen: `systemctl --user list-timers etoro-paper-weekly.timer`,
+Ausgabe in `logs/paper_weekly.log`. Sofort ausführen: `systemctl --user start etoro-paper-weekly.service`.
