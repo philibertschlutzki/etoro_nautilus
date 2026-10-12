@@ -3,3 +3,6 @@
 - 2026-10-12 04:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-12 04:15 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-12 04:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
+- 2026-10-12 05:15 UTC ERÖFFNET Long BTC.ETORO, Position 3602833773, 197.67 USD, PnL +0.20
+- 2026-10-12 05:15 UTC ERÖFFNET Long INJ.ETORO, Position 3602833776, 197.74 USD, PnL +0.57
+- 2026-10-12 05:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
