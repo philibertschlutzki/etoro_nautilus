@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 14:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-12 15:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 9573.38 USD |
-| Investiert | 395.41 USD in 2 Position(en) |
-| Unrealisierter PnL | -5.86 USD |
+| Freies Guthaben | 9377.03 USD |
+| Investiert | 590.47 USD in 3 Position(en) |
+| Unrealisierter PnL | -9.46 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 3 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,12 +15,12 @@ Stand: 2026-10-12 14:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| BTC.ETORO | Long | 197.67 | 84041.4 | -3.25 |
-| INJ.ETORO | Long | 197.74 | 8.025 | -2.61 |
+| CVNA.ETORO | Short | 195.06 | 63.32 | +1.73 |
+| BTC.ETORO | Long | 197.67 | 84041.4 | -2.86 |
+| INJ.ETORO | Long | 197.74 | 8.025 | -8.33 |
 
 ## Letzte Ereignisse
 
-- 2026-10-11 13:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 13:45 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 14:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-11 14:24 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
@@ -50,3 +50,4 @@ Stand: 2026-10-12 14:00 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-12 07:00 UTC ZUSAMMENFASSUNG Guthaben 9574.26 USD, 2 offene Position(en) (PnL -1.89), 2 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 11:15 UTC ZUSAMMENFASSUNG Guthaben 9573.67 USD, 2 offene Position(en) (PnL -3.36), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 14:00 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 14:15 UTC ERÖFFNET Short CVNA.ETORO, Position 3603778653, 195.06 USD, PnL -0.55
