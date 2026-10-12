@@ -57,10 +57,14 @@ def find_key(obj, name):
 
 def new_position(before_ids, instrument_id, tries=20):
     for _ in range(tries):
-        for p in guard.positions():
+        try:
+            current = guard.positions()
+        except RuntimeError as e:          # 429 etc.: weiter versuchen, nie abbrechen (Order koennte offen sein)
+            print("positions-Abfrage fehlgeschlagen, neuer Versuch:", e); time.sleep(5); continue
+        for p in current:
             if int(p["instrumentID"]) == int(instrument_id) and str(p["positionID"]) not in before_ids:
                 return p
-        time.sleep(3)
+        time.sleep(4)
     return None
 
 

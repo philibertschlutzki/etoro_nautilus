@@ -47,11 +47,17 @@ def _req(url, method="GET", payload=None):
         return e.code, {"error": e.read().decode()[:300]}
 
 
-def get(url):
-    s, b = _req(url)
-    if s != 200:
-        raise RuntimeError(f"GET {url.split('?')[0]} HTTP {s}")
-    return b
+def get(url, tries=6):
+    """GET mit Backoff bei HTTP 429/5xx (nie abbrechen, solange eine Order unbestaetigt sein koennte)."""
+    import time
+    for i in range(tries):
+        s, b = _req(url)
+        if s == 200:
+            return b
+        if s in (429, 500, 502, 503, 504):
+            time.sleep(min(60, 3 * 2 ** i)); continue
+        break
+    raise RuntimeError(f"GET {url.split('?')[0]} HTTP {s}")
 
 
 def verify_account():
