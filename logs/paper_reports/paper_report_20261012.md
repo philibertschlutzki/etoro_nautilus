@@ -81,3 +81,5 @@
 - 2026-10-12 20:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 21:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 21:45 UTC ZUSAMMENFASSUNG Guthaben 125467.66 USD, 6 offene Position(en) (PnL -1.41), 21 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-12 22:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 22:45 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
