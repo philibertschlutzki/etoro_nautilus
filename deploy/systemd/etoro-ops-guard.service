@@ -1,0 +1,10 @@
+[Unit]
+Description=eToro Paper-Bot Betriebs-Wächter (Bot-Check + Log-Budget 5 GiB)
+ConditionPathExists=%h/etoro_nautilus/automation/ops_guard.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+ExecStart=/usr/bin/flock -n /tmp/ops_guard.lock %h/etoro_nautilus/venv/bin/python -m automation.ops_guard
+StandardOutput=append:%h/etoro_nautilus/logs/ops_guard.log
+StandardError=append:%h/etoro_nautilus/logs/ops_guard.log
