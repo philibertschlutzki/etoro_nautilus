@@ -1,45 +1,31 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 16:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-12 17:15 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 9376.14 USD |
-| Investiert | 590.47 USD in 3 Position(en) |
-| Unrealisierter PnL | -6.84 USD |
+| Freies Guthaben | 8555.04 USD |
+| Investiert | 1388.71 USD in 8 Position(en) |
+| Unrealisierter PnL | -2.67 USD |
 | Bot | läuft |
-| Fehlerzeilen im heutigen Bot-Log | 5 |
+| Fehlerzeilen im heutigen Bot-Log | 10 |
 | Paare mit Evidenz-Ledger | 0 |
 
 ## Offene Positionen
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| CVNA.ETORO | Short | 195.06 | 63.32 | +2.83 |
-| BTC.ETORO | Long | 197.67 | 84041.4 | -3.51 |
-| INJ.ETORO | Long | 197.74 | 8.025 | -6.16 |
+| ORCL.ETORO | Short | 191.14 | 136.53 | -1.05 |
+| INTU.ETORO | Short | 191.28 | 308.52 | +0.23 |
+| ZTS.ETORO | Short | 191.71 | 75.18 | -0.20 |
+| LULU.ETORO | Short | 191.00 | 94.09 | -0.28 |
+| CVNA.ETORO | Short | 191.52 | 61.19 | -0.44 |
+| MSTR.ETORO | Short | 190.41 | 153.56 | -0.66 |
+| CELH.ETORO | Short | 191.65 | 28.35 | -0.27 |
+| Instrument 10817 | Long | 50.00 | 48.78 | +0.00 |
 
 ## Letzte Ereignisse
 
-- 2026-10-11 14:24 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 14:24 UTC ZUSAMMENFASSUNG Guthaben 9619.58 USD, 2 offene Position(en) (PnL +0.69), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft NICHT, Ledger: noch keine Evidenz.
-- 2026-10-11 14:24 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 14:24 UTC ZUSAMMENFASSUNG Guthaben 9619.58 USD, 2 offene Position(en) (PnL +0.61), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft NICHT, Ledger: noch keine Evidenz.
-- 2026-10-11 14:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 14:45 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 15:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 16:15 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 16:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 16:45 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 17:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 17:15 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 17:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
-- 2026-10-11 18:30 UTC ZUSAMMENFASSUNG Guthaben 9619.58 USD, 2 offene Position(en) (PnL +6.86), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
-- 2026-10-11 22:15 UTC GESCHLOSSEN Long INJ.ETORO, Position 3602666415, 156.10 USD, PnL +0.85 (zuletzt gesehen)
-- 2026-10-11 22:45 UTC ZUSAMMENFASSUNG Guthaben 9774.96 USD, 1 offene Position(en) (PnL +1.57), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
-- 2026-10-12 00:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3602662774, 199.56 USD, PnL +1.76 (zuletzt gesehen)
-- 2026-10-12 02:45 UTC ZUSAMMENFASSUNG Guthaben 9974.27 USD, 0 offene Position(en) (PnL +0.00), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
-- 2026-10-12 04:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-12 04:15 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-12 04:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-12 05:15 UTC ERÖFFNET Long BTC.ETORO, Position 3602833773, 197.67 USD, PnL +0.20
@@ -51,3 +37,22 @@ Stand: 2026-10-12 16:00 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-12 14:15 UTC ERÖFFNET Short CVNA.ETORO, Position 3603778653, 195.06 USD, PnL -0.55
 - 2026-10-12 15:15 UTC ZUSAMMENFASSUNG Guthaben 9376.14 USD, 3 offene Position(en) (PnL -8.60), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 15:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 16:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 16:45 UTC ERÖFFNET Long Instrument 3249, Position 3603980639, 50.00 USD, PnL -0.03
+- 2026-10-12 16:45 UTC ERÖFFNET Long Instrument 6962, Position 3603980671, 50.00 USD, PnL -0.01
+- 2026-10-12 17:00 UTC ERÖFFNET Long Instrument 3157, Position 3603996958, 50.00 USD, PnL -0.03
+- 2026-10-12 17:00 UTC GESCHLOSSEN Long Instrument 3249, Position 3603980639, 50.00 USD, PnL -0.03 (zuletzt gesehen)
+- 2026-10-12 17:00 UTC GESCHLOSSEN Short CVNA.ETORO, Position 3603778653, 195.06 USD, PnL +3.88 (zuletzt gesehen)
+- 2026-10-12 17:00 UTC GESCHLOSSEN Long Instrument 6962, Position 3603980671, 50.00 USD, PnL -0.01 (zuletzt gesehen)
+- 2026-10-12 17:00 UTC GESCHLOSSEN Long BTC.ETORO, Position 3602833773, 197.67 USD, PnL -3.36 (zuletzt gesehen)
+- 2026-10-12 17:00 UTC GESCHLOSSEN Long INJ.ETORO, Position 3602833776, 197.74 USD, PnL -4.39 (zuletzt gesehen)
+- 2026-10-12 17:00 UTC WARNUNG 3 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 17:15 UTC ERÖFFNET Short ORCL.ETORO, Position 3603997738, 191.14 USD, PnL -1.05
+- 2026-10-12 17:15 UTC ERÖFFNET Short INTU.ETORO, Position 3603997733, 191.28 USD, PnL +0.23
+- 2026-10-12 17:15 UTC ERÖFFNET Short ZTS.ETORO, Position 3603997732, 191.71 USD, PnL -0.20
+- 2026-10-12 17:15 UTC ERÖFFNET Short LULU.ETORO, Position 3603997745, 191.00 USD, PnL -0.28
+- 2026-10-12 17:15 UTC ERÖFFNET Short CVNA.ETORO, Position 3603997731, 191.52 USD, PnL -0.44
+- 2026-10-12 17:15 UTC ERÖFFNET Short MSTR.ETORO, Position 3603997743, 190.41 USD, PnL -0.66
+- 2026-10-12 17:15 UTC ERÖFFNET Short CELH.ETORO, Position 3603997755, 191.65 USD, PnL -0.27
+- 2026-10-12 17:15 UTC ERÖFFNET Long Instrument 10817, Position 3603998078, 50.00 USD, PnL +0.00
+- 2026-10-12 17:15 UTC GESCHLOSSEN Long Instrument 3157, Position 3603996958, 50.00 USD, PnL -0.03 (zuletzt gesehen)
