@@ -184,7 +184,7 @@ def main():
     ap.add_argument("--symbols", default=None, help="c1/c5: kommagetrennte Symbole aus universe.csv (z. B. BTC,SW.PA); Standard: Krypto, sonst Nicht-US-Aktie")
     ap.add_argument("--exclude-us", action="store_true", default=False, help="US-Aktien aus dem Pool nehmen (Option; Standard: aus)")
     ap.add_argument("--side", choices=["short", "long"], default="short", help="c4: Richtung der Probe-Orders (long = W-8BEN-768-Messung auf US-Aktien, <= 20 USD, sofort schliessen falls angenommen)")
-    ap.add_argument("--env", choices=["real", "demo"], default="real", help="real = angeheftetes Paper-Konto ueber /real/ (Standard); demo = Demo-Konto ueber /demo/ (Key mit Demo-Scope), --confirm-account demo")
+    ap.add_argument("--env", choices=["real", "demo"], default="demo", help="demo = Demo-Konto ueber /demo/ (Standard, --confirm-account demo); real = angeheftetes Paper-Konto ueber /real/ (nur mit ETORO_PAPER_ACCOUNT_CID, Altbestand)")
     ap.add_argument("--classes", default="K1,K5", help="freigegebene Klassen (Standard K1,K5; K2 braucht >= 1000 USD und wird bei kleineren Caps verweigert)")
     a = ap.parse_args()
     guard.load_env()

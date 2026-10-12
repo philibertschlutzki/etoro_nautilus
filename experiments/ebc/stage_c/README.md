@@ -1,4 +1,4 @@
-# EBC Stufe C — Start (Paper-Konto 48264806, /real/-Pfad per account_guard)
+# EBC Stufe C — Start (Standard seit 2026-10-12: Demo-Konto, /demo/-Pfade)
 
 Alle Befehle im Klon-Root `~/ebc_exp` (Interpreter: `~/etoro_nautilus/venv/bin/python3`). Standard ist **Dry-Run** (nur GET, nie POST).
 
@@ -24,3 +24,8 @@ Beispiele: `run_stage_c.py c5 --live --confirm-account 48264806` (wählt Krypto)
 Update 2026-10-12: Phili hat W-8BEN um 16:38 UTC unterzeichnet; die Wirkung ist verzögert/unklar. `--exclude-us` ist nur eine Option (Standard aus). Standardauswahl für c1/c5 ohne `--symbols` bleibt Krypto bzw. Nicht-US-Aktie.
 (a) jetzt: `run_stage_c.py c5 --live --confirm-account 48264806` (Krypto).
 (b) später, Sperre-Probe auf US-Aktie: `run_stage_c.py c5 --live --confirm-account 48264806 --symbols GOOG` (50 USD; bei 768 nur Ablehnung verbucht, kein Schaden; bei Annahme wird halbiert und mit `closeall` beendet).
+
+
+## Umstellung auf das Demo-Konto (2026-10-12)
+Standard ist jetzt `--env demo` (Demo-Konto, ~17.388 USD, Key mit Demo-Scope, `--confirm-account demo`, State `results/stage_c/state_demo.json`). `--env real` bleibt nur für das alte Testkonto 48264806 (Key nicht mehr gültig) und nie für das andere reale Konto, das der neue Key über `/real/` erreicht. W-8BEN: im Demo-Konto frei (Probekauf TSLA 10 USD), im alten Testkonto gesperrt (768). Beispiele: `run_stage_c.py c5 --live --confirm-account demo --symbols BTC`, `... c1 ... --symbols BTC`, `... c4 ... --n 10`, `... closeall --live --confirm-account demo`.
+Mindestgebühr: bei 10 USD wurden 1,00 USD Gebühr verbucht (Vermutung: Mindestgebühr je Order) - bei der Auswertung nicht mit bps auf kleine Beträge verwechseln.
