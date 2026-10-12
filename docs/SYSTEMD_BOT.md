@@ -8,7 +8,7 @@ Wächter (`ops_guard`) meldet den Ausfall trotzdem im Fehler-Log. Alles läuft a
 | | bisher | mit systemd |
 |---|---|---|
 | Bot-Start | `daily_orchestrator.py` startet `momentum_ls_run.py` per `Popen` | systemd startet den Dienst `etoro-paper-bot.service` |
-| Ausfall | Bot bleibt weg | `Restart=always`, 30 s Pause, maximal 5 Starts in 15 min |
+| Ausfall | Bot bleibt weg | `Restart=always`, 30 s Pause, kein Startlimit; kein Neustart nach Exit 3 (Circuit-Breaker) und 4 (Sperre gehalten) |
 | Tägliche Auswahl | Orchestrator | unverändert: Orchestrator wählt, schreibt die Whitelist und startet/stoppt den Dienst |
 | Log | `logs/incubation_bot_<Datum>.log` | unverändert (derselbe Dateiname) |
 
@@ -74,5 +74,5 @@ Danach startet der Orchestrator den Bot wieder selbst per `Popen`. Der Wächter-
   startet den Dienst danach nicht von allein neu. Nur ein Absturz oder SIGKILL löst `Restart=always` aus.
 - Die Unit lädt keine Schlüssel; der Bot liest `.env` selbst. Es werden keine Zugangsdaten in Unit-Dateien geschrieben.
 - Der Dienst startet nur, wenn `data/state/incubation_whitelist.json` existiert (`ConditionPathExists`).
-- Nach `StartLimitBurst` Fehlstarts bleibt der Dienst `failed`: `systemctl --user reset-failed etoro-paper-bot.service`, dann Ursache
-  im Journal und im Fehler-Log des Wächters prüfen.
+- Nach einem Circuit-Breaker-Stopp (Exit 3) oder `Bot läuft bereits` (Exit 4) bleibt der Dienst `failed`: Ursache im Journal und im
+  Fehler-Log des Wächters prüfen, dann `systemctl --user reset-failed etoro-paper-bot.service` und bewusst neu starten.
