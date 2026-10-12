@@ -16,3 +16,7 @@ eToro lehnt FX-Positionen < 1000 USD ab (Bot-Beobachtung 2026-10-11). Standard d
 ### FX-Finanzierung (Entscheidung Phili 2026-10-12: 1010 USD)
 Nur Phase `fin`, Betrag genau 1010 USD, höchstens 4 FX-Testpositionen (z. B. 1 Long + 1 Short je Paar, 2 Paare), Handelszeit-/Wochenend-Prüfung unverändert. Aufruf: `run_stage_c.py fin --live --confirm-account 48264806 --classes K1,K2,K5 --fx-max-exposure <Anteil>`.
 **Achtung:** Die Exposure-Grenze der Testpositionen ist standardmäßig 4 % des Kontos – eine 1010-USD-Position sind aber ~10 %, 2 Positionen ~20 %, 4 Positionen ~40 % (brutto; Long/Short-Paare netto ~0). Mit dem Standard wird FX deshalb verweigert, bis `--fx-max-exposure` bewusst gesetzt wird (z. B. 0.20 für 1 Long + 1 Short).
+
+## W-8BEN-Befund (2026-10-12)
+Long-Eröffnungen auf US-Aktien werden mit `errorCode 768` („User is blocked by W-8BEN“) asynchron abgelehnt, Shorts auf US-Aktien werden angenommen (Details `results/stage_c/w8ben_finding.md`). Daher laufen `c1`/`c5` standardmäßig auf Krypto (K5, long, <= 50 USD) bzw. Nicht-US-Aktien (`--symbols`), nie auf US-Aktien. Probe der Long-Sperre: `c4 --side long`.
+Beispiele: `run_stage_c.py c5 --live --confirm-account 48264806` (wählt Krypto), `run_stage_c.py c1 --live --confirm-account 48264806 --symbols BTC`.

@@ -136,6 +136,17 @@ def monitor():
     print(f"monitor: {len(state['positions'])} eigene Testpositionen protokolliert")
 
 
+def pick_instrument(pool, symbols, g):
+    """c1/c5: explizite --symbols, sonst Krypto (K5, 24/7), sonst Nicht-US-Aktie (Symbol mit '.', Boerse offen). Nie US-Aktien (W-8BEN, 768)."""
+    if symbols:
+        want = [x.strip() for x in symbols.split(",")]
+        return next((r for r in pool if r["symbol"] in want), None)
+    k5 = next((r for r in pool if r["klasse"] == "K5"), None)
+    if k5 is not None and "K5" in g.classes:
+        return k5
+    return next((r for r in pool if r["klasse"] == "K1" and "." in r["symbol"] and guard.market_open("K1")), None)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall"])
@@ -145,6 +156,9 @@ def main():
     ap.add_argument("--bot-map", default=os.path.expanduser("~/etoro_nautilus/automation/config/instrument_map.json"))
     ap.add_argument("--n", type=int, default=30)
     ap.add_argument("--fx-max-exposure", type=float, default=0.04, help="Obergrenze Summe der Testpositionen als Anteil des Kontos (Standard 4 %%)")
+    ap.add_argument("--symbols", default=None, help="c1/c5: kommagetrennte Symbole aus universe.csv (z. B. BTC,SW.PA); Standard: Krypto, sonst Nicht-US-Aktie")
+    ap.add_argument("--exclude-us", action="store_true", default=True, help="c1/c5 nie auf US-Aktien (W-8BEN-Sperre, errorCode 768); Standard an")
+    ap.add_argument("--side", choices=["short", "long"], default="short", help="c4: Richtung der Probe-Orders (long = W-8BEN-768-Messung auf US-Aktien, <= 20 USD, sofort schliessen falls angenommen)")
     ap.add_argument("--classes", default="K1,K5", help="freigegebene Klassen (Standard K1,K5; K2 braucht >= 1000 USD und wird bei kleineren Caps verweigert)")
     a = ap.parse_args()
     guard.load_env()
@@ -175,22 +189,24 @@ def main():
     if a.phase == "c4":
         for r in rnd.sample(eq, min(a.n, len(eq))):
             try:
-                res = open_order(g, r, 20.0, False, tag="c4")
+                res = open_order(g, r, 20.0, a.side == "long", tag="c4" if a.side == "short" else "c4long")
                 if res and res[0]: close_position(g, res[0]["positionID"])
                 append("shortability.csv", ["ts", "instrument", "symbol", "accepted", "rejection"], [now(), r["etoro_id"], r["symbol"], bool(res and res[0]), (res[1] if res else "dryrun")])
             except guard.Refused as e:
                 print("uebersprungen:", r["symbol"], e)
             time.sleep(1.1)
     elif a.phase == "c1":
-        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)   # K2 nur wenn per --classes freigegeben
-        if r is None: print("kein geeignetes Instrument/Markt geschlossen"); return
+        r = pick_instrument(pool, a.symbols, g)
+        if r is None: print("kein geeignetes Instrument (Krypto/Nicht-US) / Markt geschlossen"); return
+        print("c1 auf", r["symbol"])
         bid, ask = rates([int(r["etoro_id"])])[int(r["etoro_id"])]
         sl = round(ask * 0.985, 5)
         open_order(g, r, 50.0, True, {"IsTslEnabled": True, "StopLossRate": sl}, tag="c1_IsTslEnabled")
         open_order(g, r, 50.0, True, {"IsTrailingStop": True, "StopLossRate": sl}, tag="c1_IsTrailingStop")
     elif a.phase == "c5":
-        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)   # K2 nur wenn per --classes freigegeben
-        if r is None: print("kein geeignetes Instrument/Markt geschlossen"); return
+        r = pick_instrument(pool, a.symbols, g)
+        if r is None: print("kein geeignetes Instrument (Krypto/Nicht-US) / Markt geschlossen"); return
+        print("c5 auf", r["symbol"])
         res = open_order(g, r, 50.0, True, tag="c5")
         if res and res[0]:
             half = round(res[0]["units"] / 2.0, 6)
