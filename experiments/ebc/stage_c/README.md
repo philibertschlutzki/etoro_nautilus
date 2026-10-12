@@ -12,3 +12,7 @@ Schutz: /me gegen CID vor jeder Order, kein Bot-Instrument, keine fremde Positio
 
 ## FX/Rohstoffe/Indizes
 eToro lehnt FX-Positionen < 1000 USD ab (Bot-Beobachtung 2026-10-11). Standard der Live-Phasen daher nur K1 (Aktien/ETF) und K5 (Krypto, nur long); K2 ist erst mit `--classes K1,K2,K5` und Betrag >= 1000 USD möglich (Caps nicht erhöht -> verweigert). Abgelehnte Orders landen mit statusID/errorCode in `results/stage_c/rejections.csv`, nie in `state.json`.
+
+### FX-Finanzierung (Entscheidung Phili 2026-10-12: 1010 USD)
+Nur Phase `fin`, Betrag genau 1010 USD, höchstens 4 FX-Testpositionen (z. B. 1 Long + 1 Short je Paar, 2 Paare), Handelszeit-/Wochenend-Prüfung unverändert. Aufruf: `run_stage_c.py fin --live --confirm-account 48264806 --classes K1,K2,K5 --fx-max-exposure <Anteil>`.
+**Achtung:** Die Exposure-Grenze der Testpositionen ist standardmäßig 4 % des Kontos – eine 1010-USD-Position sind aber ~10 %, 2 Positionen ~20 %, 4 Positionen ~40 % (brutto; Long/Short-Paare netto ~0). Mit dem Standard wird FX deshalb verweigert, bis `--fx-max-exposure` bewusst gesetzt wird (z. B. 0.20 für 1 Long + 1 Short).

@@ -144,6 +144,7 @@ def main():
     ap.add_argument("--whitelist", default=os.path.expanduser("~/etoro_nautilus/data/state/incubation_whitelist.json"))
     ap.add_argument("--bot-map", default=os.path.expanduser("~/etoro_nautilus/automation/config/instrument_map.json"))
     ap.add_argument("--n", type=int, default=30)
+    ap.add_argument("--fx-max-exposure", type=float, default=0.04, help="Obergrenze Summe der Testpositionen als Anteil des Kontos (Standard 4 %%)")
     ap.add_argument("--classes", default="K1,K5", help="freigegebene Klassen (Standard K1,K5; K2 braucht >= 1000 USD und wird bei kleineren Caps verweigert)")
     a = ap.parse_args()
     guard.load_env()
@@ -155,6 +156,7 @@ def main():
     ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2"}[a.phase]
     g = guard.Gate(a.live, a.confirm_account, excl, f"{OUT}/state.json", ph, lambda m: print(m))
     g.classes = tuple(a.classes.split(','))
+    g.fx_max_exposure = a.fx_max_exposure
     pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes]
     rnd = random.Random(SEED)
     eq = [r for r in pool if r["klasse"] == "K1" and guard.market_open("K1")]
@@ -199,10 +201,11 @@ def main():
                        "fees_after": (rest[0].get("totalFees"), rest[0].get("totalExternalFees")) if rest else None}, open(f"{OUT}/partial_close.json", "w"), indent=1)
     elif a.phase == "fin":
         plan = [(k, b) for k in g.classes for b in ((True,) if k == "K5" else (True, False))]
+        fx_amt = lambda k: guard.FX_FIN_AMOUNT if k == "K2" else 100.0
         for k, buy in plan:
             r = next((x for x in pool if x["klasse"] == k and guard.market_open(k)), None)
             if r is None: print("kein Instrument/Markt geschlossen fuer", k, buy); continue
-            try: open_order(g, r, 100.0, buy, tag=f"fin_{k}_{'long' if buy else 'short'}")
+            try: open_order(g, r, fx_amt(k), buy, tag=f"fin_{k}_{'long' if buy else 'short'}")
             except guard.Refused as e: print("uebersprungen:", k, e)
             pool = [x for x in pool if x["etoro_id"] != r["etoro_id"]]
     print("fertig; Modus", "LIVE" if a.live else "DRY-RUN")

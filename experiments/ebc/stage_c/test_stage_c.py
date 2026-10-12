@@ -72,4 +72,13 @@ def test_cfd_classes_blocked_by_default_and_fx_minimum(monkeypatch):
     g = mk()
     with pytest.raises(guard.Refused): g.check_open(8, 20, True, "K2")        # K2 nicht freigegeben
     g.classes = ("K1", "K2", "K5")
-    with pytest.raises(guard.Refused): g.check_open(8, 50, True, "K2")        # FX-Mindestbetrag 1000 USD, Cap wird nicht erhoeht
+    with pytest.raises(guard.Refused): g.check_open(8, 50, True, "K2")        # FX nur mit genau 1010 USD
+    g.phase = "c2"
+    with pytest.raises(guard.Refused): g.check_open(8, 1500, True, "K2")      # nicht 1010
+    monkeypatch.setattr(guard, "account_equity", lambda: 10000.0)
+    with pytest.raises(guard.Refused): g.check_open(8, 1010, True, "K2")      # 4-%-Exposure-Standard bindet (1010 = 10 %)
+    g.fx_max_exposure = 0.25
+    g.check_open(8, 1010, True, "K2")                                         # nach expliziter Freigabe ok
+    g.state["positions"] = {str(i): {"klasse": "K2", "amount": 1010} for i in range(4)}
+    g.fx_max_exposure = 1.0
+    with pytest.raises(guard.Refused): g.check_open(9, 1010, True, "K2")      # max. 4 FX-Testpositionen

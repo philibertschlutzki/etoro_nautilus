@@ -18,6 +18,8 @@ ORDER_INFO = f"{BASE}/trading/info/real/orders"
 CAPS = {"c1": 50.0, "c4": 20.0, "c5": 50.0, "c2": 100.0, "c3": 100.0}
 MAX_TEST_POSITIONS = 20
 DEFAULT_CLASSES = ('K1', 'K5')          # FX/Rohstoffe/Indizes: eToro lehnt kleine Betraege ab (FX < 1000 USD); nur mit --classes
+FX_FIN_AMOUNT = 1010.0                   # Phili 2026-10-12: FX-Finanzierungsmessung nur mit Order == 1010 USD (eToro-Minimum 1000)
+FX_MAX_POSITIONS = 4
 MIN_AMOUNT_USD = {'K2': 1000.0}          # vom Bot beobachtet (2026-10-11 21:00 UTC); K3/K4 unbekannt -> Ablehnung wird als Messwert verbucht
 
 
@@ -63,6 +65,12 @@ def verify_account():
     return pinned
 
 
+def account_equity():
+    d = get(PNL).get('clientPortfolio', {})
+    inv = sum(float(p.get('amount', 0)) + float((p.get('unrealizedPnL') or {}).get('pnL', 0) or 0) for p in d.get('positions') or [])
+    return float(d.get('credit') or 0) + inv
+
+
 def positions(pnl=None):
     d = (pnl or get(PNL)).get("clientPortfolio", {})
     return d.get("positions") or []
@@ -97,6 +105,7 @@ class Gate:
     def __init__(self, live: bool, confirm_cid: str | None, excluded_ids: set[int], state_path: str, phase: str, log):
         self.live, self.confirm, self.excluded, self.state_path, self.phase, self.log = live, confirm_cid, set(excluded_ids), state_path, phase, log
         self.classes = DEFAULT_CLASSES
+        self.fx_max_exposure = 0.04
         self.state = json.load(open(state_path)) if os.path.exists(state_path) else {"positions": {}}
 
     def save(self):
@@ -106,7 +115,14 @@ class Gate:
     def check_open(self, instrument_id: int, amount: float, is_buy: bool, klasse: str):
         cap = CAPS[self.phase]
         if klasse not in getattr(self, 'classes', DEFAULT_CLASSES): raise Refused(f'Klasse {klasse} in diesem Lauf nicht freigegeben (--classes)')
-        if amount < MIN_AMOUNT_USD.get(klasse, 0.0): raise Refused(f'Mindestbetrag {MIN_AMOUNT_USD[klasse]} USD fuer {klasse} > Betrag {amount} (Caps werden nicht erhoeht)')
+        fx_ok = (klasse == 'K2' and self.phase == 'c2' and abs(amount - FX_FIN_AMOUNT) < 1e-6)
+        if klasse == 'K2':
+            if not fx_ok: raise Refused('FX nur in Phase fin mit genau 1010 USD (Mindestbetrag 1000, andere Caps unveraendert)')
+            if sum(1 for v in self.state['positions'].values() if v.get('klasse') == 'K2') >= FX_MAX_POSITIONS: raise Refused('mehr als 4 FX-Testpositionen')
+            equity = account_equity()
+            used = sum(float(v.get('amount', 0)) for v in self.state['positions'].values())
+            if used + amount > self.fx_max_exposure * equity: raise Refused(f'Exposure der Testpositionen {used + amount:.0f} USD > {self.fx_max_exposure:.0%} des Kontos ({equity:.0f} USD); --fx-max-exposure explizit anheben')
+        if amount < MIN_AMOUNT_USD.get(klasse, 0.0) and not fx_ok: raise Refused(f'Mindestbetrag {MIN_AMOUNT_USD[klasse]} USD fuer {klasse} > Betrag {amount} (Caps werden nicht erhoeht)')
         if amount > cap: raise Refused(f"Betrag {amount} > Limit {cap} ({self.phase})")
         if int(instrument_id) in self.excluded: raise Refused(f"Instrument {instrument_id} wird vom Bot gehandelt (Whitelist)")
         if klasse == "K5" and not is_buy: raise Refused("Krypto nur long")
