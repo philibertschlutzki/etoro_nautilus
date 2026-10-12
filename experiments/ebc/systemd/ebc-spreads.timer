@@ -1,0 +1,9 @@
+[Unit]
+Description=EBC Spread-Stichprobe alle 15 Minuten an Werktagen 07:00 bis 21:00 UTC
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 07..21:00,15,30,45:00 UTC
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -4,9 +4,11 @@ import argparse, json, os, sys, time, datetime as dt
 sys.path.insert(0, os.path.dirname(__file__))
 import api, universe
 
-ap = argparse.ArgumentParser(); ap.add_argument("--loop", type=float, default=0); ap.add_argument("--max-snapshots", type=int, default=1)
+ap = argparse.ArgumentParser(); ap.add_argument("--loop", type=float, default=0); ap.add_argument("--max-snapshots", type=int, default=1); ap.add_argument("--universe", action="append", default=[])
 a = ap.parse_args()
 ids = [r["id"] for r in universe.load()]
+for u in a.universe:
+    ids += [r["id"] for r in universe.load(u) if r["id"] not in ids]
 out = "data/ebc/spreads.jsonl"
 for snap in range(a.max_snapshots):
     ts = dt.datetime.now(dt.timezone.utc).isoformat()
