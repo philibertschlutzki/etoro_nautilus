@@ -76,3 +76,12 @@ Danach startet der Orchestrator den Bot wieder selbst per `Popen`. Der Wächter-
 - Der Dienst startet nur, wenn `data/state/incubation_whitelist.json` existiert (`ConditionPathExists`).
 - Nach einem Circuit-Breaker-Stopp (Exit 3) oder `Bot läuft bereits` (Exit 4) bleibt der Dienst `failed`: Ursache im Journal und im
   Fehler-Log des Wächters prüfen, dann `systemctl --user reset-failed etoro-paper-bot.service` und bewusst neu starten.
+
+## Wöchentlicher Paper-Bericht
+
+`etoro-paper-weekly.timer` (montags 06:00 UTC, `Persistent=true` holt verpasste Läufe nach) ruft `python -m automation.paper_weekly_report`
+auf: abgeschlossene Trades der letzten 7 Tage direkt aus der eToro-Historie, Krypto-Gebühr nachgerechnet, Auswertung je
+Anlageklasse, Strategie und Instrument, mit Hinweis, ob die Stichprobe (mindestens 30 Round-Trips) für eine Aussage reicht. Ergebnis:
+`data/paper_reports/paper_weekly_<JJJJ-Www>.md` und `paper_weekly_latest.md`; der stündliche `paper_report_publish` legt sie unter
+`logs/paper_reports/` ins Repo. Alle Trades werden zusätzlich in `data/state/paper_trades.jsonl` gesammelt. Sofort ausführen:
+`venv/bin/python -m automation.paper_weekly_report --all` (alles seit dem ersten Trade) oder `systemctl --user start etoro-paper-weekly.service`.
