@@ -1,0 +1,461 @@
+etoro_id,symbol,name,stratum,klasse,in_status_quo,n_candles,oldest,newest,max_gap,zero_range_share
+10713,ENIC,Enel Chile Sa,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+6052,GGB,Gerdau SA-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1802,SCHW,Charles Schwab Corp,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.001
+6431,GO,Grocery Outlet Holding Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8678,SAP,SAP SE ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6663,CWEN,Clearway Energy Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9111,CWH,Camping World Holdings Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6089,ABCB,Ameris Bancorp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1896,WSM,Williams-Sonoma Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.002
+9141,ACLS,Axcelis Technologies Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9155,BFLY,Butterfly Network Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2595,RTO.US,Rentokil Initial PLC ADR,us_stock,K1,False,968,2022-10-13,2026-10-09,2,0.0
+8651,STVN,Stevanato Group S.p.A.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+11030,SPIR,Spire Global Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+1606,PPG,PPG Industries Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.002
+6862,STNG,Scorpio Tankers Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10711,SMRT,Smartrent Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+5201,CRSR,Corsair Gaming Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6026,BZUN,Baozun Inc-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+7790,FUTU,Futu Holdings Ltd-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1824,NAVI,Navient Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8991,TGTX,TG Therapeutics Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6290,UONE,Urban One Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6576,GTM,ZoomInfo Technologies Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8910,NVT,nVent Electric plc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10977,CDZI,Cadiz Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+6703,COUR,Coursera Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6591,AMC,AMC Entertainment Holdings Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10956,IRD,Opus Genetics Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+4323,VEEV,Veeva Systems Inc A,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1575,HIG,The Hartford Financial Services Group Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.002
+2488,DAVE,Dave Inc.,us_stock,K1,False,832,2023-04-29,2026-10-09,2,0.0012
+10930,LAB,Standard Biotool,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+1712,STLD,Steel Dynamics Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.002
+11008,ABEO,Abeona Therapeutics Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+5109,LLYVK,Liberty Live Holdings Inc-C,us_stock,K1,False,766,2023-08-04,2026-10-09,2,0.0
+6617,BIP,Brookfield Infrastructure Partners LP,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4143,SCI,Service Corp Intl,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4397,ON,ON Semiconductor Corp,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+4129,PPC,Pilgrim's Pride,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9061,BF-B,Brown-Forman Corporation,us_stock,K1,False,1000,2022-09-06,2026-10-09,2,0.001
+1707,CBRE,CBRE Group Inc,us_stock,K1,False,1000,2022-09-07,2026-10-09,2,0.0
+4180,BHC,Bausch Health Companies Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4499,NIU,Niu Technologies-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5609,DOYU,Douyu -ADR,us_stock,K1,False,1000,2022-08-26,2026-10-09,2,0.0
+4133,QSR,Restaurant Brands International Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1581,EOG,EOG Resources Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.001
+1955,DAR,Darling Ingredients Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2874,GEHC,GE HealthCare Technologies Inc,us_stock,K1,False,921,2023-01-04,2026-10-09,2,0.0
+1168,PHIN,Phinia Inc,us_stock,K1,False,790,2023-07-04,2026-10-09,2,0.0013
+8010,PCVX,Vaxcyte Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1742,WCC,WESCO International Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2596,GRND,Grindr Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.008
+1693,GNW,Genworth Financial Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1008,AA,Alcoa,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+4372,TSCO,Tractor Supply Co,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.001
+6756,OPLN,OPENLANE Inc,us_stock,K1,False,1000,2022-08-26,2026-10-09,2,0.0
+10940,VLN,Valens Semiconductor Ltd,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+8868,CNXC,Concentrix Corporation,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1075,NEOG,Neogen Corporation,us_stock,K1,False,1000,2022-08-30,2026-10-09,2,0.001
+8836,NDAQ,Nasdaq Inc.,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+4329,SNPS,Synopsys Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+1642,D,Dominion Energy Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+6205,CLSK,Cleanspark Inc,us_stock,K1,False,999,2022-09-12,2026-10-09,2,0.0
+9287,RIVN,Rivian Automotive,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+6771,LXP,Lexington Realty Trust,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6522,RRR,Red Rock Resorts Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1676,APD,Air Products & Chemicals Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+4401,ZION,Zions Bancorp NA,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6068,EHC,Encompass Health Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1387,MOMO,Hello Group Inc-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8906,ASTH, Astrana Health Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8989,APAM,Artisan Partners Asset Management Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6334,FCEL,FuelCell Energy Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6184,AVXL,Anavex Life Sciences Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10912,HEPS,D-Market Elektronik Hizmetler Ve Ticaret As,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+1791,EME,Emcor Group Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+5452,FOUR,Shift4 Payments Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1051,EBAY,eBay,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+4179,VRTX,Vertex Pharmaceuticals Incorporated,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.0
+4387,SW,Smurfit Westrock Plc,us_stock,K1,False,1000,2022-09-07,2026-10-09,2,0.0
+4064,GLPI,Gaming and Leisure,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8104,SF.US,Stifel Financial Corporation,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9030,LOPE,Grand Canyon Education Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1607,GPC,Genuine Parts Co,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.0
+1718,BALL,Ball Corp,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+1931,KNX,Knight-Swift Transportation Holdings Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4255,CCI,Crown Castle International,us_stock,K1,False,999,2022-09-12,2026-10-09,2,0.001
+1974,NTLA,Intellia Therapeutics Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4136,RIG,Transocean LTD,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1960,SLGN,Silgan Holdings Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4085,IPGP,Ipg Photonics Corp.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6443,IFRX,InflaRx NV,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6810,PD,PagerDuty Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6699,FCN,FTI Consulting Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1561,XRX,Xerox Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8859,OPEN,Opendoor Technologies Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+8942,NBP,NovaBridge Biosciences,us_stock,K1,False,1000,2022-08-26,2026-10-09,2,0.0
+1799,SANM,Sanmina Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5705,JBTM,JBT Marel Corp.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1678,HSIC,Henry Schein Inc,us_stock,K1,False,1000,2022-09-08,2026-10-09,2,0.001
+6543,BMBL,Bumble Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8641,FMX,Fomento Economico Mexicano SAB-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1595,AEP,American Electric Power Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+6034,HGV,Hilton Grand Vacations Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1495,WFC,Wells Fargo & Co,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+1504,CAH,Cardinal Health Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.002
+5982,LII,Lennox International Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.001
+1486,SHEL,Shell PLC (ADR),us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8940,VMI,Valmont Industries Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1528,CI,Cigna Group,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+6600,AR.US,Antero Resources Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6155,NVAX,Novavax Inc,us_stock,K1,False,999,2022-09-12,2026-10-09,2,0.0
+4290,ZBH,Zimmer Biomet Holdings Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.003
+8908,EXPO,Exponent Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9148,IRWD,Ironwood Pharmaceuticals Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6763,KRC,Kilroy Realty Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6023,RVTY,Revvity Inc ,us_stock,K1,False,1000,2022-09-02,2026-10-07,2,0.001
+1760,CMS,CMS Energy Corp,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.003
+8612,BGDE,Big Digital Energy Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8674,LOGI,Logitech International S.A.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2599,KVUE,Kenvue Inc,us_stock,K1,False,839,2023-04-29,2026-10-09,2,0.0036
+1100,TEO,Telecom Argentina SA-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.001
+6556,UPWK,Upwork Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4266,PRU,Prudential Financial Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.002
+1074,CNR,Core Natural Resources Inc,us_stock,K1,False,1000,2022-08-30,2026-10-09,2,0.0
+9099,FIGS,FIGS Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9290,KLTR,Kaltura Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.001
+1549,ARW,Arrow Electronics Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8006,EBS,Emergent BioSolutions Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6178,APPS,Digital Turbine Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1923,H.US,Hyatt Hotels Corp,us_stock,K1,False,1000,2022-08-26,2026-10-09,2,0.0
+8782,CHRD, Chord Energy Corporation,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10978,ADV,Advantage Solutions Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+4123,PAM,Pampa Energia S.A.-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6448,INMD,Inmode Ltd,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1620,WM,Waste Management Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+1046,V,Visa,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+1076,VERU,Veru Inc,us_stock,K1,False,1000,2022-08-30,2026-10-09,2,0.002
+9269,TASK,TaskUs Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10794,DBD,Diebold Nixdorf Inc,us_stock,K1,False,770,2023-08-14,2026-10-09,2,0.0
+1541,DUK,Duke Energy Corp,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.001
+1035,WMT,Walmart Inc.,us_stock,K1,False,999,2022-09-09,2026-10-09,2,0.0
+1711,DRI,Darden Restaurants Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.001
+1033,RTX,Raytheon-Technologies,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+8853,MORN,Morningstar Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5622,AXGN,Axogen Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6872,TECK,Teck Resources Ltd,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4108,MELI,MercadoLibre Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+1685,ALLY,Ally Financial Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6341,MNKD,MannKind Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6015,CHGG,Chegg Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8692,ONC,BeiGene Ltd-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1462,CVS,CVS Health Corp,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+1065,PRVA,"Privia Health Group, Inc",us_stock,K1,False,1000,2022-08-30,2026-10-09,2,0.0
+2893,MSGE,Madison Square Garden Spinco,us_stock,K1,False,840,2023-04-17,2026-10-09,2,0.0012
+8724,CIB,Grupo Cibest S.A,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6586,AIV,Apartment Investment and Management Co,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10882,TMC,Tmc The Metals Co Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+6520,RPRX,Royalty Pharma PLC,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5683,INSP,Inspire Medical Systems Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6020,MTN,Vail Resorts Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1550,AFL,Aflac Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.001
+6142,IDA,IDACORP Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6338,TBCH,Turtle Beach Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4093,LAMR,Lamar Advertising Company,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2891,OUST,Ouster Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.001
+10693,CVM,Cel-Sci Corp,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+1570,CMI,Cummins Inc (Ex. Cummins Engine Inc),us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.0
+8952,DIOD,Diodes Incorporated,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10982,CAPR,Capricor Therapeutics Inc,us_stock,K1,False,922,2023-01-03,2026-10-09,2,0.0
+1926,FBIN,Fortune Brands Innovations Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6659,CTVA,Corteva Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+9129,UPBD, Upbound Group Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1709,RSG,Republic Services Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.0
+6203,CLDX,Celldex Therapeutics Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6721,GTN,Gray Media Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8897,RGLD,Royal Gold Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4363,VST,Vistra Corp,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+5687,MAIN,Main Street Capital Corp.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9100,RARE.US,Ultragenyx Pharmaceutical Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6059,CHE,Chemed Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6732,HP,Helmerich & Payne Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6083,FRPT,Freshpet Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1014,CVX.US,Chevron,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+4299,ALGN,Align Technology Inc,us_stock,K1,False,1000,2022-09-07,2026-10-08,2,0.0
+1534,GD,General Dynamics Corp,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+6713,GEO,GEO Group Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5714,PTON,Peloton Interactive,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6193,BLNK,Blink Charging Co,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4191,YELP,Yelp Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6220,FRSX,Foresight Autonomous Holdings Ltd-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+11010,BVS,Bioventus Inc - A,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+4209,POST,Post holdings,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+11027,DERM,Journey Medical Corp,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0011
+5607,AVAV,AeroVironment Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1106,AMX,"America Movil, S.A.B. de C.V.-ADR",us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8993,AUPH,Aurinia Pharmaceuticals Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5393,DT,Dynatrace Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10897,ACET,Adicet Bio Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+9085,RKLB,Rocket Lab Corp,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+4243,BTI,British American Tobacco PLC ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6579,ABR,Arbor Realty Trust Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1618,CB,Chubb Corp,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+6398,CDXS,Codexis Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8956,BWXT,BWX Technologies Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1667,PEG,Public Service Enterprise Group Inc,us_stock,K1,False,1000,2022-09-08,2026-10-09,2,0.002
+4343,CFG,Citizens Financial Group Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+6383,ATRA,Atara Biotherapeutics Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9241,PAYO,Payoneer Global Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.006
+1702,SAH,Sonic Automotive Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1597,CNC,Centene Corp,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+1032,UNH,UnitedHealth,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+9159,AOSL,Alpha and Omega Semiconductor Limited,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2890,VTS,Vitesse Energy Inc,us_stock,K1,False,903,2023-01-15,2026-10-09,2,0.0011
+1592,TMO,Thermo Fisher Scientific Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.0
+1834,IQV,IQVIA Holdings Inc.,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+11001,ASPS,Altisource Portfolio Sol,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0011
+10676,ERAS,Erasca Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+10998,EVC,Entravision Communications-A,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+5416,ITT,ITT Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1149,STZ,Constellation Brands Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.0
+6222,GEVO,Gevo Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1378,JD.US,JD.com-ADR,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+6657,CRK,Comstock Resources Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1804,MAT,Mattel Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5992,IRM,Iron Mountain Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.001
+6324,CRSP,CRISPR Therapeutics AG,us_stock,K1,False,1000,2022-08-26,2026-10-09,2,0.0
+1598,BNY,Bank of New York Mellon Corp,us_stock,K1,False,999,2022-09-12,2026-10-09,2,0.0
+10907,CMPX,Compass Therapeutics Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+8979,LOB,Live Oak Bancshares Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5712,NET,Cloudflare,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6678,ZIM,ZIM Shipping Services Ltd,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10969,SRTA,Strata Critical Medical Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+1512,HUM,Humana Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.0
+6391,BNTX,BioNTech SE-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6751,IRT,Independence Realty Trust Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6215,EGAN,eGain Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1729,DOV,Dover Corp,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.002
+5979,AEO,American Eagle Outfitters Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1971,NTDOY,Nintendo CO Ltd-ADR,us_stock,K1,False,1000,2022-09-02,2026-10-09,2,0.0
+5699,WGO,Winnebago Industries Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4313,MCHP,Microchip Technology Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.0
+8605,ONL,Orion Office Reit Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4063,GIB,CGI Group,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8937,AWI,Armstrong World Industries Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1858,MKL,Markel Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1165,SMG,Scotts Miracle-Gro Company,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10660,EOSE,Eos Energy Enterprises Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+6808,PBA,Pembina Pipeline Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5263,MANH,Manhattan Associates Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6053,CROX,Crocs Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1852,TNL,Travel + Leisure Co,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8887,FOXF,Fox Factory Holding Corp.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1566,DINO,HF Sinclair Corp.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6463,LXRX,Lexicon Pharmaceuticals Inc,us_stock,K1,False,1000,2022-08-26,2026-10-09,2,0.0
+1363,ODD,Oddity Tech Ltd,us_stock,K1,False,780,2023-07-18,2026-10-09,2,0.0013
+6297,WATT,Energous Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1590,AES,AES Corp,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+9125,PTLO,Portillo's Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+5640,PI,Impinj Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10995,ABAT,American Battery Technology,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0011
+5970,KMT,Kennametal Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6126,TXRH,Texas Roadhouse Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8985,FNB,F.N.B. Corporation,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6264,PLUG,Plug Power Inc,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+8646,AXIAY,AXIA ENERGIA - ADR,us_stock,K1,False,1000,2022-08-24,2026-10-09,3,0.0
+8947,ROG,Rogers Corporation,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10963,RDW.US,Redwire Corp,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+9089,VVV.US,Valvoline Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+11032,KALA,Kala Bio Inc,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+8996,MATX,Matson Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6869,WTRG,Essential Utilities Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1109,TV,"Grupo Televisa, S.A.B.-ADR",us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1608,OMC,Omnicom Group Inc,us_stock,K1,False,1000,2022-09-08,2026-10-09,2,0.0
+9294,TOST,Toast Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6685,EPR,EPR Properties,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4339,FANG,Diamondback Energy Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.002
+1722,BDX,Becton Dickinson & Co.,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+6289,BTTC,Black Titan Corp,us_stock,K1,False,1000,2022-08-26,2026-10-09,2,0.003
+8869,TPL,Texas Pacific Land Corporation,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.001
+6793,NNN,National Retail Properties Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1155,BABA,Alibaba-ADR,us_stock,K1,False,999,2022-09-13,2026-10-09,2,0.0
+8713,PEGA,Pegasystems Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6915,RLX,RLX Technology Inc-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1768,OSK,Oshkosh Corp,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1047,VOD,Vodafone Group plc-ADR,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1954,GL,Globe Life Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.001
+6002,VNO,Vornado Realty Trust,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8988,VSAT,Viasat Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6911,YEXT,Yext Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8708,CNM,Core & Main Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1140,CAR,Avis Budget Group Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+8704,ADNT,Adient plc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1537,AVT.US,Avnet Inc,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4289,DLR,Digital Realty Trust Inc,us_stock,K1,False,1000,2022-09-09,2026-10-09,2,0.0
+8891,BL,BlackLine Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+9083,OMCL,Omnicell Inc.,us_stock,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10899,MAGN,Magnera Corp,us_stock,K1,False,923,2023-01-03,2026-10-09,2,0.0
+1953,TROW,T Rowe Price Group Inc,us_stock,K1,False,1000,2022-09-12,2026-10-09,2,0.001
+4539,TWEKA.NV,TKH Group,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2327,3328.HK,Bank of Communications,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+9161,VZ.RTH,Verizon,nonus_stock,K1,False,790,2023-07-19,2026-10-09,2,0.0
+9275,WISE.L,Wise Ltd,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+1322,ELE.MC,Endesa,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+5611,ALCLA.PA,Claranova SADIR,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2745,JD.L,JD Sports Fashion PLC,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+5603,S92.DE,SMA Solar Technology AG,nonus_stock,K1,False,1000,2022-09-30,2026-10-09,4,0.0
+2231,ERIC-A.ST,Telefonaktiebolaget LM Ericsson,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.001
+2691,ZIG.L,Zigup PLC,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+1418,UHR.ZU,The Swatch Group SA - B Shares,nonus_stock,K1,False,1000,2022-09-08,2026-10-09,4,0.0
+7062,APA.ASX,APA Group ,nonus_stock,K1,False,999,2022-09-27,2026-10-09,2,0.0
+1256,OR.PA,LOreal SA,nonus_stock,K1,False,1000,2022-10-06,2026-10-09,2,0.0
+3690,HABA.DE,HAMBORNER REIT AG,nonus_stock,K1,False,1000,2022-10-11,2026-10-09,4,0.004
+5044,CDI.PA,Christian Dior,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+1331,IDR.MC,Indra Sistemas SA,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+7039,BXB.ASX,Brambles Limited ,nonus_stock,K1,False,999,2022-09-28,2026-10-09,2,0.0
+2732,FCIT.L,Foreign & Colonial Investment Trust PLC,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+5804,ALC.ZU,Alcon Inc.,nonus_stock,K1,False,1000,2022-09-08,2026-10-09,4,0.0
+8008,VLA.PA,Valneva SE,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+1342,SCYR.MC,Sacyr,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2269,ISS.CO,ISS A/S,nonus_stock,K1,False,1000,2022-09-07,2026-10-09,4,0.0
+2165,QLT.L,Quilter PLC,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+2585,NDA.DE,Aurubis AG,nonus_stock,K1,False,1000,2022-09-30,2026-10-09,4,0.0
+5844,CAST.ST,Castellum AB,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+5032,OPM.PA,Opmobility,nonus_stock,K1,False,1000,2022-10-06,2026-10-09,2,0.0
+2044,ITRK.L,Intertek Group,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.01
+1334,MAP.MC,Mapfre,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2323,2899.HK,Zijin Mining,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+2372,00966.HK,China Taiping Insurance Holdin,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+3315,TPG.ASX,TPG Telecom Limited,nonus_stock,K1,False,999,2022-09-28,2026-10-09,3,0.0
+2426,778.HK,Fortune Real Estate Investment Trust,nonus_stock,K1,False,999,2022-08-12,2026-10-09,3,0.001
+3718,GRE.MC,Grenergy Renovables S.A.,nonus_stock,K1,False,1000,2022-10-18,2026-10-09,2,0.003
+3552,DAN.MI,Danieli & C. Officine Meccaniche S.p.A,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,4,0.004
+9014,SF.ST,Stillfront Group AB,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+2827,IPO.L,IP Group PLC,nonus_stock,K1,False,1000,2022-09-20,2026-10-09,2,0.0
+2500,HDD.DE,Heidelberger Druckmaschinen AG,nonus_stock,K1,False,1000,2022-09-30,2026-10-09,4,0.0
+1292,MONC.MI,Moncler,nonus_stock,K1,False,1000,2022-09-27,2026-10-09,4,0.0
+2600,HILS.L,Hill & Smith PLC,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+2901,WFC.RTH,Wells Fargo & Co,nonus_stock,K1,False,790,2023-07-19,2026-10-09,2,0.0013
+5747,UMI.BR,Umicore,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2405,1585.HK,Yadea Group Holdings Ltd,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+4545,WKL.NV,Wolters Kluwer NV,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+1206,MBG.DE,Mercedes-Benz Group AG,nonus_stock,K1,False,1000,2022-09-30,2026-10-09,4,0.0
+3717,LDA.MC,Línea Directa Aseguradora S.A. Compania de Seguros y Reaseguros,nonus_stock,K1,False,1000,2022-10-18,2026-10-09,2,0.003
+5825,PSPN.ZU,PSP Swiss Property AG,nonus_stock,K1,False,1000,2022-09-08,2026-10-09,4,0.0
+2639,CCC.L,Computacenter PLC,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+5888,FDJU.PA,FDJ United,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2896,QCOM.RTH,Qualcomm Inc,nonus_stock,K1,False,790,2023-07-19,2026-10-09,2,0.0
+1994,LISP.ZU,Chocoladefabriken Lindt & Sprungli AG,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,4,0.006
+2618,SYNT.L,Synthomer PLC,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+3316,SPK.ASX,Spark New Zealand Limited,nonus_stock,K1,False,999,2022-09-28,2026-10-09,3,0.0
+2164,TW.L,Taylor Wimpey,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+5787,VALMT.HE,Valmet Corporation,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+5761,EDEN.PA,Edenred SA,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2382,01928.HK,Sands China Ltd,nonus_stock,K1,False,999,2022-08-12,2026-10-09,3,0.0
+2785,CARD.L,Card Factory PLC,nonus_stock,K1,False,1000,2022-09-20,2026-10-09,2,0.0
+2300,0939.HK,China Construction Bank,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+5808,BUCN.ZU,Bucher Industries AG,nonus_stock,K1,False,1000,2022-09-07,2026-10-09,4,0.0
+1211,BMW.DE,Bayerische Motoren Werke Aktiengesellschaft,nonus_stock,K1,False,1000,2022-09-30,2026-10-09,4,0.0
+1217,FRE.DE,Fresenius SE & Co KGaA,nonus_stock,K1,False,1000,2022-09-30,2026-10-09,4,0.0
+3557,EGLA.MI,EuroGroup Laminations S.p.A,nonus_stock,K1,False,830,2023-06-02,2026-10-09,4,0.0036
+2230,YAR.OL,Yara International,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+4221,BRE.MI,Brembo,nonus_stock,K1,False,1000,2022-09-27,2026-10-09,4,0.0
+1288,ISP.MI,Intesa Sanpaolo Group,nonus_stock,K1,False,1000,2022-09-27,2026-10-09,4,0.0
+2309,1339.HK,People's Insurance Company (Group) of China,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+3336,BPT.ASX,Beach Energy Limited,nonus_stock,K1,False,999,2022-09-22,2026-10-09,6,0.0
+2035,GLEN.L,Glencore Plc,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+3310,AIA.ASX,Auckland International Airport Limited,nonus_stock,K1,False,999,2022-09-27,2026-10-09,3,0.0
+5848,ESSITYB.ST,Essity AB ser. B,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+3584,XFAB.PA,X Fab Silicon Foundries EV,nonus_stock,K1,False,1000,2022-10-17,2026-10-09,2,0.003
+2816,WIZZ.L,Wizz Air Holdings Plc,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+2251,ORRON.ST,Orron Energy AB,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+3566,VIRI.PA,Viridien,nonus_stock,K1,False,1000,2022-10-17,2026-10-09,2,0.003
+3679,FYB.DE,FORMYCON AG,nonus_stock,K1,False,1000,2022-10-11,2026-10-09,4,0.006
+2241,SWED-A.ST,Swedbank AB ser A,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+3546,ICOS.MI,Intercos S.p.A,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,4,0.006
+7012,PLS.ASX,PLS Group Ltd,nonus_stock,K1,False,999,2022-09-28,2026-10-09,2,0.0
+2243,ATCO-A.ST,Atlas Copco AB ser. A,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+3661,NA9.DE,NAGARRO SE,nonus_stock,K1,False,1000,2022-10-11,2026-10-09,4,0.003
+2717,BBOX.L,Tritax Big Box REIT Plc,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+8773,UNH.RTH,UnitedHealth,nonus_stock,K1,False,790,2023-07-19,2026-10-09,2,0.0
+2319,2328.HK,Picc Property And Casualty,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+5800,SALM.OL,SalMar ASA,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+5576,METSB.HE,Metsa Board,nonus_stock,K1,False,1000,2022-09-12,2026-10-09,4,0.0
+2723,WKP.L,Workspace Group PLC,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+2350,1186.HK,China Railway Construction,nonus_stock,K1,False,999,2022-08-11,2026-10-09,3,0.0
+2416,1038.HK,CK Infrastructure Holdings Ltd,nonus_stock,K1,False,999,2022-08-12,2026-10-09,3,0.0
+3308,NWS.ASX,News Corporation,nonus_stock,K1,False,999,2022-09-29,2026-10-09,3,0.0
+2760,VCT.L,Victrex PLC,nonus_stock,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+5033,RCO.PA,Remy Cointreau SA,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+2547,1U1.DE,1&1 AG,nonus_stock,K1,False,1000,2022-09-30,2026-10-09,4,0.0
+2841,PIN.L,Pantheon International,nonus_stock,K1,False,1000,2022-09-20,2026-10-09,2,0.002
+2573,SIX2.DE,SIXT SE,nonus_stock,K1,False,1000,2022-09-29,2026-10-09,4,0.0
+2709,QQ.L,QinetiQ Group PLC,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.0
+1417,UBSG.ZU,UBS Group AG,nonus_stock,K1,False,1000,2022-09-08,2026-10-09,4,0.0
+5005,AF.PA,Air France-KLM,nonus_stock,K1,False,1000,2022-10-07,2026-10-09,2,0.0
+3672,AG1.DE,AUTO1 GROUP SE,nonus_stock,K1,False,1000,2022-10-11,2026-10-09,4,0.003
+2763,SPI.L,Spire Healthcare Group PLC,nonus_stock,K1,False,1000,2022-09-22,2026-10-09,2,0.007
+7065,ILU.ASX,Iluka Resources Limited,nonus_stock,K1,False,999,2022-09-30,2026-10-09,2,0.0
+3252,VIG,Vanguard Dividend Appreciation ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2945,QDVI.DE,iShares Edge MSCI USA Value Factor UCITS ETF,etf,K1,False,758,2023-09-12,2026-10-09,4,0.0
+3173,CQQQ,Invesco China Technology ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2942,QDVA.DE,iShares Edge MSCI USA Momentum Factor UCITS ETF,etf,K1,False,758,2023-09-12,2026-10-09,4,0.0
+3104,WEAT,Teucrium Wheat Fund,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3103,CORN.US,Teucrium Corn Fund,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3171,BRZU,Direxion Daily MSCI Brazil Bull 2X ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10826,XLSR,SPDR SSGA US Sector Rotation ETF,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+8741,IGF,iShares Global Infrastructure ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3277,SXRH.DE,iShares TIPS 0-5 UCITS ETF,etf,K1,False,762,2023-09-12,2026-10-09,4,0.0
+1092,MGK,Vanguard Morningstar Mega Cap Growth ETF,etf,K1,False,1000,2022-08-30,2026-10-09,2,0.001
+3228,SPGP.L,iShares Gold Producers UCITS ETF,etf,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+3212,PPLT,Abrdn Platinum ETF Trust,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3418,QQQ.RTH,Invesco QQQ,etf,K1,False,791,2023-07-19,2026-10-09,2,0.0
+1085,EFV,iShares MSCI EAFE Value ETF,etf,K1,False,1000,2022-08-30,2026-10-09,2,0.0
+10799,EWP,Ishares Msci Spain Etf,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+10859,XRT,APDR S&P Retail ETF,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+9230,ARKG,ARK Genomic Revolution ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3147,IUSG,iShares Core S&P US Growth,etf,K1,False,1000,2022-08-26,2026-10-09,2,0.0
+10771,IFLN,Invesco Bloomberg Enhanced Fal,etf,K1,False,922,2023-01-03,2026-10-09,2,0.0011
+6327,DVY,iShares Select Dividend ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1392,VSS,Vanguard FTSE All-World ex-US Small Capital Index Fund,etf,K1,False,1000,2022-08-30,2026-10-09,2,0.001
+10850,SPTM,SPDR Portfolio S&P 1500 Composite Stock Market ETF,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+10837,COWZ,Pacer Us Cash Cows 100 Etf,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+3013,XLU,State Street Utilities Select Sector SPDR ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1393,GUNR,Northern Trust Morningstar Global Upstream Natural Resources ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3218,SCHE,Schwab Emerging Markets Equity ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3248,VBK,Vanguard Morningstar Small-Cap Growth ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10786,UCON,First Trust Tcw Unconstraine,etf,K1,False,921,2023-01-03,2026-10-09,2,0.0
+10792,GOVI,Invesco Equal Weight 0-30 Yr,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+6743,INCM,Franklin Income Focus ETF,etf,K1,False,816,2023-06-08,2026-10-09,2,0.0
+4432,MCHI,iShares MSCI China ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1432,IYE,iShares U.S. Energy ETF,etf,K1,False,1000,2022-08-30,2026-10-09,2,0.0
+10831,DGS,Wisdomtree Em Small Cap,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+2916,IBCC.DE,iShares Treasury Bond 0-1yr UCITS ETF,etf,K1,False,764,2023-09-12,2026-10-09,4,0.0
+8748,URA,Global X Uranium ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+2987,IBC9.DE,iShares Global High Yield Corp Bond UCITS ETF,etf,K1,False,765,2023-09-12,2026-10-09,4,0.0
+6960,GOVT,iShares US Treasury Bond ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4002,ACWI,iShares MSCI ACWI Index Fund,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3121,EWW,iShares MSCI Mexico ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4396,IWN,iShares Russell 2000 Value ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3009,EFA,iShares MSCI EAFE ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10849,XT,iShares Future Exponential Technologies ETF,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+8102,QQQJ,Invesco NASDAQ Next Gen 100 ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3005,IWM,Ishares Russell 2000 ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4493,IJJ,iShares S&P Mid-Cap 400 Value ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3003,EWJ,Ishares MSCI JAPAN ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10782,SUSC,Ishares Esg Aware Usd Corpor,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+4298,VEU,Vanguard FTSE All-World ex-US,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+10815,EPI,Wisdomtree India Earnings,etf,K1,False,923,2023-01-03,2026-10-09,2,0.0
+3040,SWDA.L,iShares Core MSCI World UCITS ETF,etf,K1,False,1000,2022-09-21,2026-10-09,2,0.0
+3193,IXJ,iShares Global Healthcare ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+6964,ARKX,ARK Space And Innovation ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3150,IEUR,iShares Core MSCI Europe ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+1389,FTCS,First Trust Capital Strength ETF,etf,K1,False,1000,2022-08-30,2026-10-09,2,0.0
+3151,IUSB,iShares Core Total USD Bond Market ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3167,ARKW,ARK Next Generation Technology ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3237,TAN,Invesco Solar ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+3205,NUGT,Direxion Daily Gold Miners Index Bull 2X ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0
+4446,EWG,iShares MSCI Germany ETF,etf,K1,False,1000,2022-08-29,2026-10-09,2,0.0

@@ -1,0 +1,23 @@
+{
+ "hypothesis": "H4",
+ "written_at": "2026-10-12T04:47:21.416998+00:00",
+ "prompt": "manuals/ebc/EBC_H4.md",
+ "prompt_sha256": "7e33ca7b03ead9ec1cf3dc5f73ecf94ee0b7009feb9cdb156ae1db233070b359",
+ "repo_head": "6ca2ba05349847d5709dc6ff0fbf53a914f386b2",
+ "seed": 20261011,
+ "comparison_period": {
+  "start": "2024-12-23",
+  "end": "2026-10-12",
+  "candles_until": "2026-10-10"
+ },
+ "preregistered_before_evaluation": true,
+ "thresholds": "siehe Prompt \u00a72.2/\u00a72.3 (unveraendert)",
+ "protocol_deviations": [
+  "Kostentabelle: nur Rueckfallwerte aus costs.py (keine Werktags-Spread-Messung, kein Stufe-C-Zugang); Spreads K1 3,0 bps, Slippage 1,5 bps je Seite.",
+  "Stufe B (Forward-Shadow) und Stufe C nicht ausgefuehrt; Route-R-Gegenprobe nicht ausgefuehrt (nur Route V).",
+  "Kein eigener Branch ebc/hx je Hypothese; ein gemeinsamer Experiment-Branch.",
+  "U_neu: Seed 20261012, Schichten 300/100/60 wie Spec, aber aus den auf eToro verfuegbaren Kandidaten mit bestandener Qualitaetspruefung (Zahl je Schicht siehe universe_neu_draw.json)."
+ ],
+ "universe_neu_sha256": "6ca894aded834f261a0fdb20bceb32bc7b3c9825613a67163b1cb7d3312804de",
+ "seed_universum": 20261012
+}

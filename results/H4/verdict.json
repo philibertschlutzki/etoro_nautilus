@@ -1,0 +1,161 @@
+{
+ "hypothesis": "H4",
+ "verdict": "UNENTSCHIEDEN",
+ "stage_a_only": true,
+ "repo_commit": "6ca2ba05349847d5709dc6ff0fbf53a914f386b2",
+ "stage_b": "nicht ausgefuehrt",
+ "stage_c": "NICHT_FREIGEGEBEN",
+ "capacity": {
+  "C30": {
+   "slots": 30,
+   "notional": 0.02,
+   "n_trades": 1141,
+   "sr": 2.0156183786388215,
+   "maxdd": -0.15421329707034992,
+   "expectancy_bps": 283.622805061533,
+   "dropped_share": 0.8764081455805892,
+   "dropped_expectancy_bps": 73.62456360652797,
+   "mean_open_positions": 27.25053078556263,
+   "n_trades_ge_2000bps": 97
+  },
+  "C60": {
+   "slots": 60,
+   "notional": 0.01,
+   "n_trades": 2237,
+   "sr": 1.814850434389627,
+   "maxdd": -0.12334531427747435,
+   "expectancy_bps": 202.7513958917864,
+   "dropped_share": 0.7576906412478336,
+   "dropped_expectancy_bps": 66.58400173062202,
+   "mean_open_positions": 54.10191082802548,
+   "n_trades_ge_2000bps": 152
+  },
+  "C120": {
+   "slots": 120,
+   "notional": 0.005,
+   "n_trades": 4352,
+   "sr": 1.6558812712558522,
+   "maxdd": -0.08680381830935788,
+   "expectancy_bps": 142.4143123356853,
+   "dropped_share": 0.5285961871750433,
+   "dropped_expectancy_bps": 61.37763881777143,
+   "mean_open_positions": 104.63057324840764,
+   "n_trades_ge_2000bps": 215
+  },
+  "C120plus": {
+   "slots": 120,
+   "notional": 0.005,
+   "n_trades": 4706,
+   "sr": 1.5269514582562351,
+   "maxdd": -0.1257583056125084,
+   "expectancy_bps": 165.22359338944483,
+   "dropped_share": 0.7357960925218954,
+   "dropped_expectancy_bps": 46.45554878238892,
+   "mean_open_positions": 107.35456475583864,
+   "n_trades_ge_2000bps": 289
+  },
+  "N30": {
+   "slots": 30,
+   "notional": 0.02,
+   "n_trades": 1312,
+   "sr": 0.8159300441307257,
+   "maxdd": -0.16580407178887938,
+   "expectancy_bps": 107.2237918730803,
+   "dropped_share": 0.8470862470862471,
+   "dropped_expectancy_bps": 44.909338632307126,
+   "mean_open_positions": 26.64968152866242,
+   "n_trades_ge_2000bps": 75
+  },
+  "C30_K1": {
+   "slots": 30,
+   "notional": 0.02,
+   "n_trades": 1165,
+   "sr": 1.833806602058815,
+   "maxdd": -0.1527941182604333,
+   "expectancy_bps": 261.5795123426604,
+   "dropped_share": 0.8231364809473205,
+   "dropped_expectancy_bps": 121.29063406377713,
+   "mean_open_positions": 26.6963906581741,
+   "n_trades_ge_2000bps": 94
+  },
+  "C30r": {
+   "slots": 30,
+   "notional": 0.02,
+   "n_trades": 1032,
+   "sr": 1.329793690658965,
+   "maxdd": -0.09097532506800497,
+   "expectancy_bps": 99.12523938830192,
+   "dropped_share": 0.8882149046793761,
+   "dropped_expectancy_bps": 99.63569727645117,
+   "mean_open_positions": 27.492569002123144,
+   "n_trades_ge_2000bps": 38
+  },
+  "Cinf": {
+   "slots": 1000000,
+   "notional": 0.005,
+   "n_trades": 17812,
+   "sr": 1.2789263526109635,
+   "maxdd": -0.24503377673878135,
+   "expectancy_bps": 77.83453025110693,
+   "dropped_share": 0.0,
+   "dropped_expectancy_bps": null,
+   "mean_open_positions": 434.92356687898086,
+   "n_trades_ge_2000bps": 566
+  },
+  "N120": {
+   "slots": 120,
+   "notional": 0.005,
+   "n_trades": 4351,
+   "sr": 0.8301249631708659,
+   "maxdd": -0.10682736503001401,
+   "expectancy_bps": 71.36170041969702,
+   "dropped_share": 0.49289044289044287,
+   "dropped_expectancy_bps": 37.026230690704146,
+   "mean_open_positions": 102.26751592356688,
+   "n_trades_ge_2000bps": 188
+  },
+  "C30plus": {
+   "slots": 30,
+   "notional": 0.02,
+   "n_trades": 1298,
+   "sr": 1.630183491725452,
+   "maxdd": -0.1787606992555273,
+   "expectancy_bps": 283.54757902372364,
+   "dropped_share": 0.9271277790253761,
+   "dropped_expectancy_bps": 61.66548960033446,
+   "mean_open_positions": 27.016985138004248,
+   "n_trades_ge_2000bps": 109
+  }
+ },
+ "predictions": {
+  "P41": {
+   "mean": 107.2237918730803,
+   "lo": -26.226974000032733,
+   "hi": 267.4628726794788,
+   "k1_c30_expectancy": 302.9942614830647,
+   "pass": false
+  },
+  "P42": {
+   "trade_ratio": 4.124452234881683,
+   "exp_ratio": 0.5825469265547916,
+   "pass": true
+  },
+  "P43": {
+   "dsr": {
+    "point": -0.4886669203825864,
+    "lo": -1.0790905602567116,
+    "hi": 0.10555647221907469,
+    "block": 8,
+    "B": 5000
+   },
+   "dd_c120plus": 0.1257583056125084,
+   "dd_c30": 0.15421329707034992,
+   "pass": false
+  }
+ },
+ "universe_neu": {
+  "n": 460,
+  "n_after_cost_filter": 452,
+  "sha256": "6ca894aded834f261a0fdb20bceb32bc7b3c9825613a67163b1cb7d3312804de"
+ }
+}

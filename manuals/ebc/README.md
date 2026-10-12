@@ -19,13 +19,15 @@ Jede Datei `EBC_Hx.md` ist ein ausführbarer, vorregistrierter Prüfauftrag für
 | [EBC_H1](EBC_H1.md) | Drei Archetypen T/M/V über das breite Universum statt Pro-Symbol-Auswahl | `BESTAETIGT` (vorläufig) | Stufe A; B+ SR 2,02 gegen 0,49, 1141 Trades |
 | [EBC_H2](EBC_H2.md) | Haltedauer, Breite, Sizing | `WIDERLEGT` (formal, Kriterium 2.3(b)) | Stufe A |
 | [EBC_H3](EBC_H3.md) | Trailing-Stop, Trailing-Take-Profit, Shorts | `UNENTSCHIEDEN` | Stufe A |
-| [EBC_H4](EBC_H4.md) | Kapazität × Breite | offen | – |
-| [EBC_H5](EBC_H5.md) | Haltedauer × Kapazität | offen | – |
-| [EBC_H6](EBC_H6.md) | Verlustbudget in drei Ebenen | offen | – |
-| [EBC_H7](EBC_H7.md) | Signal-Breite (drei neue Archetypen) | offen | – |
-| [EBC_H8](EBC_H8.md) | Realer Durchsatz von B++ im Paper-Konto | offen | – |
+| [EBC_H4](EBC_H4.md) | Kapazität × Breite | `UNENTSCHIEDEN` | Stufe A (2026-10-12): C120+ ×4,1 Trades, aber SR 1,53 gegen 2,02; Replikation auf `U_neu` schwach (SR 0,82), [Bericht](../../results/H4/report.md) |
+| [EBC_H5](EBC_H5.md) | Haltedauer × Kapazität | `WIDERLEGT` | Stufe A: M 1 Tag ΔSR −0,52, NP10 −81 bps je ausgelöstem Signal, [Bericht](../../results/H5/report.md) |
+| [EBC_H6](EBC_H6.md) | Verlustbudget in drei Ebenen | `WIDERLEGT` | Stufe A: DS 45 % hebt Trade-Expectancy (+12 bps), L123 senkt Portfolio-SR um 0,49, [Bericht](../../results/H6/report.md) |
+| [EBC_H7](EBC_H7.md) | Signal-Breite (drei neue Archetypen) | `UNENTSCHIEDEN` | Stufe A: R netto positiv (SR allein 1,94), aber ρ(R, TMV) 0,70; feste Quoten ohne Sharpe-Gewinn, [Bericht](../../results/H7/report.md) |
+| [EBC_H8](EBC_H8.md) | Realer Durchsatz von B++ im Paper-Konto | nicht ausgeführt | keine Freigabe für Paper-Orders, [Bericht](../../results/H8/report.md) |
 
 Stufe C (Demo-/Paper-Orders) wurde bisher für keine Hypothese freigegeben. Stufe B von H1 (B+ Forward-Shadow) ist mit `experiments/ebc/stage_b_daily.py` vorbereitet (Einstiege ab 2026-10-12), aber noch ohne Ergebnis.
+
+Stufe-A-Ergebnisse H4–H7 (2026-10-12, lokaler Katalog, Rückfallkosten, ohne Stufe B/C): Keine Variante schlägt B+ (C30) bei Sharpe und Rendite signifikant; vola-gleich bleibt B+ vorn (33,8 % p. a. gegen 25–31 %). Querschnitt: `results/H4/summary_h4_h7.json`.
 
 ## Zielmatrix H4–H8
 
