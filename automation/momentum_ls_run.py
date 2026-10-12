@@ -591,7 +591,12 @@ def main():
                 "reason": "bot_capital_basis", "bot_capital_usd": float(bot_capital_usd),
             }, level=logging.WARNING)
         logger.warning(f"[BOT_CAPITAL] Risikorechnung auf festem Bot-Kapital {float(bot_capital_usd):.2f} USD.")
-    account_view = EToroAccountView(api_key, user_key, api_environment, log=logger, bot_capital=bot_capital)
+    # Trade-Ledger aus den eToro-Positionen (Demo-Konto hat keine Trade-Historie über die API): verschwindet eine Position eines
+    # Bot-Instruments aus dem Kontostand, ist sie geschlossen (automation/trade_ledger.py -> data/state/demo_trades.jsonl).
+    from automation.trade_ledger import TradeLedger
+    trade_ledger = TradeLedger({b["etoro_id"] for b in bots_config}, log=logger)
+    account_view = EToroAccountView(api_key, user_key, api_environment, log=logger, bot_capital=bot_capital,
+                                    observers=[trade_ledger.observe])
     allocator.set_account_view(account_view)
 
     node = TradingNode(config=config)

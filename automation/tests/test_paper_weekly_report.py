@@ -69,3 +69,19 @@ def test_run_schreibt_wochen_und_latest_datei(tmp_path, monkeypatch):
     names = sorted(p.name for p in (tmp_path / "r").iterdir())
     assert names == ["paper_weekly_2026-W42.md", "paper_weekly_latest.md"]
     assert "Wöchentlicher Paper-Bericht 2026-W42" in (tmp_path / "r" / "paper_weekly_latest.md").read_text("utf-8")
+
+
+def test_demo_konto_nutzt_den_bot_ledger_statt_der_api_historie(tmp_path, monkeypatch):
+    monkeypatch.setattr("automation.account_guard.verify_paper_account", lambda *a, **k: "demo")
+    ledger = tmp_path / "demo_trades.jsonl"
+    ledger.write_text(json.dumps(_row(11, 14, 0.4, 1000.0)) + "\n", encoding="utf-8")
+    env = {"ETORO_ENV": "demo", "ETORO_API_KEY": "k", "ETORO_USER_KEY": "u"}
+
+    def history(*a, **k):
+        raise AssertionError("Demo hat keine API-Historie")
+
+    rc = w.run(days=7, now=NOW, environ=env, history=history, pnl_fetch=lambda: {"clientPortfolio": {"credit": 5.0, "positions": []}},
+               report_dir=tmp_path / "r", trades_path=ledger)
+    assert rc == 0
+    text = (tmp_path / "r" / "paper_weekly_latest.md").read_text("utf-8")
+    assert "| alle Klassen | 1 |" in text

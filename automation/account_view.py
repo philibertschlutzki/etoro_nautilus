@@ -47,6 +47,9 @@ class EToroPosition:
     leverage: float
     pnl: float             # unrealisierter PnL in USD
     stop_loss_rate: float | None = None
+    open_rate: float | None = None
+    opened_iso: str | None = None       # eToro-Öffnungszeit (UTC, ISO-8601)
+    external_fees: float = 0.0          # totalExternalFees (Krypto-Einstiegsgebühr)
 
     @property
     def notional(self) -> float:
@@ -109,7 +112,9 @@ def parse_snapshot(pnl_data: dict, *, now: float | None = None) -> AccountSnapsh
         positions.append(EToroPosition(
             position_id=str(pid), instrument_id=int(eid), is_buy=bool(is_buy), amount=amount,
             leverage=_number(low.get("leverage")) or 1.0, pnl=pnl or 0.0,
-            stop_loss_rate=_number(low.get("stoplossrate"))))
+            stop_loss_rate=_number(low.get("stoplossrate")), open_rate=_number(low.get("openrate")),
+            opened_iso=(str(low["opendatetime"]) if low.get("opendatetime") else None),
+            external_fees=_number(low.get("totalexternalfees")) or 0.0))
     return AccountSnapshot(credit=credit, positions=tuple(positions), taken_at=time.time() if now is None else now)
 
 
@@ -140,8 +145,9 @@ class EToroAccountView:
     """Thread-sicherer, zwischengespeicherter Lesezugriff auf das Konto (siehe Modul-Docstring)."""
 
     def __init__(self, api_key: str, user_key: str, environment: str, *, fetch=fetch_pnl_sync, ttl_s: float = 10.0,
-                 max_age_s: float = 120.0, clock=time.time, log=None, bot_capital=None) -> None:
+                 max_age_s: float = 120.0, clock=time.time, log=None, bot_capital=None, observers=None) -> None:
         self._args = (api_key, user_key, environment)
+        self._observers = list(observers or [])      # je erfolgreichem Abruf aufgerufen (z. B. Trade-Ledger)
         self._fetch = fetch
         self._ttl_s, self._max_age_s, self._clock = float(ttl_s), float(max_age_s), clock
         self._log = log
@@ -170,6 +176,12 @@ class EToroAccountView:
                     snap = replace(snap, bot_equity=self._bot_capital.observe(snap.positions))
                 self._last = snap
                 self._retry_not_before = 0.0
+                for observer in self._observers:
+                    try:
+                        observer(self._last)
+                    except Exception as exc:     # ein Beobachter darf die Risikorechnung nie stören
+                        if self._log is not None:
+                            self._log.warning(f"[ACCOUNT_VIEW] Beobachter fehlgeschlagen: {exc!r}")
             except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as exc:
                 self._retry_not_before = now + _backoff_s(exc)
                 if self._log is not None:

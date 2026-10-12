@@ -74,7 +74,9 @@ def test_report_ohne_zeit_oder_mit_zukunftszeit_bleibt_bei_jetzt():
     assert _report(_pnl(item), 123).ts_last == 123
 
 
-def test_reconcile_nutzt_bei_24h_instrumenten_die_wanduhr_wenn_der_bar_cache_luecken_hat():
+def test_reconcile_nutzt_bei_24h_instrumenten_die_wanduhr_wenn_der_bar_cache_luecken_hat(monkeypatch):
+    from automation.strategies import hourly_strategy_base as hsb
+    monkeypatch.setattr(hsb, "_read_instrument_asset_class", lambda i: "CRYPTO")      # unabhängig vom globalen Cache anderer Tests
     from automation.strategies.rsi2_reversion import Rsi2ReversionConfig, Rsi2ReversionStrategy
     from nautilus_trader.model.enums import PositionSide  # noqa: F401
     from unittest.mock import PropertyMock, patch
