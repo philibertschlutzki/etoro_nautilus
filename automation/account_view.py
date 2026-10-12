@@ -6,6 +6,7 @@ Positionen anderer Prozesse auf demselben Konto noch Positionen, die nach einem 
 der Adapter meldet als Kontostand nur das freie Guthaben.
 
   Equity = credit + Σ Betrag der offenen Positionen + Σ unrealisierter PnL
+  (mit ``bot_capital``: Equity = festes Kapital + realisiert + unrealisiert, siehe bot_capital.py)
 
 ``EToroAccountView.snapshot()`` liefert einen höchstens ``ttl_s`` Sekunden alten Stand (ein Abruf bedient Watchdog-
 Thread und Strategien) und ``None``, wenn der Abruf fehlschlägt und der letzte Stand älter als ``max_age_s`` ist:
@@ -19,7 +20,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 PNL_URLS = {"demo": "https://public-api.etoro.com/api/v1/trading/info/demo/pnl",
             "real": "https://public-api.etoro.com/api/v1/trading/info/real/pnl"}
@@ -57,6 +58,7 @@ class AccountSnapshot:
     credit: float
     positions: tuple[EToroPosition, ...]
     taken_at: float = field(default_factory=time.time)
+    bot_equity: float | None = None     # gesetzt, wenn ein festes Bot-Kapital gilt (automation/bot_capital.py)
 
     @property
     def invested(self) -> float:
@@ -68,6 +70,9 @@ class AccountSnapshot:
 
     @property
     def equity(self) -> float:
+        """Bei festem Bot-Kapital dessen Equity (unabhängig von Copy-Trading/Einzahlungen), sonst Konto-Equity."""
+        if self.bot_equity is not None:
+            return self.bot_equity
         return self.credit + self.invested + self.unrealized_pnl
 
     @property
@@ -135,14 +140,19 @@ class EToroAccountView:
     """Thread-sicherer, zwischengespeicherter Lesezugriff auf das Konto (siehe Modul-Docstring)."""
 
     def __init__(self, api_key: str, user_key: str, environment: str, *, fetch=fetch_pnl_sync, ttl_s: float = 10.0,
-                 max_age_s: float = 120.0, clock=time.time, log=None) -> None:
+                 max_age_s: float = 120.0, clock=time.time, log=None, bot_capital=None) -> None:
         self._args = (api_key, user_key, environment)
         self._fetch = fetch
         self._ttl_s, self._max_age_s, self._clock = float(ttl_s), float(max_age_s), clock
         self._log = log
+        self._bot_capital = bot_capital
         self._lock = threading.Lock()
         self._last: AccountSnapshot | None = None
         self._retry_not_before = 0.0
+
+    @property
+    def uses_bot_capital(self) -> bool:
+        return self._bot_capital is not None
 
     def snapshot(self, *, fresh: bool = False) -> AccountSnapshot | None:
         """Stand höchstens ``ttl_s`` alt (``fresh=True`` erzwingt einen Abruf). ``None``, wenn der Abruf scheitert und
@@ -155,7 +165,10 @@ class EToroAccountView:
                 # Nach einem Fehler (v. a. HTTP 429) nicht bei jedem Aufruf neu abrufen: das verschärft das Rate-Limit.
                 return self._last if self._last is not None and now - self._last.taken_at <= self._max_age_s else None
             try:
-                self._last = parse_snapshot(self._fetch(*self._args), now=now)
+                snap = parse_snapshot(self._fetch(*self._args), now=now)
+                if self._bot_capital is not None:
+                    snap = replace(snap, bot_equity=self._bot_capital.observe(snap.positions))
+                self._last = snap
                 self._retry_not_before = 0.0
             except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as exc:
                 self._retry_not_before = now + _backoff_s(exc)

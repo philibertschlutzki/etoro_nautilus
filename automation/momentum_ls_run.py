@@ -576,7 +576,22 @@ def main():
     # Risikorechnung (Verlust-Stopp, Exposure-Deckel, Positionsgrösse) liest Guthaben und offene Positionen direkt von
     # eToro statt aus dem Bot-Gedächtnis (automation/account_view.py).
     from automation.account_view import EToroAccountView
-    account_view = EToroAccountView(api_key, user_key, api_environment, log=logger)
+    bot_capital = None
+    bot_capital_usd = live_risk_cfg.get("bot_capital_usd")
+    if bot_capital_usd:
+        # Festes Bot-Kapital: Copy-Trading/Einzahlungen im Konto verändern Breaker und Positionsgröße nicht.
+        from automation.bot_capital import BotCapital
+        bot_capital = BotCapital.for_environment(float(bot_capital_usd), api_environment)
+        if bot_capital.fresh:
+            # Die Equity-Basis wechselt (Konto-Equity -> Bot-Kapital): der alte Hochwasserstand/die Tagesbasis
+            # würden sonst einen Phantom-Drawdown ergeben. Einmaliger, automatischer Reset.
+            _prev = PersistentEquityState(hwm_path, environment=environment).reset()
+            emit_execution_event(logger, "LIVE_HWM_RESET", {
+                "environment": environment, "hwm_path": str(hwm_path), "previous_state": _prev,
+                "reason": "bot_capital_basis", "bot_capital_usd": float(bot_capital_usd),
+            }, level=logging.WARNING)
+        logger.warning(f"[BOT_CAPITAL] Risikorechnung auf festem Bot-Kapital {float(bot_capital_usd):.2f} USD.")
+    account_view = EToroAccountView(api_key, user_key, api_environment, log=logger, bot_capital=bot_capital)
     allocator.set_account_view(account_view)
 
     node = TradingNode(config=config)
