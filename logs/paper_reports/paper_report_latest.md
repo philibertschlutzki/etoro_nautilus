@@ -1,6 +1,6 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 01:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-12 02:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
