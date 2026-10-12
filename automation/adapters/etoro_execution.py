@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+
+from automation.fatal_exit import hard_exit
 import ssl
 import time
 import uuid
@@ -533,7 +535,7 @@ class EToroExecutionClient(LiveExecutionClient):
                     LogColor.YELLOW,
                 )
                 await asyncio.sleep(min(10 * attempt, 60) + random.uniform(0, 2))
-        os._exit(1)
+        hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
     async def _ws_message_loop(self) -> None:
         try:
@@ -560,7 +562,7 @@ class EToroExecutionClient(LiveExecutionClient):
             self._log.error(
                 f"WS error or closure: {exc}. Forcing restart.", LogColor.RED
             )
-            os._exit(1)
+            hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
     async def _process_ws_message(self, msg: dict, is_replay: bool = False) -> None:
         msg_type = msg.get("type", "")

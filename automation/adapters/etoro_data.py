@@ -4,6 +4,8 @@ import ssl
 import uuid
 import websockets
 import os
+
+from automation.fatal_exit import hard_exit
 import traceback
 from datetime import datetime
 
@@ -138,14 +140,14 @@ class EToroDataClient(LiveMarketDataClient):
                     f"Unerwarteter Fehler (Programmierfehler) beim Verbindungsaufbau: {e}\n{traceback.format_exc()}",
                     LogColor.RED
                 )
-                os._exit(1)
+                hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
         self._log.error(
             f"WebSocket nach {_MAX_CONNECT_ATTEMPTS} Versuchen nicht erreichbar "
             f"(letzter Fehler: {last_exc}). Erzwinge Neustart via systemd...",
             LogColor.RED,
         )
-        os._exit(1)
+        hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
     async def _disconnect(self) -> None:
         if self._ws is not None:
@@ -291,20 +293,20 @@ class EToroDataClient(LiveMarketDataClient):
                 "Erzwinge Neustart via systemd...",
                 LogColor.YELLOW,
             )
-            os._exit(1)
+            hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
         except websockets.exceptions.ConnectionClosedOK:
             self._log.warning(
                 "WebSocket sauber getrennt (CloseOK). Erzwinge Neustart...",
                 LogColor.YELLOW,
             )
-            os._exit(1)
+            hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
         except websockets.exceptions.ConnectionClosedError as e:
             self._log.error(
                 f"WebSocket Verbindungsfehler: {e}. Erzwinge Neustart...",
                 LogColor.RED,
             )
-            os._exit(1)
+            hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
         except asyncio.CancelledError:
             self._log.info("Message Loop beendet (Cancelled).", LogColor.BLUE)
             raise
@@ -313,7 +315,7 @@ class EToroDataClient(LiveMarketDataClient):
                 f"Unerwarteter WebSocket-Fehler: {e}. Erzwinge Neustart...",
                 LogColor.RED,
             )
-            os._exit(1)
+            hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
     # ── Message Processing ────────────────────────────────────────────────────
 
