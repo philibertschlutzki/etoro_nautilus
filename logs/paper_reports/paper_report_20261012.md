@@ -64,3 +64,8 @@
 - 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 108217994, 113.69 USD, PnL +352.70 (zuletzt gesehen)
 - 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 17183199, 68.28 USD, PnL +162.70 (zuletzt gesehen)
 - 2026-10-12 17:45 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 19:15 UTC ERÖFFNET Long Instrument 4435, Position 3616900322, 19.98 USD, PnL -0.02
+- 2026-10-12 19:15 UTC WARNUNG 3 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 19:30 UTC ERÖFFNET Long GOOG.ETORO, Position 3616901725, 24.99 USD, PnL +0.02
+- 2026-10-12 19:30 UTC GESCHLOSSEN Long Instrument 4435, Position 3616900322, 19.98 USD, PnL -0.02 (zuletzt gesehen)
+- 2026-10-12 19:30 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
