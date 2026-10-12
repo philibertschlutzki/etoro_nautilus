@@ -1,6 +1,6 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 03:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-12 04:45 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
@@ -44,3 +44,6 @@ Keine offene Position.
 - 2026-10-11 22:45 UTC ZUSAMMENFASSUNG Guthaben 9774.96 USD, 1 offene Position(en) (PnL +1.57), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 00:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3602662774, 199.56 USD, PnL +1.76 (zuletzt gesehen)
 - 2026-10-12 02:45 UTC ZUSAMMENFASSUNG Guthaben 9974.27 USD, 0 offene Position(en) (PnL +0.00), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-12 04:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
+- 2026-10-12 04:15 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
+- 2026-10-12 04:30 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
