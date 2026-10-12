@@ -6,3 +6,4 @@
 - 2026-10-12 05:15 UTC ERÖFFNET Long BTC.ETORO, Position 3602833773, 197.67 USD, PnL +0.20
 - 2026-10-12 05:15 UTC ERÖFFNET Long INJ.ETORO, Position 3602833776, 197.74 USD, PnL +0.57
 - 2026-10-12 05:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 07:00 UTC ZUSAMMENFASSUNG Guthaben 9574.26 USD, 2 offene Position(en) (PnL -1.89), 2 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
