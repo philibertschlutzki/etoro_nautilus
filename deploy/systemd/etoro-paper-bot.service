@@ -5,9 +5,8 @@
 Description=eToro Paper-Bot (Inkubation, Paper-Konto)
 # Ohne Whitelist gibt es nichts zu handeln: erst der Orchestrator legt sie an.
 ConditionPathExists=%h/etoro_nautilus/data/state/incubation_whitelist.json
-# Maximal 5 Starts in 15 Minuten, danach Abbruch statt Endlosschleife (Wächter meldet den Ausfall).
-StartLimitIntervalSec=900
-StartLimitBurst=5
+# Kein Startlimit: nach einer längeren Netzunterbrechung muss der Dienst weiter versuchen (der Wächter meldet Ausfälle).
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -17,6 +16,8 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/bin/bash -c 'exec %h/etoro_nautilus/venv/bin/python3 automation/momentum_ls_run.py --incubation --universe data/universe/momentum_ls.json --tournament data/state/incubation_whitelist.json >> logs/incubation_bot_$$(date -u +%%Y%%m%%d).log 2>&1'
 Restart=always
 RestartSec=30
+# 3 = Circuit-Breaker ausgelöst (braucht einen Menschen), 4 = Sperre bereits gehalten: kein automatischer Neustart.
+RestartPreventExitStatus=3 4
 # SIGTERM -> geordnetes Herunterfahren des Bots (live_risk.LiveShutdownCoordinator), danach SIGKILL.
 TimeoutStopSec=90
 KillSignal=SIGTERM
