@@ -15,7 +15,7 @@ BASE = "https://public-api.etoro.com/api/v1"
 EXEC = f"{BASE}/trading/execution"                     # per account_guard: /real/-Pfad nur fuer das angeheftete Paper-Konto
 PNL = f"{BASE}/trading/info/real/pnl"
 ORDER_INFO = f"{BASE}/trading/info/real/orders"
-CAPS = {"c1": 50.0, "c4": 20.0, "c5": 50.0, "c2": 100.0, "c3": 100.0}
+CAPS = {"w8": 10.0, "c1": 50.0, "c4": 20.0, "c5": 50.0, "c2": 100.0, "c3": 100.0}
 MAX_TEST_POSITIONS = 20
 DEFAULT_CLASSES = ('K1', 'K5')          # FX/Rohstoffe/Indizes: eToro lehnt kleine Betraege ab (FX < 1000 USD); nur mit --classes
 FX_FIN_AMOUNT = 1010.0                   # Phili 2026-10-12: FX-Finanzierungsmessung nur mit Order == 1010 USD (eToro-Minimum 1000)

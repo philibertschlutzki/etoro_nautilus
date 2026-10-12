@@ -92,3 +92,7 @@ def test_recover_adopts_pending_by_order_id(monkeypatch, tmp_path):
     g.state["pending"]["88"] = {"instrument": 9, "klasse": "K1", "is_buy": False, "amount": 20.0}   # abgelehnt, keine Position
     run_stage_c.recover(g)
     assert "5" in g.state["positions"] and not g.state["pending"]
+
+
+def test_w8ben_phase_cap_is_10():
+    assert guard.CAPS["w8"] == 10.0

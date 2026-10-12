@@ -8,6 +8,7 @@ Phasen:  plan | c4 | c1 | c5 | fin | monitor | closeall
   c5       eine Position <= 50 USD oeffnen und mit UnitsToDeduct halbieren
   fin      kleine Positionen je Klasse/Seite fuer Finanzierungsmessung (<= 100 USD); danach taeglich 'monitor'
   monitor  rein lesend: protokolliert Gebuehren-/Stop-Felder aller eigenen Testpositionen
+  w8ben    EIN Long-Kauf (10 USD) einer liquiden US-Aktie, sofort wieder schliessen: Ausgabe 'W-8BEN: frei' / 'W-8BEN: gesperrt (768)' / 'unklar: <errorCode>'
   closeall schliesst alle eigenen Testpositionen per positionId
 """
 from __future__ import annotations
@@ -169,7 +170,7 @@ def pick_instrument(pool, symbols, g):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall"])
+    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "w8ben"])
     ap.add_argument("--live", action="store_true", help="Orders wirklich senden (Standard: Dry-Run)")
     ap.add_argument("--confirm-account", default=None, help="muss gleich ETORO_PAPER_ACCOUNT_CID sein")
     ap.add_argument("--whitelist", default=os.path.expanduser("~/etoro_nautilus/data/state/incubation_whitelist.json"))
@@ -187,7 +188,7 @@ def main():
     if a.phase == "monitor":
         return monitor()
     excl = guard.bot_excluded_ids(a.whitelist, a.bot_map)
-    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2"}[a.phase]
+    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "w8ben": "w8"}[a.phase]
     g = guard.Gate(a.live, a.confirm_account, excl, f"{OUT}/state.json", ph, lambda m: print(m))
     g.classes = tuple(a.classes.split(','))
     g.fx_max_exposure = a.fx_max_exposure
@@ -195,6 +196,28 @@ def main():
     pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes and not (a.exclude_us and r['klasse'] == 'K1' and '.' not in r['symbol'])]
     rnd = random.Random(SEED)
     eq = [r for r in pool if r["klasse"] == "K1" and guard.market_open("K1")]
+    if a.phase == "w8ben":
+        r = next((x for x in pool if x["klasse"] == "K1" and x["symbol"] in ("AAPL", "MSFT", "GOOG", "NVDA", "AMZN", "META", "TSLA") and guard.market_open("K1")), None)
+        if r is None:
+            print("W-8BEN-Test nicht moeglich: keine liquide US-Aktie im Pool oder US-Markt geschlossen"); return
+        print("W-8BEN-Test auf", r["symbol"], "(10 USD Long)")
+        try:
+            res = open_order(g, r, 10.0, True, tag="w8ben")
+        except guard.Refused as e:
+            print("verweigert:", e); return
+        if not g.live:
+            print("DRY-RUN: kein Ergebnis"); return
+        pos, rej = res
+        if pos:
+            print("W-8BEN: frei")
+            try: close_position(g, pos["positionID"])
+            except Exception as e: print("FEHLER beim Schliessen:", e, "- Position", pos["positionID"], "bleibt in state.json; closeall --live --confirm-account", acct)
+        elif rej and "768" in rej:
+            print("W-8BEN: gesperrt (768)", rej)
+        else:
+            code = next((w for w in (rej or "").replace(":", " ").split() if w.startswith("error_")), "unbekannt")
+            print(f"unklar: {code} {rej}")
+        return
     if a.phase == "plan":
         cls = {k: len([r for r in pool if r["klasse"] == k]) for k in ("K1", "K2", "K3", "K4", "K5")}
         sel = {"c4": [r["symbol"] for r in rnd.sample([r for r in pool if r["klasse"] == "K1"], min(a.n, len(pool)))],
