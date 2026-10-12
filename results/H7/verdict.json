@@ -1,0 +1,57 @@
+{
+ "hypothesis": "H7",
+ "verdict": "UNENTSCHIEDEN",
+ "stage_a_only": true,
+ "repo_commit": "6ca2ba05349847d5709dc6ff0fbf53a914f386b2",
+ "stage_b": "nicht ausgefuehrt",
+ "stage_c": "entfaellt",
+ "archetypes": {
+  "R": {
+   "n_trades": 2461,
+   "expectancy_bps": 69.55120031940314,
+   "ci90": [
+    29.297013444708544,
+    107.82447128741045
+   ],
+   "alpha_ann": 0.03439138579551706,
+   "corr_tmv": 0.698988805006922,
+   "passed_p71_p72": false
+  },
+  "X": {
+   "n_trades": 184,
+   "expectancy_bps": 463.24710162682663,
+   "ci90": [
+    -40.19636606695255,
+    1013.4374561121834
+   ],
+   "alpha_ann": 0.008714133410105785,
+   "corr_tmv": 0.6215567622077585,
+   "passed_p71_p72": false
+  },
+  "W": {
+   "n_trades": 352,
+   "expectancy_bps": 34.46385969458563,
+   "ci90": [
+    -22.0942573425255,
+    89.99243126268742
+   ],
+   "alpha_ann": 0.001806182114011134,
+   "corr_tmv": 0.33073605237769366,
+   "passed_p71_p72": true
+  }
+ },
+ "corr_R_M": 0.6452880387037888,
+ "overlap_R_M": 0.204028809363043,
+ "combination": {
+  "delta_sr": {
+   "point": 0.0038406636491998825,
+   "lo": -0.49287229534816873,
+   "hi": 0.5120519634484242,
+   "block": 8,
+   "B": 5000
+  }
+ },
+ "archetypes_for_bplusplus": [
+  "W"
+ ]
+}
