@@ -454,6 +454,10 @@ class LiveCircuitBreakerWatchdog:
             snap = self._account_view.snapshot()
             if snap is not None:
                 return snap.equity
+            if getattr(self._account_view, "uses_bot_capital", False):
+                # Ersatz aus dem Bot-Portfolio hätte eine andere Basis (Konto statt Bot-Kapital) und würde den HWM verfälschen.
+                logger.error("[LiveCircuitBreaker] eToro-Kontostand nicht lesbar — Tick übersprungen (festes Bot-Kapital).")
+                return None
             logger.error("[LiveCircuitBreaker] eToro-Kontostand nicht lesbar — Equity aus dem Bot-Portfolio (Ersatz).")
         try:
             from nautilus_trader.model.identifiers import Venue
