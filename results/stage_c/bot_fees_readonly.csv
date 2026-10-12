@@ -1,0 +1,3 @@
+position_id,instrument,klasse,side,amount,age_days,total_fees,fees_bps,tsl,has_sl
+3602666415,100330,CRYPTO,long,156.1,0.067,1.56,99.93593850096093,False,True
+3602662774,100000,CRYPTO,long,199.56,0.275,2.0,100.22048506714773,False,True

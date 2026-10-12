@@ -1,0 +1,12 @@
+[Unit]
+Description=EBC Spread-Stichprobe (lesend, bis 2026-10-16)
+ConditionPathExists=%h/ebc_exp/experiments/ebc/sample_spreads.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ebc_exp
+Nice=10
+ExecCondition=/bin/bash -c '[ "$(date -u +%%Y%%m%%d)" -le 20261016 ]'
+ExecStart=/usr/bin/flock -n /tmp/ebc_spreads.lock %h/etoro_nautilus/venv/bin/python3 experiments/ebc/sample_spreads.py --universe results/H4/universe_neu.csv
+StandardOutput=append:%h/ebc_exp/logs/ebc_spreads.log
+StandardError=append:%h/ebc_exp/logs/ebc_spreads.log
