@@ -52,7 +52,11 @@ def _req(url, method="GET", payload=None):
 
 
 def get(url):
-    s, b = _req(url)
+    import time
+    for i in range(8):                       # 429 (Rate-Limit, Key wird mit Bot und Messungen geteilt): Backoff 3, 6, 12 ... 60 s
+        s, b = _req(url)
+        if s != 429: break
+        time.sleep(min(60, 3 * 2 ** i))
     if s != 200:
         raise RuntimeError(f"GET {url.split('?')[0]} HTTP {s}")
     return b
