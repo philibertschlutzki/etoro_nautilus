@@ -1,10 +1,15 @@
 {
  "hypothesis": "H4",
- "verdict": "UNENTSCHIEDEN",
+ "verdict": "WIDERLEGT",
  "stage_a_only": true,
  "repo_commit": "6ca2ba05349847d5709dc6ff0fbf53a914f386b2",
  "stage_b": "nicht ausgefuehrt",
- "stage_c": "NICHT_FREIGEGEBEN",
+ "stage_c": {
+  "status": "TEILWEISE",
+  "acceptance_rate_h4": "24/25 (1 x error_746)",
+  "min_fee_usd": 1.0,
+  "fee_model": "pauschal 1,00 USD je Order"
+ },
  "capacity": {
   "C30": {
    "slots": 30,
@@ -157,5 +162,7 @@
   "n": 460,
   "n_after_cost_filter": 452,
   "sha256": "6ca894aded834f261a0fdb20bceb32bc7b3c9825613a67163b1cb7d3312804de"
- }
+ },
+ "verdict_stage_a_fallback_costs": "UNENTSCHIEDEN",
+ "verdict_basis": "Stufe A mit Pauschalgebuehr 1 USD je Order (Stufe C), obere \u0394SR-Grenze C120+ - C30 < 0"
 }

@@ -1,0 +1,13 @@
+{
+ "positions": {
+  "3603970523": {
+   "instrument": 6961,
+   "klasse": "K1",
+   "is_buy": true,
+   "opened": "2026-10-12T16:39:18.363067+00:00",
+   "amount": 50.0,
+   "tag": "h4_breit",
+   "units": 0.242013
+  }
+ }
+}

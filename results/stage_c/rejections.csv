@@ -1,0 +1,72 @@
+ts,order_id,instrument,klasse,side,amount_usd,status_id,error_code,message,tag
+2026-10-12T16:34:50.243446+00:00,1610357499,10715,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:34:54.432299+00:00,1610450801,6833,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:34:58.876102+00:00,1610357500,10737,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:21.213384+00:00,1610283524,6266,K1,BUY,50.0,4,746,etoro_order_status_4_error_746: opening position is disallowed  for Buy positions of this instrument,h4_breit
+2026-10-12T16:36:25.148259+00:00,1610389457,1552,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:29.519467+00:00,1610283525,1187,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:33.771326+00:00,1610357512,7658,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:38.034488+00:00,1610450820,10681,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:42.085855+00:00,1610566023,1161,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:46.247587+00:00,1610325438,10961,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:50.070146+00:00,1610434951,1041,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:54.696696+00:00,1610325440,6908,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:36:58.920622+00:00,1610450821,9045,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:03.110189+00:00,1610423155,8679,K1,BUY,50.0,,,orderinfo_error:GET https://public-api.etoro.com/api/v1/trading/info/real/orders/1610423155 HTTP 404,h4_breit
+2026-10-12T16:37:07.022423+00:00,1610566024,6805,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:11.086315+00:00,1610193866,4361,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:15.169533+00:00,1610283529,1872,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:19.646522+00:00,1610261400,6802,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:23.782772+00:00,1610203752,6585,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:28.030758+00:00,1610325441,6152,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:31.880951+00:00,1610375462,9031,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:36.010949+00:00,1610261403,1644,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:40.101302+00:00,1610261405,6006,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:44.015515+00:00,1610375463,1062,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:48.156886+00:00,1610421278,1039,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:52.150043+00:00,1610458864,2882,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:37:56.217282+00:00,1610450827,4050,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:38:00.492254+00:00,1609955976,1733,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:38:04.647719+00:00,1610450828,1813,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:39:51.902452+00:00,1610203758,10715,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:39:55.970534+00:00,1610421280,6833,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:40:00.114482+00:00,1610375469,10737,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:41:31.943998+00:00,1610566037,6266,K1,BUY,50.0,4,746,etoro_order_status_4_error_746: opening position is disallowed  for Buy positions of this instrument,h4_breit
+2026-10-12T16:41:35.903541+00:00,1610283557,1552,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:41:39.804547+00:00,1610450864,1187,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:41:43.888859+00:00,1610379296,7658,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:41:48.063625+00:00,1610357548,10681,K1,BUY,50.0,,,orderinfo_error:GET https://public-api.etoro.com/api/v1/trading/info/real/orders/1610357548 HTTP 404,h4_breit
+2026-10-12T16:41:52.089131+00:00,1610251629,1161,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:41:56.150602+00:00,1610257447,10961,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:00.155670+00:00,1610251630,1041,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:04.983132+00:00,1610357549,6908,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:09.719635+00:00,1610247801,9045,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:13.673902+00:00,1610257449,8679,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:18.388302+00:00,1610349382,6805,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:22.317042+00:00,1610486631,4361,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:26.220353+00:00,1610283567,1872,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:30.276250+00:00,1610193913,6802,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:34.699407+00:00,1610434977,6585,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:38.743087+00:00,1610307489,6152,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:43.024736+00:00,1610450873,9031,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:47.051607+00:00,1610307490,1644,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:51.052020+00:00,1610307491,6006,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:55.058508+00:00,1610566040,1062,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:42:58.914129+00:00,1610261430,1039,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:43:03.263778+00:00,1610261431,2882,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:43:07.186896+00:00,1610307494,4050,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:43:11.134643+00:00,1610425176,1733,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:43:14.992829+00:00,1610375476,1813,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_breit
+2026-10-12T16:45:58.287874+00:00,1610193934,3279,K1,BUY,50.0,,,orderinfo_error:GET https://public-api.etoro.com/api/v1/trading/info/real/orders/1610193934 HTTP 404,h4_breit
+2026-10-12T16:57:25.116570+00:00,1610243687,1607,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:29.479485+00:00,1610421353,5712,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:33.671042+00:00,1610243688,5109,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:37.647699+00:00,1610403326,8605,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:41.727790+00:00,1610421354,6721,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:45.600323+00:00,1610325543,6203,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:49.574774+00:00,1610403329,6713,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:53.692409+00:00,1610257521,4108,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:57:57.621100+00:00,1610359512,6338,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:58:01.631283+00:00,1610359513,1729,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T16:58:05.736174+00:00,1610171943,8908,K1,BUY,50.0,4,768,etoro_order_status_4_error_768: User is blocked by W-8BEN from opening position.,h4_neu
+2026-10-12T19:27:10.345855+00:00,388167608,6266,K1,BUY,50.0,4,746,etoro_order_status_4_error_746: opening position is disallowed  for Buy positions of this instrument,h4_breit
