@@ -161,11 +161,21 @@ def monitor():
     print(f"monitor: {len(state['positions'])} eigene Testpositionen protokolliert")
 
 
+LIQUID_US = ("GOOG", "MSFT", "AAPL", "NVDA", "AMZN", "META", "TSLA")
+
+
 def pick_instrument(pool, symbols, g):
-    """c1/c5: explizite --symbols, sonst Krypto (K5, 24/7), sonst Nicht-US-Aktie (Symbol mit '.', Boerse offen). Nie US-Aktien (W-8BEN, 768)."""
+    """c1/c5: explizite --symbols (muss im Pool liegen: nicht Bot-Whitelist, keine fremde offene Position); sonst Demo: liquide US-Aktie
+    (GOOG, ...) bei offenem US-Markt, dann Krypto, dann Nicht-US-Aktie; Real (Altbestand): Krypto, dann Nicht-US (W-8BEN-768 im alten Konto)."""
     if symbols:
         want = [x.strip() for x in symbols.split(",")]
-        return next((r for r in pool if r["symbol"] in want), None)
+        hit = next((r for r in pool if r["symbol"] in want), None)
+        if hit is None:
+            print(f"{want} nicht im Pool (Bot-Whitelist/offene Position/Klasse nicht freigegeben/nicht im Universum)")
+        return hit
+    us = next((r for r in pool if r["klasse"] == "K1" and r["symbol"] in LIQUID_US and guard.market_open("K1")), None) if guard.ENV_MODE == "demo" else None
+    if us is not None:
+        return us
     k5 = next((r for r in pool if r["klasse"] == "K5"), None)
     if k5 is not None and "K5" in g.classes:
         return k5
