@@ -241,7 +241,12 @@ def main():
             print("feeprobe nicht moeglich: keine liquide US-Aktie im Pool (Bot/offene Position) oder US-Markt geschlossen"); return
         print("feeprobe auf", r["symbol"], "- Long 200/500/1000 USD, jeweils sofort voll geschlossen")
         rows_fp = []
+        def snap():
+            d = guard.get(guard.PNL)["clientPortfolio"]
+            return float(d.get("credit") or 0), {str(p["positionID"]): p for p in d.get("positions") or []}
         for amt in (200.0, 500.0, 1000.0):
+            if g.live:
+                c0, _ = snap()
             try:
                 res = open_order(g, r, amt, True, tag=f"feeprobe{int(amt)}")
             except guard.Refused as e:
@@ -251,31 +256,30 @@ def main():
             pos, rej = res
             if not pos:
                 print(f"{amt:.0f} USD: keine Position ({rej})"); continue
-            open_fee = float(pos.get("totalFees") or 0) + float(pos.get("totalExternalFees") or 0)
+            c1_, ps = snap()
+            p_now = ps.get(str(pos["positionID"]), pos)
+            open_fee = float(p_now.get("totalFees") or 0) + float(p_now.get("totalExternalFees") or 0)
+            upnl = float((p_now.get("unrealizedPnL") or {}).get("pnL") or 0)      # unmittelbar vor dem Schliessen
             try: close_position(g, pos["positionID"])
             except Exception as e: print("FEHLER beim Schliessen:", e, "- closeall --env", guard.ENV_MODE); break
-            rows_fp.append(dict(amount=amt, position_id=pos["positionID"], units=pos["units"], open_rate=pos["openRate"], open_fee=open_fee))
+            time.sleep(4)
+            c2, _ = snap()
+            # Kasse: c1_ = c0 - amount (- open_fee evtl.); nach dem Schliessen: c2 = c1_ + amount + realisierter PnL - close_fee
+            realized_net = c2 - c1_ - float(p_now.get("amount", amt))
+            rows_fp.append(dict(amount=amt, position_id=pos["positionID"], units=pos["units"], open_rate=pos["openRate"], open_fee=open_fee,
+                                credit_open_delta=round(c0 - c1_, 4), upnl_before_close=round(upnl, 4), realized_net=round(realized_net, 4),
+                                close_fee_est=round(upnl - realized_net, 4)))
             time.sleep(6)
         if not g.live:
             print("DRY-RUN: kein Ergebnis"); return
-        time.sleep(5)
-        hist = {str(h["positionId"]): h for h in guard.get(f"{guard.BASE}/trading/info/trade/history?minDate={dt.date.today().isoformat()}&page=1&pageSize=50")}
-        out = []
-        for x in rows_fp:
-            h = hist.get(str(x["position_id"]))
-            if h:
-                gross = x["units"] * (h["closeRate"] - x["open_rate"])
-                total = round(gross - h["netProfit"], 4)
-                x.update(close_rate=h["closeRate"], net_profit=h["netProfit"], hist_fees=h.get("fees"), implied_total_fee=total, close_fee=round(total - x["open_fee"], 4))
-            out.append(x)
         os.makedirs(OUT, exist_ok=True)
+        cols = ["amount", "position_id", "units", "open_rate", "open_fee", "credit_open_delta", "upnl_before_close", "realized_net", "close_fee_est"]
         with open(f"{OUT}/feeprobe.csv", "w", newline="") as f:
-            cols = ["amount", "position_id", "units", "open_rate", "open_fee", "close_rate", "net_profit", "hist_fees", "implied_total_fee", "close_fee"]
-            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader(); w.writerows(out)
-        print(f"\n{'USD':>6} {'open_fee':>9} {'open_bps':>9} {'close_fee':>10} {'close_bps':>10} {'total':>7}  (impl. aus Brutto-PnL minus netProfit; hist_fees)")
-        for x in out:
-            cf = x.get("close_fee"); a_ = x["amount"]
-            print(f"{a_:6.0f} {x['open_fee']:9.2f} {x['open_fee']/a_*1e4:9.1f} {('%.2f' % cf) if cf is not None else 'n/a':>10} {('%.1f' % (cf/a_*1e4)) if cf is not None else 'n/a':>10} {x.get('implied_total_fee','n/a')}  hist={x.get('hist_fees')}")
+            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader(); w.writerows(rows_fp)
+        print(f"\n{'USD':>6} {'open_fee':>9} {'open_bps':>9} {'close_fee~':>11} {'close_bps~':>11}   (close_fee~ = unrealisierter PnL vor Close - realisierte Kassenaenderung; Rauschen durch Kursdrift ~ +-0,3 USD)")
+        for x in rows_fp:
+            a_ = x["amount"]; cf = x["close_fee_est"]
+            print(f"{a_:6.0f} {x['open_fee']:9.2f} {x['open_fee']/a_*1e4:9.1f} {cf:11.2f} {cf/a_*1e4:11.1f}")
         return
     if a.phase == "plan":
         cls = {k: len([r for r in pool if r["klasse"] == k]) for k in ("K1", "K2", "K3", "K4", "K5")}
