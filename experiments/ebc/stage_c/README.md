@@ -20,3 +20,7 @@ Nur Phase `fin`, Betrag genau 1010 USD, höchstens 4 FX-Testpositionen (z. B. 1 
 ## W-8BEN-Befund (2026-10-12)
 Long-Eröffnungen auf US-Aktien werden mit `errorCode 768` („User is blocked by W-8BEN“) asynchron abgelehnt, Shorts auf US-Aktien werden angenommen (Details `results/stage_c/w8ben_finding.md`). Daher laufen `c1`/`c5` standardmäßig auf Krypto (K5, long, <= 50 USD) bzw. Nicht-US-Aktien (`--symbols`), nie auf US-Aktien. Probe der Long-Sperre: `c4 --side long`.
 Beispiele: `run_stage_c.py c5 --live --confirm-account 48264806` (wählt Krypto), `run_stage_c.py c1 --live --confirm-account 48264806 --symbols BTC`.
+
+Update 2026-10-12: Phili hat W-8BEN um 16:38 UTC unterzeichnet; die Wirkung ist verzögert/unklar. `--exclude-us` ist nur eine Option (Standard aus). Standardauswahl für c1/c5 ohne `--symbols` bleibt Krypto bzw. Nicht-US-Aktie.
+(a) jetzt: `run_stage_c.py c5 --live --confirm-account 48264806` (Krypto).
+(b) später, Sperre-Probe auf US-Aktie: `run_stage_c.py c5 --live --confirm-account 48264806 --symbols GOOG` (50 USD; bei 768 nur Ablehnung verbucht, kein Schaden; bei Annahme wird halbiert und mit `closeall` beendet).

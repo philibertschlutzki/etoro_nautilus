@@ -157,7 +157,7 @@ def main():
     ap.add_argument("--n", type=int, default=30)
     ap.add_argument("--fx-max-exposure", type=float, default=0.04, help="Obergrenze Summe der Testpositionen als Anteil des Kontos (Standard 4 %%)")
     ap.add_argument("--symbols", default=None, help="c1/c5: kommagetrennte Symbole aus universe.csv (z. B. BTC,SW.PA); Standard: Krypto, sonst Nicht-US-Aktie")
-    ap.add_argument("--exclude-us", action="store_true", default=True, help="c1/c5 nie auf US-Aktien (W-8BEN-Sperre, errorCode 768); Standard an")
+    ap.add_argument("--exclude-us", action="store_true", default=False, help="US-Aktien aus dem Pool nehmen (Option; Standard: aus)")
     ap.add_argument("--side", choices=["short", "long"], default="short", help="c4: Richtung der Probe-Orders (long = W-8BEN-768-Messung auf US-Aktien, <= 20 USD, sofort schliessen falls angenommen)")
     ap.add_argument("--classes", default="K1,K5", help="freigegebene Klassen (Standard K1,K5; K2 braucht >= 1000 USD und wird bei kleineren Caps verweigert)")
     a = ap.parse_args()
@@ -171,7 +171,8 @@ def main():
     g = guard.Gate(a.live, a.confirm_account, excl, f"{OUT}/state.json", ph, lambda m: print(m))
     g.classes = tuple(a.classes.split(','))
     g.fx_max_exposure = a.fx_max_exposure
-    pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes]
+    us_hint = (lambda r: '.' not in r['symbol'])
+    pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes and not (a.exclude_us and r['klasse'] == 'K1' and '.' not in r['symbol'])]
     rnd = random.Random(SEED)
     eq = [r for r in pool if r["klasse"] == "K1" and guard.market_open("K1")]
     if a.phase == "plan":
