@@ -318,6 +318,11 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     # Suchraum, daher überschreibend.
     cfg_kwargs["session_window"] = session_window_to_param(
         load_session_window_for_symbol(bot_spec["symbol"]))
+    # Offene eToro-Positionen, die der Bot nach einem Neustart übernimmt, gehören sonst der Strategie "EXTERNAL". Deren
+    # Schliessen ist im NETTING-OMS verboten (OrderDenied: position_id ...-EXTERNAL not valid for NETTING OMS) und ohne
+    # position_id entsteht eine Phantom-Short-Position. Mit dem Claim ordnet Nautilus die bei der Reconciliation
+    # erzeugten Orders/Positionen dieses Instruments der Strategie zu: Zeit-/Stop-Exits schliessen die Position normal.
+    cfg_kwargs["external_order_claims"] = [bot_spec["symbol"]]
 
     strat_config = ConfigClass(**cfg_kwargs)
     return StrategyClass(config=strat_config, allocator=allocator)
