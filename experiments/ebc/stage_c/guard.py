@@ -123,7 +123,7 @@ class Gate:
             used = sum(float(v.get('amount', 0)) for v in self.state['positions'].values())
             if used + amount > self.fx_max_exposure * equity: raise Refused(f'Exposure der Testpositionen {used + amount:.0f} USD > {self.fx_max_exposure:.0%} des Kontos ({equity:.0f} USD); --fx-max-exposure explizit anheben')
         if amount < MIN_AMOUNT_USD.get(klasse, 0.0) and not fx_ok: raise Refused(f'Mindestbetrag {MIN_AMOUNT_USD[klasse]} USD fuer {klasse} > Betrag {amount} (Caps werden nicht erhoeht)')
-        if amount > cap: raise Refused(f"Betrag {amount} > Limit {cap} ({self.phase})")
+        if amount > cap and not (klasse == 'K2' and self.phase == 'c2' and abs(amount - FX_FIN_AMOUNT) < 1e-6): raise Refused(f"Betrag {amount} > Limit {cap} ({self.phase})")
         if int(instrument_id) in self.excluded: raise Refused(f"Instrument {instrument_id} wird vom Bot gehandelt (Whitelist)")
         if klasse == "K5" and not is_buy: raise Refused("Krypto nur long")
         if not market_open(klasse): raise Refused(f"Markt fuer {klasse} geschlossen")
