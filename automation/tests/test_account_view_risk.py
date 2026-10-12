@@ -96,3 +96,41 @@ def test_breaker_equity_comes_from_etoro_including_foreign_positions():
     equity = wd._read_equity()
     assert equity == pytest.approx(9619.58 - 2000 + 199.56 + 2000 + 0.21)
     assert 1.0 - equity / (9619.58 + 199.56) < 0.001                         # kein falscher Tagesverlust
+
+
+def _http_429(retry_after=None):
+    from email.message import Message
+    headers = Message()
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+    return urllib.error.HTTPError("https://x", 429, "Too Many Requests", headers, None)
+
+
+def test_rate_limit_backoff_stops_hammering_and_serves_the_last_good_snapshot():
+    now = [1000.0]
+    calls = []
+
+    def fetch(*a):
+        calls.append(now[0])
+        if len(calls) == 1:
+            return _pnl()
+        raise _http_429(retry_after=20)
+
+    view = EToroAccountView("k", "u", "demo", fetch=fetch, clock=lambda: now[0], ttl_s=10.0, max_age_s=120.0)
+    assert view.snapshot() is not None                    # Abruf 1 ok
+    now[0] = 1011.0
+    assert view.snapshot() is not None                    # Abruf 2 -> 429, alter Stand bleibt gültig
+    for t in (1012.0, 1020.0, 1030.0):                    # innerhalb von 20 s (Retry-After): kein weiterer Abruf
+        now[0] = t
+        view.snapshot(fresh=True)
+    assert len(calls) == 2
+    now[0] = 1032.0                                       # Retry-After vorbei: wieder ein Versuch
+    view.snapshot()
+    assert len(calls) == 3
+
+
+def test_backoff_defaults_and_cap():
+    from automation import account_view as av
+    assert av._backoff_s(_http_429()) == av.RATE_LIMIT_BACKOFF_S
+    assert av._backoff_s(_http_429(900)) == av.MAX_BACKOFF_S
+    assert av._backoff_s(OSError("x")) == av.ERROR_BACKOFF_S

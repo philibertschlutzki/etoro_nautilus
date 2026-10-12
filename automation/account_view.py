@@ -116,6 +116,21 @@ def fetch_pnl_sync(api_key: str, user_key: str, environment: str, *, opener=urll
         return json.loads(resp.read().decode("utf-8"))
 
 
+RATE_LIMIT_BACKOFF_S = 10.0     # HTTP 429 ohne Retry-After
+ERROR_BACKOFF_S = 3.0           # alle anderen Abruffehler
+MAX_BACKOFF_S = 60.0
+
+
+def _backoff_s(exc: Exception) -> float:
+    """Wartezeit nach einem Abruffehler: ``Retry-After`` (höchstens 60 s) bzw. 10 s bei 429, sonst 3 s."""
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+        try:
+            return min(MAX_BACKOFF_S, max(1.0, float(exc.headers.get("Retry-After"))))
+        except (AttributeError, TypeError, ValueError):
+            return RATE_LIMIT_BACKOFF_S
+    return ERROR_BACKOFF_S
+
+
 class EToroAccountView:
     """Thread-sicherer, zwischengespeicherter Lesezugriff auf das Konto (siehe Modul-Docstring)."""
 
@@ -127,6 +142,7 @@ class EToroAccountView:
         self._log = log
         self._lock = threading.Lock()
         self._last: AccountSnapshot | None = None
+        self._retry_not_before = 0.0
 
     def snapshot(self, *, fresh: bool = False) -> AccountSnapshot | None:
         """Stand höchstens ``ttl_s`` alt (``fresh=True`` erzwingt einen Abruf). ``None``, wenn der Abruf scheitert und
@@ -135,11 +151,17 @@ class EToroAccountView:
             now = self._clock()
             if self._last is not None and not fresh and now - self._last.taken_at < self._ttl_s:
                 return self._last
+            if now < self._retry_not_before:
+                # Nach einem Fehler (v. a. HTTP 429) nicht bei jedem Aufruf neu abrufen: das verschärft das Rate-Limit.
+                return self._last if self._last is not None and now - self._last.taken_at <= self._max_age_s else None
             try:
                 self._last = parse_snapshot(self._fetch(*self._args), now=now)
+                self._retry_not_before = 0.0
             except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError) as exc:
+                self._retry_not_before = now + _backoff_s(exc)
                 if self._log is not None:
-                    self._log.warning(f"[ACCOUNT_VIEW] Kontoabruf fehlgeschlagen: {exc}")
+                    self._log.warning(f"[ACCOUNT_VIEW] Kontoabruf fehlgeschlagen: {exc} "
+                                      f"(nächster Versuch frühestens in {self._retry_not_before - now:.0f} s)")
             if self._last is not None and now - self._last.taken_at <= self._max_age_s:
                 return self._last
             return None
