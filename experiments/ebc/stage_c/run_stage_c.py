@@ -86,6 +86,9 @@ def open_order(g: guard.Gate, r, amount, is_buy, extra=None, tag=""):
     if not g.live:
         return None
     oid = find_key(body, "orderid")
+    if oid is not None and status in (200, 201):            # VOR jedem Folgeschritt festhalten (Wiederaufnahme nach Abbruch)
+        g.state["pending"][str(oid)] = {"instrument": iid, "klasse": r["klasse"], "is_buy": is_buy, "opened": submit_ts, "amount": amount, "tag": tag}
+        g.save()
     rej = None; info = {}
     if status not in (200, 201):
         rej = f"http_{status}: {json.dumps(body)[:200]}"
@@ -103,6 +106,7 @@ def open_order(g: guard.Gate, r, amount, is_buy, extra=None, tag=""):
     fees = (pos.get("totalFees", 0) + pos.get("totalExternalFees", 0)) if pos else ""
     append("fills.csv", ["order_id", "position_id", "instrument", "klasse", "side", "submit_ts", "bid", "ask", "fill_px", "units", "amount_usd", "fees_usd", "overnight_fees_usd", "http", "rejection", "tag"],
            [oid, pos["positionID"] if pos else "", iid, r["klasse"], "BUY" if is_buy else "SELL", submit_ts, bid, ask, pos["openRate"] if pos else "", pos["units"] if pos else "", amount, fees, 0, status, rej or "", tag])
+    g.state["pending"].pop(str(oid), None)
     if pos:
         g.state["positions"][str(pos["positionID"])] = {"instrument": iid, "klasse": r["klasse"], "is_buy": is_buy, "opened": submit_ts, "amount": amount, "tag": tag, "units": pos["units"]}
         g.save()
@@ -119,6 +123,18 @@ def close_position(g: guard.Gate, position_id, units_to_deduct=None):
                 g.state["positions"].pop(str(position_id), None); g.save(); break
             time.sleep(3)
     return status
+
+
+def recover(g):
+    """Nach Abbruch: Orders aus state['pending'] ueber die orderID den Positionen im Konto zuordnen und als eigene Testposition aufnehmen."""
+    cur = {str(p.get("orderID")): p for p in guard.positions()}
+    for oid, meta in list(g.state.get("pending", {}).items()):
+        p = cur.get(str(oid))
+        if p:
+            g.state["positions"][str(p["positionID"])] = dict(meta, units=p["units"])
+            print("wieder aufgenommen:", oid, "->", p["positionID"])
+        g.state["pending"].pop(oid, None)
+    g.save()
 
 
 def monitor():
@@ -188,6 +204,7 @@ def main():
                    "hinweis": "Diese Symbole werden nur vom EBC-Stufe-C-Skript gehandelt; der Bot-Thread sollte sie ausschliessen."}, open(f"{OUT}/test_symbols.json", "w"), indent=1)
         print(json.dumps({"pool_by_class": cls, "planned": sel}, indent=1)); return
     if a.phase == "closeall":
+        recover(g)
         for pid in list(g.state["positions"]):
             print("close", pid, close_position(g, pid)); 
         return

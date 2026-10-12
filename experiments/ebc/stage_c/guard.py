@@ -47,10 +47,16 @@ def _req(url, method="GET", payload=None):
         return e.code, {"error": e.read().decode()[:300]}
 
 
+_last_get = [0.0]
+
+
 def get(url, tries=6):
     """GET mit Backoff bei HTTP 429/5xx (nie abbrechen, solange eine Order unbestaetigt sein koennte)."""
     import time
     for i in range(tries):
+        wait = 1.1 - (time.time() - _last_get[0])          # >= 1 s Abstand: Rate-Limit mit dem Bot teilen
+        if wait > 0: time.sleep(wait)
+        _last_get[0] = time.time()
         s, b = _req(url)
         if s == 200:
             return b
@@ -113,6 +119,7 @@ class Gate:
         self.classes = DEFAULT_CLASSES
         self.fx_max_exposure = 0.04
         self.state = json.load(open(state_path)) if os.path.exists(state_path) else {"positions": {}}
+        self.state.setdefault("pending", {})
 
     def save(self):
         os.makedirs(os.path.dirname(self.state_path), exist_ok=True)

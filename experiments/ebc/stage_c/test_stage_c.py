@@ -82,3 +82,13 @@ def test_cfd_classes_blocked_by_default_and_fx_minimum(monkeypatch):
     g.state["positions"] = {str(i): {"klasse": "K2", "amount": 1010} for i in range(4)}
     g.fx_max_exposure = 1.0
     with pytest.raises(guard.Refused): g.check_open(9, 1010, True, "K2")      # max. 4 FX-Testpositionen
+
+
+def test_recover_adopts_pending_by_order_id(monkeypatch, tmp_path):
+    import run_stage_c
+    monkeypatch.setattr(guard, "positions", lambda pnl=None: [{"orderID": 77, "positionID": 5, "units": 1.5}])
+    g = guard.Gate(False, None, set(), str(tmp_path / "s.json"), "c4", lambda m: None)
+    g.state["pending"]["77"] = {"instrument": 9, "klasse": "K1", "is_buy": False, "amount": 20.0}
+    g.state["pending"]["88"] = {"instrument": 9, "klasse": "K1", "is_buy": False, "amount": 20.0}   # abgelehnt, keine Position
+    run_stage_c.recover(g)
+    assert "5" in g.state["positions"] and not g.state["pending"]
