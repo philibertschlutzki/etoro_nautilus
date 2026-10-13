@@ -44,6 +44,8 @@ from automation.incubation import (
 
 # Issue #1368 (GH #1265) — Exit-Code, wenn eine Inkubation in einem anderen als dem Demo-Environment starten soll.
 EXIT_INCUBATION_NOT_DEMO = 6
+# Der Key gehört nicht zum angehefteten Paper-Konto (ETORO_PAPER_ACCOUNT_CID): braucht einen Menschen, kein Neustart-Zyklus.
+EXIT_PAPER_ACCOUNT_MISMATCH = 7
 
 # Das Konto ist fest das eToro-Demo-Konto (10k USD Paper-Trading); Orders werden dort wirklich platziert
 # (``--dry-run`` bleibt als reiner CLI-Schalter). ETORO_ENV/ETORO_DRY_RUN/ETORO_CONFIRM_LIVE sind KEINE
@@ -318,6 +320,11 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     # Suchraum, daher überschreibend.
     cfg_kwargs["session_window"] = session_window_to_param(
         load_session_window_for_symbol(bot_spec["symbol"]))
+    # Offene eToro-Positionen, die der Bot nach einem Neustart übernimmt, gehören sonst der Strategie "EXTERNAL". Deren
+    # Schliessen ist im NETTING-OMS verboten (OrderDenied: position_id ...-EXTERNAL not valid for NETTING OMS) und ohne
+    # position_id entsteht eine Phantom-Short-Position. Mit dem Claim ordnet Nautilus die bei der Reconciliation
+    # erzeugten Orders/Positionen dieses Instruments der Strategie zu: Zeit-/Stop-Exits schliessen die Position normal.
+    cfg_kwargs["external_order_claims"] = [bot_spec["symbol"]]
 
     strat_config = ConfigClass(**cfg_kwargs)
     return StrategyClass(config=strat_config, allocator=allocator)
@@ -493,6 +500,7 @@ def main():
         max_symbol_exposure_fraction=max_symbol_exposure,
         dd_halt_fraction=live_risk_cfg.get("dd_halt_fraction", 0.10),
         psi_min=live_risk_cfg.get("psi_min", 0.2),
+        min_equity_entry_usd=live_risk_cfg.get("min_equity_entry_usd", 0.0),
         # Issue #1368 — LIVE_SMALL-Paare handeln mit ``capital_fraction_small`` der regulären Allokation
         # (Phase 5 stempelt ``capital_fraction`` in den Whitelist-Eintrag; ohne Stempel 1,0).
         symbol_capital_fractions={
@@ -507,7 +515,7 @@ def main():
         api_environment = verify_paper_account(api_key, user_key)
     except PaperAccountError as exc:
         logger.critical(f"[PAPER-KONTO] {exc}")
-        sys.exit(1)
+        sys.exit(EXIT_PAPER_ACCOUNT_MISMATCH)
     dry_run = True if args.dry_run else ETORO_EXECUTION["dry_run"]
     if args.incubation and not args.dry_run:
         # Issue #1368 — die Inkubation handelt im Demo-Konto (environment == "demo" ist oben erzwungen):
@@ -569,7 +577,27 @@ def main():
     # Risikorechnung (Verlust-Stopp, Exposure-Deckel, Positionsgrösse) liest Guthaben und offene Positionen direkt von
     # eToro statt aus dem Bot-Gedächtnis (automation/account_view.py).
     from automation.account_view import EToroAccountView
-    account_view = EToroAccountView(api_key, user_key, api_environment, log=logger)
+    bot_capital = None
+    bot_capital_usd = live_risk_cfg.get("bot_capital_usd")
+    if bot_capital_usd:
+        # Festes Bot-Kapital: Copy-Trading/Einzahlungen im Konto verändern Breaker und Positionsgröße nicht.
+        from automation.bot_capital import BotCapital
+        bot_capital = BotCapital.for_environment(float(bot_capital_usd), api_environment)
+        if bot_capital.fresh:
+            # Die Equity-Basis wechselt (Konto-Equity -> Bot-Kapital): der alte Hochwasserstand/die Tagesbasis
+            # würden sonst einen Phantom-Drawdown ergeben. Einmaliger, automatischer Reset.
+            _prev = PersistentEquityState(hwm_path, environment=environment).reset()
+            emit_execution_event(logger, "LIVE_HWM_RESET", {
+                "environment": environment, "hwm_path": str(hwm_path), "previous_state": _prev,
+                "reason": "bot_capital_basis", "bot_capital_usd": float(bot_capital_usd),
+            }, level=logging.WARNING)
+        logger.warning(f"[BOT_CAPITAL] Risikorechnung auf festem Bot-Kapital {float(bot_capital_usd):.2f} USD.")
+    # Trade-Ledger aus den eToro-Positionen (Demo-Konto hat keine Trade-Historie über die API): verschwindet eine Position eines
+    # Bot-Instruments aus dem Kontostand, ist sie geschlossen (automation/trade_ledger.py -> data/state/demo_trades.jsonl).
+    from automation.trade_ledger import TradeLedger
+    trade_ledger = TradeLedger({b["etoro_id"] for b in bots_config}, log=logger)
+    account_view = EToroAccountView(api_key, user_key, api_environment, log=logger, bot_capital=bot_capital,
+                                    observers=[trade_ledger.observe])
     allocator.set_account_view(account_view)
 
     node = TradingNode(config=config)

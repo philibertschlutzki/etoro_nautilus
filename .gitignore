@@ -41,3 +41,6 @@ automation/config_*/
 /cfg_H/
 /data/ebc/
 /.env
+
+# Stufe C: Konto-Erkundung (persoenliche Daten)
+/results/stage_c/whoami/

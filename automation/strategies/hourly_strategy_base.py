@@ -801,6 +801,16 @@ class HourlyStrategyBase(Strategy):
         pos = positions[0]
         entry_ns = int(pos.ts_opened)
         bars_elapsed = self._count_bars_since(entry_ns)
+        if (bars_elapsed is not None and getattr(self, "_session_window", None) is None
+                and _read_instrument_asset_class(str(self.instrument_id)) in ("CRYPTO", "FOREX")):
+            # Rund um die Uhr gehandelte Instrumente (Krypto, Forex): Der Bar-Cache enthält nach einem Neustart nur
+            # Katalog-Warm-up und Live-Bars, die Lücke dazwischen fehlt. Die Wanduhr (Stunden seit Einstieg) ist hier
+            # exakt und nie kleiner als die wahre Bar-Zahl, also nimmt der größere Wert den Zeit-Exit nicht zurück.
+            try:
+                wall_hours = int((self.clock.timestamp_ns() - entry_ns) // bar_axis.HOURLY_INTERVAL_NS)
+            except NotImplementedError:      # Uhr ohne Zeitquelle (z. B. nicht registrierte Strategie in Tests): Bar-Zahl behalten
+                wall_hours = 0
+            bars_elapsed = max(bars_elapsed, wall_hours)
 
         if bars_elapsed is not None:
             expired = bars_elapsed >= self._max_bars_in_trade

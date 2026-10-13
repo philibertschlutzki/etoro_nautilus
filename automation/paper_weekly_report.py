@@ -42,6 +42,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPORT_DIR = PROJECT_ROOT / "data" / "paper_reports"
 TRADES_PATH = PROJECT_ROOT / "data" / "state" / "paper_trades.jsonl"
+DEMO_TRADES_PATH = PROJECT_ROOT / "data" / "state" / "demo_trades.jsonl"      # aus den eToro-Positionen (automation/trade_ledger.py)
 WHITELIST_PATH = PROJECT_ROOT / "data" / "state" / "incubation_whitelist.json"
 INSTRUMENT_MAP_PATH = PROJECT_ROOT / "automation" / "config" / "instrument_map.json"
 BACKTEST_CFG_PATH = PROJECT_ROOT / "automation" / "config" / "backtest.json"
@@ -223,7 +224,7 @@ def render(trades: list[Trade], *, since: datetime, now: datetime, equity: dict 
     total = summarize(trades)
     lines = [f"# Wöchentlicher Paper-Bericht {now.strftime('%G-W%V')}", "",
              f"Zeitraum: {since:%Y-%m-%d %H:%M} bis {now:%Y-%m-%d %H:%M} UTC (abgeschlossene Trades). "
-             "Quelle: eToro-Trade-Historie des Paper-Kontos, Krypto-Gebühr nachgerechnet.", ""]
+             "Quelle: eToro-Trade-Historie bzw. Bot-Ledger aus den eToro-Positionen (Demo), Krypto-Gebühr nachgerechnet.", ""]
     lines += ["## Kontostand (eToro)", ""]
     if equity:
         lines += ["| Kennzahl | Wert |", "|---|---|",
@@ -328,11 +329,13 @@ def run(*, days: int = 7, everything: bool = False, now: datetime | None = None,
     except PaperAccountError as exc:
         print(f"FEHLER: {exc}", file=sys.stderr)
         return 2
-    trades_path = trades_path or TRADES_PATH
+    demo = env_name == "demo"
+    trades_path = trades_path or (DEMO_TRADES_PATH if demo else TRADES_PATH)
     report_dir = report_dir or REPORT_DIR
     since_fetch = (now - timedelta(days=WARMUP_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
     try:
-        rows = history(api_key, user_key, since_fetch)
+        # Demo-Konto: keine Trade-Historie über die API; der Bot schreibt den Ledger selbst (automation/trade_ledger.py).
+        rows = [] if demo else history(api_key, user_key, since_fetch)
         pnl = (pnl_fetch or (lambda: _get(PNL_URLS[env_name], api_key, user_key)))()
     except ReportError as exc:
         print(f"FEHLER: {exc}", file=sys.stderr)

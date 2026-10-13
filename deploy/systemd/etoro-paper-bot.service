@@ -16,8 +16,9 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/bin/bash -c 'exec %h/etoro_nautilus/venv/bin/python3 automation/momentum_ls_run.py --incubation --universe data/universe/momentum_ls.json --tournament data/state/incubation_whitelist.json >> logs/incubation_bot_$$(date -u +%%Y%%m%%d).log 2>&1'
 Restart=always
 RestartSec=30
-# 3 = Circuit-Breaker ausgelöst (braucht einen Menschen), 4 = Sperre bereits gehalten: kein automatischer Neustart.
-RestartPreventExitStatus=3 4
+# 3 = Circuit-Breaker ausgelöst (braucht einen Menschen), 4 = Sperre bereits gehalten, 6 = Umgebung nicht demo,
+# 7 = Key gehört nicht zum angehefteten Paper-Konto: kein automatischer Neustart.
+RestartPreventExitStatus=3 4 6 7
 # SIGTERM -> geordnetes Herunterfahren des Bots (live_risk.LiveShutdownCoordinator), danach SIGKILL.
 TimeoutStopSec=90
 KillSignal=SIGTERM

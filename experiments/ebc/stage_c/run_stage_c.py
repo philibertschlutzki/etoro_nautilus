@@ -1,16 +1,16 @@
 """EBC Stufe C (Demo-Konto; /real/ nur mit STAGE_C_ENV=real). STANDARD = DRY-RUN: es werden nur GET-Aufrufe gemacht, nie ein POST.
 Scharf nur mit:  --live --confirm-account demo
 
-Phasen:  plan | c4 | c1 | c5 | fin | monitor | closeall | h4 | h6
+Phasen:  plan | c4 | c1 | c5 | fin | monitor | closeall
   plan     Kandidaten bestimmen, results/stage_c/test_symbols.json schreiben (fuer den Bot-Thread), nichts senden
   c4       30 Zufallsaktien: Short-Order <= 20 USD, Orderstatus pruefen, Position sofort schliessen   (nur US-Handelszeit)
   c1       zwei Long-Orders <= 50 USD (IsTslEnabled vs IsTrailingStop, gleicher StopLossRate); danach 'monitor' alle 5 Min
   c5       eine Position <= 50 USD oeffnen und mit UnitsToDeduct halbieren
   fin      kleine Positionen je Klasse/Seite fuer Finanzierungsmessung (<= 100 USD); danach taeglich 'monitor'
   monitor  rein lesend: protokolliert Gebuehren-/Stop-Felder aller eigenen Testpositionen
+  w8ben    EIN Long-Kauf (10 USD) einer liquiden US-Aktie, sofort wieder schliessen: Ausgabe 'W-8BEN: frei' / 'W-8BEN: gesperrt (768)' / 'unklar: <errorCode>'
+  feeprobe je 1 Long (200/500/1000 USD) einer liquiden US-Aktie, sofort voll schliessen, Gebuehr open/close getrennt (Tabelle)
   closeall schliesst alle eigenen Testpositionen per positionId
-  h4       EBC-H4 Kleinorders: je <= 50 USD Long mit StopLossRate (15 %), nach >= 60 s schliessen; US-Aktien/ETF aus U_breit und U_neu (--n je Universum)
-  h6       EBC-H6 Stop-Distanz: 10 US-Aktien/ETF x StopLossRate 45/30/20 % unter dem Ask, 20 USD, gespeichertes Stop-Niveau lesen, sofort schliessen
 """
 from __future__ import annotations
 
@@ -59,10 +59,14 @@ def find_key(obj, name):
 
 def new_position(before_ids, instrument_id, tries=20):
     for _ in range(tries):
-        for p in guard.positions():
+        try:
+            current = guard.positions()
+        except RuntimeError as e:          # 429 etc.: weiter versuchen, nie abbrechen (Order koennte offen sein)
+            print("positions-Abfrage fehlgeschlagen, neuer Versuch:", e); time.sleep(5); continue
+        for p in current:
             if int(p["instrumentID"]) == int(instrument_id) and str(p["positionID"]) not in before_ids:
                 return p
-        time.sleep(3)
+        time.sleep(4)
     return None
 
 
@@ -84,6 +88,9 @@ def open_order(g: guard.Gate, r, amount, is_buy, extra=None, tag=""):
     if not g.live:
         return None
     oid = find_key(body, "orderid")
+    if oid is not None and status in (200, 201):            # VOR jedem Folgeschritt festhalten (Wiederaufnahme nach Abbruch)
+        g.state["pending"][str(oid)] = {"instrument": iid, "klasse": r["klasse"], "is_buy": is_buy, "opened": submit_ts, "amount": amount, "tag": tag}
+        g.save()
     rej = None; info = {}
     if status not in (200, 201):
         rej = f"http_{status}: {json.dumps(body)[:200]}"
@@ -92,8 +99,8 @@ def open_order(g: guard.Gate, r, amount, is_buy, extra=None, tag=""):
         from automation.adapters.etoro_execution import order_rejection_reason
         try:
             info = guard.get(f"{guard.ORDER_INFO}/{oid}"); rej = order_rejection_reason(info)
-        except Exception as e:
-            rej = f"orderinfo_error:{e}"
+        except Exception as e:             # Order-Info nicht lesbar (404/429): KEINE Ablehnung annehmen, Position per pnl suchen
+            print("Order-Info nicht lesbar:", str(e)[:120]); rej = None
     pos = new_position(before, iid) if not rej else None
     if rej:
         append("rejections.csv", ["ts", "order_id", "instrument", "klasse", "side", "amount_usd", "status_id", "error_code", "message", "tag"],
@@ -101,6 +108,7 @@ def open_order(g: guard.Gate, r, amount, is_buy, extra=None, tag=""):
     fees = (pos.get("totalFees", 0) + pos.get("totalExternalFees", 0)) if pos else ""
     append("fills.csv", ["order_id", "position_id", "instrument", "klasse", "side", "submit_ts", "bid", "ask", "fill_px", "units", "amount_usd", "fees_usd", "overnight_fees_usd", "http", "rejection", "tag"],
            [oid, pos["positionID"] if pos else "", iid, r["klasse"], "BUY" if is_buy else "SELL", submit_ts, bid, ask, pos["openRate"] if pos else "", pos["units"] if pos else "", amount, fees, 0, status, rej or "", tag])
+    g.state["pending"].pop(str(oid), None)
     if pos:
         g.state["positions"][str(pos["positionID"])] = {"instrument": iid, "klasse": r["klasse"], "is_buy": is_buy, "opened": submit_ts, "amount": amount, "tag": tag, "units": pos["units"]}
         g.save()
@@ -119,16 +127,32 @@ def close_position(g: guard.Gate, position_id, units_to_deduct=None):
     return status
 
 
+def recover(g):
+    """Nach Abbruch: Orders aus state['pending'] ueber die orderID den Positionen im Konto zuordnen und als eigene Testposition aufnehmen."""
+    cur = {str(p.get("orderID")): p for p in guard.positions()}
+    for oid, meta in list(g.state.get("pending", {}).items()):
+        p = cur.get(str(oid))
+        if p:
+            g.state["positions"][str(p["positionID"])] = dict(meta, units=p["units"])
+            print("wieder aufgenommen:", oid, "->", p["positionID"])
+        g.state["pending"].pop(oid, None)
+    g.save()
+
+
+def state_file():
+    return f"{OUT}/state.json" if guard.ENV_MODE == "real" else f"{OUT}/state_{guard.ENV_MODE}.json"
+
+
 def monitor():
     g_pos = {str(p["positionID"]): p for p in guard.positions()}
-    state = json.load(open(f"{OUT}/state.json")) if os.path.exists(f"{OUT}/state.json") else {"positions": {}}
+    state = json.load(open(state_file())) if os.path.exists(state_file()) else {"positions": {}}
     ids = [v["instrument"] for v in state["positions"].values()]
     rt = rates(ids) if ids else {}
     for pid, meta in list(state["positions"].items()):
         p = g_pos.get(pid)
         if not p:
             append("position_fees_daily.csv", ["ts", "position_id", "instrument", "klasse", "status"], [now(), pid, meta["instrument"], meta["klasse"], "nicht mehr offen"])
-            state["positions"].pop(pid, None); json.dump(state, open(f"{OUT}/state.json", "w"), indent=1); continue
+            state["positions"].pop(pid, None); json.dump(state, open(state_file(), "w"), indent=1); continue
         bid, ask = rt.get(meta["instrument"], ("", ""))
         row = [now(), pid, meta["instrument"], meta["klasse"], "BUY" if p["isBuy"] else "SELL", p["units"], p["openRate"], p.get("stopLossRate"), p.get("isTslEnabled"),
                p.get("totalFees"), p.get("totalExternalFees"), p.get("amount"), bid, ask, meta.get("tag", "")]
@@ -138,30 +162,125 @@ def monitor():
     print(f"monitor: {len(state['positions'])} eigene Testpositionen protokolliert")
 
 
+LIQUID_US = ("GOOG", "MSFT", "AAPL", "NVDA", "AMZN", "META", "TSLA")
+
+
+def pick_instrument(pool, symbols, g):
+    """c1/c5: explizite --symbols (muss im Pool liegen: nicht Bot-Whitelist, keine fremde offene Position); sonst Demo: liquide US-Aktie
+    (GOOG, ...) bei offenem US-Markt, dann Krypto, dann Nicht-US-Aktie; Real (Altbestand): Krypto, dann Nicht-US (W-8BEN-768 im alten Konto)."""
+    if symbols:
+        want = [x.strip() for x in symbols.split(",")]
+        hit = next((r for r in pool if r["symbol"] in want), None)
+        if hit is None:
+            print(f"{want} nicht im Pool (Bot-Whitelist/offene Position/Klasse nicht freigegeben/nicht im Universum)")
+        return hit
+    us = next((r for r in pool if r["klasse"] == "K1" and r["symbol"] in LIQUID_US and guard.market_open("K1")), None) if guard.ENV_MODE == "demo" else None
+    if us is not None:
+        return us
+    k5 = next((r for r in pool if r["klasse"] == "K5"), None)
+    if k5 is not None and "K5" in g.classes:
+        return k5
+    return next((r for r in pool if r["klasse"] == "K1" and "." in r["symbol"] and guard.market_open("K1")), None)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "h4", "h6"])
+    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "w8ben", "feeprobe"])
     ap.add_argument("--live", action="store_true", help="Orders wirklich senden (Standard: Dry-Run)")
     ap.add_argument("--confirm-account", default=None, help="demo (Standard) bzw. ETORO_PAPER_ACCOUNT_CID bei STAGE_C_ENV=real")
     ap.add_argument("--whitelist", default=os.path.expanduser("~/etoro_nautilus/data/state/incubation_whitelist.json"))
     ap.add_argument("--bot-map", default=os.path.expanduser("~/etoro_nautilus/automation/config/instrument_map.json"))
     ap.add_argument("--n", type=int, default=30)
     ap.add_argument("--fx-max-exposure", type=float, default=0.04, help="Obergrenze Summe der Testpositionen als Anteil des Kontos (Standard 4 %%)")
+    ap.add_argument("--symbols", default=None, help="c1/c5: kommagetrennte Symbole aus universe.csv (z. B. BTC,SW.PA); Standard: Krypto, sonst Nicht-US-Aktie")
+    ap.add_argument("--exclude-us", action="store_true", default=False, help="US-Aktien aus dem Pool nehmen (Option; Standard: aus)")
+    ap.add_argument("--side", choices=["short", "long"], default="short", help="c4: Richtung der Probe-Orders (long = W-8BEN-768-Messung auf US-Aktien, <= 20 USD, sofort schliessen falls angenommen)")
+    ap.add_argument("--env", choices=["real", "demo"], default="demo", help="demo = Demo-Konto ueber /demo/ (Standard, --confirm-account demo); real = angeheftetes Paper-Konto ueber /real/ (nur mit ETORO_PAPER_ACCOUNT_CID, Altbestand)")
     ap.add_argument("--classes", default="K1,K5", help="freigegebene Klassen (Standard K1,K5; K2 braucht >= 1000 USD und wird bei kleineren Caps verweigert)")
     a = ap.parse_args()
     guard.load_env()
+    guard.FORCE_ENV[0] = a.env
     acct = guard.verify_account()
-    print(f"/me OK (Paper-Konto {acct}); Modus: {'LIVE' if a.live else 'DRY-RUN'}")
+    print(f"Konto OK ({acct}, Umgebung {guard.ENV_MODE}); Modus: {'LIVE' if a.live else 'DRY-RUN'}")
     if a.phase == "monitor":
         return monitor()
     excl = guard.bot_excluded_ids(a.whitelist, a.bot_map)
-    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "h4": "h4", "h6": "h6"}[a.phase]
-    g = guard.Gate(a.live, a.confirm_account, excl, f"{OUT}/state.json", ph, lambda m: print(m))
+    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "w8ben": "w8", "feeprobe": "fp"}[a.phase]
+    g = guard.Gate(a.live, a.confirm_account, excl, state_file(), ph, lambda m: print(m))
     g.classes = tuple(a.classes.split(','))
     g.fx_max_exposure = a.fx_max_exposure
-    pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes]
+    us_hint = (lambda r: '.' not in r['symbol'])
+    pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes and not (a.exclude_us and r['klasse'] == 'K1' and '.' not in r['symbol'])]
     rnd = random.Random(SEED)
     eq = [r for r in pool if r["klasse"] == "K1" and guard.market_open("K1")]
+    if a.phase == "w8ben":
+        r = next((x for x in pool if x["klasse"] == "K1" and x["symbol"] in ("AAPL", "MSFT", "GOOG", "NVDA", "AMZN", "META", "TSLA") and guard.market_open("K1")), None)
+        if r is None:
+            print("W-8BEN-Test nicht moeglich: keine liquide US-Aktie im Pool oder US-Markt geschlossen"); return
+        print("W-8BEN-Test auf", r["symbol"], "(10 USD Long)")
+        try:
+            res = open_order(g, r, 10.0, True, tag="w8ben")
+        except guard.Refused as e:
+            print("verweigert:", e); return
+        if not g.live:
+            print("DRY-RUN: kein Ergebnis"); return
+        pos, rej = res
+        if pos:
+            print("W-8BEN: frei")
+            try: close_position(g, pos["positionID"])
+            except Exception as e: print("FEHLER beim Schliessen:", e, "- Position", pos["positionID"], "bleibt in state.json; closeall --live --confirm-account", acct)
+        elif rej and "768" in rej:
+            print("W-8BEN: gesperrt (768)", rej)
+        else:
+            code = next((w for w in (rej or "").replace(":", " ").split() if w.startswith("error_")), "unbekannt")
+            print(f"unklar: {code} {rej}")
+        return
+    if a.phase == "feeprobe":
+        r = next((x for x in pool if x["klasse"] == "K1" and x["symbol"] in LIQUID_US and guard.market_open("K1")), None)
+        if r is None:
+            print("feeprobe nicht moeglich: keine liquide US-Aktie im Pool (Bot/offene Position) oder US-Markt geschlossen"); return
+        print("feeprobe auf", r["symbol"], "- Long 200/500/1000 USD, jeweils sofort voll geschlossen")
+        rows_fp = []
+        def snap():
+            d = guard.get(guard.PNL)["clientPortfolio"]
+            return float(d.get("credit") or 0), {str(p["positionID"]): p for p in d.get("positions") or []}
+        for amt in (200.0, 500.0, 1000.0):
+            if g.live:
+                c0, _ = snap()
+            try:
+                res = open_order(g, r, amt, True, tag=f"feeprobe{int(amt)}")
+            except guard.Refused as e:
+                print("verweigert:", e); break
+            if not g.live:
+                continue
+            pos, rej = res
+            if not pos:
+                print(f"{amt:.0f} USD: keine Position ({rej})"); continue
+            c1_, ps = snap()
+            p_now = ps.get(str(pos["positionID"]), pos)
+            open_fee = float(p_now.get("totalFees") or 0) + float(p_now.get("totalExternalFees") or 0)
+            upnl = float((p_now.get("unrealizedPnL") or {}).get("pnL") or 0)      # unmittelbar vor dem Schliessen
+            try: close_position(g, pos["positionID"])
+            except Exception as e: print("FEHLER beim Schliessen:", e, "- closeall --env", guard.ENV_MODE); break
+            time.sleep(4)
+            c2, _ = snap()
+            # Kasse: c1_ = c0 - amount (- open_fee evtl.); nach dem Schliessen: c2 = c1_ + amount + realisierter PnL - close_fee
+            realized_net = c2 - c1_ - float(p_now.get("amount", amt))
+            rows_fp.append(dict(amount=amt, position_id=pos["positionID"], units=pos["units"], open_rate=pos["openRate"], open_fee=open_fee,
+                                credit_open_delta=round(c0 - c1_, 4), upnl_before_close=round(upnl, 4), realized_net=round(realized_net, 4),
+                                close_fee_est=round(upnl - realized_net, 4)))
+            time.sleep(6)
+        if not g.live:
+            print("DRY-RUN: kein Ergebnis"); return
+        os.makedirs(OUT, exist_ok=True)
+        cols = ["amount", "position_id", "units", "open_rate", "open_fee", "credit_open_delta", "upnl_before_close", "realized_net", "close_fee_est"]
+        with open(f"{OUT}/feeprobe.csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader(); w.writerows(rows_fp)
+        print(f"\n{'USD':>6} {'open_fee':>9} {'open_bps':>9} {'close_fee~':>11} {'close_bps~':>11}   (close_fee~ = unrealisierter PnL vor Close - realisierte Kassenaenderung; Rauschen durch Kursdrift ~ +-0,3 USD)")
+        for x in rows_fp:
+            a_ = x["amount"]; cf = x["close_fee_est"]
+            print(f"{a_:6.0f} {x['open_fee']:9.2f} {x['open_fee']/a_*1e4:9.1f} {cf:11.2f} {cf/a_*1e4:11.1f}")
+        return
     if a.phase == "plan":
         cls = {k: len([r for r in pool if r["klasse"] == k]) for k in ("K1", "K2", "K3", "K4", "K5")}
         sel = {"c4": [r["symbol"] for r in rnd.sample([r for r in pool if r["klasse"] == "K1"], min(a.n, len(pool)))],
@@ -171,28 +290,31 @@ def main():
                    "hinweis": "Diese Symbole werden nur vom EBC-Stufe-C-Skript gehandelt; der Bot-Thread sollte sie ausschliessen."}, open(f"{OUT}/test_symbols.json", "w"), indent=1)
         print(json.dumps({"pool_by_class": cls, "planned": sel}, indent=1)); return
     if a.phase == "closeall":
+        recover(g)
         for pid in list(g.state["positions"]):
             print("close", pid, close_position(g, pid)); 
         return
     if a.phase == "c4":
         for r in rnd.sample(eq, min(a.n, len(eq))):
             try:
-                res = open_order(g, r, 20.0, False, tag="c4")
+                res = open_order(g, r, 20.0, a.side == "long", tag="c4" if a.side == "short" else "c4long")
                 if res and res[0]: close_position(g, res[0]["positionID"])
                 append("shortability.csv", ["ts", "instrument", "symbol", "accepted", "rejection"], [now(), r["etoro_id"], r["symbol"], bool(res and res[0]), (res[1] if res else "dryrun")])
             except guard.Refused as e:
                 print("uebersprungen:", r["symbol"], e)
             time.sleep(1.1)
     elif a.phase == "c1":
-        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)   # K2 nur wenn per --classes freigegeben
-        if r is None: print("kein geeignetes Instrument/Markt geschlossen"); return
+        r = pick_instrument(pool, a.symbols, g)
+        if r is None: print("kein geeignetes Instrument (Krypto/Nicht-US) / Markt geschlossen"); return
+        print("c1 auf", r["symbol"])
         bid, ask = rates([int(r["etoro_id"])])[int(r["etoro_id"])]
         sl = round(ask * 0.985, 5)
         open_order(g, r, 50.0, True, {"IsTslEnabled": True, "StopLossRate": sl}, tag="c1_IsTslEnabled")
         open_order(g, r, 50.0, True, {"IsTrailingStop": True, "StopLossRate": sl}, tag="c1_IsTrailingStop")
     elif a.phase == "c5":
-        r = next((x for x in pool if x["klasse"] == "K2" and guard.market_open("K2")), None) or (eq[0] if eq else None)   # K2 nur wenn per --classes freigegeben
-        if r is None: print("kein geeignetes Instrument/Markt geschlossen"); return
+        r = pick_instrument(pool, a.symbols, g)
+        if r is None: print("kein geeignetes Instrument (Krypto/Nicht-US) / Markt geschlossen"); return
+        print("c5 auf", r["symbol"])
         res = open_order(g, r, 50.0, True, tag="c5")
         if res and res[0]:
             half = round(res[0]["units"] / 2.0, 6)
@@ -201,40 +323,6 @@ def main():
             rest = [p for p in guard.positions() if str(p["positionID"]) == str(res[0]["positionID"])]
             json.dump({"opened_units": res[0]["units"], "deducted": half, "remaining": rest[0]["units"] if rest else 0,
                        "fees_after": (rest[0].get("totalFees"), rest[0].get("totalExternalFees")) if rest else None}, open(f"{OUT}/partial_close.json", "w"), indent=1)
-    elif a.phase == "h4":
-        neu = [dict(r, etoro_id=r["etoro_id"]) for r in csv.DictReader(open("results/H4/universe_neu.csv"))]
-        open_ids = {int(p["instrumentID"]) for p in guard.positions()}
-        def pick(rows, n):
-            us = [r for r in rows if r["stratum"] == "us_stock" and int(r["etoro_id"]) not in excl and int(r["etoro_id"]) not in open_ids]
-            etf = [r for r in rows if r["stratum"] == "etf" and int(r["etoro_id"]) not in excl and int(r["etoro_id"]) not in open_ids]
-            return rnd.sample(us, min(n, len(us))) + rnd.sample(etf, min(max(1, n // 2), len(etf)))
-        sel = [(r, "breit") for r in pick([r for r in universe() if r["klasse"] == "K1"], a.n)] + [(r, "neu") for r in pick(neu, a.n)]
-        print(f"h4: {len(sel)} Instrumente ({a.n} US-Aktien + {max(1, a.n // 2)} ETF je Universum, Nicht-US ausgelassen: K1-Handelszeit-Pruefung gilt nur fuer US)")
-        for r, src in sel:
-            r = dict(r, klasse="K1")
-            try:
-                bid, ask = rates([int(r["etoro_id"])])[int(r["etoro_id"])]
-                res = open_order(g, r, 50.0, True, {"StopLossRate": round(ask * 0.85, 5)}, tag=f"h4_{src}")
-                if res and res[0]:
-                    time.sleep(61); close_position(g, res[0]["positionID"])
-            except guard.Refused as e:
-                print("uebersprungen:", r["symbol"], e)
-            time.sleep(1.1)
-    elif a.phase == "h6":
-        us = [r for r in pool if r["klasse"] == "K1" and r.get("stratum") in ("us_stock", "etf")]
-        for r in rnd.sample(us, min(10, len(us))):
-            for dist in (0.45, 0.30, 0.20):
-                try:
-                    iid = int(r["etoro_id"]); bid, ask = rates([iid])[iid]
-                    res = open_order(g, r, 20.0, True, {"StopLossRate": round(ask * (1 - dist), 5)}, tag=f"h6_{int(dist*100)}")
-                    pos, rej = res if res else (None, "dryrun")
-                    stored = pos.get("stopLossRate") if pos else ""
-                    append("sl_distance.csv", ["ts", "instrument", "symbol", "klasse", "requested_distance", "status", "rejection", "stored_stop_rate", "stored_distance", "ask"],
-                           [now(), iid, r["symbol"], r["klasse"], dist, "accepted" if pos else "rejected", rej or "", stored, (1 - float(stored) / ask) if stored else "", ask])
-                    if pos: close_position(g, pos["positionID"])
-                except guard.Refused as e:
-                    print("uebersprungen:", r["symbol"], e)
-                time.sleep(1.1)
     elif a.phase == "fin":
         plan = [(k, b) for k in g.classes for b in ((True,) if k == "K5" else (True, False))]
         fx_amt = lambda k: guard.FX_FIN_AMOUNT if k == "K2" else 100.0

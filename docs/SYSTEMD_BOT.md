@@ -8,7 +8,7 @@ Wächter (`ops_guard`) meldet den Ausfall trotzdem im Fehler-Log. Alles läuft a
 | | bisher | mit systemd |
 |---|---|---|
 | Bot-Start | `daily_orchestrator.py` startet `momentum_ls_run.py` per `Popen` | systemd startet den Dienst `etoro-paper-bot.service` |
-| Ausfall | Bot bleibt weg | `Restart=always`, 30 s Pause, kein Startlimit; kein Neustart nach Exit 3 (Circuit-Breaker) und 4 (Sperre gehalten) |
+| Ausfall | Bot bleibt weg | `Restart=always`, 30 s Pause, kein Startlimit; kein Neustart nach Exit 3 (Circuit-Breaker), 4 (Sperre gehalten), 6 (Umgebung nicht demo) und 7 (Key passt nicht zum Paper-Konto) |
 | Tägliche Auswahl | Orchestrator | unverändert: Orchestrator wählt, schreibt die Whitelist und startet/stoppt den Dienst |
 | Log | `logs/incubation_bot_<Datum>.log` | unverändert (derselbe Dateiname) |
 
@@ -74,7 +74,7 @@ Danach startet der Orchestrator den Bot wieder selbst per `Popen`. Der Wächter-
   startet den Dienst danach nicht von allein neu. Nur ein Absturz oder SIGKILL löst `Restart=always` aus.
 - Die Unit lädt keine Schlüssel; der Bot liest `.env` selbst. Es werden keine Zugangsdaten in Unit-Dateien geschrieben.
 - Der Dienst startet nur, wenn `data/state/incubation_whitelist.json` existiert (`ConditionPathExists`).
-- Nach einem Circuit-Breaker-Stopp (Exit 3) oder `Bot läuft bereits` (Exit 4) bleibt der Dienst `failed`: Ursache im Journal und im
+- Nach einem Circuit-Breaker-Stopp (Exit 3) oder `Bot läuft bereits` (Exit 4), nicht-demo-Umgebung (Exit 6) oder falschem Konto-Key (Exit 7, `ETORO_PAPER_ACCOUNT_CID` passt nicht zu `/me`) bleibt der Dienst `failed`: Ursache im Journal und im
   Fehler-Log des Wächters prüfen, dann `systemctl --user reset-failed etoro-paper-bot.service` und bewusst neu starten.
 
 ## Wöchentlicher Paper-Bericht
