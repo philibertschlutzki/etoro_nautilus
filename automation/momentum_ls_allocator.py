@@ -20,6 +20,13 @@ _MIN_ORDER_USD = 11.0
 _MAX_MIN_NOTIONAL_FRACTION = 0.15     # eine Position mit erzwungenem Mindestbetrag darf höchstens 15 % der Equity belegen
 
 
+def _etoro_id(instrument_id) -> int | None:
+    """eToro-InstrumentID zu einer Nautilus-InstrumentId (``None``, wenn unbekannt)."""
+    from automation.adapters.instrument_map import ETORO_INSTRUMENTS
+    target = str(instrument_id)
+    return next((int(k) for k, v in ETORO_INSTRUMENTS.items() if v == target), None)
+
+
 def _position_notional(pos) -> float | None:
     """Entry-Notional (``|quantity| * avg_px_open``) — bewusst KEIN Mark-to-Market-Wert (das würde
     einen aktuellen Quote pro offener Position voraussetzen, den der Allocator an dieser Stelle
@@ -171,10 +178,29 @@ class MomentumLSAllocator:
                     open_notional += notional
 
         if snap is not None:
-            # Das Konto zählt: alle offenen eToro-Positionen (auch fremde/nicht übernommene) belegen das Budget;
-            # der Bot-Cache liefert nur die Untergrenze für gerade gefüllte, noch nicht abgerufene Positionen.
-            open_count = max(open_count, len(snap.positions))
-            open_notional = max(0.0 if notional_unknown else open_notional, snap.notional)
+            # Das Konto zählt: alle offenen eToro-Positionen (auch fremde/nicht übernommene) belegen das Budget, mit dem
+            # eToro-Betrag in USD (snap.notional). Der Bot-Cache zählt nur für Instrumente, die eToro (noch) nicht
+            # zeigt, also gerade gefüllt und noch nicht abgerufen. NICHT per max(): Bei einer vom Bot übernommenen
+            # Position ist die Cache-Menge die echte Einheitenzahl und der Kurs steht in der Quote-Währung (NZDJPY:
+            # 3.564,66 NZD × 88,613 JPY = 315.875 statt 1.991 USD), das verfünffachte Exposure auf 668 % und sperrte jeden
+            # Einstieg, solange eine JPY-/MXN-Position offen war.
+            in_snapshot = {p.instrument_id for p in snap.positions}
+            extra_count, extra_notional, extra_unknown = 0, 0.0, False
+            for uni_id in self._universe:
+                eid = _etoro_id(uni_id)
+                if eid is not None and eid in in_snapshot:
+                    continue
+                for pos in cache.positions_open(instrument_id=uni_id):
+                    extra_count += 1
+                    notional = _position_notional(pos)
+                    if notional is None:
+                        extra_unknown = True
+                    else:
+                        extra_notional += notional
+            if extra_unknown:
+                extra_notional += self._max_symbol_exposure_fraction * account_balance     # konservativ: volles Symbol-Cap
+            open_count = len(snap.positions) + extra_count
+            open_notional = snap.notional + extra_notional
             notional_unknown = False
         if notional_unknown:
             open_exposure_fraction = min(1.0, open_count * self._max_symbol_exposure_fraction)
