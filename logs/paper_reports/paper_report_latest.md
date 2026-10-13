@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-13 00:15 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-13 01:15 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 119494.21 USD |
 | Investiert | 8318.43 USD in 9 Position(en) |
-| Unrealisierter PnL | -3.03 USD |
+| Unrealisierter PnL | -2.84 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,15 +15,15 @@ Stand: 2026-10-13 00:15 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| NZDJPY.ETORO | Short | 1991.12 | 88.613 | +2.02 |
-| GOOG.ETORO | Long | 24.99 | 349.22 | -0.01 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +0.14 |
-| NZDUSD.ETORO | Short | 1010.00 | 0.55867 | +0.36 |
-| ETH.ETORO | Long | 100.00 | 2516.87 | -3.51 |
-| CAT.ETORO | Long | 100.00 | 800.63 | -0.95 |
-| INTC.ETORO | Short | 100.00 | 101.38 | +1.26 |
-| USDMXN.ETORO | Long | 1991.58 | 18.26631 | +0.30 |
-| AUDJPY.ETORO | Long | 1990.75 | 110.352 | -2.64 |
+| NZDJPY.ETORO | Short | 1991.12 | 88.613 | +2.61 |
+| GOOG.ETORO | Long | 24.99 | 349.22 | -0.09 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +1.16 |
+| NZDUSD.ETORO | Short | 1010.00 | 0.55867 | -0.05 |
+| ETH.ETORO | Long | 100.00 | 2516.87 | -3.26 |
+| CAT.ETORO | Long | 100.00 | 800.63 | -0.70 |
+| INTC.ETORO | Short | 100.00 | 101.38 | +1.85 |
+| USDMXN.ETORO | Long | 1991.58 | 18.26631 | -1.85 |
+| AUDJPY.ETORO | Long | 1990.75 | 110.352 | -2.51 |
 
 ## Letzte Ereignisse
 
