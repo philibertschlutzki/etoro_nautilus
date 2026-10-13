@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-13 11:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-13 12:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 126943.76 USD |
-| Investiert | 7000.55 USD in 5 Position(en) |
-| Unrealisierter PnL | +1.38 USD |
+| Freies Guthaben | 128930.85 USD |
+| Investiert | 5011.69 USD in 4 Position(en) |
+| Unrealisierter PnL | +3.93 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 5 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,15 +15,13 @@ Stand: 2026-10-13 11:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| AUDJPY.ETORO | Long | 1991.62 | 110.214 | +1.01 |
-| USDNOK.ETORO | Long | 1988.86 | 9.5462 | -1.52 |
-| EURSEK.ETORO | Long | 1990.09 | 11.1766 | -0.88 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +2.88 |
-| Instrument 4509 | Short | 19.99 | 1529.4 | -0.11 |
+| AUDJPY.ETORO | Long | 1991.62 | 110.214 | +2.22 |
+| EURSEK.ETORO | Long | 1990.09 | 11.1766 | -1.43 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +3.20 |
+| Instrument 4509 | Short | 19.99 | 1529.4 | -0.06 |
 
 ## Letzte Ereignisse
 
-- 2026-10-13 03:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-13 03:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
 - 2026-10-13 04:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
 - 2026-10-13 04:30 UTC GESCHLOSSEN Short NZDJPY.ETORO, Position 3616982300, 1991.12 USD, PnL +2.41 (zuletzt gesehen)
@@ -53,3 +51,4 @@ Stand: 2026-10-13 11:30 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-13 10:15 UTC ERÖFFNET Long EURSEK.ETORO, Position 3617093220, 1990.09 USD, PnL +0.59
 - 2026-10-13 11:15 UTC ERÖFFNET Long USDNOK.ETORO, Position 3617129908, 1988.86 USD, PnL -0.23
 - 2026-10-13 11:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3617013790, 1991.96 USD, PnL -10.32 (zuletzt gesehen)
+- 2026-10-13 12:15 UTC GESCHLOSSEN Long USDNOK.ETORO, Position 3617129908, 1988.86 USD, PnL -1.83 (zuletzt gesehen)
