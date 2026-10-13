@@ -44,3 +44,4 @@ automation/config_*/
 
 # Stufe C: Konto-Erkundung (persoenliche Daten)
 /results/stage_c/whoami/
+/results/daily/

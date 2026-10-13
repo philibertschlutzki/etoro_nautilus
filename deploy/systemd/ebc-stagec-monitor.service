@@ -1,0 +1,12 @@
+[Unit]
+Description=EBC Stufe C monitor --env demo (rein lesend, keine Orders)
+ConditionPathExists=%h/ebc_stagec/experiments/ebc/stage_c/run_stage_c.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ebc_stagec
+Nice=10
+# Nur 'monitor' mit --env demo; weder --live noch closeall.
+ExecStart=/usr/bin/flock -n /tmp/ebc_stagec_monitor.lock %h/etoro_nautilus/venv/bin/python3 experiments/ebc/stage_c/run_stage_c.py monitor --env demo
+StandardOutput=append:%h/ebc_stagec/logs/ebc_stagec_monitor.log
+StandardError=append:%h/ebc_stagec/logs/ebc_stagec_monitor.log

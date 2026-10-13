@@ -85,3 +85,7 @@ Anlageklasse, Strategie und Instrument, mit Hinweis, ob die Stichprobe (mindeste
 `data/paper_reports/paper_weekly_<JJJJ-Www>.md` und `paper_weekly_latest.md`; der stündliche `paper_report_publish` legt sie unter
 `logs/paper_reports/` ins Repo. Alle Trades werden zusätzlich in `data/state/paper_trades.jsonl` gesammelt. Sofort ausführen:
 `venv/bin/python -m automation.paper_weekly_report --all` (alles seit dem ersten Trade) oder `systemctl --user start etoro-paper-weekly.service`.
+
+## Tägliche Timer (Stage-C monitor 06:50 UTC, Gesundheitscheck 06:55 UTC)
+
+`deploy/systemd/install_daily.sh` installiert und aktiviert `ebc-stagec-monitor.timer` (nur `monitor --env demo`, Log `~/ebc_stagec/logs/ebc_stagec_monitor.log`) und `etoro-daily-health.timer` (`automation/daily_health.py`, Bericht `results/daily/<Datum>.md`, Log `logs/daily_health.log`). Beide lesen nur, senden keine Orders und ändern weder `.env` noch bestehende Units.

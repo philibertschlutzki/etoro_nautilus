@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Gesundheitscheck täglich 06:55 UTC
+
+[Timer]
+# Nicht zur vollen Stunde (429-Rate-Limit mit dem Bot).
+OnCalendar=*-*-* 06:55:00 UTC
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

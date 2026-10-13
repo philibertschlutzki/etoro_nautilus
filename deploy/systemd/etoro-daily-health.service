@@ -1,0 +1,13 @@
+[Unit]
+Description=eToro Paper-Bot täglicher Gesundheitscheck (lesend, ohne Netzwerk) -> results/daily/<Datum>.md
+ConditionPathExists=%h/etoro_nautilus/automation/daily_health.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=10
+# Exit 1 = Befund im Bericht (kein Dienstfehler): als Erfolg werten, der Bericht steht in results/daily/.
+SuccessExitStatus=1
+ExecStart=/usr/bin/flock -n /tmp/etoro_daily_health.lock %h/etoro_nautilus/venv/bin/python3 -m automation.daily_health
+StandardOutput=append:%h/etoro_nautilus/logs/daily_health.log
+StandardError=append:%h/etoro_nautilus/logs/daily_health.log

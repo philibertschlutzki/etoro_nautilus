@@ -172,12 +172,6 @@
       "price_precision": 2,
       "size_precision": 2
     },
-    "3208": {
-      "symbol": "PALL.ETORO",
-      "asset_class": "commodity",
-      "price_precision": 5,
-      "size_precision": 5
-    },
     "4067": {
       "symbol": "GSAT.ETORO",
       "asset_class": "equity",
@@ -1029,6 +1023,1748 @@
       "asset_class": "equity",
       "price_precision": 2,
       "size_precision": 2
+    },
+    "6244": {
+      "symbol": "MARA.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9425": {
+      "symbol": "IONQ.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1069": {
+      "symbol": "SMCI.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10683": {
+      "symbol": "SOUN.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10655": {
+      "symbol": "RGTI.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10881": {
+      "symbol": "QBTS.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9272": {
+      "symbol": "HOOD.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8108": {
+      "symbol": "AFRM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9255": {
+      "symbol": "SOFI.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9085": {
+      "symbol": "RKLB.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4404": {
+      "symbol": "CVNA.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10088": {
+      "symbol": "ASTS.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9956": {
+      "symbol": "OKLO.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6218": {
+      "symbol": "APP.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9256": {
+      "symbol": "LCID.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9287": {
+      "symbol": "RIVN.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4489": {
+      "symbol": "NIO.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8954": {
+      "symbol": "AI.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6264": {
+      "symbol": "PLUG.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10674": {
+      "symbol": "BBAI.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "100040": {
+      "symbol": "LINK.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100037": {
+      "symbol": "DOT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100005": {
+      "symbol": "LTC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100002": {
+      "symbol": "BCH.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100337": {
+      "symbol": "NEAR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100340": {
+      "symbol": "SUI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100041": {
+      "symbol": "UNI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100020": {
+      "symbol": "XLM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100333": {
+      "symbol": "ARB.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100026": {
+      "symbol": "TRX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "1": {
+      "symbol": "EURUSD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "10": {
+      "symbol": "EURJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "100004": {
+      "symbol": "DASH.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100007": {
+      "symbol": "ETC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100008": {
+      "symbol": "API3.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100009": {
+      "symbol": "CRO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100010": {
+      "symbol": "ETHFI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100011": {
+      "symbol": "SKL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100012": {
+      "symbol": "RAY.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100013": {
+      "symbol": "RUNE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100014": {
+      "symbol": "WIF.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100015": {
+      "symbol": "IOTX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100016": {
+      "symbol": "IMX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100018": {
+      "symbol": "MIOTA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100021": {
+      "symbol": "OCEAN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100022": {
+      "symbol": "A.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100023": {
+      "symbol": "NEO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100028": {
+      "symbol": "ZEC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100030": {
+      "symbol": "BNB.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100032": {
+      "symbol": "XTZ.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100038": {
+      "symbol": "SKY.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100039": {
+      "symbol": "COMP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100042": {
+      "symbol": "YFI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100044": {
+      "symbol": "AAVE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100045": {
+      "symbol": "FIL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100046": {
+      "symbol": "ALGO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100047": {
+      "symbol": "ATOM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100048": {
+      "symbol": "MANA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100049": {
+      "symbol": "APE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100050": {
+      "symbol": "LRC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100051": {
+      "symbol": "ENJ.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100052": {
+      "symbol": "BICO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100053": {
+      "symbol": "BAT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100054": {
+      "symbol": "BNT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100055": {
+      "symbol": "OGN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100056": {
+      "symbol": "POL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100057": {
+      "symbol": "FLR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100058": {
+      "symbol": "GALA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100059": {
+      "symbol": "ALICE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100060": {
+      "symbol": "CHZ.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100061": {
+      "symbol": "HBAR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100062": {
+      "symbol": "DYDX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100064": {
+      "symbol": "THETA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100065": {
+      "symbol": "S.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100066": {
+      "symbol": "GRT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100067": {
+      "symbol": "1INCH.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100068": {
+      "symbol": "CRV.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100069": {
+      "symbol": "ANKR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100070": {
+      "symbol": "OXT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100071": {
+      "symbol": "REN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100072": {
+      "symbol": "SNX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100073": {
+      "symbol": "STORJ.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100074": {
+      "symbol": "ZRX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100075": {
+      "symbol": "CELO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100076": {
+      "symbol": "SUSHI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100077": {
+      "symbol": "QNT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100078": {
+      "symbol": "BAL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100079": {
+      "symbol": "FET.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100081": {
+      "symbol": "AMP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100082": {
+      "symbol": "AXS.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100083": {
+      "symbol": "SGB.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100084": {
+      "symbol": "SAND.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100086": {
+      "symbol": "LUNA2.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100087": {
+      "symbol": "BAND.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100088": {
+      "symbol": "CTSI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100089": {
+      "symbol": "ENS.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100090": {
+      "symbol": "UMA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100091": {
+      "symbol": "LUNC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100092": {
+      "symbol": "FTT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100093": {
+      "symbol": "SRM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100094": {
+      "symbol": "LPT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100095": {
+      "symbol": "COTI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100096": {
+      "symbol": "JASMY.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100097": {
+      "symbol": "ZRO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100098": {
+      "symbol": "HNT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100099": {
+      "symbol": "KNC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100223": {
+      "symbol": "BTCCNH.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "100263": {
+      "symbol": "GOLDBTC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100269": {
+      "symbol": "BTCGRAM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100271": {
+      "symbol": "ETHGRAM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100272": {
+      "symbol": "GRAMEUR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100300": {
+      "symbol": "GRAM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100301": {
+      "symbol": "BONKxM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100305": {
+      "symbol": "ZK.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100306": {
+      "symbol": "BERA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100307": {
+      "symbol": "PYTH.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100308": {
+      "symbol": "TRUMP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100309": {
+      "symbol": "PENDLE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100310": {
+      "symbol": "EIGEN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100311": {
+      "symbol": "SWELL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100312": {
+      "symbol": "METIS.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100313": {
+      "symbol": "PYR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100314": {
+      "symbol": "STX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100315": {
+      "symbol": "APT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100316": {
+      "symbol": "STRK.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100317": {
+      "symbol": "W.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100318": {
+      "symbol": "MOVE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100319": {
+      "symbol": "MON.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100320": {
+      "symbol": "TRB.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100321": {
+      "symbol": "RONIN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100322": {
+      "symbol": "AXL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100326": {
+      "symbol": "SEI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100330": {
+      "symbol": "INJ.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100331": {
+      "symbol": "GHST.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100332": {
+      "symbol": "KSM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100334": {
+      "symbol": "RENDER.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100335": {
+      "symbol": "OP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100336": {
+      "symbol": "LDO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100338": {
+      "symbol": "TIA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100339": {
+      "symbol": "JTO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100341": {
+      "symbol": "RPL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100342": {
+      "symbol": "ORCA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100343": {
+      "symbol": "OSMO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100408": {
+      "symbol": "SUPER.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100409": {
+      "symbol": "COW.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100410": {
+      "symbol": "ME.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100411": {
+      "symbol": "KAITO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100412": {
+      "symbol": "ACH.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100413": {
+      "symbol": "PRIME.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100414": {
+      "symbol": "AKT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100415": {
+      "symbol": "MORPHO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100416": {
+      "symbol": "VET.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100417": {
+      "symbol": "ICP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100418": {
+      "symbol": "TAO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100419": {
+      "symbol": "NOT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100420": {
+      "symbol": "PRCL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100423": {
+      "symbol": "ELIZAOS.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100424": {
+      "symbol": "XCN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100425": {
+      "symbol": "POPCAT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100426": {
+      "symbol": "PNUT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100427": {
+      "symbol": "PENGU.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100429": {
+      "symbol": "SWFTC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100430": {
+      "symbol": "AIOZ.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100433": {
+      "symbol": "FARTCOIN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100434": {
+      "symbol": "ENA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100436": {
+      "symbol": "FLOKIxM.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100437": {
+      "symbol": "IP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100441": {
+      "symbol": "WLD.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100442": {
+      "symbol": "MOODENG.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100443": {
+      "symbol": "PUMP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100445": {
+      "symbol": "WLFI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100447": {
+      "symbol": "XPL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100448": {
+      "symbol": "ASTER.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100449": {
+      "symbol": "CC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100450": {
+      "symbol": "SPX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100451": {
+      "symbol": "PLUME.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100452": {
+      "symbol": "NIGHT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100453": {
+      "symbol": "M.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100455": {
+      "symbol": "XDC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100457": {
+      "symbol": "MNT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100459": {
+      "symbol": "KAS.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100461": {
+      "symbol": "SYRUP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100462": {
+      "symbol": "JUP.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100501": {
+      "symbol": "CAKE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100502": {
+      "symbol": "VIRTUAL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100503": {
+      "symbol": "JST.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100505": {
+      "symbol": "GNO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100506": {
+      "symbol": "KITE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100508": {
+      "symbol": "2z.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100514": {
+      "symbol": "TRAC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100516": {
+      "symbol": "0G.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100518": {
+      "symbol": "AR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100519": {
+      "symbol": "KMNO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100520": {
+      "symbol": "MET.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100521": {
+      "symbol": "ZEN.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100522": {
+      "symbol": "RSR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100525": {
+      "symbol": "ZORA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100527": {
+      "symbol": "CORE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100529": {
+      "symbol": "VVV.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100530": {
+      "symbol": "SAFE.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100533": {
+      "symbol": "ZETA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100534": {
+      "symbol": "SXT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100541": {
+      "symbol": "KAVA.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100544": {
+      "symbol": "MERL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100546": {
+      "symbol": "AVNT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100562": {
+      "symbol": "ILV.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100565": {
+      "symbol": "CVC.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100570": {
+      "symbol": "C98.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100575": {
+      "symbol": "LQTY.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100588": {
+      "symbol": "CELR.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100592": {
+      "symbol": "WELL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100604": {
+      "symbol": "QI.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100605": {
+      "symbol": "NEWT.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100606": {
+      "symbol": "EUL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100608": {
+      "symbol": "VELO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100609": {
+      "symbol": "GODS.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100610": {
+      "symbol": "MPLX.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100631": {
+      "symbol": "SD.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100636": {
+      "symbol": "RECALL.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100657": {
+      "symbol": "POLS.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100659": {
+      "symbol": "A8.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100663": {
+      "symbol": "DIMO.ETORO",
+      "asset_class": "crypto",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "11": {
+      "symbol": "GBPJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "12": {
+      "symbol": "EURAUD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "13": {
+      "symbol": "EURCAD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "14": {
+      "symbol": "AUDJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "15": {
+      "symbol": "CADJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "16": {
+      "symbol": "CHFJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "17": {
+      "symbol": "OIL.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "18": {
+      "symbol": "GOLD.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "19": {
+      "symbol": "SILVER.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "2": {
+      "symbol": "GBPUSD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "3": {
+      "symbol": "NZDUSD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "339": {
+      "symbol": "LEAD.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "340": {
+      "symbol": "ZINC.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "341": {
+      "symbol": "EuroOIL.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "343": {
+      "symbol": "Nickel.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "344": {
+      "symbol": "Aluminum.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "39": {
+      "symbol": "USDHKD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "4": {
+      "symbol": "USDCAD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "40": {
+      "symbol": "PLATINUM.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "423": {
+      "symbol": "USDILS.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "424": {
+      "symbol": "GBPILS.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "425": {
+      "symbol": "EURILS.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "426": {
+      "symbol": "USDCOP.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "427": {
+      "symbol": "USDCLP.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "428": {
+      "symbol": "USDKRW.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "429": {
+      "symbol": "USDBRL.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "44": {
+      "symbol": "USDRUB.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "45": {
+      "symbol": "USDCNH.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "455": {
+      "symbol": "USDPEN.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "456": {
+      "symbol": "USDINR.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "458": {
+      "symbol": "USDPHP.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "459": {
+      "symbol": "USDTWD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "46": {
+      "symbol": "AUDCHF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "460": {
+      "symbol": "USDTHB.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "461": {
+      "symbol": "USDIDR.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "47": {
+      "symbol": "AUDCAD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "48": {
+      "symbol": "AUDNZD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "49": {
+      "symbol": "EURNZD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "5": {
+      "symbol": "USDJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "50": {
+      "symbol": "GBPAUD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "51": {
+      "symbol": "GBPCHF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "52": {
+      "symbol": "GBPNZD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "53": {
+      "symbol": "NZDCAD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "54": {
+      "symbol": "NZDCHF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "55": {
+      "symbol": "NZDJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "56": {
+      "symbol": "CADCHF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "57": {
+      "symbol": "USDNOK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "58": {
+      "symbol": "USDSEK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "59": {
+      "symbol": "NOKSEK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "6": {
+      "symbol": "USDCHF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "60": {
+      "symbol": "EURNOK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "61": {
+      "symbol": "EURSEK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "63": {
+      "symbol": "USDMXN.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "64": {
+      "symbol": "USDSGD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "65": {
+      "symbol": "GBPCAD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "66": {
+      "symbol": "ZARJPY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "68": {
+      "symbol": "EURPLN.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "69": {
+      "symbol": "USDHUF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "7": {
+      "symbol": "AUDUSD.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "70": {
+      "symbol": "EURHUF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "71": {
+      "symbol": "GBPHUF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "72": {
+      "symbol": "CHFHUF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "73": {
+      "symbol": "USDPLN.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "75": {
+      "symbol": "USDDKK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "76": {
+      "symbol": "EURDKK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "8": {
+      "symbol": "EURGBP.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "82": {
+      "symbol": "USDCZK.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "9": {
+      "symbol": "EURCHF.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
     }
-  }
+  },
+  "round_the_clock_synced_utc": "2026-10-10T17:54:25.411075+00:00",
+  "round_the_clock_filter_version": 2
 }
