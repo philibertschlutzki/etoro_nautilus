@@ -1,0 +1,32 @@
+{
+ "generated": "2026-10-13T17:01:35.361186+00:00",
+ "samples_total": 136900,
+ "samples_valid": 24645,
+ "n_instruments_measured": 370,
+ "by_class": {
+  "K2": {
+   "n_instruments": 48,
+   "median_p50_bps": 0.436117965823028,
+   "p75_of_p50_bps": 1.0596192568895555,
+   "model_fallback_bps": 1.5
+  },
+  "K3": {
+   "n_instruments": 10,
+   "median_p50_bps": 10.326293775162178,
+   "p75_of_p50_bps": 18.84590213369648,
+   "model_fallback_bps": 5.0
+  },
+  "K4": {
+   "n_instruments": 16,
+   "median_p50_bps": 1.2473825215753274,
+   "p75_of_p50_bps": 2.520893856125219,
+   "model_fallback_bps": 4.0
+  },
+  "K1": {
+   "n_instruments": 296,
+   "median_p50_bps": 26.29808298064968,
+   "p75_of_p50_bps": 50.572193053668066,
+   "model_fallback_bps": 3.0
+  }
+ }
+}

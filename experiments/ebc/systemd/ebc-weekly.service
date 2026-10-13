@@ -1,0 +1,11 @@
+[Unit]
+Description=EBC Wochenbericht (Spread-Auswertung, Forward-Shadow, B+ mit gemessenen Kosten), nur lesend
+ConditionPathExists=%h/ebc_exp/experiments/ebc/weekly_report.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ebc_exp
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/ebc_weekly.lock /bin/bash -c '%h/etoro_nautilus/venv/bin/python3 experiments/ebc/spread_eval.py && %h/etoro_nautilus/venv/bin/python3 experiments/ebc/weekly_report.py'
+StandardOutput=append:%h/ebc_exp/logs/ebc_weekly.log
+StandardError=append:%h/ebc_exp/logs/ebc_weekly.log
