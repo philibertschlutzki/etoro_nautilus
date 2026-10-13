@@ -1,0 +1,2 @@
+# Altes Testkonto 48264806 (nicht mehr erreichbar mit dem neuen Key)
+Archiv: `state_real_ARCHIV_altes_testkonto.json` (nicht loeschen). Darin: pending-Order 1610568239 (c4, SELL 20 USD auf Instrument 6916/RBLX, 2026-10-12 17:26:50 UTC) ohne Fill in `fills.csv`; Lauf wurde unterbrochen. Es kann dort eine offene RBLX-Short-Position (20 USD) liegen. Pruefen (eToro-Oberflaeche oder alter Key) und ggf. manuell schliessen.

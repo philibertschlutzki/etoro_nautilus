@@ -82,3 +82,42 @@ def test_cfd_classes_blocked_by_default_and_fx_minimum(monkeypatch):
     g.state["positions"] = {str(i): {"klasse": "K2", "amount": 1010} for i in range(4)}
     g.fx_max_exposure = 1.0
     with pytest.raises(guard.Refused): g.check_open(9, 1010, True, "K2")      # max. 4 FX-Testpositionen
+
+
+def test_recover_adopts_pending_by_order_id(monkeypatch, tmp_path):
+    import run_stage_c
+    monkeypatch.setattr(guard, "positions", lambda pnl=None: [{"orderID": 77, "positionID": 5, "units": 1.5}])
+    g = guard.Gate(False, None, set(), str(tmp_path / "s.json"), "c4", lambda m: None)
+    g.state["pending"]["77"] = {"instrument": 9, "klasse": "K1", "is_buy": False, "amount": 20.0}
+    g.state["pending"]["88"] = {"instrument": 9, "klasse": "K1", "is_buy": False, "amount": 20.0}   # abgelehnt, keine Position
+    run_stage_c.recover(g)
+    assert "5" in g.state["positions"] and not g.state["pending"]
+
+
+def test_w8ben_phase_cap_is_10():
+    assert guard.CAPS["w8"] == 10.0
+
+
+def test_whoami_scrubs_secrets():
+    import whoami
+    out = whoami.scrub({"x-api-key": "abc", "name": "n", "nested": [{"accessToken": "t", "v": 1}]})
+    assert out["x-api-key"] == "<entfernt>" and out["nested"][0]["accessToken"] == "<entfernt>" and out["nested"][0]["v"] == 1
+
+
+def test_demo_mode_paths_and_confirmation(monkeypatch):
+    monkeypatch.setenv("ETORO_PAPER_ACCOUNT_CID", "123")
+    monkeypatch.setattr(guard, "_req", lambda *a, **k: (200, {}))
+    monkeypatch.setattr(guard, "get", lambda url, tries=6: {})
+    guard.FORCE_ENV[0] = "demo"
+    try:
+        assert guard.verify_account() == "demo"
+        assert guard.EXEC.endswith("/execution/demo") and "/demo/pnl" in guard.PNL
+        with pytest.raises(guard.Refused): mk(live=True, confirm="123").post(guard.EXEC + "/x", {})
+        assert mk(live=True, confirm="demo").post(guard.EXEC + "/x", {})[0] == 200
+    finally:
+        guard.FORCE_ENV[0] = None
+        guard.set_environment()
+
+
+def test_feeprobe_cap_1000():
+    assert guard.CAPS["fp"] == 1000.0
