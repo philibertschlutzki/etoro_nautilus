@@ -1,3 +1,8 @@
 - 2026-10-13 01:45 UTC ZUSAMMENFASSUNG Guthaben 120490.39 USD, 9 offene Position(en) (PnL -1.87), 3 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-13 03:00 UTC WARNUNG Inkubations-Bot läuft nicht (Sperrdatei frei).
 - 2026-10-13 03:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-13 04:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-13 04:30 UTC GESCHLOSSEN Short NZDJPY.ETORO, Position 3616982300, 1991.12 USD, PnL +2.41 (zuletzt gesehen)
+- 2026-10-13 04:30 UTC GESCHLOSSEN Long USDMXN.ETORO, Position 3616982298, 1991.58 USD, PnL -2.72 (zuletzt gesehen)
+- 2026-10-13 04:30 UTC GESCHLOSSEN Long AUDJPY.ETORO, Position 3616982299, 1990.75 USD, PnL -3.38 (zuletzt gesehen)
+- 2026-10-13 04:30 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
