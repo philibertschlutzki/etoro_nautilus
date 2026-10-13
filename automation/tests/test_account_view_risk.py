@@ -134,3 +134,42 @@ def test_backoff_defaults_and_cap():
     assert av._backoff_s(_http_429()) == av.RATE_LIMIT_BACKOFF_S
     assert av._backoff_s(_http_429(900)) == av.MAX_BACKOFF_S
     assert av._backoff_s(OSError("x")) == av.ERROR_BACKOFF_S
+
+
+def _fx_position(pid, eid, amount, units, rate):
+    return {"positionID": pid, "instrumentID": eid, "isBuy": False, "amount": amount, "leverage": 1, "units": units,
+            "openRate": rate, "unrealizedPnL": {"pnL": 0.0}, "stopLossRate": 1.0}
+
+
+def test_adopted_fx_position_counts_with_its_usd_amount_not_units_times_quote_price():
+    """Regression 13.10.: übernommene USDMXN-/NZDJPY-Position (Einheiten × Kurs in der Quote-Währung) ergab im Cache ein
+    Vielfaches ihres USD-Betrags, Exposure 668 % und gesperrte Einstiege. Hier USDZAR: 1.991,12 USD = 1.991,12 Einheiten @ 18,4."""
+    usdzar_eid = 42
+    snap = parse_snapshot({"clientPortfolio": {"credit": 8_100.0, "positions": [
+        _fx_position(7, usdzar_eid, 1991.12, 1991.12, 18.4)]}})
+    adopted = SimpleNamespace(quantity=1991.12, avg_px_open=18.4)            # Cache-Sicht der übernommenen Position: 36.637 "USD"
+
+    class _FxCache:
+        def positions_open(self, instrument_id=None):
+            return [adopted] if str(instrument_id) == "USDZAR.ETORO" else []
+
+    alloc = MomentumLSAllocator(["USDZAR.ETORO", "BTC.ETORO"], max_total_exposure_fraction=0.60,
+                                max_symbol_exposure_fraction=0.02)
+    alloc.set_account_view(SimpleNamespace(snapshot=lambda fresh=False: snap))
+    result = alloc.get_allocation(InstrumentId.from_str("BTC.ETORO"), _FxCache(), 10_000.0)
+    assert result == pytest.approx(0.02 * snap.equity)           # Budget frei: 1.991 USD sind nur ca. 2 % der Equity
+
+
+def test_freshly_filled_position_not_yet_in_snapshot_still_counts_from_the_cache():
+    snap = parse_snapshot({"clientPortfolio": {"credit": 10_000.0, "positions": []}})
+    fresh = SimpleNamespace(quantity=20.0, avg_px_open=100.0)               # 2.000 USD, eToro zeigt sie noch nicht
+
+    class _FreshCache:
+        def positions_open(self, instrument_id=None):
+            return [fresh] if str(instrument_id) == "NZDJPY.ETORO" else []
+
+    alloc = MomentumLSAllocator(["NZDJPY.ETORO", "BTC.ETORO"], max_total_exposure_fraction=0.30,
+                                max_symbol_exposure_fraction=0.20)
+    alloc.set_account_view(SimpleNamespace(snapshot=lambda fresh=False: snap))
+    # Equity 10.000, Gesamtbudget 30 % = 3.000, Cache belegt 2.000 → frei 1.000 (10 %), Symbol-Cap 20 % → 10 % Allokation
+    assert alloc.get_allocation(InstrumentId.from_str("BTC.ETORO"), _FreshCache(), 10_000.0) == pytest.approx(1000.0)
