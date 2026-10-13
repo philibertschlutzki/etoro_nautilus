@@ -67,3 +67,6 @@
 - 2026-10-13 17:15 UTC ERÖFFNET Short POWL.ETORO, Position 3617602456, 1955.27 USD, PnL -3.67
 - 2026-10-13 17:15 UTC ERÖFFNET Short GOLD.ETORO, Position 3617602458, 1951.78 USD, PnL -2.08
 - 2026-10-13 17:15 UTC GESCHLOSSEN Short CVNA.ETORO, Position 3617426040, 1937.48 USD, PnL -9.48 (zuletzt gesehen)
+- 2026-10-13 18:15 UTC GESCHLOSSEN Long RGTI.ETORO, Position 3617481046, 1943.36 USD, PnL +9.16 (zuletzt gesehen)
+- 2026-10-13 18:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3617481047, 1948.72 USD, PnL -10.33 (zuletzt gesehen)
+- 2026-10-13 18:30 UTC ZUSAMMENFASSUNG Guthaben 95894.20 USD, 26 offene Position(en) (PnL -194.39), 19 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
