@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-13 12:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-13 13:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 128930.85 USD |
-| Investiert | 5011.69 USD in 4 Position(en) |
-| Unrealisierter PnL | +3.93 USD |
+| Freies Guthaben | 126941.67 USD |
+| Investiert | 6999.34 USD in 5 Position(en) |
+| Unrealisierter PnL | +9.63 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 5 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,16 +15,14 @@ Stand: 2026-10-13 12:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| AUDJPY.ETORO | Long | 1991.62 | 110.214 | +2.22 |
-| EURSEK.ETORO | Long | 1990.09 | 11.1766 | -1.43 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +3.20 |
-| Instrument 4509 | Short | 19.99 | 1529.4 | -0.06 |
+| AUDJPY.ETORO | Long | 1991.62 | 110.214 | +4.73 |
+| USDNOK.ETORO | Long | 1988.90 | 9.5297 | -0.94 |
+| CHFJPY.ETORO | Long | 1988.84 | 190.144 | +1.99 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +3.81 |
+| Instrument 4509 | Short | 19.99 | 1529.4 | +0.04 |
 
 ## Letzte Ereignisse
 
-- 2026-10-13 03:30 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
-- 2026-10-13 04:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
-- 2026-10-13 04:30 UTC GESCHLOSSEN Short NZDJPY.ETORO, Position 3616982300, 1991.12 USD, PnL +2.41 (zuletzt gesehen)
 - 2026-10-13 04:30 UTC GESCHLOSSEN Long USDMXN.ETORO, Position 3616982298, 1991.58 USD, PnL -2.72 (zuletzt gesehen)
 - 2026-10-13 04:30 UTC GESCHLOSSEN Long AUDJPY.ETORO, Position 3616982299, 1990.75 USD, PnL -3.38 (zuletzt gesehen)
 - 2026-10-13 04:30 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
@@ -52,3 +50,6 @@ Stand: 2026-10-13 12:30 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-13 11:15 UTC ERÖFFNET Long USDNOK.ETORO, Position 3617129908, 1988.86 USD, PnL -0.23
 - 2026-10-13 11:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3617013790, 1991.96 USD, PnL -10.32 (zuletzt gesehen)
 - 2026-10-13 12:15 UTC GESCHLOSSEN Long USDNOK.ETORO, Position 3617129908, 1988.86 USD, PnL -1.83 (zuletzt gesehen)
+- 2026-10-13 13:15 UTC ERÖFFNET Long USDNOK.ETORO, Position 3617154255, 1988.90 USD, PnL +0.25
+- 2026-10-13 13:15 UTC ERÖFFNET Long CHFJPY.ETORO, Position 3617154256, 1988.84 USD, PnL +1.12
+- 2026-10-13 13:15 UTC GESCHLOSSEN Long EURSEK.ETORO, Position 3617093220, 1990.09 USD, PnL -1.53 (zuletzt gesehen)
