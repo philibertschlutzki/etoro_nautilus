@@ -1,32 +1,32 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-12 23:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-13 00:15 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 125467.66 USD |
-| Investiert | 2344.98 USD in 6 Position(en) |
-| Unrealisierter PnL | -2.03 USD |
+| Freies Guthaben | 119494.21 USD |
+| Investiert | 8318.43 USD in 9 Position(en) |
+| Unrealisierter PnL | -3.03 USD |
 | Bot | läuft |
-| Fehlerzeilen im heutigen Bot-Log | 28 |
+| Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
 
 ## Offene Positionen
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| GOOG.ETORO | Long | 24.99 | 349.22 | +0.01 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +0.03 |
-| NZDUSD.ETORO | Short | 1010.00 | 0.55867 | +0.09 |
-| ETH.ETORO | Long | 100.00 | 2516.87 | -2.09 |
-| CAT.ETORO | Long | 100.00 | 800.63 | -0.16 |
-| INTC.ETORO | Short | 100.00 | 101.38 | +0.09 |
+| NZDJPY.ETORO | Short | 1991.12 | 88.613 | +2.02 |
+| GOOG.ETORO | Long | 24.99 | 349.22 | -0.01 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +0.14 |
+| NZDUSD.ETORO | Short | 1010.00 | 0.55867 | +0.36 |
+| ETH.ETORO | Long | 100.00 | 2516.87 | -3.51 |
+| CAT.ETORO | Long | 100.00 | 800.63 | -0.95 |
+| INTC.ETORO | Short | 100.00 | 101.38 | +1.26 |
+| USDMXN.ETORO | Long | 1991.58 | 18.26631 | +0.30 |
+| AUDJPY.ETORO | Long | 1990.75 | 110.352 | -2.64 |
 
 ## Letzte Ereignisse
 
-- 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 168438709, 91.00 USD, PnL +1005.00 (zuletzt gesehen)
-- 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 28057862, 113.78 USD, PnL +281.44 (zuletzt gesehen)
-- 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 3001818, 113.76 USD, PnL +233.79 (zuletzt gesehen)
 - 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 87683075, 113.68 USD, PnL +313.42 (zuletzt gesehen)
 - 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 24797633, 45.51 USD, PnL +111.52 (zuletzt gesehen)
 - 2026-10-12 17:45 UTC GESCHLOSSEN Long Instrument 1053, Position 108439640, 113.69 USD, PnL +351.51 (zuletzt gesehen)
@@ -54,3 +54,6 @@ Stand: 2026-10-12 23:00 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-12 21:45 UTC ZUSAMMENFASSUNG Guthaben 125467.66 USD, 6 offene Position(en) (PnL -1.41), 21 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-12 22:15 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
 - 2026-10-12 22:45 UTC WARNUNG 2 neue Fehlerzeilen im Bot-Log.
+- 2026-10-12 23:15 UTC ERÖFFNET Short NZDJPY.ETORO, Position 3616982300, 1991.12 USD, PnL +0.56
+- 2026-10-12 23:15 UTC ERÖFFNET Long USDMXN.ETORO, Position 3616982298, 1991.58 USD, PnL +0.30
+- 2026-10-12 23:15 UTC ERÖFFNET Long AUDJPY.ETORO, Position 3616982299, 1990.75 USD, PnL -0.70
