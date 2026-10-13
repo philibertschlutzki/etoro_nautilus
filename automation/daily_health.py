@@ -32,6 +32,7 @@ UNIT = "etoro-paper-bot.service"
 DAILY_STOP = 0.03
 DD_STOP = 0.10
 WARN_SHARE = 0.5     # Befund, sobald die Hälfte des Abstands zu einem Stopp aufgebraucht ist
+_TS = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z?\s*")
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -71,7 +72,7 @@ def recent_errors(now: datetime, log_dir: Path = LOG_DIR) -> tuple[int, list[tup
                     continue
             except ValueError:
                 pass   # Zeile ohne Zeitstempel (z. B. Traceback-Teil): zählen
-            counts[re.sub(r"\d+", "#", ln[30:] if len(ln) > 30 else ln)[:140]] += 1
+            counts[re.sub(r"\d+", "#", _TS.sub("", ln))[:140]] += 1
     return sum(counts.values()), counts.most_common(5)
 
 
