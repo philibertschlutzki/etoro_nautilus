@@ -27,3 +27,5 @@
 - 2026-10-13 09:15 UTC GESCHLOSSEN Long EURSEK.ETORO, Position 3617044051, 1992.07 USD, PnL -2.40 (zuletzt gesehen)
 - 2026-10-13 10:00 UTC ZUSAMMENFASSUNG Guthaben 128960.89 USD, 4 offene Position(en) (PnL -1.67), 15 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-13 10:15 UTC ERÖFFNET Long EURSEK.ETORO, Position 3617093220, 1990.09 USD, PnL +0.59
+- 2026-10-13 11:15 UTC ERÖFFNET Long USDNOK.ETORO, Position 3617129908, 1988.86 USD, PnL -0.23
+- 2026-10-13 11:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3617013790, 1991.96 USD, PnL -10.32 (zuletzt gesehen)
