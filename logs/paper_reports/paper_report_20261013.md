@@ -6,3 +6,7 @@
 - 2026-10-13 04:30 UTC GESCHLOSSEN Long USDMXN.ETORO, Position 3616982298, 1991.58 USD, PnL -2.72 (zuletzt gesehen)
 - 2026-10-13 04:30 UTC GESCHLOSSEN Long AUDJPY.ETORO, Position 3616982299, 1990.75 USD, PnL -3.38 (zuletzt gesehen)
 - 2026-10-13 04:30 UTC WARNUNG 1 neue Fehlerzeilen im Bot-Log.
+- 2026-10-13 05:15 UTC ERÖFFNET Long BTC.ETORO, Position 3617005700, 1991.70 USD, PnL +5.93
+- 2026-10-13 05:15 UTC ERÖFFNET Short NZDJPY.ETORO, Position 3617005698, 1990.78 USD, PnL -1.06
+- 2026-10-13 05:15 UTC ERÖFFNET Long USDMXN.ETORO, Position 3617005699, 1991.63 USD, PnL -1.48
+- 2026-10-13 05:45 UTC ZUSAMMENFASSUNG Guthaben 120466.88 USD, 9 offene Position(en) (PnL +1.93), 6 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
