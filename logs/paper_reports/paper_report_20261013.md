@@ -81,3 +81,5 @@
 - 2026-10-13 20:15 UTC GESCHLOSSEN Long INTU.ETORO, Position 3617602454, 1953.28 USD, PnL -28.16 (zuletzt gesehen)
 - 2026-10-13 20:15 UTC GESCHLOSSEN Short ASTS.ETORO, Position 3617426049, 1939.10 USD, PnL -3.71 (zuletzt gesehen)
 - 2026-10-13 21:15 UTC GESCHLOSSEN Long AUDJPY.ETORO, Position 3617481043, 1947.71 USD, PnL -1.30 (zuletzt gesehen)
+- 2026-10-13 22:45 UTC ZUSAMMENFASSUNG Guthaben 94004.66 USD, 27 offene Position(en) (PnL -197.68), 11 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-13 23:15 UTC GESCHLOSSEN Long INJ.ETORO, Position 3617602453, 1956.93 USD, PnL -13.43 (zuletzt gesehen)
