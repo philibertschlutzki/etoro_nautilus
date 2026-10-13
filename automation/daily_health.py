@@ -32,6 +32,7 @@ UNIT = "etoro-paper-bot.service"
 DAILY_STOP = 0.03
 DD_STOP = 0.10
 WARN_SHARE = 0.5     # Befund, sobald die Hälfte des Abstands zu einem Stopp aufgebraucht ist
+_LEVEL = re.compile(r"\b(ERROR|CRITICAL)\b|Traceback")
 _TS = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z?\s*")
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -64,7 +65,7 @@ def recent_errors(now: datetime, log_dir: Path = LOG_DIR) -> tuple[int, list[tup
             continue
         for ln in lines:
             ln = _ANSI.sub("", ln)
-            if " ERROR" not in ln and "CRITICAL" not in ln and "Traceback" not in ln:
+            if not _LEVEL.search(ln):
                 continue
             stamp = ln[:19]
             try:
