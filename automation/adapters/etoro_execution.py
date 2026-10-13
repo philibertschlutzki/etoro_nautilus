@@ -7,6 +7,7 @@ import json
 import os
 
 from automation.fatal_exit import hard_exit
+from automation.ws_reconnect import ReconnectBudget
 import ssl
 import time
 import uuid
@@ -237,6 +238,8 @@ class EToroExecutionClient(LiveExecutionClient):
         self._session: aiohttp.ClientSession | None = None
         self._ws: object | None = None
         self._ws_task: asyncio.Task | None = None
+        self._reconnect_budget = ReconnectBudget()
+        self._closing = False
 
         # [WS-2] TTL-based WS event buffer: list of (monotonic_timestamp, event_dict)
         # Events older than _WS_BUFFER_TTL_S are silently dropped on replay.
@@ -426,6 +429,7 @@ class EToroExecutionClient(LiveExecutionClient):
         return max(int(b.ts_event) for b in bars)
 
     async def _disconnect(self) -> None:
+        self._closing = True            # kein Reconnect beim gewollten Schließen
         await self._rate_limiter.stop()
         if self._ws_task:
             self._ws_task.cancel()
@@ -579,10 +583,31 @@ class EToroExecutionClient(LiveExecutionClient):
                         if isinstance(msg, dict):
                             await self._process_ws_message(msg)
         except Exception as exc:
-            self._log.error(
-                f"WS error or closure: {exc}. Forcing restart.", LogColor.RED
-            )
-            hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
+            self._log.error(f"WS error or closure: {exc}.", LogColor.RED)
+            await self._recover_ws(exc)
+            return
+        # Der Server hat die Verbindung sauber geschlossen: die Schleife endet ohne Fehler, der Kanal ist aber tot.
+        await self._recover_ws(None)
+
+    async def _recover_ws(self, exc: Exception | None) -> None:
+        """Verbindung ohne Prozess-Neustart neu aufbauen (Authentifizieren, Abonnieren, Positionen abgleichen).
+        Ist das Budget aufgebraucht oder scheitert der Aufbau mehrfach, gilt wie zuvor der harte Ausstieg."""
+        if self._closing:
+            return
+        if not self._reconnect_budget.allow():
+            self._log.error("WS: zu viele Reconnects in kurzer Zeit — harter Neustart.", LogColor.RED)
+            hard_exit("WebSocket/Verbindung — Reconnect-Budget aufgebraucht")
+            return
+        self._log.warning(f"WS: baue die Verbindung neu auf (Grund: {exc or 'sauber geschlossen'}).", LogColor.YELLOW)
+        old, self._ws = self._ws, None
+        if old is not None:
+            with suppress(Exception):
+                await old.close()
+        await self._connect_ws()           # hard_exit nach _MAX_CONNECT_ATTEMPTS erfolglosen Versuchen
+        try:
+            await self._reconcile_positions_on_connect()
+        except Exception as rexc:
+            self._log.warning(f"[GR-04] Reconcile nach WS-Reconnect fehlgeschlagen: {rexc}", LogColor.YELLOW)
 
     async def _process_ws_message(self, msg: dict, is_replay: bool = False) -> None:
         msg_type = msg.get("type", "")
