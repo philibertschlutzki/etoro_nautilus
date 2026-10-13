@@ -1,0 +1,11 @@
+[Unit]
+Description=EBC Stufe C monitor täglich 06:50 UTC
+
+[Timer]
+# Nicht zur vollen Stunde (429-Rate-Limit mit dem Bot).
+OnCalendar=*-*-* 06:50:00 UTC
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
