@@ -1,5 +1,5 @@
 """Gemeinsame Bibliothek fuer EBC-H4 bis H7 (Stufe A): Universen, Serien, Kalender, parallele Trade-Erzeugung, Portfolio-Helfer."""
-import csv, datetime as dt, math, os, pickle, sys
+import csv, datetime as dt, json, math, os, pickle, sys
 from multiprocessing import Pool
 sys.path.insert(0, os.path.dirname(__file__)); sys.path.insert(0, os.getcwd())
 import numpy as np
@@ -25,7 +25,11 @@ def setup(with_neu=True):
         neu = universe.load("results/H4/universe_neu.csv")
         for r in neu: r["src"] = "neu"; base[r["id"]] = "data/ebc/daily_neu"
         rows = rows + neu
-    ct = costs.CostTable(rows)
+    if os.environ.get("EBC_MEASURED") == "1" and os.path.exists("data/ebc/spreads_valid.json"):   # gemessene Werktags-Spreads (spread_eval.py)
+        sp = {k: tuple(v) for k, v in json.load(open("data/ebc/spreads_valid.json")).items()}
+        ct = costs.CostTable(rows, spreads=sp, use_measured=True)
+    else:
+        ct = costs.CostTable(rows)
     series = {r["id"]: sim.Series(*_load(r["id"], base[r["id"]])) for r in rows}
     cal = pf.Calendar({r["id"]: series[r["id"]] for r in rows if r["src"] == "breit"})   # Kalender wie H1 (Paritaet)
     return rows, ct, series, cal
