@@ -1,5 +1,5 @@
-"""EBC Stufe C (Paper-Konto, /real/-Pfad per account_guard). STANDARD = DRY-RUN: es werden nur GET-Aufrufe gemacht, nie ein POST.
-Scharf nur mit:  --live --confirm-account <ETORO_PAPER_ACCOUNT_CID>
+"""EBC Stufe C (Demo-Konto; /real/ nur mit STAGE_C_ENV=real). STANDARD = DRY-RUN: es werden nur GET-Aufrufe gemacht, nie ein POST.
+Scharf nur mit:  --live --confirm-account demo
 
 Phasen:  plan | c4 | c1 | c5 | fin | monitor | closeall
   plan     Kandidaten bestimmen, results/stage_c/test_symbols.json schreiben (fuer den Bot-Thread), nichts senden
@@ -187,7 +187,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "w8ben", "feeprobe"])
     ap.add_argument("--live", action="store_true", help="Orders wirklich senden (Standard: Dry-Run)")
-    ap.add_argument("--confirm-account", default=None, help="muss gleich ETORO_PAPER_ACCOUNT_CID sein")
+    ap.add_argument("--confirm-account", default=None, help="demo (Standard) bzw. ETORO_PAPER_ACCOUNT_CID bei STAGE_C_ENV=real")
     ap.add_argument("--whitelist", default=os.path.expanduser("~/etoro_nautilus/data/state/incubation_whitelist.json"))
     ap.add_argument("--bot-map", default=os.path.expanduser("~/etoro_nautilus/automation/config/instrument_map.json"))
     ap.add_argument("--n", type=int, default=30)

@@ -42,3 +42,22 @@ Trades: C120+ macht ×4.1 so viele Trades wie C30, C∞ ×16. Gewinn: Die Gesamt
 ## Einschränkungen
 
 Ein Aufwärtsregime; `U_neu` und `U_breit` enthalten nur heute noch gelistete Instrumente mit ≥ 750 Kerzen (Überlebens-Verzerrung); ohne gemessene Spreads, ohne Stufe B und C; C30r mit einer Ziehung je Trade, nicht je Handelstag neu.
+
+
+## Kosten-Rekalibrierung aus Stufe C (2026-10-12, Demo-Konto) — Verdikt nach Rekalibrierung: WIDERLEGT
+
+eToro berechnet eine **Pauschalgebühr von 1,00 USD je Order** (23 von 24 `h4`-Orders; TSLA-Feeprobe 200/500/1000 USD je 1,00 USD beim Öffnen, ca. 1 USD beim Schliessen). Bei 50-USD-Orders sind das 200 bps je Seite. Pflicht nach §9: Stufe A mit gemessenen Werten neu rechnen. Annahme: Gebühr in bps = 2 USD / (Notional-Anteil × 17 388 USD Equity) als Kommission für Aktien/ETF; Filter und Rang weiter mit den Rückfallkosten (`experiments/ebc/h4_fee_recalc.py`, `cost_recalibration_fee.json`).
+
+| Arm | Gebühr Round-Trip bps | Trades | SR | MaxDD | Rendite | Expectancy bps |
+|---|---|---|---|---|---|---|
+| C10 | 19 | 373 | 1.34 | -22.5 % | 73 % | 284 |
+| C15 | 29 | 588 | 1.33 | -19.3 % | 63 % | 233 |
+| C20 | 38 | 777 | 1.46 | -19.4 % | 62 % | 226 |
+| C30 | 58 | 1141 | 1.62 | -17.4 % | 62 % | 230 |
+| C60 | 115 | 2237 | 0.88 | -16.0 % | 22 % | 100 |
+| C120 | 230 | 4352 | -0.56 | -15.0 % | -11 % | -49 |
+| C120plus | 230 | 4706 | -0.54 | -20.4 % | -14 % | -54 |
+| N30 | 58 | 1312 | 0.36 | -18.5 % | 10 % | 50 |
+| C30plus | 58 | 1298 | 1.29 | -20.2 % | 65 % | 228 |
+
+ΔSR gegen C30: C60 -0.74 [-1.15; -0.37], C120 -2.18 [-2.72; -1.69], C120+ -2.16 [-2.83; -1.54]. Die obere Grenze für C120+ liegt klar unter 0: Widerlegungskriterium §2.3(b) trifft zu. Kleine Positionen sind mit der Pauschalgebühr netto negativ; C30 bleibt das Optimum (weniger, aber grössere Positionen C10 bis C20 sind nicht besser: SR 1,34 bis 1,46 gegen 1,62). Folge für den Live-Bot: Positionen unter ca. 150 USD zahlen mehr als 130 bps Round-Trip an Gebühr.
