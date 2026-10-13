@@ -1534,12 +1534,32 @@ def phase5b_incubation(
         log.info("[Phase 5b] --no-deploy: Demo-Bot wird nicht angefasst.")
         return {"status": "no_deploy", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
     desired_sha = compute_whitelist_sha256(pairs) if pairs else None
+    # systemd-Modus (PAPER_BOT_SYSTEMD_UNIT): Stopp/Start über ``systemctl --user`` statt SIGTERM + Popen; systemd
+    # startet den Bot nach einem Ausfall selbst neu (siehe automation/systemd_bot.py, deploy/systemd/).
+    from automation import systemd_bot
+    unit = systemd_bot.configured_unit()
+    reconcile_kwargs = {"stop_fn": systemd_bot.make_stop_fn(unit)} if unit else {}
     reconcile = reconcile_live_bot(paths["lock"], desired_sha, stop_timeout_s=_live_bot_stop_timeout_s(),
-                                   reason="incubation_whitelist_changed" if pairs else "no_incubating_pairs")
+                                   reason="incubation_whitelist_changed" if pairs else "no_incubating_pairs",
+                                   **reconcile_kwargs)
     for event_type, payload_ev in reconcile.events:
         emit_json_event(log, event_type, {**payload_ev, "instance": "incubation"})
     if not reconcile.start_new:
         return {"status": reconcile.action, "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+    if unit:
+        try:
+            inc.assert_stage_environment(inc.INCUBATING, os.environ.get("ETORO_ENV") or "demo")
+        except inc.IncubationEnvironmentError as exc:
+            log.critical(f"[Phase 5b] {exc}")
+            return {"status": "error", "error": str(exc)}
+        ok, err = systemd_bot.start_unit(unit)
+        if not ok:
+            log.error(f"[Phase 5b] systemd-Start von {unit} fehlgeschlagen: {err}")
+            return {"status": "start_failed", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
+        emit_json_event(log, "INCUBATION_BOT_STARTED", {
+            "pid": None, "via": "systemd", "unit": unit, "environment": "demo", "pairs": sorted(pairs),
+            "whitelist_sha256": desired_sha, "lock_file": str(paths["lock"])})
+        return {"status": "started", "cycle": cycle.to_dict(), "incubating": sorted(pairs)}
     cmd = [sys.executable, str(PROJECT_ROOT / "automation" / "momentum_ls_run.py"), "--incubation",
            "--universe", str(UNIVERSE_PATH), "--tournament", str(paths["whitelist"])]
     # INCUBATING läuft ausschliesslich im Demo-Konto: das Environment wird hier gesetzt UND vom Bot geprüft.

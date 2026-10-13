@@ -80,15 +80,15 @@ def test_live_instruments_allow_fractional_units_like_the_backtest():
     assert float(by_symbol["CAT.ETORO"].size_increment) == 0.01
 
 
-def test_crypto_round_trip_fee_is_two_percent_and_others_keep_the_global_commission():
+def test_crypto_round_trip_fee_is_two_percent_equity_ten_bps_and_others_keep_the_global_commission():
     from automation.backtest_runner import resolve_commission_bps, _read_default_round_trip_cost_bps
     from automation.strategies.hourly_strategy_base import resolve_commission_bps_model
 
     assert resolve_commission_bps("CRYPTO", 1.0) == 200.0
-    assert resolve_commission_bps("EQUITY", 1.0) == 1.0
+    assert resolve_commission_bps("EQUITY", 1.0) == 10.0    # 1 USD je Seite bei ~2000 USD je Paar (Stage C, 2026-10-12)
     assert resolve_commission_bps("FOREX", 1.0) == 1.0
     assert resolve_commission_bps_model("BTC.ETORO") == 200.0
-    assert resolve_commission_bps_model("CAT.ETORO") == 1.0
+    assert resolve_commission_bps_model("CAT.ETORO") == 10.0
     assert _read_default_round_trip_cost_bps("BTC.ETORO") >= 200.0
 
 

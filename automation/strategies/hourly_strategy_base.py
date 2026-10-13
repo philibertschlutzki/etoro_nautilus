@@ -510,6 +510,7 @@ class HourlyStrategyBase(Strategy):
         # Watchdog dann DAUERHAFT, Pitfall #273). Der Watchdog gilt jetzt als entwaffnet, solange
         # DIESE Order (per ID) im Cache offen ist, nicht ab dem blossen Absenden.
         self._exit_market_close_order_id = None
+        self._adopted_close_order_ids: set = set()
         # Issue #859 Fix Punkt 4 — Obergrenze vergeblicher Markt-Close-Versuche (rejected/denied),
         # bevor der Trial als terminal unrecoverable gilt (statt eine offene Position endlos erneut
         # zu versuchen).
@@ -800,6 +801,16 @@ class HourlyStrategyBase(Strategy):
         pos = positions[0]
         entry_ns = int(pos.ts_opened)
         bars_elapsed = self._count_bars_since(entry_ns)
+        if (bars_elapsed is not None and getattr(self, "_session_window", None) is None
+                and _read_instrument_asset_class(str(self.instrument_id)) in ("CRYPTO", "FOREX")):
+            # Rund um die Uhr gehandelte Instrumente (Krypto, Forex): Der Bar-Cache enthält nach einem Neustart nur
+            # Katalog-Warm-up und Live-Bars, die Lücke dazwischen fehlt. Die Wanduhr (Stunden seit Einstieg) ist hier
+            # exakt und nie kleiner als die wahre Bar-Zahl, also nimmt der größere Wert den Zeit-Exit nicht zurück.
+            try:
+                wall_hours = int((self.clock.timestamp_ns() - entry_ns) // bar_axis.HOURLY_INTERVAL_NS)
+            except NotImplementedError:      # Uhr ohne Zeitquelle (z. B. nicht registrierte Strategie in Tests): Bar-Zahl behalten
+                wall_hours = 0
+            bars_elapsed = max(bars_elapsed, wall_hours)
 
         if bars_elapsed is not None:
             expired = bars_elapsed >= self._max_bars_in_trade
@@ -1092,7 +1103,8 @@ class HourlyStrategyBase(Strategy):
         # lassen. `_ruined` bleibt einmal gesetzt fuer den Rest des Backtests (kein "Erholen").
         if self._ruined:
             return True
-        current_equity = self._get_current_balance()
+        allocator_equity = self.allocator.risk_equity() if self.allocator is not None else None
+        current_equity = allocator_equity if allocator_equity is not None else self._get_current_balance()
         if self._initial_equity is None:
             if current_equity > 0:
                 self._initial_equity = current_equity
@@ -1608,6 +1620,12 @@ class HourlyStrategyBase(Strategy):
         # der Watchdog kann dann einen neuen Versuch auslösen, statt dauerhaft entwaffnet zu bleiben.
         if self._exit_pending is not None:
             self._exit_market_close_order_id = order.client_order_id
+        if str(getattr(pos, "strategy_id", "")) == "EXTERNAL":
+            # Übernommene eToro-Position (Besitzer EXTERNAL): der Close muss auf DIESE Position gebucht werden,
+            # sonst entsteht im Netting eine Phantom-Short-Position und die Long bleibt offen.
+            self._adopted_close_order_ids.add(order.client_order_id)
+            self.submit_order(order, position_id=pos.id)
+            return
         self.submit_order(order)
 
     # ── Issue #712 — dynamischer Take-Profit (opt-in) ───────────────────────────────────────────
@@ -1721,6 +1739,11 @@ class HourlyStrategyBase(Strategy):
 
     def on_order_filled(self, event) -> None:
         self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
+        if event.client_order_id in self._adopted_close_order_ids:
+            # PositionClosed der übernommenen Position gehört EXTERNAL und erreicht die Strategie nicht.
+            self._adopted_close_order_ids.discard(event.client_order_id)
+            if not self.cache.positions_open(instrument_id=self.instrument_id):
+                self.on_position_closed(event)
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
 
@@ -1976,6 +1999,15 @@ class HourlyStrategyBase(Strategy):
                     f"[{self.instrument_id}] RISK_CAP_HIT: {trade_amount_usd:.2f} USD -> {_risk_cap:.2f} USD "
                     f"(Verlust am Stop {_stop_pct:.2%} <= {float(_risk_frac):.2%} der Equity {balance:.2f} USD)")
                 trade_amount_usd = _risk_cap
+
+        if self.allocator is not None:
+            from automation.min_position import min_notional
+            _min_notional = min_notional(str(self.instrument_id), _read_instrument_asset_class(str(self.instrument_id)))
+            if _min_notional > 0.0 and trade_amount_usd < _min_notional:
+                self._log.info(
+                    f"[{self.instrument_id}] MIN_NOTIONAL: {trade_amount_usd:.2f} USD < eToro-Mindestbetrag "
+                    f"{_min_notional:.0f} USD (Risiko-Deckel oder Budget) — kein Entry.")
+                return None
 
         MIN_TRADE_USD = 11.0
         if trade_amount_usd < MIN_TRADE_USD:

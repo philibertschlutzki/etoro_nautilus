@@ -4,6 +4,9 @@ import ssl
 import uuid
 import websockets
 import os
+
+from automation.fatal_exit import hard_exit
+from automation.ws_reconnect import ReconnectBudget
 import traceback
 from datetime import datetime
 
@@ -83,10 +86,12 @@ class EToroDataClient(LiveMarketDataClient):
 
         self._last_bid: dict[str, float] = {}
         self._last_ask: dict[str, float] = {}
+        self._reconnect_budget = ReconnectBudget()
+        self._closing = False
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
-    async def _connect(self) -> None:
+    async def _connect(self, *, register_instruments: bool = True) -> None:
         ssl_context = ssl.create_default_context()
         last_exc: Exception | None = None
 
@@ -108,7 +113,8 @@ class EToroDataClient(LiveMarketDataClient):
                     timeout=_CONNECT_TIMEOUT_S,
                 )
                 self._log.info("WebSocket verbunden. Authentifiziere...", LogColor.GREEN)
-                self._register_instruments()
+                if register_instruments:      # beim Reconnect bleiben Instrumente und Cache unverändert
+                    self._register_instruments()
                 self._last_bid.clear()
                 self._last_ask.clear()
                 await self._authenticate()
@@ -138,16 +144,17 @@ class EToroDataClient(LiveMarketDataClient):
                     f"Unerwarteter Fehler (Programmierfehler) beim Verbindungsaufbau: {e}\n{traceback.format_exc()}",
                     LogColor.RED
                 )
-                os._exit(1)
+                hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
         self._log.error(
             f"WebSocket nach {_MAX_CONNECT_ATTEMPTS} Versuchen nicht erreichbar "
             f"(letzter Fehler: {last_exc}). Erzwinge Neustart via systemd...",
             LogColor.RED,
         )
-        os._exit(1)
+        hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
     async def _disconnect(self) -> None:
+        self._closing = True            # kein Reconnect beim gewollten Schließen
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
@@ -274,6 +281,7 @@ class EToroDataClient(LiveMarketDataClient):
     # ── Message Loop ──────────────────────────────────────────────────────────
 
     async def _message_loop(self) -> None:
+        reason = "unbekannt"
         try:
             async for raw in self._ws:
                 if not raw or raw == b"\x00":
@@ -285,35 +293,39 @@ class EToroDataClient(LiveMarketDataClient):
                 if "messages" in data:
                     for msg in data["messages"]:
                         self._process_message(msg)
-
-            self._log.warning(
-                "WebSocket vom Server sauber geschlossen. "
-                "Erzwinge Neustart via systemd...",
-                LogColor.YELLOW,
-            )
-            os._exit(1)
-
+            reason = "vom Server sauber geschlossen"
+            self._log.warning(f"WebSocket {reason}.", LogColor.YELLOW)
         except websockets.exceptions.ConnectionClosedOK:
-            self._log.warning(
-                "WebSocket sauber getrennt (CloseOK). Erzwinge Neustart...",
-                LogColor.YELLOW,
-            )
-            os._exit(1)
+            reason = "sauber getrennt (CloseOK)"
+            self._log.warning(f"WebSocket {reason}.", LogColor.YELLOW)
         except websockets.exceptions.ConnectionClosedError as e:
-            self._log.error(
-                f"WebSocket Verbindungsfehler: {e}. Erzwinge Neustart...",
-                LogColor.RED,
-            )
-            os._exit(1)
+            reason = f"Verbindungsfehler: {e}"
+            self._log.error(f"WebSocket {reason}.", LogColor.RED)
         except asyncio.CancelledError:
             self._log.info("Message Loop beendet (Cancelled).", LogColor.BLUE)
             raise
         except Exception as e:
-            self._log.error(
-                f"Unerwarteter WebSocket-Fehler: {e}. Erzwinge Neustart...",
-                LogColor.RED,
-            )
-            os._exit(1)
+            reason = f"unerwarteter Fehler: {e}"
+            self._log.error(f"WebSocket {reason}.", LogColor.RED)
+        await self._recover_ws(reason)
+
+    async def _recover_ws(self, reason: str) -> None:
+        """Verbindung ohne Prozess-Neustart neu aufbauen (Authentifizieren, Instrumente abonnieren). Ist das Budget
+        aufgebraucht oder scheitert der Aufbau mehrfach (``_connect``), gilt wie zuvor der harte Ausstieg."""
+        if self._closing:
+            return
+        if not self._reconnect_budget.allow():
+            self._log.error("WebSocket: zu viele Reconnects in kurzer Zeit — harter Neustart.", LogColor.RED)
+            hard_exit("WebSocket/Verbindung — Reconnect-Budget aufgebraucht")
+            return
+        self._log.warning(f"WebSocket: baue die Verbindung neu auf ({reason}).", LogColor.YELLOW)
+        old, self._ws = self._ws, None
+        if old is not None:
+            try:
+                await old.close()
+            except Exception:
+                pass
+        await self._connect(register_instruments=False)
 
     # ── Message Processing ────────────────────────────────────────────────────
 

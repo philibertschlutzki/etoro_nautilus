@@ -1,0 +1,11 @@
+[Unit]
+Description=EBC Stufe B Forward-Shadow (B+, HL+NP, Kombi6-Pool), nur lesend
+ConditionPathExists=%h/ebc_exp/experiments/ebc/stage_b_multi.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ebc_exp
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/ebc_stage_b.lock %h/etoro_nautilus/venv/bin/python3 experiments/ebc/stage_b_multi.py --since 2026-10-12
+StandardOutput=append:%h/ebc_exp/logs/ebc_stage_b.log
+StandardError=append:%h/ebc_exp/logs/ebc_stage_b.log

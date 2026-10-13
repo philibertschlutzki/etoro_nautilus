@@ -412,8 +412,11 @@ class LiveCircuitBreakerWatchdog:
         distribution_refs: dict[str, dict] | None = None,
         n_min_round_trips: int = 30,
         now_fn: Callable[[], Any] | None = None,
+        account_view=None,
     ) -> None:
         self._node = node
+        # Equity direkt von eToro (automation/account_view.py); ``None`` = Equity aus dem Nautilus-Portfolio.
+        self._account_view = account_view
         self._venue = venue
         self._poll_interval_s = poll_interval_s
         self._dd_halt_fraction = dd_halt_fraction
@@ -447,6 +450,15 @@ class LiveCircuitBreakerWatchdog:
         self._stopped = threading.Event()
 
     def _read_equity(self) -> float | None:
+        if self._account_view is not None:
+            snap = self._account_view.snapshot()
+            if snap is not None:
+                return snap.equity
+            if getattr(self._account_view, "uses_bot_capital", False):
+                # Ersatz aus dem Bot-Portfolio hätte eine andere Basis (Konto statt Bot-Kapital) und würde den HWM verfälschen.
+                logger.error("[LiveCircuitBreaker] eToro-Kontostand nicht lesbar — Tick übersprungen (festes Bot-Kapital).")
+                return None
+            logger.error("[LiveCircuitBreaker] eToro-Kontostand nicht lesbar — Equity aus dem Bot-Portfolio (Ersatz).")
         try:
             from nautilus_trader.model.identifiers import Venue
             venue_arg = (

@@ -1,0 +1,27 @@
+# eToro Paper-Bot als systemd-User-Dienst. Installation: deploy/systemd/install.sh (siehe docs/SYSTEMD_BOT.md).
+# Der Dienst läuft den Inkubations-Bot mit der aktuellen Whitelist. Die tägliche Auswahl bleibt im Orchestrator
+# (PAPER_BOT_SYSTEMD_UNIT=etoro-paper-bot.service): er schreibt die Whitelist und startet/stoppt diesen Dienst.
+[Unit]
+Description=eToro Paper-Bot (Inkubation, Paper-Konto)
+# Ohne Whitelist gibt es nichts zu handeln: erst der Orchestrator legt sie an.
+ConditionPathExists=%h/etoro_nautilus/data/state/incubation_whitelist.json
+# Kein Startlimit: nach einer längeren Netzunterbrechung muss der Dienst weiter versuchen (der Wächter meldet Ausfälle).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/etoro_nautilus
+Environment=PYTHONUNBUFFERED=1
+# Log wie bisher nach logs/incubation_bot_<Datum>.log (paper_report und ops_guard lesen dieses Muster).
+ExecStart=/bin/bash -c 'exec %h/etoro_nautilus/venv/bin/python3 automation/momentum_ls_run.py --incubation --universe data/universe/momentum_ls.json --tournament data/state/incubation_whitelist.json >> logs/incubation_bot_$$(date -u +%%Y%%m%%d).log 2>&1'
+Restart=always
+RestartSec=30
+# 3 = Circuit-Breaker ausgelöst (braucht einen Menschen), 4 = Sperre bereits gehalten, 6 = Umgebung nicht demo,
+# 7 = Key gehört nicht zum angehefteten Paper-Konto: kein automatischer Neustart.
+RestartPreventExitStatus=3 4 6 7
+# SIGTERM -> geordnetes Herunterfahren des Bots (live_risk.LiveShutdownCoordinator), danach SIGKILL.
+TimeoutStopSec=90
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

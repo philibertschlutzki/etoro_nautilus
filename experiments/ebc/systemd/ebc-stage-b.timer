@@ -1,0 +1,10 @@
+[Unit]
+Description=EBC Stufe B taeglich nach Handelsschluss (Mo-Fr 22:45 UTC)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 22:45:00 UTC
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

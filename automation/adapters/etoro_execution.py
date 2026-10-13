@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+
+from automation.fatal_exit import hard_exit
+from automation.ws_reconnect import ReconnectBudget
 import ssl
 import time
 import uuid
@@ -110,9 +113,24 @@ def order_rejection_reason(order_info: dict) -> str | None:
     return f"etoro_order_status_{status_id}_error_{error_code}: {message}".rstrip(": ")
 
 
+def _open_time_ns(value) -> int | None:
+    """eToro-Öffnungszeit (``2026-10-11T08:00:00.463Z``) als UTC-Nanosekunden; ``None``, wenn nicht lesbar."""
+    if not value:
+        return None
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.replace(microsecond=0).timestamp()) * 1_000_000_000 + dt.microsecond * 1_000   # ganzzahlig, ohne Float-Rauschen
+    except (TypeError, ValueError):
+        return None
+
+
 def net_open_positions(pnl_data: dict) -> dict[str, dict]:
     """Fasst die offenen eToro-Positionen je eToro-InstrumentID netto zusammen (NETTING-Konto): ``{eid:
-    {"units": signiert, "avg_px": gewichteter Öffnungskurs, "position_ids": [...]}}``. Rein, deterministisch."""
+    {"units": signiert, "avg_px": gewichteter Öffnungskurs, "position_ids": [...], "opened_ns": frühester Einstieg}}``
+    (``opened_ns`` fehlt, wenn eToro keine lesbare Öffnungszeit liefert). Rein, deterministisch."""
     data = pnl_data.get("clientPortfolio", pnl_data) if isinstance(pnl_data, dict) else {}
     out: dict[str, dict] = {}
     for item in data.get("Positions", data.get("positions", [])) or []:
@@ -133,6 +151,9 @@ def net_open_positions(pnl_data: dict) -> dict[str, dict]:
         entry["notional"] += units * rate
         if low.get("positionid") is not None:
             entry["position_ids"].append(str(low["positionid"]))
+        opened_ns = _open_time_ns(low.get("opendatetime") or low.get("opentimestamp"))
+        if opened_ns is not None and (entry.get("opened_ns") is None or opened_ns < entry["opened_ns"]):
+            entry["opened_ns"] = opened_ns        # frühester Einstieg der netto zusammengefassten Positionen
     for entry in out.values():
         notional, units_abs = entry.pop("notional"), abs(entry["units"])
         entry["avg_px"] = notional / units_abs if units_abs > 0 else 0.0
@@ -217,6 +238,8 @@ class EToroExecutionClient(LiveExecutionClient):
         self._session: aiohttp.ClientSession | None = None
         self._ws: object | None = None
         self._ws_task: asyncio.Task | None = None
+        self._reconnect_budget = ReconnectBudget()
+        self._closing = False
 
         # [WS-2] TTL-based WS event buffer: list of (monotonic_timestamp, event_dict)
         # Events older than _WS_BUFFER_TTL_S are silently dropped on replay.
@@ -273,7 +296,9 @@ class EToroExecutionClient(LiveExecutionClient):
                 position_side=PositionSide.LONG if entry["units"] > 0 else PositionSide.SHORT,
                 quantity=Quantity(abs(entry["units"]), instrument.size_precision),
                 report_id=UUID4(),
-                ts_last=ts,
+                # Echter Einstiegszeitpunkt statt "jetzt": Nautilus setzt daraus ts_opened der übernommenen Position, und
+                # die Strategie rehydriert damit ihren Bar-Zähler (Zeit-Exit trotz Neustarts, GR-04).
+                ts_last=min(entry.get("opened_ns") or ts, ts),
                 ts_init=ts,
                 avg_px_open=Decimal(str(entry["avg_px"])) if entry["avg_px"] else None,
             ))
@@ -404,6 +429,7 @@ class EToroExecutionClient(LiveExecutionClient):
         return max(int(b.ts_event) for b in bars)
 
     async def _disconnect(self) -> None:
+        self._closing = True            # kein Reconnect beim gewollten Schließen
         await self._rate_limiter.stop()
         if self._ws_task:
             self._ws_task.cancel()
@@ -533,7 +559,7 @@ class EToroExecutionClient(LiveExecutionClient):
                     LogColor.YELLOW,
                 )
                 await asyncio.sleep(min(10 * attempt, 60) + random.uniform(0, 2))
-        os._exit(1)
+        hard_exit("WebSocket/Verbindung — siehe Exception und Aufrufstelle")
 
     async def _ws_message_loop(self) -> None:
         try:
@@ -557,10 +583,31 @@ class EToroExecutionClient(LiveExecutionClient):
                         if isinstance(msg, dict):
                             await self._process_ws_message(msg)
         except Exception as exc:
-            self._log.error(
-                f"WS error or closure: {exc}. Forcing restart.", LogColor.RED
-            )
-            os._exit(1)
+            self._log.error(f"WS error or closure: {exc}.", LogColor.RED)
+            await self._recover_ws(exc)
+            return
+        # Der Server hat die Verbindung sauber geschlossen: die Schleife endet ohne Fehler, der Kanal ist aber tot.
+        await self._recover_ws(None)
+
+    async def _recover_ws(self, exc: Exception | None) -> None:
+        """Verbindung ohne Prozess-Neustart neu aufbauen (Authentifizieren, Abonnieren, Positionen abgleichen).
+        Ist das Budget aufgebraucht oder scheitert der Aufbau mehrfach, gilt wie zuvor der harte Ausstieg."""
+        if self._closing:
+            return
+        if not self._reconnect_budget.allow():
+            self._log.error("WS: zu viele Reconnects in kurzer Zeit — harter Neustart.", LogColor.RED)
+            hard_exit("WebSocket/Verbindung — Reconnect-Budget aufgebraucht")
+            return
+        self._log.warning(f"WS: baue die Verbindung neu auf (Grund: {exc or 'sauber geschlossen'}).", LogColor.YELLOW)
+        old, self._ws = self._ws, None
+        if old is not None:
+            with suppress(Exception):
+                await old.close()
+        await self._connect_ws()           # hard_exit nach _MAX_CONNECT_ATTEMPTS erfolglosen Versuchen
+        try:
+            await self._reconcile_positions_on_connect()
+        except Exception as rexc:
+            self._log.warning(f"[GR-04] Reconcile nach WS-Reconnect fehlgeschlagen: {rexc}", LogColor.YELLOW)
 
     async def _process_ws_message(self, msg: dict, is_replay: bool = False) -> None:
         msg_type = msg.get("type", "")
@@ -918,6 +965,19 @@ class EToroExecutionClient(LiveExecutionClient):
             return
 
         etoro_id = int(self._instrument_to_etoro.get(str(order.instrument_id), "0"))
+
+        if is_close and not etoro_pos_id:
+            # Kein offener eToro-Eintrag für dieses Instrument: nichts zu schliessen (sonst HTTP 400 auf ".../None").
+            self._log.warning(f"[{order.instrument_id}] Close ohne offene eToro-Position — Order abgelehnt.")
+            await self._state.delete(order.client_order_id.value)
+            self.generate_order_rejected(
+                strategy_id=order.strategy_id,
+                instrument_id=order.instrument_id,
+                client_order_id=order.client_order_id,
+                reason="no_open_position",
+                ts_event=ts,
+            )
+            return
 
         if is_close:
             payload = self._build_close_payload(etoro_id)
@@ -1519,6 +1579,8 @@ class EToroExecutionClient(LiveExecutionClient):
             reason=reason[:500],
             ts_event=self._clock.timestamp_ns(),
         )
+        from automation.min_position import learn_from_rejection
+        learn_from_rejection(str(order.instrument_id), reason)
         return True
 
     async def _reconcile_via_pnl(

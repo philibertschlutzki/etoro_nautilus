@@ -1,0 +1,21 @@
+{
+ "hypothesis": "H7",
+ "written_at": "2026-10-12T04:20:16.349848+00:00",
+ "prompt": "manuals/ebc/EBC_H7.md",
+ "prompt_sha256": "4c8ad61e18ef7e83a8d90378e180210a62ec3828912110160d8f4e2612c5d797",
+ "repo_head": "6ca2ba05349847d5709dc6ff0fbf53a914f386b2",
+ "seed": 20261011,
+ "comparison_period": {
+  "start": "2024-12-23",
+  "end": "2026-10-12",
+  "candles_until": "2026-10-10"
+ },
+ "preregistered_before_evaluation": false,
+ "thresholds": "siehe Prompt \u00a72.2/\u00a72.3 (unveraendert)",
+ "protocol_deviations": [
+  "Kostentabelle: nur Rueckfallwerte aus costs.py (keine Werktags-Spread-Messung, kein Stufe-C-Zugang); Spreads K1 3,0 bps, Slippage 1,5 bps je Seite.",
+  "Stufe B (Forward-Shadow) und Stufe C nicht ausgefuehrt; Route-R-Gegenprobe nicht ausgefuehrt (nur Route V).",
+  "Kein eigener Branch ebc/hx je Hypothese; ein gemeinsamer Experiment-Branch.",
+  "Vorregistrierung wurde NACH einem ersten Entwicklungslauf der Skripte geschrieben (Schwellen aus dem Prompt unveraendert, nicht nach Ergebnissen angepasst)."
+ ]
+}
