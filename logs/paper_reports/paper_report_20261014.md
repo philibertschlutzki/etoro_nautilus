@@ -10,3 +10,8 @@
 - 2026-10-14 03:15 UTC ERÖFFNET Long CHFJPY.ETORO, Position 3618003867, 1912.27 USD, PnL -0.35
 - 2026-10-14 03:15 UTC ERÖFFNET Long AUDJPY.ETORO, Position 3618003868, 1913.07 USD, PnL -0.40
 - 2026-10-14 03:15 UTC GESCHLOSSEN Long USDNOK.ETORO, Position 3617979026, 1918.84 USD, PnL -2.70 (zuletzt gesehen)
+- 2026-10-14 07:00 UTC ZUSAMMENFASSUNG Guthaben 90926.43 USD, 29 offene Position(en) (PnL -242.05), 6 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-14 07:15 UTC GESCHLOSSEN Long EURSEK.ETORO, Position 3618003865, 1913.68 USD, PnL +0.08 (zuletzt gesehen)
+- 2026-10-14 07:15 UTC GESCHLOSSEN Long USDZAR.ETORO, Position 3618003866, 1913.87 USD, PnL -0.94 (zuletzt gesehen)
+- 2026-10-14 07:15 UTC GESCHLOSSEN Long CHFJPY.ETORO, Position 3618003867, 1912.27 USD, PnL -1.69 (zuletzt gesehen)
+- 2026-10-14 07:15 UTC GESCHLOSSEN Short Instrument 4509, Position 3617015937, 19.99 USD, PnL +0.22 (zuletzt gesehen)
