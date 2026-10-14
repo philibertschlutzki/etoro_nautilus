@@ -20,3 +20,4 @@
 - 2026-10-14 09:15 UTC GESCHLOSSEN Long AUDJPY.ETORO, Position 3618003868, 1913.07 USD, PnL +4.93 (zuletzt gesehen)
 - 2026-10-14 10:15 UTC ERÖFFNET Long AUDJPY.ETORO, Position 3618271515, 1920.69 USD, PnL +0.33
 - 2026-10-14 10:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3618003864, 1913.65 USD, PnL -9.50 (zuletzt gesehen)
+- 2026-10-14 11:15 UTC ZUSAMMENFASSUNG Guthaben 94972.53 USD, 26 offene Position(en) (PnL -236.48), 9 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
