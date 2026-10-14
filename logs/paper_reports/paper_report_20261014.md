@@ -55,3 +55,5 @@
 - 2026-10-14 15:15 UTC GESCHLOSSEN Short VSH.ETORO, Position 3617481045, 1947.34 USD, PnL -13.31 (zuletzt gesehen)
 - 2026-10-14 15:15 UTC GESCHLOSSEN Short LULU.ETORO, Position 3617677849, 1933.75 USD, PnL +40.74 (zuletzt gesehen)
 - 2026-10-14 15:30 UTC ZUSAMMENFASSUNG Guthaben 100151.43 USD, 23 offene Position(en) (PnL +357.91), 33 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-14 16:15 UTC GESCHLOSSEN Long PODD.ETORO, Position 3617701976, 1934.24 USD, PnL -34.16 (zuletzt gesehen)
+- 2026-10-14 16:15 UTC GESCHLOSSEN Short MTZ.ETORO, Position 3617575829, 1963.21 USD, PnL +56.92 (zuletzt gesehen)
