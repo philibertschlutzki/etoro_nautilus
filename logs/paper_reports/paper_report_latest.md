@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-15 02:45 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-15 04:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 108490.87 USD |
-| Investiert | 36427.29 USD in 19 Position(en) |
-| Unrealisierter PnL | -138.25 USD |
+| Freies Guthaben | 102721.37 USD |
+| Investiert | 42196.79 USD in 22 Position(en) |
+| Unrealisierter PnL | -126.14 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,32 +15,31 @@ Stand: 2026-10-15 02:45 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| GOLD.ETORO | Short | 1927.77 | 4101.58 | -20.01 |
-| CHFJPY.ETORO | Long | 1923.72 | 190.087 | +2.61 |
+| GOLD.ETORO | Short | 1927.77 | 4101.58 | -20.91 |
+| CHFJPY.ETORO | Long | 1923.72 | 190.087 | +2.48 |
 | ACN.ETORO | Long | 1986.23 | 215.66 | -18.42 |
 | PODD.ETORO | Long | 1986.83 | 134.7 | -47.20 |
 | FRO.ETORO | Long | 1982.53 | 56.66 | -15.40 |
 | POWL.ETORO | Short | 1979.07 | 167.11 | -31.62 |
 | CELH.ETORO | Long | 1982.19 | 26.9 | +18.42 |
 | MTZ.ETORO | Short | 1981.01 | 193.27 | -9.33 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +6.46 |
-| ORCL.ETORO | Short | 1958.31 | 129.68 | +15.55 |
-| LLY.ETORO | Short | 1988.22 | 1204.98 | -19.64 |
-| MRK.ETORO | Short | 1958.94 | 147.34 | -28.85 |
-| CVNA.ETORO | Long | 1959.33 | 57.08 | +17.51 |
-| ASML.ETORO | Long | 1947.48 | 1678.95 | -67.22 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +6.63 |
+| ORCL.ETORO | Short | 1958.31 | 129.68 | +24.31 |
+| LLY.ETORO | Short | 1988.22 | 1204.98 | -19.83 |
+| MRK.ETORO | Short | 1958.94 | 147.34 | -22.07 |
+| CVNA.ETORO | Long | 1959.33 | 57.08 | +14.42 |
+| ASML.ETORO | Long | 1947.48 | 1678.95 | -67.97 |
 | Z.ETORO | Long | 1997.44 | 27.01 | +95.40 |
-| INTU.ETORO | Short | 1961.84 | 310.42 | +2.65 |
-| RGTI.ETORO | Long | 1961.45 | 11.66 | -18.50 |
-| PYPL.ETORO | Long | 1976.73 | 55.84 | -1.06 |
-| QBTS.ETORO | Long | 1958.21 | 11.99 | -19.60 |
+| INTU.ETORO | Short | 1961.84 | 310.42 | +5.25 |
+| NZDJPY.ETORO | Long | 1922.97 | 88.776 | -1.34 |
+| RGTI.ETORO | Long | 1961.45 | 11.66 | -21.87 |
+| USDNOK.ETORO | Long | 1923.18 | 9.47969 | +0.73 |
+| PYPL.ETORO | Long | 1976.73 | 55.84 | -1.42 |
+| QBTS.ETORO | Long | 1958.21 | 11.99 | -17.97 |
+| USDZAR.ETORO | Long | 1923.35 | 16.54304 | +1.57 |
 
 ## Letzte Ereignisse
 
-- 2026-10-14 18:00 UTC GESCHLOSSEN Short ARWR.ETORO, Position 3617262628, 1999.27 USD, PnL +34.65 (zuletzt gesehen)
-- 2026-10-14 18:00 UTC GESCHLOSSEN Short SMTC.ETORO, Position 3617260886, 1999.77 USD, PnL +57.63 (zuletzt gesehen)
-- 2026-10-14 18:00 UTC GESCHLOSSEN Short SEI.US.ETORO, Position 3617259548, 1999.19 USD, PnL +174.81 (zuletzt gesehen)
-- 2026-10-14 18:15 UTC ERÖFFNET Long FRO.ETORO, Position 3618975068, 1982.53 USD, PnL -7.70
 - 2026-10-14 18:15 UTC ERÖFFNET Short POWL.ETORO, Position 3618975070, 1979.07 USD, PnL -8.65
 - 2026-10-14 18:15 UTC ERÖFFNET Long CELH.ETORO, Position 3618975071, 1982.19 USD, PnL +5.89
 - 2026-10-14 18:15 UTC ERÖFFNET Short MTZ.ETORO, Position 3618975072, 1981.01 USD, PnL -6.46
@@ -67,3 +66,7 @@ Stand: 2026-10-15 02:45 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-14 23:45 UTC ZUSAMMENFASSUNG Guthaben 108504.39 USD, 19 offene Position(en) (PnL -75.91), 5 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-15 01:15 UTC ERÖFFNET Long CHFJPY.ETORO, Position 3619164408, 1923.72 USD, PnL -0.57
 - 2026-10-15 01:15 UTC GESCHLOSSEN Long INJ.ETORO, Position 3619060639, 1960.53 USD, PnL -31.54 (zuletzt gesehen)
+- 2026-10-15 03:15 UTC ERÖFFNET Long NZDJPY.ETORO, Position 3619173247, 1922.97 USD, PnL -1.47
+- 2026-10-15 03:15 UTC ERÖFFNET Long USDNOK.ETORO, Position 3619173248, 1923.18 USD, PnL +1.54
+- 2026-10-15 03:15 UTC ERÖFFNET Long USDZAR.ETORO, Position 3619173249, 1923.35 USD, PnL +1.04
+- 2026-10-15 04:00 UTC ZUSAMMENFASSUNG Guthaben 102721.37 USD, 22 offene Position(en) (PnL -126.14), 5 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
