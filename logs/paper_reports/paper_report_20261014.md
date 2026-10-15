@@ -92,3 +92,4 @@
 - 2026-10-14 20:15 UTC ERÖFFNET Long RGTI.ETORO, Position 3619088848, 1961.45 USD, PnL +1.68
 - 2026-10-14 20:15 UTC ERÖFFNET Long QBTS.ETORO, Position 3619088849, 1958.21 USD, PnL +6.53
 - 2026-10-14 20:15 UTC GESCHLOSSEN Short MSTR.ETORO, Position 3618708146, 1977.81 USD, PnL +40.45 (zuletzt gesehen)
+- 2026-10-14 23:45 UTC ZUSAMMENFASSUNG Guthaben 108504.39 USD, 19 offene Position(en) (PnL -75.91), 5 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
