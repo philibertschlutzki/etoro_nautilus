@@ -9,3 +9,5 @@
 - 2026-10-15 07:15 UTC GESCHLOSSEN Long USDNOK.ETORO, Position 3619173248, 1923.18 USD, PnL +8.06 (zuletzt gesehen)
 - 2026-10-15 08:00 UTC ZUSAMMENFASSUNG Guthaben 108506.16 USD, 19 offene Position(en) (PnL -210.78), 3 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-15 09:15 UTC ERÖFFNET Long USDZAR.ETORO, Position 3619671625, 1902.60 USD, PnL -2.41
+- 2026-10-15 10:15 UTC GESCHLOSSEN Long USDZAR.ETORO, Position 3619671625, 1902.60 USD, PnL -4.52 (zuletzt gesehen)
+- 2026-10-15 10:15 UTC GESCHLOSSEN Long NZDJPY.ETORO, Position 3619173247, 1922.97 USD, PnL -6.19 (zuletzt gesehen)
