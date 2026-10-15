@@ -1,11 +1,11 @@
 [Unit]
-Description=eToro Massen-Backtests mit Load-Management (ein Block pro Lauf)
-ConditionPathExists=%h/etoro_nautilus/automation/backtest_loadmgr.py
+Description=eToro Tages-Backtests (EBC Arm-A-Trades je Instrument) mit Load-Management, ein Block pro Lauf
+ConditionPathExists=%h/ebc_exp/cfg_A/strategy_defaults.json
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/etoro_nautilus
+WorkingDirectory=%h/ebc_exp
 Nice=19
-ExecStart=/usr/bin/flock -n /tmp/etoro-loadmgr.lock %h/etoro_nautilus/venv/bin/python -m automation.backtest_loadmgr --once --state results/loadmgr/state.json --cmd "%h/etoro_nautilus/venv/bin/python -m automation.optimizer.sweep --strategies all --symbols {symbols} --n-jobs {jobs} --max-wallclock-h 0.6"
+ExecStart=/usr/bin/flock -n /tmp/etoro-loadmgr.lock %h/etoro_nautilus/venv/bin/python %h/etoro_nautilus/automation/backtest_loadmgr.py --once --burst-s 1500 --cwd %h/ebc_exp --state %h/etoro_nautilus/results/loadmgr/state.json --symbols-cmd "%h/etoro_nautilus/venv/bin/python %h/etoro_nautilus/experiments/ebc/gen_a.py --list-pending" --cmd "%h/etoro_nautilus/venv/bin/python %h/etoro_nautilus/experiments/ebc/gen_a.py --ids {symbols} --workers {jobs}"
 StandardOutput=append:%h/etoro_nautilus/logs/loadmgr.log
 StandardError=append:%h/etoro_nautilus/logs/loadmgr.log

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import json
 import os
 import shlex
@@ -113,13 +114,15 @@ def jobs_for(budget: float, snap: Snapshot, cores: int | None = None) -> int:
 @dataclass
 class BlockSizer:
     """AIMD: additive/multiplikative Steigerung bei Erfolg, Halbierung bei Fehlschlag."""
-    size: int = 4
+    size: int = 8
     min_size: int = 1
     max_size: int = 64
     target_s: float = 40 * 60
 
     def success(self, duration_s: float) -> None:
-        if duration_s < self.target_s * 0.6:
+        if duration_s < self.target_s * 0.1:
+            self.size = min(self.max_size, self.size * 2)          # sehr schnell: Block verdoppeln
+        elif duration_s < self.target_s * 0.6:
             self.size = min(self.max_size, max(self.size + 1, int(self.size * 1.25)))
 
     def failure(self) -> None:
@@ -131,7 +134,7 @@ class State:
     pending: list[str] = field(default_factory=list)
     done: list[str] = field(default_factory=list)
     failed: dict[str, int] = field(default_factory=dict)     # Symbol -> Fehlversuche
-    block_size: int = 4
+    block_size: int = 8
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -157,7 +160,7 @@ def next_block(st: State, size: int) -> list[str]:
     return st.pending[:max(1, size)]
 
 
-def run_block(cmd_tpl: str, block: list[str], jobs: int, *, timeout_s: float, poll_s: float = 10.0,
+def run_block(cmd_tpl: str, block: list[str], jobs: int, *, timeout_s: float, cwd: str | None = None, poll_s: float = 10.0,
               snapshot_fn=read_snapshot, budget_fn=compute_budget, log=print) -> tuple[bool, str]:
     """Führt einen Block aus und bricht ihn bei Lastverletzung ab. (Erfolg, Grund)."""
     cmd = cmd_tpl.format(symbols=",".join(block), jobs=jobs)
@@ -167,7 +170,7 @@ def run_block(cmd_tpl: str, block: list[str], jobs: int, *, timeout_s: float, po
     argv += shlex.split(cmd)
     log(f"[loadmgr] Block {len(block)} Symbole, {jobs} Worker: {block[:3]}...")
     t0 = time.monotonic()
-    proc = subprocess.Popen(argv, start_new_session=True)
+    proc = subprocess.Popen(argv, start_new_session=True, cwd=cwd)
     while True:
         try:
             rc = proc.wait(timeout=poll_s)
@@ -231,13 +234,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--symbols-file", default=None, help="eine Symbolzeile je Instrument; ohne Angabe: alle Instrumente mit Katalogdaten")
     ap.add_argument("--cmd", required=True)
     ap.add_argument("--state", default="results/loadmgr/state.json")
+    ap.add_argument("--symbols-cmd", default=None, help="Befehl, der die offenen Einheiten zeilenweise ausgibt (z. B. gen_a.py --list-pending)")
+    ap.add_argument("--cwd", default=None, help="Arbeitsverzeichnis des Block-Befehls")
     ap.add_argument("--once", action="store_true", help="nur einen Schritt (für systemd-Timer alle 15 Minuten)")
+    ap.add_argument("--burst-s", type=float, default=0.0, help="mit --once: weitere Blöcke nachschieben, solange es klappt und so viele Sekunden nicht um sind")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     symbols = ([s.strip() for s in Path(a.symbols_file).read_text(encoding="utf-8").splitlines()
-                if s.strip() and not s.startswith("#")] if a.symbols_file else catalog_symbols())
+                if s.strip() and not s.startswith("#")] if a.symbols_file else
+                (subprocess.run(shlex.split(a.symbols_cmd), capture_output=True, text=True, check=True, cwd=a.cwd).stdout.split()
+                 if a.symbols_cmd else catalog_symbols()))
     state_path = Path(a.state)
     st = State.load(state_path, symbols)
+    if a.symbols_cmd:                      # der Befehl kennt den Bedarf (auch Neuberechnung veralteter Ergebnisse)
+        st.pending = [s for s in symbols if st.failed.get(s, 0) < MAX_ATTEMPTS]
     sizer = BlockSizer(size=st.block_size)
     if a.dry_run:
         snap = read_snapshot()
@@ -245,11 +255,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Budget {budget:.2f}, {may_run(budget, snap)}, Worker {jobs_for(budget, snap)}, "
               f"Block {next_block(st, st.block_size)}, offen {len(st.pending)}, fertig {len(st.done)}")
         return 0
+    t_start = time.monotonic()
     while True:
-        res = step(st, sizer, a.cmd)
+        res = step(st, sizer, a.cmd, runner=functools.partial(run_block, cwd=a.cwd))
         st.save(state_path)
         print(f"[loadmgr] {res}; offen {len(st.pending)}, fertig {len(st.done)}, Blockgröße {st.block_size}")
-        if res == "done" or a.once:
+        if res == "done":
+            return 0
+        if a.once and not (res == "ran:ok" and time.monotonic() - t_start < a.burst_s):
             return 0
         if res.startswith("waiting"):
             time.sleep(300)

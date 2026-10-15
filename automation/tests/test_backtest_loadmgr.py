@@ -38,6 +38,9 @@ def test_jobs_respect_budget_and_existing_load():
 
 def test_block_sizer_aimd():
     s = lm.BlockSizer(size=8, target_s=100)
+    s.success(5)                       # sehr schnell: verdoppeln
+    assert s.size == 16
+    s.size = 8
     s.success(30)
     assert s.size == 10
     s.success(95)                      # nah am Zeitziel: keine Steigerung
