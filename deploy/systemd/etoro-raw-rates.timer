@@ -1,0 +1,9 @@
+[Unit]
+Description=Rohdaten-Rekorder: Spreads aller Instrumente alle 10 Minuten, rund um die Uhr
+
+[Timer]
+OnCalendar=*-*-* *:10,20,30,40,50:00 UTC
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

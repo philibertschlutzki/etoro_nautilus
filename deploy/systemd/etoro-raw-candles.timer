@@ -1,0 +1,10 @@
+[Unit]
+Description=Rohdaten-Rekorder: Kerzen täglich 23:10 UTC, Wiederaufnahme 03:10 UTC
+
+[Timer]
+OnCalendar=*-*-* 23:10:00 UTC
+OnCalendar=*-*-* 03:10:00 UTC
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

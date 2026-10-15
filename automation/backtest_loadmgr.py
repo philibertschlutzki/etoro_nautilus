@@ -218,16 +218,24 @@ def step(st: State, sizer: BlockSizer, cmd_tpl: str, *, now: dt.datetime | None 
     return "ran:ok" if success else f"ran:fail ({reason})"
 
 
+def catalog_symbols(root: Path | None = None) -> list[str]:
+    """Instrumente der instrument_map, für die Katalogdaten vorliegen (nur dort ist ein Backtest möglich)."""
+    root = root or Path(__file__).resolve().parents[1]
+    m = json.loads((root / "automation" / "config" / "instrument_map.json").read_text(encoding="utf-8"))
+    have = {p.name for p in (root / "data" / "nautilus" / "data" / "cfd").glob("*")}
+    return sorted(v["symbol"] for v in m["instruments"].values() if v["symbol"] in have)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--symbols-file", required=True)
+    ap.add_argument("--symbols-file", default=None, help="eine Symbolzeile je Instrument; ohne Angabe: alle Instrumente mit Katalogdaten")
     ap.add_argument("--cmd", required=True)
     ap.add_argument("--state", default="results/loadmgr/state.json")
     ap.add_argument("--once", action="store_true", help="nur einen Schritt (für systemd-Timer alle 15 Minuten)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
-    symbols = [s.strip() for s in Path(a.symbols_file).read_text(encoding="utf-8").splitlines()
-               if s.strip() and not s.startswith("#")]
+    symbols = ([s.strip() for s in Path(a.symbols_file).read_text(encoding="utf-8").splitlines()
+                if s.strip() and not s.startswith("#")] if a.symbols_file else catalog_symbols())
     state_path = Path(a.state)
     st = State.load(state_path, symbols)
     sizer = BlockSizer(size=st.block_size)

@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Rohdaten: Stunden- und Tageskerzen aller Instrumente auffüllen (lesend)
+ConditionPathExists=%h/etoro_nautilus/automation/raw_recorder.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/etoro-raw-candles.lock %h/etoro_nautilus/venv/bin/python -m automation.raw_recorder candles --max-seconds 3000
+StandardOutput=append:%h/etoro_nautilus/logs/raw_recorder.log
+StandardError=append:%h/etoro_nautilus/logs/raw_recorder.log

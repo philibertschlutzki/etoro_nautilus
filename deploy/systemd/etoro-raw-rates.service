@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Rohdaten: Bid/Ask aller Instrumente (lesend)
+ConditionPathExists=%h/etoro_nautilus/automation/raw_recorder.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/etoro-raw-rates.lock %h/etoro_nautilus/venv/bin/python -m automation.raw_recorder rates
+StandardOutput=append:%h/etoro_nautilus/logs/raw_recorder.log
+StandardError=append:%h/etoro_nautilus/logs/raw_recorder.log

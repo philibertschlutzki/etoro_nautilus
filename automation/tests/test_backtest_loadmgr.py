@@ -75,3 +75,8 @@ def test_failure_halves_block_and_skips_poison_symbol():
     assert st.block_size == 1
     lm.step(st, sizer, "x", now=quiet, snap=OK, runner=runner)         # A: dritter Fehlversuch
     assert "A" not in st.pending and st.pending[0] == "B"
+
+
+def test_catalog_symbols_only_instruments_with_data():
+    syms = lm.catalog_symbols()
+    assert syms == sorted(syms) and all(s.endswith(".ETORO") for s in syms)
