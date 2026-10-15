@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Massen-Backtests mit Load-Management (ein Block pro Lauf)
+ConditionPathExists=%h/etoro_nautilus/automation/backtest_loadmgr.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=19
+ExecStart=/usr/bin/flock -n /tmp/etoro-loadmgr.lock %h/etoro_nautilus/venv/bin/python -m automation.backtest_loadmgr --once --state results/loadmgr/state.json --cmd "%h/etoro_nautilus/venv/bin/python -m automation.optimizer.sweep --strategies all --symbols {symbols} --n-jobs {jobs} --max-wallclock-h 0.6"
+StandardOutput=append:%h/etoro_nautilus/logs/loadmgr.log
+StandardError=append:%h/etoro_nautilus/logs/loadmgr.log
