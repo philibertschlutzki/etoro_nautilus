@@ -165,6 +165,10 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # k_spread · spread_bps_model (backtest.json, Single Source of Truth) abgeleitet.
     spread_gate_bps: float | None = None
     k_spread: float = 2.0
+    # Kosten-Edge-Gate (Live): Entry nur, wenn ATR(bps) >= entry_min_atr_to_cost_ratio * Round-Trip-Kosten.
+    # None (Default) ⇒ aus, Backtest/Bestandsverhalten unveraendert.
+    entry_min_atr_to_cost_ratio: float | None = None
+    entry_round_trip_cost_bps: float | None = None
     # Issue #716 (GR-03) — node-weiter Aggregat-Exposure-Cap + harter Notional-Deckel, ZUSÄTZLICH
     # zum (unverändert bestehenden) per-Strategie max_open_positions. Konservative Defaults
     # (Schutz gegen Capital Starvation im Paper-Konto, start_capital=10000 USD/backtest.json):
@@ -1873,6 +1877,20 @@ class HourlyStrategyBase(Strategy):
                         f"threshold={threshold_bps:.2f}bps"
                     )
                     return None
+
+        # Kosten-Edge-Gate: ATR (bps) muss einen Anteil der Round-Trip-Kosten tragen, sonst frisst
+        # die Gebuehr den Erwartungswert (Krypto: 200 bps Round-Trip gegen 30-60 bps Stunden-ATR).
+        _edge_ratio = getattr(self.config, "entry_min_atr_to_cost_ratio", None)
+        _edge_cost = getattr(self.config, "entry_round_trip_cost_bps", None)
+        if _edge_ratio and _edge_cost and self._exit_atr.initialized:
+            atr_bps = self._effective_atr_value(self._exit_atr.value, price) / price * 10_000.0
+            need_bps = float(_edge_ratio) * float(_edge_cost)
+            if atr_bps < need_bps:
+                self._log.info(
+                    f"[{self.instrument_id}] COST_EDGE_GATE_REJECT: atr={atr_bps:.1f}bps < "
+                    f"{need_bps:.1f}bps ({_edge_ratio}*Round-Trip {_edge_cost:.1f}bps)"
+                )
+                return None
 
         # Issue #716 (GR-03) — node-weiter Aggregat-Exposure-Cap, ZUSÄTZLICH zum (unverändert
         # bestehenden) per-Strategie max_open_positions-Check in den Subklassen.
