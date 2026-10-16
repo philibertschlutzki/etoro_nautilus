@@ -40,8 +40,8 @@
   "spread_bps_by_asset_class": {
     "CRYPTO": 15.0,
     "EQUITY": 7.0,
-    "FOREX": 1.5,
-    "COMMODITY": 5.0,
+    "FOREX": 1.0,
+    "COMMODITY": 10.0,
     "DEFAULT": 4.0
   },
   "spread_bps_by_symbol": {
@@ -70,9 +70,9 @@
   },
   "slippage_bps_by_asset_class": {
     "CRYPTO": 7.5,
-    "EQUITY": 1.5,
-    "FOREX": 0.75,
-    "COMMODITY": 2.5,
+    "EQUITY": 3.5,
+    "FOREX": 0.5,
+    "COMMODITY": 5.0,
     "DEFAULT": 2.0
   },
   "unknown_asset_class_policy": "reject",
