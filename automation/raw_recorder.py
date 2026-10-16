@@ -65,8 +65,14 @@ def api_get(url: str, tries: int = 6) -> dict:
     raise RuntimeError("API: zu viele Fehlversuche " + url.split("?")[0])
 
 
+DEFAULT_EXTRA_UNIVERSES = ("results/H1/universe.csv", "results/H4/universe_neu.csv")      # EBC-Backtest-Universum
+
+
 def instrument_ids(extra_files: list[str] | None = None) -> list[str]:
-    """Alle IDs der instrument_map (Source of Truth des Bots) plus IDs aus Zusatz-CSV-Dateien (Spalte etoro_id)."""
+    """Alle IDs der instrument_map (Source of Truth des Bots) plus IDs aus Zusatz-CSV-Dateien (Spalte etoro_id).
+    Ohne Angabe: das EBC-Backtest-Universum (falls vorhanden) — der Rekorder sammelt damit alles, was getestet wird."""
+    if extra_files is None:
+        extra_files = [str(ROOT / f) for f in DEFAULT_EXTRA_UNIVERSES if (ROOT / f).exists()]
     m = json.loads((ROOT / "automation" / "config" / "instrument_map.json").read_text(encoding="utf-8"))
     ids = [str(k) for k in m["instruments"]]
     for f in extra_files or []:

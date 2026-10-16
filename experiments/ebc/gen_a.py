@@ -1,6 +1,6 @@
 """Arm-A-Rohdaten (Route R): die 8 Tagesachsen-Strategien mit strategy_defaults + PAPER_TRAILING_TP je Instrument.
 Ausgabe: data/ebc/a_trades/<id>.pkl {strategy: [trade...]} (Roh, inkl. Shorts; A1-Filter spaeter)."""
-import json, multiprocessing as mp, os, pickle, sys, time
+import csv, json, multiprocessing as mp, os, pickle, sys, time
 os.environ["ETORO_CONFIG_DIR"] = os.path.abspath("cfg_A")
 sys.path.insert(0, os.getcwd()); sys.path.insert(0, os.path.dirname(__file__))
 import numpy as np
@@ -8,8 +8,28 @@ STRATS = ["SmaCrossoverStrategy", "MeanReversionStrategy", "DynamicBreakoutStrat
           "AdxAtrMomentumStrategy", "SqueezeBreakoutStrategy", "DonchianRegimeBreakoutStrategy", "Rsi2ReversionStrategy"]
 OUT = "data/ebc/a_trades"; os.makedirs(OUT, exist_ok=True)
 
+RAW_DAILY = os.path.expanduser("~/etoro_nautilus/data/raw/candles_1d")      # Rohdaten-Rekorder (automation/raw_recorder.py)
+MIN_RAW_BARS = 120
+KLASSE = {"equity": "K1", "forex": "K2", "commodity": "K3", "crypto": "K5"}
+
 def base_dir(iid):
-    return "data/ebc/daily" if os.path.exists(f"data/ebc/daily/{iid}.csv") else "data/ebc/daily_neu"
+    if os.path.exists(f"data/ebc/daily/{iid}.csv"): return "data/ebc/daily"
+    if os.path.exists(f"data/ebc/daily_neu/{iid}.csv"): return "data/ebc/daily_neu"
+    return "data/ebc/daily_raw"
+
+def sync_raw_daily(iid):
+    """Instrumente ausserhalb des EBC-Universums: Tageskerzen aus dem Rekorder ins EBC-Format (date,open,high,low,close)."""
+    src = f"{RAW_DAILY}/{iid}.csv"; dst = f"data/ebc/daily_raw/{iid}.csv"
+    if not os.path.exists(src): return False
+    if os.path.exists(dst) and os.path.getmtime(dst) >= os.path.getmtime(src): return True
+    rows = list(csv.DictReader(open(src)))
+    if len(rows) < MIN_RAW_BARS: return False
+    os.makedirs("data/ebc/daily_raw", exist_ok=True)
+    with open(dst + ".tmp", "w", newline="") as f:
+        w = csv.writer(f); w.writerow(["date", "open", "high", "low", "close", "volume"])
+        for r in rows: w.writerow([r["ts"][:10], r["open"], r["high"], r["low"], r["close"], r.get("volume", 0)])
+    os.replace(dst + ".tmp", dst)
+    return True
 
 def is_stale(iid, refresh_days):
     """True, wenn kein Pkl existiert oder (bei refresh_days > 0) die Tagesdatei neuer ist und das Pkl aelter als N Tage."""
@@ -42,6 +62,16 @@ def all_rows():
     if os.path.exists("results/H4/universe_neu.csv"):
         seen = {r["id"] for r in rows}
         rows += [r for r in universe.load("results/H4/universe_neu.csv") if r["id"] not in seen]
+    # Rest der instrument_map (Krypto, FX-Exoten, ...): nur mit genug Rohdaten-Tageskerzen
+    try:
+        imap = json.load(open(os.path.expanduser("~/etoro_nautilus/automation/config/instrument_map.json")))["instruments"]
+    except OSError:
+        imap = {}
+    seen = {r["id"] for r in rows}
+    for iid, v in imap.items():
+        if iid in seen or not sync_raw_daily(iid): continue
+        r = {"id": iid, "etoro_id": iid, "symbol": v["symbol"], "klasse": KLASSE.get(v["asset_class"], "K1")}
+        r["cost_class"] = universe.COST_CLASS[r["klasse"]]; rows.append(r)
     return rows
 
 if __name__ == "__main__":

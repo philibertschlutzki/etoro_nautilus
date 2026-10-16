@@ -1,0 +1,9 @@
+[Unit]
+Description=Katalog-Fortschreibung täglich 23:40 UTC (nach den Rohdaten-Kerzen)
+
+[Timer]
+OnCalendar=*-*-* 23:40:00 UTC
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
