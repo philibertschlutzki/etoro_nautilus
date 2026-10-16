@@ -1,0 +1,2 @@
+- 2026-10-16 00:15 UTC GESCHLOSSEN Long CHFJPY.ETORO, Position 3621294553, 1846.14 USD, PnL -0.79 (zuletzt gesehen)
+- 2026-10-16 00:30 UTC ZUSAMMENFASSUNG Guthaben 81615.31 USD, 34 offene Position(en) (PnL -52.90), 3 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
