@@ -137,6 +137,18 @@ class SizingCapCorrection:
     overshoot_factor: float | None
 
 
+def sizing_cap_base_equity(*, allocated_usd: float | None, target_fraction: float | None, balance: float | None) -> float | None:
+    """Bemessungsbasis (Equity) des Post-Fill-Deckels. Im Live-Pfad (Allocator) wurde die Positionsgroesse auf der
+    eToro-Equity gerechnet, ``balance`` ist dagegen das Nautilus-Kontoguthaben (schrumpft mit gebundener Margin der
+    Geschwister-Entries derselben Stunde). Wer den Deckel gegen ``balance`` prueft, kuerzt jeden Entry um die
+    Differenz (gemessen: 8-16 % bei FX-Longs, Teilschliessung 10 s nach dem Fill). Mit ``allocated_usd`` (der
+    tatsaechlich bestellte Betrag nach allen Deckeln) prueft der Deckel nur noch, was er pruefen soll: Preisbewegung
+    zwischen Sizing und Fill. Ohne ``allocated_usd`` (Backtest, Pfad C) bleibt es bei ``balance``."""
+    if allocated_usd is not None and allocated_usd > 0 and target_fraction is not None and target_fraction > 0:
+        return allocated_usd / target_fraction
+    return balance
+
+
 def compute_sizing_cap_correction(
     *, realized_notional: float, equity_at_entry: float | None, target_fraction: float | None,
     tolerance: float = 0.02,
