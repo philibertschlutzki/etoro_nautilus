@@ -275,3 +275,39 @@ def test_phase5_whitelist_entry_carries_live_params_sha256_and_override(tmp_path
     assert entry["proposed_instrument_override"] == override
     assert (entry["holdout_trade_return_bps_mean"], entry["holdout_trade_return_bps_std"],
             entry["holdout_trade_return_bps_n"]) == (12.5, 40.0, 77)
+
+
+# ─── E1: kostengekoppelter ATR-Floor live == Backtest ─────────────────────────────
+
+def test_live_atr_floor_matches_backtest_cost_coupled_floor():
+    """Live setzt den Floor wie der Backtest: max(Klassen-Floor, ratio·c_rt/atr_trailing_multiplier)."""
+    from automation import backtest_runner as br
+    from automation.live_params import resolve_live_atr_floor_bps
+    sym = next(s for s in ("AAPL.ETORO", "NVO.ETORO", "BTC.ETORO") if _symbol_resolvable(br, s))
+    for mult in (1.0, 2.5, 6.0):
+        expected = br.cost_coupled_atr_floor_bps(
+            br.resolve_atr_floor_bps(sym, json.load(open(br.config_dir() / "backtest.json"))["atr_floor_bps_by_asset_class"],
+                                     br._resolve_asset_class_for_symbol(sym, policy="default")),
+            atr_trailing_multiplier=mult, round_trip_cost_bps=br._read_default_round_trip_cost_bps(sym))
+        assert resolve_live_atr_floor_bps(sym, {"atr_trailing_multiplier": mult}) == pytest.approx(expected)
+
+
+def test_live_atr_floor_exceeds_2bps_fallback_for_tight_multiplier():
+    from automation import backtest_runner as br
+    from automation.live_params import resolve_live_atr_floor_bps
+    sym = next(s for s in ("AAPL.ETORO", "NVO.ETORO", "BTC.ETORO") if _symbol_resolvable(br, s))
+    assert resolve_live_atr_floor_bps(sym, {"atr_trailing_multiplier": 1.0}) > 2.0
+
+
+def test_live_atr_floor_fail_open_returns_none(monkeypatch):
+    from automation import backtest_runner as br
+    from automation.live_params import resolve_live_atr_floor_bps
+    monkeypatch.setattr(br, "config_dir", lambda: Path("/nonexistent"))
+    assert resolve_live_atr_floor_bps("X.ETORO", {"atr_trailing_multiplier": 2.0}) is None
+
+
+def _symbol_resolvable(br, sym) -> bool:
+    try:
+        return br._resolve_asset_class_for_symbol(sym, policy="default") != "UNKNOWN"
+    except Exception:
+        return False

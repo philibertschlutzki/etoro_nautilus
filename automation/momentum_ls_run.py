@@ -34,7 +34,8 @@ from automation.live_bot_lock import (
 )
 from automation.log_manager import emit_execution_event
 from automation.live_params import (
-    live_params_sha256, mismatching_live_params, resolve_live_entry_cost_gate, resolve_live_params,
+    live_params_sha256, mismatching_live_params, resolve_live_atr_floor_bps, resolve_live_entry_cost_gate,
+    resolve_live_params,
 )
 from automation.disaster_stop import DISASTER_STOP_MODE_BROKER, resolve_disaster_stop_params
 from automation.session_windows import load_session_window_for_symbol, session_window_to_param
@@ -305,6 +306,11 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
            **bot_spec["params"]},
         disaster_stop_mode=DISASTER_STOP_MODE_BROKER,
     )
+    # E1 — kostengekoppelter ATR-Floor wie im Backtest (sonst fällt die Strategie auf 2.0 bps zurück).
+    # Nie aus dem Suchraum, daher überschreibend; None (Auflösungsfehler) ⇒ Strategie-Default.
+    live_atr_floor = resolve_live_atr_floor_bps(bot_spec["symbol"], bot_spec["params"])
+    if live_atr_floor is not None:
+        cfg_kwargs["atr_floor_bps"] = live_atr_floor
     # Kosten-Edge-Gate: kein Entry, wenn die Stundenbar-ATR die Round-Trip-Kosten nicht tragen kann.
     cfg_kwargs.update(resolve_live_entry_cost_gate(bot_spec["symbol"]))
     if "max_open_positions" in bot_spec:

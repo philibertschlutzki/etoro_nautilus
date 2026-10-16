@@ -96,6 +96,30 @@ def load_live_param_sources(config_dir: Path) -> tuple[dict, list]:
     return defaults, strategies_raw
 
 
+def resolve_live_atr_floor_bps(symbol: str, params: Mapping[str, Any], *, min_stop_to_cost_ratio: float = 3.0) -> float | None:
+    """E1 — kostengekoppelter ATR-Floor (bps) für den Live-Bot, paritätisch zum Backtest.
+
+    Der Backtest (``backtest_runner``, #924/#1096) übergibt der Strategie
+    ``cost_coupled_atr_floor_bps(resolve_atr_floor_bps(Asset-Class), atr_trailing_multiplier,
+    Round-Trip-Kosten)``. Der Live-Bot setzte ``atr_floor_bps`` nie und fiel auf den Klassen-Default
+    2.0 bps zurück: bei engen Bars wird die Stop-Distanz kleiner als die Kosten (Noise-Stop-Outs).
+    ``None`` bei jedem Auflösungsfehler (fail-open ⇒ Strategie-Default bleibt, bisheriges Verhalten)."""
+    try:
+        from automation import backtest_runner as br
+        cfg_path = br.config_dir() / "backtest.json"
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            by_class = json.load(f).get("atr_floor_bps_by_asset_class")
+        asset_class = br._resolve_asset_class_for_symbol(symbol, policy="default")
+        if asset_class == "UNKNOWN":
+            asset_class = "DEFAULT"
+        base = br.resolve_atr_floor_bps(symbol, by_class, asset_class)
+        return br.cost_coupled_atr_floor_bps(
+            base, atr_trailing_multiplier=params.get("atr_trailing_multiplier"),
+            round_trip_cost_bps=br._read_default_round_trip_cost_bps(symbol),
+            min_stop_to_cost_ratio=min_stop_to_cost_ratio)
+    except Exception:
+        return None
+
 # Kosten-Edge-Gate (Live-Entry): Mindest-ATR (bps, Stundenbar) als Anteil der Round-Trip-Kosten.
 # Krypto kostet real 100 bps je Seite (gemessen, results/stage_c/bot_fees_readonly.json) + Spread;
 # eine Stundenbar-ATR von 30-60 bps kann das in Stunden Haltedauer nicht verdienen. Aktien (~17 bps)
