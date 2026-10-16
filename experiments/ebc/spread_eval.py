@@ -5,6 +5,8 @@ sys.path.insert(0, os.path.dirname(__file__)); sys.path.insert(0, os.getcwd())
 import numpy as np
 import costs, universe
 
+rows_cls = {r["id"]: r["klasse"] for r in universe.load()}
+if os.path.exists("results/H4/universe_neu.csv"): rows_cls.update({r["id"]: r["klasse"] for r in universe.load("results/H4/universe_neu.csv")})
 by = collections.defaultdict(list); days = collections.defaultdict(set); total = valid = 0
 for line in open("data/ebc/spreads.jsonl"):
     x = json.loads(line); total += 1
@@ -12,6 +14,7 @@ for line in open("data/ebc/spreads.jsonl"):
     if ts.weekday() >= 5 or not x.get("qts"): continue
     q = dt.datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", x["qts"].replace("Z", "+00:00")))
     if not (0 <= (ts - q).total_seconds() <= 300): continue
+    if rows_cls.get(x["id"]) == "K1" and not (14.5 <= ts.hour + ts.minute / 60 <= 19.5): continue   # Aktien/ETF nur in der regulaeren US-Sitzung (ausserhalb 40-70 bps, Quote-Aufweitung)
     mid = 0.5 * (x["bid"] + x["ask"])
     if mid <= 0: continue
     by[x["id"]].append((x["ask"] - x["bid"]) / mid * 1e4); days[x["id"]].add(ts.date()); valid += 1
