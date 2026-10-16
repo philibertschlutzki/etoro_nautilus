@@ -5,3 +5,4 @@
 - 2026-10-16 01:15 UTC GESCHLOSSEN Long BTC.ETORO, Position 3621222793, 1858.56 USD, PnL -2.31 (zuletzt gesehen)
 - 2026-10-16 04:45 UTC ZUSAMMENFASSUNG Guthaben 87176.93 USD, 31 offene Position(en) (PnL +42.88), 3 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-16 09:00 UTC ZUSAMMENFASSUNG Guthaben 87175.71 USD, 31 offene Position(en) (PnL -18.88), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-16 13:00 UTC ZUSAMMENFASSUNG Guthaben 87175.28 USD, 31 offene Position(en) (PnL -59.18), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
