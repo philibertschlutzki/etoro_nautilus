@@ -80,3 +80,4 @@
 - 2026-10-15 19:15 UTC ERÖFFNET Long ACN.ETORO, Position 3621323898, 1850.46 USD, PnL -1.73
 - 2026-10-15 20:15 UTC ZUSAMMENFASSUNG Guthaben 76078.37 USD, 37 offene Position(en) (PnL +52.18), 31 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-15 22:15 UTC GESCHLOSSEN Long EURNOK.ETORO, Position 3621184903, 1841.75 USD, PnL -1.41 (zuletzt gesehen)
+- 2026-10-15 23:15 UTC GESCHLOSSEN Long USDNOK.ETORO, Position 3621323894, 1852.29 USD, PnL -0.97 (zuletzt gesehen)
