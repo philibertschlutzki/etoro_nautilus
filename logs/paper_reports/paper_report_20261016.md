@@ -8,3 +8,4 @@
 - 2026-10-16 13:00 UTC ZUSAMMENFASSUNG Guthaben 87175.28 USD, 31 offene Position(en) (PnL -59.18), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-16 14:15 UTC GESCHLOSSEN Long RGTI.ETORO, Position 3621323903, 1848.44 USD, PnL +36.48 (zuletzt gesehen)
 - 2026-10-16 14:15 UTC GESCHLOSSEN Short CVNA.ETORO, Position 3621323889, 1851.30 USD, PnL -43.73 (zuletzt gesehen)
+- 2026-10-16 15:15 UTC GESCHLOSSEN Long CRM.ETORO, Position 3621323887, 1844.56 USD, PnL -36.82 (zuletzt gesehen)
