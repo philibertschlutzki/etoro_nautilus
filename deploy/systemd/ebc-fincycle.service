@@ -1,0 +1,11 @@
+[Unit]
+Description=EBC Finanzierungsmessung (Demo): Zyklus Freitag öffnen, Dienstag schließen; entschärft ohne ARMED-Datei
+ConditionPathExists=%h/etoro_nautilus/experiments/ebc/stage_c/fin_cycle.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ebc_stagec
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/ebc_fincycle.lock %h/etoro_nautilus/venv/bin/python3 %h/etoro_nautilus/experiments/ebc/stage_c/fin_cycle.py --auto --python %h/etoro_nautilus/venv/bin/python3
+StandardOutput=append:%h/ebc_stagec/logs/ebc_fincycle.log
+StandardError=append:%h/ebc_stagec/logs/ebc_fincycle.log

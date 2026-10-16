@@ -1,0 +1,11 @@
+[Unit]
+Description=EBC Finanzierungsmessung: Freitag 19:40 UTC (öffnen) und Dienstag 07:10 UTC (schließen)
+
+[Timer]
+OnCalendar=Fri *-*-* 19:40:00 UTC
+OnCalendar=Tue *-*-* 07:10:00 UTC
+Persistent=false
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
