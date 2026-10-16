@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Katalog fortschreiben (Stundenhistorie wächst bis zur Stunden-Backtest-Schwelle)
+ConditionPathExists=%h/etoro_nautilus/automation/api_backfiller.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=15
+ExecStart=/usr/bin/flock -n /tmp/etoro-catalog-fill.lock %h/etoro_nautilus/venv/bin/python -m automation.api_backfiller --days 3
+StandardOutput=append:%h/etoro_nautilus/logs/catalog_fill.log
+StandardError=append:%h/etoro_nautilus/logs/catalog_fill.log

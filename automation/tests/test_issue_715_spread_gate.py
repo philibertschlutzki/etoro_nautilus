@@ -25,8 +25,8 @@ def test_symbol_override_takes_precedence():
 
 
 def test_asset_class_fallback_for_known_equity():
-    # CAT.ETORO (instrument_map.json) -> asset_class "equity" -> backtest.json EQUITY=3.0
-    assert resolve_spread_bps_model("CAT.ETORO") == 3.0
+    # CAT.ETORO (instrument_map.json) -> asset_class "equity" -> backtest.json EQUITY (7.0, gemessen in der US-Sitzung)
+    assert resolve_spread_bps_model("CAT.ETORO") == 7.0
 
 
 def test_default_fallback_for_unknown_instrument():

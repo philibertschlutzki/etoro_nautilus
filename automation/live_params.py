@@ -119,3 +119,21 @@ def resolve_live_atr_floor_bps(symbol: str, params: Mapping[str, Any], *, min_st
             min_stop_to_cost_ratio=min_stop_to_cost_ratio)
     except Exception:
         return None
+
+# Kosten-Edge-Gate (Live-Entry): Mindest-ATR (bps, Stundenbar) als Anteil der Round-Trip-Kosten.
+# Krypto kostet real 100 bps je Seite (gemessen, results/stage_c/bot_fees_readonly.json) + Spread;
+# eine Stundenbar-ATR von 30-60 bps kann das in Stunden Haltedauer nicht verdienen. Aktien (~17 bps)
+# und FX (~2 bps) passieren das Gate praktisch immer.
+DEFAULT_ENTRY_MIN_ATR_TO_COST_RATIO = 0.4
+
+
+def resolve_live_entry_cost_gate(symbol: str, *, ratio: float = DEFAULT_ENTRY_MIN_ATR_TO_COST_RATIO) -> dict[str, float]:
+    """Config-Kwargs fuer das Kosten-Edge-Gate der Strategie (``{}`` bei Fehler, fail-open)."""
+    try:
+        from automation import backtest_runner as br
+        cost = float(br._read_default_round_trip_cost_bps(symbol))
+    except Exception:
+        return {}
+    if not math.isfinite(cost) or cost <= 0.0 or ratio <= 0.0:
+        return {}
+    return {"entry_min_atr_to_cost_ratio": float(ratio), "entry_round_trip_cost_bps": cost}

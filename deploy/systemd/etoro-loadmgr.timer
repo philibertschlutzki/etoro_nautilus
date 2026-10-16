@@ -1,0 +1,9 @@
+[Unit]
+Description=Load-Manager alle 15 Minuten (entscheidet selbst, ob gerechnet werden darf)
+
+[Timer]
+OnCalendar=*-*-* *:07,22,37,52:00 UTC
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

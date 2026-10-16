@@ -49,9 +49,9 @@ def test_resolution_backward_compatible_without_symbol_map():
 
 # ── Config-Kalibrierung + Dokumentation ──────────────────────────────────────────────────────
 def test_equity_spread_recalibrated_realistic():
-    """EQUITY von 8 auf einen realistischen Blue-Chip-Wert (≤ 3 bps) gesenkt."""
+    """EQUITY-Spread im gemessenen Band der regulaeren US-Sitzung (EBC-Messung 2026-10-12/16: Median 6 bis 8 bps je Stunde, 104 Bot-Aktien)."""
     eq = CFG["spread_bps_by_asset_class"]["EQUITY"]
-    assert eq <= 3.0, f"EQUITY-Spread {eq} bps immer noch unrealistisch weit (war 8.0)."
+    assert 5.0 <= eq <= 10.0, f"EQUITY-Spread {eq} bps ausserhalb des gemessenen Bands (6-8 bps in der Sitzung)."
     assert eq > 0.0, "Ein Spread von 0 erzeugt Zero-Spread-Artefakte."
 
 

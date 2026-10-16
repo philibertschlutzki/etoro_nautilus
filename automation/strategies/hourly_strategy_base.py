@@ -56,7 +56,7 @@ from automation.disaster_stop import (
     format_sl_tag,
     parse_sl_pct_from_tags,
 )
-from automation.live_risk import compute_sizing_cap_correction, risk_capped_notional
+from automation.live_risk import compute_sizing_cap_correction, risk_capped_notional, sizing_cap_base_equity
 from automation.log_manager import emit_execution_event
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
 from automation.session_windows import (
@@ -165,6 +165,10 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # k_spread · spread_bps_model (backtest.json, Single Source of Truth) abgeleitet.
     spread_gate_bps: float | None = None
     k_spread: float = 2.0
+    # Kosten-Edge-Gate (Live): Entry nur, wenn ATR(bps) >= entry_min_atr_to_cost_ratio * Round-Trip-Kosten.
+    # None (Default) ⇒ aus, Backtest/Bestandsverhalten unveraendert.
+    entry_min_atr_to_cost_ratio: float | None = None
+    entry_round_trip_cost_bps: float | None = None
     # Issue #716 (GR-03) — node-weiter Aggregat-Exposure-Cap + harter Notional-Deckel, ZUSÄTZLICH
     # zum (unverändert bestehenden) per-Strategie max_open_positions. Konservative Defaults
     # (Schutz gegen Capital Starvation im Paper-Konto, start_capital=10000 USD/backtest.json):
@@ -546,6 +550,7 @@ class HourlyStrategyBase(Strategy):
         # None (kein Post-Fill-Eingriff) fuer die USD-/Fallback-Pfade B/D/E, dieselbe Ausnahme wie
         # der #1209-Pre-Fill-Deckel (siehe dortiger Kommentar, Issue #182-Praezedenz).
         self._sizing_target_fraction: float | None = None
+        self._sizing_allocated_usd: float | None = None      # bestellter Betrag im Allocator-Pfad (Basis des Post-Fill-Deckels)
         self._sizing_cap_tolerance = float(getattr(config, "sizing_cap_tolerance", None) or 0.02)
         self._sizing_cap_corrections_count: int = 0
         self._sizing_cap_max_overshoot_pre_correction: float | None = None
@@ -1874,6 +1879,20 @@ class HourlyStrategyBase(Strategy):
                     )
                     return None
 
+        # Kosten-Edge-Gate: ATR (bps) muss einen Anteil der Round-Trip-Kosten tragen, sonst frisst
+        # die Gebuehr den Erwartungswert (Krypto: 200 bps Round-Trip gegen 30-60 bps Stunden-ATR).
+        _edge_ratio = getattr(self.config, "entry_min_atr_to_cost_ratio", None)
+        _edge_cost = getattr(self.config, "entry_round_trip_cost_bps", None)
+        if _edge_ratio and _edge_cost and self._exit_atr.initialized:
+            atr_bps = self._effective_atr_value(self._exit_atr.value, price) / price * 10_000.0
+            need_bps = float(_edge_ratio) * float(_edge_cost)
+            if atr_bps < need_bps:
+                self._log.info(
+                    f"[{self.instrument_id}] COST_EDGE_GATE_REJECT: atr={atr_bps:.1f}bps < "
+                    f"{need_bps:.1f}bps ({_edge_ratio}*Round-Trip {_edge_cost:.1f}bps)"
+                )
+                return None
+
         # Issue #716 (GR-03) — node-weiter Aggregat-Exposure-Cap, ZUSÄTZLICH zum (unverändert
         # bestehenden) per-Strategie max_open_positions-Check in den Subklassen.
         max_agg = getattr(self.config, "max_aggregate_open_positions", None)
@@ -1914,6 +1933,7 @@ class HourlyStrategyBase(Strategy):
         # on_position_opened, NUR fuer die beiden pct-basierten Pfade A/C gesetzt (siehe
         # HourlyStrategyConfig.sizing_cap_tolerance-Kommentar); B/D/E bleiben None (kein Eingriff).
         self._sizing_target_fraction = None
+        self._sizing_allocated_usd = None
         _sizing_via_pct = False
         if self.allocator is not None:
             # A: Live-Allocator hat höchste Prio
@@ -2017,6 +2037,9 @@ class HourlyStrategyBase(Strategy):
         if trade_amount_pct is not None and trade_amount_pct > 0 and self.allocator is None and (trade_amount_usd_cfg is None or trade_amount_usd_cfg <= 0 or trade_amount_usd_cfg == 100.0):
              self._log.info(f"[{self.instrument_id}] Calculated sizing: {trade_amount_usd:.2f} USD ({trade_amount_pct}%) from equity {balance:.2f} USD")
 
+        if self.allocator is not None:
+            self._sizing_allocated_usd = trade_amount_usd
+
         units = trade_amount_usd / price
 
         try:
@@ -2087,7 +2110,9 @@ class HourlyStrategyBase(Strategy):
         # B/D/E (kein Eingriff, siehe _compute_quantity).
         _corrected_qty = float(event.quantity)
         if self._sizing_target_fraction is not None:
-            _equity_at_entry = self._get_current_balance()
+            _equity_at_entry = sizing_cap_base_equity(
+                allocated_usd=self._sizing_allocated_usd, target_fraction=self._sizing_target_fraction,
+                balance=self._get_current_balance())
             _realized_notional = float(event.quantity) * float(event.avg_px_open)
             _correction = compute_sizing_cap_correction(
                 realized_notional=_realized_notional, equity_at_entry=_equity_at_entry,
