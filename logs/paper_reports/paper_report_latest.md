@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-16 19:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-16 20:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
-| Freies Guthaben | 82892.70 USD |
-| Investiert | 61447.89 USD in 33 Position(en) |
-| Unrealisierter PnL | +279.46 USD |
+| Freies Guthaben | 86641.23 USD |
+| Investiert | 57695.43 USD in 31 Position(en) |
+| Unrealisierter PnL | +259.32 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,44 +15,40 @@ Stand: 2026-10-16 19:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| PYPL.ETORO | Long | 1898.92 | 57.3 | -26.51 |
-| USDNOK.ETORO | Long | 1876.24 | 9.44891 | -3.99 |
-| CVNA.ETORO | Short | 1899.60 | 59.54 | +32.54 |
-| INTU.ETORO | Short | 1873.58 | 323.59 | +3.82 |
-| LSCC.ETORO | Long | 1899.79 | 105.72 | -25.34 |
-| GOLD.ETORO | Long | 1875.56 | 4167.94 | +0.28 |
-| EURNOK.ETORO | Long | 1900.29 | 10.59601 | +0.02 |
-| USDTWD.ETORO | Long | 1876.42 | 32.498 | -0.58 |
-| INJ.ETORO | Long | 1900.62 | 8.666 | +1.97 |
-| ORCL.ETORO | Short | 1875.59 | 129.52 | +16.65 |
-| SN.ETORO | Long | 1963.01 | 191.73 | -48.43 |
-| APP.ETORO | Short | 1874.94 | 272.52 | +45.55 |
-| ACN.ETORO | Long | 1875.75 | 226.54 | +1.32 |
-| CELH.ETORO | Short | 1875.74 | 28.8 | +42.33 |
-| LULU.ETORO | Short | 1875.46 | 98.42 | +32.20 |
-| QBTS.ETORO | Long | 1875.31 | 11.95 | -4.71 |
-| EURSEK.ETORO | Long | 1876.22 | 11.1408 | -0.02 |
-| PODD.ETORO | Short | 1874.60 | 141.5 | +1.85 |
-| FRO.ETORO | Long | 1875.83 | 52.94 | -10.63 |
-| FSLY.ETORO | Long | 1876.44 | 22.51 | -17.51 |
-| LLY.ETORO | Short | 1866.90 | 1261.42 | +5.62 |
-| CHFJPY.ETORO | Long | 1874.61 | 191.688 | +0.25 |
-| CRM.ETORO | Long | 1876.15 | 239.0 | +15.39 |
-| RGTI.ETORO | Long | 1873.80 | 12.02 | -3.12 |
-| ASTS.ETORO | Short | 1875.73 | 42.17 | +61.83 |
-| NZDJPY.ETORO | Long | 1875.53 | 89.311 | -0.61 |
-| PSN.US.ETORO | Long | 1962.23 | 43.96 | -1.79 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.44 |
-| VSH.ETORO | Short | 1961.14 | 27.02 | -79.84 |
-| DFTX.ETORO | Short | 1961.71 | 34.2 | +107.84 |
-| MSTR.ETORO | Short | 1857.47 | 148.48 | +156.37 |
-| ZTS.ETORO | Short | 1875.45 | 77.85 | -27.70 |
-| POWL.ETORO | Short | 1857.27 | 165.64 | -3.03 |
+| PYPL.ETORO | Long | 1898.92 | 57.3 | -20.88 |
+| CVNA.ETORO | Short | 1899.60 | 59.54 | +19.46 |
+| INTU.ETORO | Short | 1873.58 | 323.59 | -10.25 |
+| LSCC.ETORO | Long | 1899.79 | 105.72 | -38.10 |
+| GOLD.ETORO | Long | 1875.56 | 4167.94 | +0.46 |
+| EURNOK.ETORO | Long | 1900.29 | 10.59601 | -0.49 |
+| USDTWD.ETORO | Long | 1876.42 | 32.498 | -0.17 |
+| INJ.ETORO | Long | 1900.62 | 8.666 | -4.61 |
+| ORCL.ETORO | Short | 1875.59 | 129.52 | +17.67 |
+| SN.ETORO | Long | 1963.01 | 191.73 | -53.96 |
+| APP.ETORO | Short | 1874.94 | 272.52 | +44.03 |
+| ACN.ETORO | Long | 1875.75 | 226.54 | +25.25 |
+| CELH.ETORO | Short | 1875.74 | 28.8 | +39.08 |
+| LULU.ETORO | Short | 1875.46 | 98.42 | +25.92 |
+| QBTS.ETORO | Long | 1875.31 | 11.95 | -26.68 |
+| PODD.ETORO | Short | 1874.60 | 141.5 | +4.64 |
+| FRO.ETORO | Long | 1875.83 | 52.94 | -17.36 |
+| FSLY.ETORO | Long | 1876.44 | 22.51 | -1.67 |
+| LLY.ETORO | Short | 1866.90 | 1261.42 | +4.60 |
+| CHFJPY.ETORO | Long | 1874.61 | 191.688 | +0.69 |
+| CRM.ETORO | Long | 1876.15 | 239.0 | +15.23 |
+| RGTI.ETORO | Long | 1873.80 | 12.02 | -34.30 |
+| ASTS.ETORO | Short | 1875.73 | 42.17 | +68.50 |
+| NZDJPY.ETORO | Long | 1875.53 | 89.311 | -0.44 |
+| PSN.US.ETORO | Long | 1962.23 | 43.96 | +8.93 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.34 |
+| VSH.ETORO | Short | 1961.14 | 27.02 | -51.53 |
+| DFTX.ETORO | Short | 1961.71 | 34.2 | +119.31 |
+| MSTR.ETORO | Short | 1857.47 | 148.48 | +149.37 |
+| ZTS.ETORO | Short | 1875.45 | 77.85 | -35.65 |
+| POWL.ETORO | Short | 1857.27 | 165.64 | +4.93 |
 
 ## Letzte Ereignisse
 
-- 2026-10-16 16:00 UTC GESCHLOSSEN Long PYPL.ETORO, Position 3621222795, 1858.42 USD, PnL +34.63 (zuletzt gesehen)
-- 2026-10-16 16:00 UTC GESCHLOSSEN Long QBTS.ETORO, Position 3621222796, 1854.82 USD, PnL -46.60 (zuletzt gesehen)
 - 2026-10-16 16:00 UTC GESCHLOSSEN Short APP.ETORO, Position 3621323896, 1849.29 USD, PnL +21.84 (zuletzt gesehen)
 - 2026-10-16 16:00 UTC GESCHLOSSEN Long ACN.ETORO, Position 3621323898, 1850.46 USD, PnL +23.81 (zuletzt gesehen)
 - 2026-10-16 16:15 UTC ERÖFFNET Long USDNOK.ETORO, Position 3621710953, 1876.24 USD, PnL +0.41
@@ -81,3 +77,5 @@ Stand: 2026-10-16 19:30 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-16 17:15 UTC ERÖFFNET Long LSCC.ETORO, Position 3621731704, 1899.79 USD, PnL -8.81
 - 2026-10-16 17:15 UTC ERÖFFNET Long EURNOK.ETORO, Position 3621731705, 1900.29 USD, PnL +0.98
 - 2026-10-16 17:15 UTC ERÖFFNET Long INJ.ETORO, Position 3621731706, 1900.62 USD, PnL -4.39
+- 2026-10-16 20:15 UTC GESCHLOSSEN Long USDNOK.ETORO, Position 3621710953, 1876.24 USD, PnL -4.26 (zuletzt gesehen)
+- 2026-10-16 20:15 UTC GESCHLOSSEN Long EURSEK.ETORO, Position 3621710963, 1876.22 USD, PnL +0.31 (zuletzt gesehen)
