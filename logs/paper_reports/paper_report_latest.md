@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-16 11:15 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-16 12:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 87175.28 USD |
 | Investiert | 57344.47 USD in 31 Position(en) |
-| Unrealisierter PnL | -29.96 USD |
+| Unrealisierter PnL | -6.08 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,37 +15,37 @@ Stand: 2026-10-16 11:15 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| ASTS.ETORO | Long | 1840.54 | 41.85 | +65.97 |
+| ASTS.ETORO | Long | 1840.54 | 41.85 | +63.77 |
 | Z.ETORO | Short | 1851.94 | 31.29 | -10.65 |
-| MRK.ETORO | Short | 1841.33 | 150.16 | +48.80 |
+| MRK.ETORO | Short | 1841.33 | 150.16 | +61.43 |
 | CELH.ETORO | Short | 1846.32 | 28.0 | -11.21 |
-| RGTI.ETORO | Long | 1848.44 | 12.16 | +33.44 |
-| ASML.ETORO | Long | 1845.02 | 1647.34 | +20.24 |
-| GOLD.ETORO | Long | 1829.36 | 4158.01 | +7.61 |
+| RGTI.ETORO | Long | 1848.44 | 12.16 | +28.88 |
+| ASML.ETORO | Long | 1845.02 | 1647.34 | +25.11 |
+| GOLD.ETORO | Long | 1829.36 | 4158.01 | +7.96 |
 | SN.ETORO | Long | 1963.01 | 191.73 | +18.33 |
 | NVO.ETORO | Short | 1876.14 | 39.4 | +8.57 |
 | ARWR.ETORO | Short | 1961.56 | 58.18 | -11.46 |
 | LSCC.ETORO | Long | 1962.23 | 112.26 | -90.54 |
 | PSN.US.ETORO | Long | 1962.23 | 43.96 | +5.80 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +9.19 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +8.50 |
 | FSLY.ETORO | Long | 1962.33 | 24.12 | +78.10 |
 | VSH.ETORO | Short | 1961.14 | 27.02 | -124.84 |
-| CRM.ETORO | Long | 1844.56 | 244.0 | +53.30 |
-| CVNA.ETORO | Short | 1851.30 | 60.54 | -14.07 |
+| CRM.ETORO | Long | 1844.56 | 244.0 | +44.75 |
+| CVNA.ETORO | Short | 1851.30 | 60.54 | -4.59 |
 | FRO.ETORO | Long | 1858.97 | 53.65 | -38.81 |
-| LLY.ETORO | Short | 1849.48 | 1266.77 | +10.45 |
-| LULU.ETORO | Short | 1851.50 | 99.7 | +3.71 |
-| INTU.ETORO | Short | 1854.52 | 329.41 | -31.13 |
-| ORCL.ETORO | Short | 1851.30 | 134.25 | +3.86 |
+| LLY.ETORO | Short | 1849.48 | 1266.77 | +16.09 |
+| LULU.ETORO | Short | 1851.50 | 99.7 | +1.86 |
+| INTU.ETORO | Short | 1854.52 | 329.41 | -29.16 |
+| ORCL.ETORO | Short | 1851.30 | 134.25 | +12.27 |
 | MTZ.ETORO | Short | 1856.37 | 189.04 | -25.14 |
-| PYPL.ETORO | Long | 1858.42 | 56.35 | +18.14 |
-| QBTS.ETORO | Long | 1854.82 | 12.34 | +48.10 |
-| APP.ETORO | Short | 1849.29 | 276.84 | -19.77 |
+| PYPL.ETORO | Long | 1858.42 | 56.35 | +21.44 |
+| QBTS.ETORO | Long | 1854.82 | 12.34 | +27.06 |
+| APP.ETORO | Short | 1849.29 | 276.84 | -15.76 |
 | DFTX.ETORO | Short | 1961.71 | 34.2 | -4.02 |
-| MSTR.ETORO | Short | 1857.47 | 148.48 | +3.25 |
-| ZTS.ETORO | Short | 1875.45 | 77.85 | -30.35 |
+| MSTR.ETORO | Short | 1857.47 | 148.48 | +14.89 |
+| ZTS.ETORO | Short | 1875.45 | 77.85 | -39.27 |
 | POWL.ETORO | Short | 1857.27 | 165.64 | -58.87 |
-| ACN.ETORO | Long | 1850.46 | 224.57 | +4.04 |
+| ACN.ETORO | Long | 1850.46 | 224.57 | +13.43 |
 
 ## Letzte Ereignisse
 
