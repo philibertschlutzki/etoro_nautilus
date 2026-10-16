@@ -52,3 +52,13 @@ def test_instrument_ids_cover_whole_map():
 def test_unfinished_candle_is_never_stored():
     got = rr.new_candles(_payload("2026-10-15T10:00:00Z", "2026-10-15T11:00:00Z"), None, before="2026-10-15T11:00:00")
     assert [r[0] for r in got] == ["2026-10-15T10:00:00Z"]
+
+
+def test_cli_default_covers_extra_universe(monkeypatch):
+    """Regression: argparse-Default [] schaltete das EBC-Universum ab (nur 459 statt 1154 Instrumente)."""
+    seen = {}
+    monkeypatch.setattr(rr, "instrument_ids", lambda extra=None: seen.setdefault("extra", extra) or ["1"])
+    monkeypatch.setattr(rr, "record_rates", lambda ids, now: 0)
+    monkeypatch.setattr(rr, "in_blackout", lambda now: False)
+    rr.main(["rates"])
+    assert seen["extra"] is None                       # None = Standard-Universum, nicht "keine Zusatzdateien"

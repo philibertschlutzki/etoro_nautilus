@@ -175,7 +175,7 @@ def record_candles(ids: list[str], max_seconds: float) -> tuple[int, int]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("mode", choices=["rates", "candles"])
-    ap.add_argument("--extra-universe", action="append", default=[], help="CSV mit Spalte etoro_id (z. B. results/H1/universe.csv)")
+    ap.add_argument("--extra-universe", action="append", default=None, help="CSV mit Spalte etoro_id (z. B. results/H1/universe.csv)")
     ap.add_argument("--max-seconds", type=float, default=1500)
     a = ap.parse_args(argv)
     now = dt.datetime.now(dt.timezone.utc)
