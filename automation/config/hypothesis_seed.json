@@ -1,0 +1,21 @@
+{
+  "_doc": "Startbestand des Hypothesen-Regelkreises (automation/hypothesis_loop.py). Quelle: results/H1..H8, docs/HYPOTHESEN_E_R.md, Kalibrierung, Drift-Check. n_trials = Zahl der dafür geprüften Varianten (zählt in die Deflation; null = nicht beziffert, zählt 0).",
+  "hypotheses": [
+    {"id": "H1", "status": "confirmed_prelim", "mechanism_class": "trend_strength", "claim": "B+ (Trend/Momentum/Vol-Archetypen mit Kostenfilter) schlägt die aktuelle Auswahl (Sharpe 2.02 vs 0.49 im Backtest, 1.79 mit Session-Spreads).", "evidence": "results/H1/verdict.json; Archetypen #1326 nur auf der Daily-Achse, nicht im Bot", "n_trials": null},
+    {"id": "H2", "status": "refuted", "mechanism_class": "cost_structure", "claim": "Siehe results/H2/report.md", "evidence": "results/H2", "n_trials": null},
+    {"id": "H3", "status": "open", "mechanism_class": "financing_carry", "claim": "Financing/Haltedauer (Stage C) entscheidet über FX-/Short-Positionen über Nacht.", "evidence": "results/H3; Stage-C-Auswertung Mo 2026-10-19", "n_trials": null},
+    {"id": "H4", "status": "refuted", "mechanism_class": "cost_structure", "claim": "Kosten/Spread als Hebel schlägt B+ nicht.", "evidence": "results/H4, results/evidence_h4_h8.json", "n_trials": null},
+    {"id": "H5", "status": "refuted", "mechanism_class": "volatility_regime", "claim": "Kein Hebel schlägt B+.", "evidence": "results/H5", "n_trials": null},
+    {"id": "H6", "status": "refuted", "mechanism_class": "volatility_regime", "claim": "Kein Hebel schlägt B+.", "evidence": "results/H6", "n_trials": null},
+    {"id": "H7", "status": "refuted", "mechanism_class": "liquidity_profile", "claim": "Kein Hebel schlägt B+.", "evidence": "results/H7", "n_trials": null},
+    {"id": "H8", "status": "deferred", "mechanism_class": "session_overlap", "claim": "Erst nach dem Forward-Shadow (Ende Nov), wenn dort ein Kandidat auftaucht.", "evidence": "results/H8", "n_trials": null},
+    {"id": "H9", "status": "rejected", "mechanism_class": "trend_strength", "claim": "Aktien-Shorts: keine robuste Regel (11.520 Varianten Walk-forward t=1.2; Portfolio-Sim Sharpe -0.36, CI enthält 0). Einzelregel up_streak5|down_regime t=2.5 kein Beweis.", "evidence": "#1379/#1380/#1381, ~/ebc_exp", "n_trials": 12920},
+    {"id": "CAL1", "status": "open", "mechanism_class": "cost_structure", "claim": "Selektions-Bias: Ø Schätzung +83 bps vs netto -28 bps (146 Demo-Trades, Korrelation -0.26/Trade). Nächster Schritt: kalibrierte Erwartung als Pair-Gate, erst backtesten.", "evidence": "etoro-calibrate.timer, data/state/trade_estimates.jsonl", "n_trials": null},
+    {"id": "DRIFT1", "status": "rejected", "mechanism_class": "volatility_regime", "claim": "Regimewechsel je Paar: 230 geflaggt vs ~173 Zufall, nicht bewiesen; volle Historie sagt den Rang am besten voraus (IC +0.024).", "evidence": "results/drift, etoro-drift.timer", "n_trials": 3454},
+    {"id": "REGIME1", "status": "rejected", "mechanism_class": "volatility_regime", "claim": "Regimefilter für Aktien-Longs im Backtest abgelehnt.", "evidence": "Backtest 2026-10", "n_trials": null},
+    {"id": "SIZE1", "status": "rejected", "mechanism_class": "cost_structure", "claim": "Positionsgröße 1-10 % des Cash nach Risiko/Chance: kein belegter Vorteil (SR 0.88 vs fix 1.83). Fix ~2 % bleibt.", "evidence": "Sizing-Test 2026-10-16", "n_trials": null},
+    {"id": "CRYPTO1", "status": "decided", "mechanism_class": "cost_structure", "claim": "Krypto nicht pauschal ausschließen; Kosten-Gate ATR_bps >= 0.4 x Round-Trip-Kosten (#1362, Faktor 0.4 nicht validiert).", "evidence": "Entscheidung Phili 2026-10-15", "n_trials": null},
+    {"id": "E1", "status": "open", "mechanism_class": "cost_structure", "claim": "Kostengekoppelter ATR-Floor wirkt nur im Backtest, Live-Bot fällt auf 2 bps (seit #1361 live).", "evidence": "docs/HYPOTHESEN_E_R.md", "n_trials": null},
+    {"id": "E2", "status": "open", "mechanism_class": "financing_carry", "claim": "FX/Short über Nacht und Zwangs-Close vor Freitag-Close; wartet auf Stage C.", "evidence": "docs/HYPOTHESEN_E_R.md", "n_trials": null}
+  ]
+}

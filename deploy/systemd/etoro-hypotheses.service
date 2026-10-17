@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Hypothesen-Regelkreis (Reports einlesen, Kandidaten falsifizieren, Bericht) -> results/hypotheses/<Datum>.md
+ConditionPathExists=%h/etoro_nautilus/automation/hypothesis_loop.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/etoro_hypotheses.lock %h/etoro_nautilus/venv/bin/python3 -m automation.hypothesis_loop
+StandardOutput=append:%h/etoro_nautilus/logs/hypotheses.log
+StandardError=append:%h/etoro_nautilus/logs/hypotheses.log
