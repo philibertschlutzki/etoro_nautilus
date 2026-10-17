@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-17 17:30 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-17 18:45 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 90183.63 USD |
 | Investiert | 54019.25 USD in 30 Position(en) |
-| Unrealisierter PnL | +262.93 USD |
+| Unrealisierter PnL | +263.35 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,7 +15,7 @@ Stand: 2026-10-17 17:30 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.22 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.13 |
 | CHFJPY.ETORO | Long | 1874.61 | 191.688 | +0.69 |
 | NZDJPY.ETORO | Long | 1875.53 | 89.311 | -0.44 |
 | EURNOK.ETORO | Long | 1900.29 | 10.59601 | -0.49 |
@@ -44,11 +44,10 @@ Stand: 2026-10-17 17:30 UTC (Spielgeld-Konto, keine Evidenz)
 | SN.ETORO | Long | 1963.01 | 191.73 | -53.96 |
 | QBTS.ETORO | Long | 1875.31 | 11.95 | -26.68 |
 | DFTX.ETORO | Short | 1961.71 | 34.2 | +119.31 |
-| ETH.ETORO | Long | 100.00 | 2413.01 | -0.42 |
+| ETH.ETORO | Long | 100.00 | 2413.01 | +0.09 |
 
 ## Letzte Ereignisse
 
-- 2026-10-16 16:15 UTC ERÖFFNET Long EURSEK.ETORO, Position 3621710963, 1876.22 USD, PnL -0.74
 - 2026-10-16 16:15 UTC ERÖFFNET Short PODD.ETORO, Position 3621710964, 1874.60 USD, PnL -2.38
 - 2026-10-16 16:15 UTC ERÖFFNET Long FRO.ETORO, Position 3621710965, 1875.83 USD, PnL -4.96
 - 2026-10-16 16:15 UTC ERÖFFNET Long FSLY.ETORO, Position 3621710966, 1876.44 USD, PnL +18.34
@@ -78,3 +77,4 @@ Stand: 2026-10-17 17:30 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-17 09:45 UTC ZUSAMMENFASSUNG Guthaben 88340.13 USD, 31 offene Position(en) (PnL +257.19), 2 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-17 13:45 UTC ZUSAMMENFASSUNG Guthaben 88340.13 USD, 31 offene Position(en) (PnL +211.01), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
 - 2026-10-17 15:45 UTC GESCHLOSSEN Long INJ.ETORO, Position 3621823640, 1925.31 USD, PnL -64.51 (zuletzt gesehen)
+- 2026-10-17 18:00 UTC ZUSAMMENFASSUNG Guthaben 90183.63 USD, 30 offene Position(en) (PnL +263.17), 1 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
