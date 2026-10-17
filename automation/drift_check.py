@@ -17,6 +17,7 @@ gehört in die Auswahl.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import pickle
 import sys
@@ -30,6 +31,7 @@ DEFAULT_TRADES = Path.home() / "ebc_exp" / "data" / "ebc" / "a_trades"
 REPORT_DIR = PROJECT_ROOT / "results" / "drift"
 FLAGS_PATH = PROJECT_ROOT / "data" / "state" / "drift_flags.json"
 INSTRUMENT_MAP = PROJECT_ROOT / "automation" / "config" / "instrument_map.json"
+METADATA = Path.home() / "ebc_exp" / "data" / "ebc" / "metadata.json"
 DAY_NS = 86_400 * 10**9
 MIN_OLD, MIN_RECENT = 15, 5          # Mindestzahl Trades im alten bzw. jungen Fenster
 T_FLAG = -1.65                       # einseitig 5 %
@@ -92,12 +94,34 @@ def analyse(pairs: dict, now_ns: int, recent_days: float) -> list[dict]:
     return rows
 
 
-def classes() -> dict[str, str]:
+UNIVERSE_CSVS = (PROJECT_ROOT / "results" / "H1" / "universe.csv", PROJECT_ROOT / "results" / "H4" / "universe_neu.csv")
+KLASSE = {"K1": "equity", "K2": "forex", "K3": "commodity", "K4": "index", "K5": "crypto"}
+TYPE_CLASS = {1: "forex", 2: "commodity", 4: "index", 5: "equity", 6: "etf", 10: "crypto"}   # eToro InstrumentTypeID
+
+
+def classes(metadata: Path = METADATA) -> dict[str, str]:
+    """Anlageklasse je Instrument-ID, damit keine Paare in '?' landen. Rangfolge (spätere gewinnen): EBC-Universum-Tabellen im Repo
+    (``klasse`` K1..K5, ETFs zählen als equity), eToro-Metadaten auf dem Gerät (InstrumentTypeID, trennt ETF), ``instrument_map.json``."""
+    out: dict[str, str] = {}
+    for path in UNIVERSE_CSVS:
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                out.update({r["etoro_id"]: KLASSE[r["klasse"]] for r in csv.DictReader(f) if r["klasse"] in KLASSE})
+        except (OSError, KeyError):
+            continue
+    try:
+        for d in json.loads(metadata.read_text("utf-8"))["InstrumentDisplayDatas"]:
+            c = TYPE_CLASS.get(d.get("InstrumentTypeID"))
+            if c:
+                out[str(d["InstrumentID"])] = c
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
     try:
         m = json.loads(INSTRUMENT_MAP.read_text("utf-8"))["instruments"]
     except (OSError, ValueError, KeyError):
-        return {}
-    return {k: v.get("asset_class", "?") for k, v in m.items()}
+        m = {}
+    out.update({k: v["asset_class"] for k, v in m.items() if v.get("asset_class")})
+    return out
 
 
 def by_class(rows: list[dict], cls: dict[str, str]) -> dict[str, dict]:
