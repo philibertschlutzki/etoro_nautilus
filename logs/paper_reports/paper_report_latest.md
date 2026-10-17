@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-17 00:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-17 01:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 86462.57 USD |
 | Investiert | 57809.54 USD in 32 Position(en) |
-| Unrealisierter PnL | +297.24 USD |
+| Unrealisierter PnL | +288.76 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -19,7 +19,7 @@ Stand: 2026-10-17 00:00 UTC (Spielgeld-Konto, keine Evidenz)
 | CVNA.ETORO | Short | 1899.60 | 59.54 | +19.46 |
 | INTU.ETORO | Short | 1873.58 | 323.59 | -10.25 |
 | LSCC.ETORO | Long | 1899.79 | 105.72 | -38.10 |
-| GOLD.ETORO | Long | 1875.56 | 4167.94 | -4.28 |
+| GOLD.ETORO | Long | 1875.56 | 4167.94 | -4.83 |
 | EURNOK.ETORO | Long | 1900.29 | 10.59601 | -0.49 |
 | USDTWD.ETORO | Long | 1876.42 | 32.498 | -0.17 |
 | ORCL.ETORO | Short | 1875.59 | 129.52 | +17.67 |
@@ -29,19 +29,19 @@ Stand: 2026-10-17 00:00 UTC (Spielgeld-Konto, keine Evidenz)
 | CELH.ETORO | Short | 1875.74 | 28.8 | +39.08 |
 | LULU.ETORO | Short | 1875.46 | 98.42 | +25.92 |
 | QBTS.ETORO | Long | 1875.31 | 11.95 | -26.68 |
-| INJ.ETORO | Long | 1914.73 | 8.551 | +38.29 |
+| INJ.ETORO | Long | 1914.73 | 8.551 | +30.23 |
 | PODD.ETORO | Short | 1874.60 | 141.5 | +4.64 |
 | FRO.ETORO | Long | 1875.83 | 52.94 | -17.36 |
 | FSLY.ETORO | Long | 1876.44 | 22.51 | -1.67 |
 | LLY.ETORO | Short | 1866.90 | 1261.42 | +4.60 |
 | CHFJPY.ETORO | Long | 1874.61 | 191.688 | +0.69 |
 | CRM.ETORO | Long | 1876.15 | 239.0 | +15.23 |
-| ETH.ETORO | Long | 100.00 | 2413.01 | +0.29 |
+| ETH.ETORO | Long | 100.00 | 2413.01 | +0.28 |
 | RGTI.ETORO | Long | 1873.80 | 12.02 | -34.30 |
 | ASTS.ETORO | Short | 1875.73 | 42.17 | +68.50 |
 | NZDJPY.ETORO | Long | 1875.53 | 89.311 | -0.44 |
 | PSN.US.ETORO | Long | 1962.23 | 43.96 | +8.93 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +6.81 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +6.95 |
 | VSH.ETORO | Short | 1961.14 | 27.02 | -51.53 |
 | DFTX.ETORO | Short | 1961.71 | 34.2 | +119.31 |
 | MSTR.ETORO | Short | 1857.47 | 148.48 | +149.37 |
