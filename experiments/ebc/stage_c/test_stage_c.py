@@ -17,7 +17,7 @@ def test_dry_run_never_posts(monkeypatch):
 
 
 def test_live_requires_matching_confirmation(monkeypatch):
-    monkeypatch.setattr(guard, "ENV", "real")
+    monkeypatch.setattr(guard, "ENV_MODE", "real")
     monkeypatch.setenv("ETORO_PAPER_ACCOUNT_CID", "123")
     monkeypatch.setattr(guard, "_req", lambda *a, **k: (200, {}))
     with pytest.raises(guard.Refused):
