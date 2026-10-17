@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Drift-Check der Backtests (lesend, ohne Netzwerk) -> results/drift/<Datum>.md, data/state/drift_flags.json
+ConditionPathExists=%h/etoro_nautilus/automation/drift_check.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/etoro_drift.lock %h/etoro_nautilus/venv/bin/python3 -m automation.drift_check --trades-dir %h/ebc_exp/data/ebc/a_trades --validate
+StandardOutput=append:%h/etoro_nautilus/logs/drift.log
+StandardError=append:%h/etoro_nautilus/logs/drift.log

@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Drift-Check wöchentlich Samstag 06:10 UTC
+
+[Timer]
+# Nach Marktschluss und dem Freitags-Wochenbericht (21:30), nicht zur vollen Stunde (429-Rate-Limit mit dem Bot).
+OnCalendar=Sat *-*-* 06:10:00 UTC
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
