@@ -39,6 +39,7 @@ from automation.live_params import (
 )
 from automation.disaster_stop import DISASTER_STOP_MODE_BROKER, resolve_disaster_stop_params
 from automation.session_windows import load_session_window_for_symbol, session_window_to_param
+from automation.trade_estimate import build_backtest_estimate
 from automation.incubation import (
     INCUBATING, INCUBATION_DIR, INCUBATION_HWM_PATH, INCUBATION_LOCK_PATH, LIVE_LEDGER_DIR, LIVE_SMALL,
     EvidenceLedger, IncubationEnvironmentError, SessionBarLedgerRecorder, assert_stage_environment,
@@ -223,12 +224,35 @@ def _build_incubation_bots_config(
             "strategy_class": strat_class_name, "etoro_id": str(etoro_id), "symbol": symbol,
             "bar_type": bar_axis.bar_type(symbol, bar_axis.LIVE_AXIS), "params": params,
             "live_params_sha256": entry["params_sha256"], "stage": INCUBATING,
+            "backtest_estimate": entry.get("backtest_estimate"),
         }
         if "max_open_positions" in params:
             bot_spec["max_open_positions"] = params.pop("max_open_positions")
         active_symbols.append(symbol)
         bots_config.append(bot_spec)
     return active_symbols, bots_config
+
+
+def _backtest_estimate_for(bot_spec: dict, tournament_data: dict) -> dict | None:
+    """Ertragsschätzung des Paars: eingefroren im Inkubations-Record, sonst aus dem Turnier gewinner (``trade_estimate``)."""
+    if bot_spec.get("backtest_estimate"):
+        return bot_spec["backtest_estimate"]
+    winner = (tournament_data.get("per_symbol_winners") or {}).get(bot_spec["symbol"]) or {}
+    return build_backtest_estimate(winner) if winner.get("strategy") == bot_spec.get("strategy_class") else None
+
+
+def _commission_rt_bps_resolver(symbol_by_instrument: dict):
+    """Round-Trip-Kommission (bps) je eToro-Instrument aus ``backtest.json`` (Single Source of Truth des Kostenmodells)."""
+    def resolve(instrument_id):
+        try:
+            from automation import backtest_runner as br
+            symbol = symbol_by_instrument.get(str(instrument_id))
+            asset_class = br._resolve_asset_class_for_symbol(symbol, policy="default")
+            default = float(json.loads((br.config_dir() / "backtest.json").read_text("utf-8")).get("commission_bps", 0.0) or 0.0)
+            return br.resolve_commission_bps("DEFAULT" if asset_class == "UNKNOWN" else asset_class, default)
+        except Exception:
+            return None
+    return resolve
 
 
 INCUBATION_MIN_SYMBOL_FRACTION = 0.02   # 200 USD bei 10 000 USD: über dem eToro-Minimum, sinnvolle Positionsgröße
@@ -607,7 +631,11 @@ def main():
     # Trade-Ledger aus den eToro-Positionen (Demo-Konto hat keine Trade-Historie über die API): verschwindet eine Position eines
     # Bot-Instruments aus dem Kontostand, ist sie geschlossen (automation/trade_ledger.py -> data/state/demo_trades.jsonl).
     from automation.trade_ledger import TradeLedger
-    trade_ledger = TradeLedger({b["etoro_id"] for b in bots_config}, log=logger)
+    trade_ledger = TradeLedger(
+        {b["etoro_id"] for b in bots_config}, log=logger,
+        meta={b["etoro_id"]: {"symbol": b["symbol"], "strategy": b["strategy_class"],
+                              "estimate": _backtest_estimate_for(b, tournament_data)} for b in bots_config},
+        commission_rt_bps_fn=_commission_rt_bps_resolver({b["etoro_id"]: b["symbol"] for b in bots_config}))
     account_view = EToroAccountView(api_key, user_key, api_environment, log=logger, bot_capital=bot_capital,
                                     observers=[trade_ledger.observe])
     allocator.set_account_view(account_view)
