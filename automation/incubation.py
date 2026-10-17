@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from automation.optimizer.manifest import write_json_atomic
+from automation.trade_estimate import build_backtest_estimate
 from automation.optimizer.sequential import (
     CONFIDENCE_DEFAULT, K_MAX_DEFAULT, N_CONCURRENT_DEFAULT, bonferroni_threshold, sequential_decision,
 )
@@ -287,20 +288,29 @@ def read_incubation_record(strategy: str, symbol: str, *, directory: Path = INCU
 
 
 def write_incubation_whitelist(stages: DeploymentStages, *, directory: Path = INCUBATION_DIR,
-                               path: Path = INCUBATION_WHITELIST_PATH, now: datetime | None = None) -> dict:
+                               path: Path = INCUBATION_WHITELIST_PATH, now: datetime | None = None,
+                               winners: Mapping[str, Mapping[str, Any]] | None = None) -> dict:
     """Die Paare des Demo-Bots: je ``INCUBATING``-Paar die EINGEFRORENEN Parameter aus
     ``incubation_<strategy>_<symbol>.json`` samt ``params_sha256`` (``per_symbol_winners``-Form, damit der
     Bot dieselbe Universums-Verschneidung nutzt). Ein Paar ohne Record oder mit abweichendem Fingerabdruck
-    wird ausgelassen (nicht prüfbar ⇒ nicht gehandelt)."""
-    winners: dict[str, dict] = {}
+    wird ausgelassen (nicht prüfbar ⇒ nicht gehandelt). ``backtest_estimate`` (Ertragsschätzung je Trade aus dem
+    Backtest, ``trade_estimate``) kommt aus dem eingefrorenen Record; fehlt sie dort (Paar vor der Einführung gestartet),
+    füllt ``winners`` (aktuelle Auswahl, gleiche Strategie) sie nach."""
+    current = winners or {}
+    out: dict[str, dict] = {}
     for strategy, symbol in stages.pairs_in(INCUBATING):
         record = read_incubation_record(strategy, symbol, directory=directory)
         sha = stages.entry(strategy, symbol).get("params_sha256")
         if not record or record.get("params_sha256") != sha or params_fingerprint(record["params"]) != sha:
             continue
-        winners[symbol] = {"strategy": strategy, "stage": INCUBATING, "params": record["params"],
+        out[symbol] = {"strategy": strategy, "stage": INCUBATING, "params": record["params"],
                            "params_sha256": sha}
-    payload = {"generated_at": _now_iso(now), "stage": INCUBATING, "per_symbol_winners": winners}
+        estimate = (record.get("source") or {}).get("backtest_estimate")
+        if estimate is None and (current.get(symbol) or {}).get("strategy") == strategy:
+            estimate = build_backtest_estimate(current[symbol])
+        if estimate is not None:
+            out[symbol]["backtest_estimate"] = estimate
+    payload = {"generated_at": _now_iso(now), "stage": INCUBATING, "per_symbol_winners": out}
     write_json_atomic(Path(path), payload)
     return payload
 
@@ -536,7 +546,7 @@ def run_incubation_cycle(
             slot_group=slot_group, group_slots=cfg.get("group_slots")):
         params = resolve_params(strategy, symbol)
         record = write_incubation_record(strategy, symbol, params, directory=ledger_dir, now=now,
-                                         source={"oos_psr": _oos_psr(_w)})
+                                         source={"oos_psr": _oos_psr(_w), "backtest_estimate": build_backtest_estimate(_w)})
         if stages.stage(strategy, symbol) in (None, RETIRED):
             stages.transition(strategy, symbol, CANDIDATE, reason="incubation_selection", now=now)
         stages.transition(strategy, symbol, INCUBATING, reason="incubation_start",
