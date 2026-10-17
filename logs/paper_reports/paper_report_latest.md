@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-17 18:45 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-17 20:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 90183.63 USD |
 | Investiert | 54019.25 USD in 30 Position(en) |
-| Unrealisierter PnL | +263.35 USD |
+| Unrealisierter PnL | +263.33 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,7 +15,7 @@ Stand: 2026-10-17 18:45 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.13 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.11 |
 | CHFJPY.ETORO | Long | 1874.61 | 191.688 | +0.69 |
 | NZDJPY.ETORO | Long | 1875.53 | 89.311 | -0.44 |
 | EURNOK.ETORO | Long | 1900.29 | 10.59601 | -0.49 |
