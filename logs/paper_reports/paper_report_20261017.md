@@ -1,1 +1,2 @@
 - 2026-10-17 01:15 UTC ZUSAMMENFASSUNG Guthaben 86462.57 USD, 32 offene Position(en) (PnL +287.82), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-17 03:15 UTC GESCHLOSSEN Long INJ.ETORO, Position 3621816963, 1914.73 USD, PnL +54.86 (zuletzt gesehen)
