@@ -97,6 +97,13 @@ def positions_view() -> dict:
             "foreign_amount": sum(float(v.get("amount") or 0) for v in foreign.values())}
 
 
+def estimate_events(path: Path = STATE_DIR / "trade_estimates.jsonl") -> list[dict]:
+    try:
+        return [json.loads(x) for x in path.read_text("utf-8").splitlines() if x.strip()]
+    except (OSError, ValueError):
+        return []
+
+
 def build_report(now: datetime, prev: dict) -> tuple[str, list[str], dict]:
     findings: list[str] = []
     info = unit_info()
@@ -142,6 +149,8 @@ def build_report(now: datetime, prev: dict) -> tuple[str, list[str], dict]:
     L += ["", "## Offene Positionen", "",
           f"- Bot: {pos['bot']}", f"- Fremd (Konto, nicht vom Bot): {pos['foreign']} ({pos['foreign_amount']:,.0f} USD)",
           f"- Konto laut letztem Paper-Bericht: {pos['account']}", ""]
+    from automation.trade_estimate import calibration_lines
+    L += ["## Backtest-Schätzung gegen Ergebnis", ""] + calibration_lines(estimate_events()) + [""]
     return "\n".join(L), findings, new_state
 
 

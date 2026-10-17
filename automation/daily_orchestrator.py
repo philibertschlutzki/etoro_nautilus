@@ -1523,7 +1523,7 @@ def phase5b_incubation(
         emit_json_event(log, "INCUBATION_CYCLE", {
             **cycle.to_dict(), "threshold": inc.bonferroni_threshold_for(inc_cfg),
             "stages": {k: v.get("stage") for k, v in stages.data.items()}})
-        payload = inc.write_incubation_whitelist(stages, directory=paths["dir"], path=paths["whitelist"], now=now)
+        payload = inc.write_incubation_whitelist(stages, directory=paths["dir"], path=paths["whitelist"], now=now, winners=winners)
     except Exception as exc:  # defensiv: die Inkubation darf Phase 5 nie verhindern
         log.error(f"[Phase 5b] Inkubations-Zyklus fehlgeschlagen: {exc}\n{traceback.format_exc()}")
         emit_json_event(log, "INCUBATION_ERROR", {"error": str(exc)})
