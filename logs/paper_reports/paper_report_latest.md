@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-17 13:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-17 14:15 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 88340.13 USD |
 | Investiert | 55944.56 USD in 31 Position(en) |
-| Unrealisierter PnL | +230.99 USD |
+| Unrealisierter PnL | +208.88 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -15,7 +15,7 @@ Stand: 2026-10-17 13:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Instrument | Richtung | Betrag (USD) | Einstieg | PnL (USD) |
 |---|---|---|---|---|
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.56 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.32 |
 | CHFJPY.ETORO | Long | 1874.61 | 191.688 | +0.69 |
 | NZDJPY.ETORO | Long | 1875.53 | 89.311 | -0.44 |
 | EURNOK.ETORO | Long | 1900.29 | 10.59601 | -0.49 |
@@ -44,12 +44,11 @@ Stand: 2026-10-17 13:00 UTC (Spielgeld-Konto, keine Evidenz)
 | SN.ETORO | Long | 1963.01 | 191.73 | -53.96 |
 | QBTS.ETORO | Long | 1875.31 | 11.95 | -26.68 |
 | DFTX.ETORO | Short | 1961.71 | 34.2 | +119.31 |
-| ETH.ETORO | Long | 100.00 | 2413.01 | +0.43 |
-| INJ.ETORO | Long | 1925.31 | 8.775 | -33.13 |
+| ETH.ETORO | Long | 100.00 | 2413.01 | +0.28 |
+| INJ.ETORO | Long | 1925.31 | 8.775 | -54.85 |
 
 ## Letzte Ereignisse
 
-- 2026-10-16 16:15 UTC ERÖFFNET Short LULU.ETORO, Position 3621710961, 1875.46 USD, PnL -2.86
 - 2026-10-16 16:15 UTC ERÖFFNET Long QBTS.ETORO, Position 3621710962, 1875.31 USD, PnL +10.99
 - 2026-10-16 16:15 UTC ERÖFFNET Long EURSEK.ETORO, Position 3621710963, 1876.22 USD, PnL -0.74
 - 2026-10-16 16:15 UTC ERÖFFNET Short PODD.ETORO, Position 3621710964, 1874.60 USD, PnL -2.38
@@ -79,3 +78,4 @@ Stand: 2026-10-17 13:00 UTC (Spielgeld-Konto, keine Evidenz)
 - 2026-10-17 08:45 UTC GESCHLOSSEN Long GOLD.ETORO, Position 3621710955, 1875.56 USD, PnL -4.13 (zuletzt gesehen)
 - 2026-10-17 09:00 UTC ERÖFFNET Long INJ.ETORO, Position 3621823640, 1925.31 USD, PnL -0.66
 - 2026-10-17 09:45 UTC ZUSAMMENFASSUNG Guthaben 88340.13 USD, 31 offene Position(en) (PnL +257.19), 2 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
+- 2026-10-17 13:45 UTC ZUSAMMENFASSUNG Guthaben 88340.13 USD, 31 offene Position(en) (PnL +211.01), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
