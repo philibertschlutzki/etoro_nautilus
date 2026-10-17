@@ -34,7 +34,7 @@ from automation.live_bot_lock import (
 )
 from automation.log_manager import emit_execution_event
 from automation.live_params import (
-    live_params_sha256, mismatching_live_params, resolve_live_atr_floor_bps, resolve_live_entry_cost_gate,
+    live_params_sha256, mismatching_live_params, resolve_live_atr_floor_bps, resolve_live_entry_cost_gate, resolve_live_entry_edge_gate,
     resolve_live_params,
 )
 from automation.disaster_stop import DISASTER_STOP_MODE_BROKER, resolve_disaster_stop_params
