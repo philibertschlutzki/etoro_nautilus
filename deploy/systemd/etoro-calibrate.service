@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Kalibrierung der Backtest-Ertragsschätzung gegen realisierte Trades (lesend, ohne Netzwerk) -> data/state/estimate_calibration.json
+ConditionPathExists=%h/etoro_nautilus/automation/calibrate_estimates.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/etoro_nautilus
+Nice=10
+ExecStart=/usr/bin/flock -n /tmp/etoro_calibrate.lock %h/etoro_nautilus/venv/bin/python3 -m automation.calibrate_estimates
+StandardOutput=append:%h/etoro_nautilus/logs/calibrate.log
+StandardError=append:%h/etoro_nautilus/logs/calibrate.log

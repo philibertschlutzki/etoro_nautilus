@@ -125,3 +125,73 @@ def calibration_lines(events: list[Mapping[str, Any]], min_trades: int = 10) -> 
         for name, rows in sorted(groups.items(), key=lambda kv: -len(kv[1])):
             out.append(f"  - {label} {name}: {len(rows)} Trades, Ø Delta {avg(rows, lambda e: e['deltaUsd']):+.2f} USD")
     return out
+
+
+# ─── Kalibrierung: Backtest-Erwartung gegen realisierten Netto-Ertrag ──────────────────────────────
+
+MIN_TRADES_CLASS = 30       # darunter gilt die Gesamt-Kalibrierung, darunter wieder keine (λ = 1)
+MIN_TRADES_GLOBAL = 30
+
+
+def realized_bps(event: Mapping[str, Any]) -> float | None:
+    """Netto-Ertrag eines ``close``-Events in bps auf das Notional (gleiche Basis wie ``trade_return_bps`` im Backtest)."""
+    inv = _num(event.get("investment"))
+    if not inv or inv <= 0:
+        return None
+    notional = inv * max(_num(event.get("leverage")) or 1.0, 1.0)
+    return float(event["result"]["net_usd"]) / notional * 1e4
+
+
+def _lambda(pairs: list[tuple[float, float]]) -> dict:
+    """λ = Regression durch den Ursprung realisiert ~ λ·geschätzt, begrenzt auf [0, 1]: die Schätzung wird nur
+    verkleinert, nie vergrössert (ein Backtest-Gewinner ist nach der Auswahl eher zu optimistisch als zu pessimistisch)."""
+    sxx = sum(e * e for e, _ in pairs)
+    raw = sum(e * r for e, r in pairs) / sxx if sxx > 0 else 1.0
+    mean_e = sum(e for e, _ in pairs) / len(pairs)
+    mean_r = sum(r for _, r in pairs) / len(pairs)
+    return {"n": len(pairs), "lambda": round(min(max(raw, 0.0), 1.0), 4), "lambda_raw": round(raw, 4),
+            "mean_estimate_bps": round(mean_e, 2), "mean_realized_bps": round(mean_r, 2),
+            "delta_bps": round(mean_r - mean_e, 2)}
+
+
+def calibrate(events: list[Mapping[str, Any]], *, min_class: int = MIN_TRADES_CLASS, min_global: int = MIN_TRADES_GLOBAL) -> dict:
+    """Kalibrierung aus ``close``-Events mit Schätzung: je Anlageklasse und gesamt. Eine Klasse unter ``min_class`` Trades erbt
+    die Gesamt-Kalibrierung; unter ``min_global`` Trades bleibt alles bei λ = 1 (unkalibriert), damit wenige Trades
+    keine Schätzung verbiegen."""
+    pairs: dict[str, list[tuple[float, float]]] = {}
+    for e in events:
+        if e.get("event") != "close":
+            continue
+        r, est = realized_bps(e), (e.get("estimate") or {}).get("mean_bps")
+        if r is None or est is None:
+            continue
+        pairs.setdefault(str(e.get("assetClass") or "DEFAULT"), []).append((float(est), r))
+    allp = [p for v in pairs.values() for p in v]
+    out: dict[str, Any] = {"global": None, "by_class": {}}
+    if len(allp) >= min_global:
+        out["global"] = _lambda(allp)
+    for cls, v in pairs.items():
+        if len(v) >= min_class:
+            out["by_class"][cls] = {**_lambda(v), "basis": "klasse"}
+        elif out["global"]:
+            out["by_class"][cls] = {**out["global"], "n_class": len(v), "basis": "gesamt"}
+    out["n_trades"] = len(allp)
+    out["note"] = "λ=1 ohne Eintrag (zu wenige Trades)" if not out["global"] else "λ aus Regression durch den Ursprung, [0,1]"
+    return out
+
+
+def calibrated_fields(estimate: Mapping[str, Any], calibration_path, asset_class: str | None) -> dict:
+    """``calibrated_mean_bps`` = λ · ``mean_bps`` aus der Kalibrierungsdatei; ohne Datei/Eintrag λ = 1."""
+    import json
+    lam, basis = 1.0, "unkalibriert"
+    try:
+        with open(calibration_path, "r", encoding="utf-8") as fh:
+            cal = json.load(fh) or {}
+        entry = (cal.get("by_class") or {}).get(str(asset_class or "DEFAULT")) or cal.get("global")
+        if entry and entry.get("lambda") is not None:
+            lam, basis = float(entry["lambda"]), f"{entry.get('basis', 'gesamt')}, n={entry.get('n')}"
+    except (OSError, ValueError):
+        pass
+    mean = _num(estimate.get("mean_bps"))
+    return {"calibration_lambda": lam, "calibration_basis": basis,
+            "calibrated_mean_bps": None if mean is None else round(lam * mean, 3)}
