@@ -34,7 +34,7 @@ from automation.live_bot_lock import (
 )
 from automation.log_manager import emit_execution_event
 from automation.live_params import (
-    live_params_sha256, mismatching_live_params, resolve_live_atr_floor_bps, resolve_live_entry_cost_gate,
+    live_params_sha256, mismatching_live_params, resolve_live_atr_floor_bps, resolve_live_entry_cost_gate, resolve_live_entry_edge_gate,
     resolve_live_params,
 )
 from automation.disaster_stop import DISASTER_STOP_MODE_BROKER, resolve_disaster_stop_params
@@ -363,6 +363,8 @@ def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, st
     # Suchraum, daher überschreibend.
     cfg_kwargs["session_window"] = session_window_to_param(
         load_session_window_for_symbol(bot_spec["symbol"]))
+    # Randzeitgate: keine Entries in Eroeffnungs-/Schlussphase (weite Spreads), nur Boersen mit Sitzungsfenster.
+    cfg_kwargs.update(resolve_live_entry_edge_gate(cfg_kwargs["session_window"]))
     # Offene eToro-Positionen, die der Bot nach einem Neustart übernimmt, gehören sonst der Strategie "EXTERNAL". Deren
     # Schliessen ist im NETTING-OMS verboten (OrderDenied: position_id ...-EXTERNAL not valid for NETTING OMS) und ohne
     # position_id entsteht eine Phantom-Short-Position. Mit dem Claim ordnet Nautilus die bei der Reconciliation

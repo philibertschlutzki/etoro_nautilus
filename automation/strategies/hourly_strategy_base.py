@@ -61,6 +61,8 @@ from automation.log_manager import emit_execution_event
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
 from automation.session_windows import (
     bars_in_session_on_day,
+    local_day,
+    session_bounds_utc_ns,
     session_window_from_param,
     trading_day_of_candle,
 )
@@ -205,6 +207,12 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # ``session_windows.resolve_session_window`` — Backtest-Runner und Live-Bot lösen es über dieselbe
     # Funktion auf (Issue #1361 baut darauf den Live-Session-Gate). Nicht im Suchraum.
     session_window: str | None = None
+    # Live-Entry-Randzeitgate (nur Entries, Exits bleiben unberührt): kein Entry in den ersten
+    # ``entry_open_margin_min`` Minuten nach der Eröffnung und den letzten ``entry_close_margin_min`` Minuten vor
+    # dem Schluss des ``session_window``. Gemessen sind die Spreads der Bot-Aktien in 14:30-19:30 UTC bei 6-8 bps,
+    # ausserhalb bei 40-70 bps. None ⇒ aus (Backtest und Bestandsverhalten unverändert).
+    entry_open_margin_min: float | None = None
+    entry_close_margin_min: float | None = None
     # Trailing-Take-Profit (bot-seitig; eToro kennt nur einen Trailing-Stop-Loss). Sobald der bestmögliche
     # Schlusskurs seit Einstieg mindestens ``trailing_tp_activation_atr`` · ATR (und das Doppelte der
     # Mindest-Sicherung) im Gewinn liegt, wird ein Gewinn gesichert: Exit, wenn der Schlusskurs unter
@@ -1890,6 +1898,23 @@ class HourlyStrategyBase(Strategy):
                 self._log.info(
                     f"[{self.instrument_id}] COST_EDGE_GATE_REJECT: atr={atr_bps:.1f}bps < "
                     f"{need_bps:.1f}bps ({_edge_ratio}*Round-Trip {_edge_cost:.1f}bps)"
+                )
+                return None
+
+        # Randzeitgate (Live): in der Eröffnungs- und Schlussphase der Börse sind die Spreads weit; kein Entry.
+        # Unabhängig vom Quote-Gate oben, das ohne QuoteTick fail-open ist.
+        _om = getattr(self.config, "entry_open_margin_min", None)
+        _cm = getattr(self.config, "entry_close_margin_min", None)
+        _win = getattr(self, "_session_window", None)
+        if (_om or _cm) and _win is not None:
+            _now_ns = self.clock.timestamp_ns()
+            _open_ns, _close_ns = session_bounds_utc_ns(local_day(_now_ns, _win), _win)
+            _lo = _open_ns + int(float(_om or 0.0) * 60e9)
+            _hi = _close_ns - int(float(_cm or 0.0) * 60e9)
+            if _now_ns < _lo or _now_ns > _hi:
+                self._log.info(
+                    f"[{self.instrument_id}] SESSION_EDGE_GATE_REJECT: Entry ausserhalb "
+                    f"[Eroeffnung+{_om or 0:g}min, Schluss-{_cm or 0:g}min] (Spreads in den Randzeiten weit)"
                 )
                 return None
 
