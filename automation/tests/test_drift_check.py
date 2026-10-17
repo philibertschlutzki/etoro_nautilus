@@ -49,3 +49,13 @@ def test_validate_runs_and_main_writes_files(tmp_path, monkeypatch):
 
 def test_main_without_data_exits_2(tmp_path):
     assert dc.main(["--trades-dir", str(tmp_path), "--out", str(tmp_path / "o"), "--flags", str(tmp_path / "f.json")]) == 2
+
+
+def test_classes_fallback_auf_metadaten(tmp_path):
+    md = tmp_path / "metadata.json"
+    md.write_text(json.dumps({"InstrumentDisplayDatas": [
+        {"InstrumentID": 1, "InstrumentTypeID": 1}, {"InstrumentID": 25, "InstrumentTypeID": 5},
+        {"InstrumentID": 99, "InstrumentTypeID": 10}, {"InstrumentID": 987654, "InstrumentTypeID": 99}]}))
+    c = dc.classes(md)
+    assert c["1"] == "forex" and c["25"] == "equity" and c["99"] == "crypto" and "987654" not in c
+    assert dc.classes(tmp_path / "fehlt.json").get("22") == "commodity"      # Karte greift weiter
