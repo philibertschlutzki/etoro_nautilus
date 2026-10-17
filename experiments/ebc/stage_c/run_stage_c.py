@@ -185,7 +185,7 @@ def pick_instrument(pool, symbols, g):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "w8ben", "feeprobe"])
+    ap.add_argument("phase", choices=["plan", "c4", "c1", "c5", "fin", "monitor", "closeall", "w8ben", "feeprobe", "minamt"])
     ap.add_argument("--live", action="store_true", help="Orders wirklich senden (Standard: Dry-Run)")
     ap.add_argument("--confirm-account", default=None, help="demo (Standard) bzw. ETORO_PAPER_ACCOUNT_CID bei STAGE_C_ENV=real")
     ap.add_argument("--whitelist", default=os.path.expanduser("~/etoro_nautilus/data/state/incubation_whitelist.json"))
@@ -205,7 +205,7 @@ def main():
     if a.phase == "monitor":
         return monitor()
     excl = guard.bot_excluded_ids(a.whitelist, a.bot_map)
-    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "w8ben": "w8", "feeprobe": "fp"}[a.phase]
+    ph = {"c4": "c4", "c1": "c1", "c5": "c5", "fin": "c2", "closeall": "c2", "plan": "c2", "w8ben": "w8", "feeprobe": "fp", "minamt": "mn"}[a.phase]
     g = guard.Gate(a.live, a.confirm_account, excl, state_file(), ph, lambda m: print(m))
     g.classes = tuple(a.classes.split(','))
     g.fx_max_exposure = a.fx_max_exposure
@@ -213,6 +213,30 @@ def main():
     pool = [r for r in candidates(a, excl) if r['klasse'] in g.classes and not (a.exclude_us and r['klasse'] == 'K1' and '.' not in r['symbol'])]
     rnd = random.Random(SEED)
     eq = [r for r in pool if r["klasse"] == "K1" and guard.market_open("K1")]
+    if a.phase == "minamt":
+        # eToro-Mindestbetrag je Rohstoff lernen: Long-Order ueber 20 USD; Ablehnung error_720 nennt MinimumPositionAmount, angenommene Position wird sofort geschlossen
+        from automation.min_position import parse_minimum
+        bot_map = json.load(open(a.bot_map))["instruments"]
+        done = {}
+        for iid, e in bot_map.items():
+            if e.get("asset_class") != "commodity" or e["symbol"] == "GOLD.ETORO": continue
+            r = {"etoro_id": iid, "symbol": e["symbol"], "klasse": "K3"}
+            try:
+                res = open_order(g, r, 20.0, True, tag="minamt")
+            except guard.Refused as ex:
+                print("uebersprungen:", e["symbol"], ex); continue
+            if not g.live: continue
+            pos, rej = res
+            minimum = parse_minimum(rej or "")
+            if pos:
+                print(e["symbol"], "20 USD angenommen (Minimum <= 20)"); done[e["symbol"]] = 0.0
+                try: close_position(g, pos["positionID"])
+                except Exception as ex: print("FEHLER beim Schliessen:", ex, "- Position", pos["positionID"], "bleibt in state.json; closeall")
+            else:
+                print(e["symbol"], "abgelehnt:", (rej or "")[:120], "-> Minimum", minimum); done[e["symbol"]] = minimum
+            append("min_amounts.csv", ["ts", "symbol", "instrument", "minimum_usd", "accepted", "rejection"], [now(), e["symbol"], iid, minimum if minimum is not None else "", bool(pos), rej or ""])
+            time.sleep(1.5)
+        print("Ergebnis:", json.dumps(done)); return
     if a.phase == "w8ben":
         r = next((x for x in pool if x["klasse"] == "K1" and x["symbol"] in ("AAPL", "MSFT", "GOOG", "NVDA", "AMZN", "META", "TSLA") and guard.market_open("K1")), None)
         if r is None:
