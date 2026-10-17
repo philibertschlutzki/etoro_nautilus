@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Hypothesen-Regelkreis wöchentlich Samstag 07:25 UTC
+
+[Timer]
+# Nach Wochenbericht (Fr 21:30) und Drift-Check (Sa 06:10); nicht zur vollen Stunde (429-Rate-Limit mit dem Bot).
+OnCalendar=Sat *-*-* 07:25:00 UTC
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
