@@ -15,6 +15,7 @@ Aufruf (im Repo-Wurzelverzeichnis, mit Tagesdaten unter data/ebc/daily):
   venv/bin/python3 experiments/ebc/h9_shorts.py --stage 1 --workers 4
   venv/bin/python3 experiments/ebc/h9_shorts.py --stage 2 --workers 4
   venv/bin/python3 experiments/ebc/h9_shorts.py --report
+Rollierend: --stage 1 --monthly (alle Mengen x 48 Ausstiege, Monatsreihen), danach --rolling (Walk-forward, Stabilität).
 """
 import argparse, csv, datetime as dt, json, math, os, sys, time
 from multiprocessing import Pool
@@ -26,8 +27,8 @@ import sim, route_r, universe, costs
 
 OUT = "results/H9"
 WARMUP = 260                      # Tage Vorlauf (SMA200 + Puffer), Signale davor werden verworfen
-M0 = 2015 * 12                    # Monatsindex-Offset
-NM = 12 * 20
+M0 = 2020 * 12                    # Monatsindex-Offset
+NM = 96
 DAY_NS = 86_400_000_000_000
 EQUITY_SPREAD_BPS = 7.0           # gemessen in der US-Sitzung (Median 6-8 bps), Memory 2026-10-16
 SPLIT_FRAC = 0.6                  # IS = erste 60 % des Zeitraums nach dem Vorlauf, OOS = Rest
@@ -230,13 +231,13 @@ def select_survivors(rows_, min_n=200, min_t=2.0):
     return sorted(set(keep))
 
 
-def run_stage(stage, workers, limit):
+def run_stage(stage, workers, limit, monthly=False):
     rows_all = universe.load()
     rows = [r for r in rows_all if r["klasse"] == "K1"]
     if limit:
         rows = rows[:limit]
     spx = load_spx(rows_all)
-    split_ts = split_ts_of(rows)
+    split_ts = 0 if monthly else split_ts_of(rows)         # monthly: alles in Zeitabschnitt 1 (Monatsreihen für rollierende Tests)
     if stage == 1:
         sig_names = sorted(build_signals(sim.Series(*_demo_series(rows))).keys())
         gate_names = ["none", "below200", "down_regime", "highvol", "index_down", "index_dayred"]
@@ -244,7 +245,7 @@ def run_stage(stage, workers, limit):
     else:
         prev = list(csv.DictReader(open(f"{OUT}/stage1.csv")))
         set_names = select_survivors(prev) + ["BASE_all|none"]
-    exits = exit_grid(full=(stage == 2))
+    exits = exit_grid(full=(stage == 2 or monthly))
     print(f"Stufe {stage}: {len(rows)} Aktien, {len(set_names)} Einstiegsmengen, {len(exits)} Ausstiege, Split {split_ts}", flush=True)
     jobs = [(r, set_names, exits, split_ts, spx, EQUITY_SPREAD_BPS) for r in rows]
     sums = np.zeros((len(set_names), len(exits), 2, NM)); cnts = np.zeros_like(sums)
@@ -255,6 +256,12 @@ def run_stage(stage, workers, limit):
                 sums += res[0]; cnts += res[1]
             if k % 20 == 0:
                 print(f"  {k}/{len(jobs)} Instrumente, {round(time.time() - t0)} s", flush=True)
+    if monthly:
+        os.makedirs(OUT, exist_ok=True)
+        np.savez_compressed(f"{OUT}/monthly.npz", sums=sums[:, :, 1, :], cnts=cnts[:, :, 1, :],
+                            sets=np.array(set_names), exits=np.array([e for e, _ in exits]), m0=M0)
+        print("geschrieben:", f"{OUT}/monthly.npz")
+        return
     print("geschrieben:", write_stage(stage, set_names, exits, sums, cnts))
 
 
@@ -265,6 +272,105 @@ def _demo_series(rows):
         except (OSError, ValueError):
             continue
     raise SystemExit("keine Tagesdaten unter data/ebc/daily gefunden")
+
+
+def rolling_report(train_m=12, test_m=3, k_sel=20, min_n_train=100, min_t=2.0, draws=300):
+    """Rollierender Walk-forward auf den Monatsreihen (monthly.npz): Auswahl der besten Varianten auf den letzten ``train_m``
+    Monaten, Bewertung im folgenden Block von ``test_m`` Monaten, dann um ``test_m`` weiter. Gegenprobe: gleich viele zufällig
+    gezogene Varianten mit genug Trades im Trainingsfenster. Edge = Variante minus Basislinie (gleicher Ausstieg)."""
+    z = np.load(f"{OUT}/monthly.npz", allow_pickle=False)
+    S, C, sets, exits = z["sums"], z["cnts"], list(z["sets"]), list(z["exits"])
+    nS, nE, nM = S.shape
+    b = sets.index("BASE_all|none")
+    months = [m for m in range(nM) if C[b, :, m].sum() > 0]
+    lo, hi = months[0], months[-1] + 1
+    rng = np.random.default_rng(20261017)
+    def ym(m):
+        return f"{(M0 + m) // 12}-{(M0 + m) % 12 + 1:02d}"
+    def window_stats(W):
+        """Edge und t für alle Varianten im Monatsfenster W (Liste von Monatsindizes)."""
+        s, c = S[:, :, W], C[:, :, W]
+        N = c.sum(2)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mu = s.sum(2) / N
+            bs, bc = s[b:b + 1], c[b:b + 1]
+            bN = bc.sum(2); bmu = bs.sum(2) / bN
+            se = np.sqrt(((s - mu[..., None] * c) ** 2).sum(2)) / N
+            bse = np.sqrt(((bs - bmu[..., None] * bc) ** 2).sum(2)) / bN
+            edge = mu - bmu
+            t = edge / np.sqrt(se ** 2 + bse ** 2)
+        return edge, t, N, bmu[0]
+    L = ["# EBC-H9 rollierende Zeitabschnitte (Walk-forward)", "",
+         f"Training {train_m} Monate, Test {test_m} Monate, Auswahl: Edge-t >= {min_t}, N >= {min_n_train}, die besten {k_sel} nach t. "
+         f"{nS - 1} Einstiegsmengen x {nE} Ausstiege = {(nS - 1) * nE} Varianten.", "",
+         "| Test-Block | Basislinie Ø netto (H5) | Auswahl (Anz.) | Edge Auswahl | Edge Zufall gleicher Zahl | Anteil Auswahl mit Edge > 0 |",
+         "|---|---|---|---|---|---|"]
+    folds = []
+    h5 = exits.index("H5_nostop_P0") if "H5_nostop_P0" in exits else 0
+    k = lo + train_m
+    while k + test_m <= hi:
+        tr, te = list(range(k - train_m, k)), list(range(k, k + test_m))
+        e_tr, t_tr, N_tr, _ = window_stats(tr)
+        e_te, t_te, N_te, bmu_te = window_stats(te)
+        ok = (N_tr >= min_n_train) & (N_te >= 10) & np.isfinite(e_tr) & np.isfinite(e_te)
+        ok[b, :] = False
+        cand = np.argwhere(ok & (t_tr >= min_t))
+        if len(cand):
+            order = np.argsort(-t_tr[cand[:, 0], cand[:, 1]])[:k_sel]
+            pick = cand[order]
+            sel = e_te[pick[:, 0], pick[:, 1]]
+            pool = np.argwhere(ok)
+            nulls = [e_te[pool[i, 0], pool[i, 1]].mean() for i in (rng.integers(0, len(pool), len(pick)) for _ in range(draws))]
+            folds.append((float(sel.mean()), float(np.mean(nulls))))
+            L.append(f"| {ym(k)} bis {ym(k + test_m - 1)} | {bmu_te[h5]:.0f} | {len(pick)} | {sel.mean():.1f} | {np.mean(nulls):.1f} | {(sel > 0).mean():.0%} |")
+        else:
+            L.append(f"| {ym(k)} bis {ym(k + test_m - 1)} | {bmu_te[h5]:.0f} | 0 | - | - | - |")
+        k += test_m
+    L.append("")
+    if folds:
+        d = np.array([a - n for a, n in folds]); sel_ = np.array([a for a, _ in folds])
+        tt = d.mean() / (d.std(ddof=1) / math.sqrt(len(d))) if len(d) > 2 and d.std(ddof=1) > 0 else float("nan")
+        L += ["## Ergebnis", "",
+              f"- Blöcke mit mindestens einer Auswahl: {len(folds)}; Ø Edge der Auswahl {sel_.mean():.1f} bps, Ø Edge Zufallsauswahl {np.mean([n for _, n in folds]):.1f} bps.",
+              f"- Auswahl besser als Zufall in {(d > 0).sum()} von {len(d)} Blöcken; t des Unterschieds über Blöcke {tt:.2f}.",
+              f"- Blöcke mit Auswahl-Edge > 0: {(sel_ > 0).sum()} von {len(sel_)}.", ""]
+    else:
+        L += ["Keine Auswahl in irgendeinem Block bestanden.", ""]
+    # Stabilität über alle Quartale je Variante
+    Q = [list(range(q, q + test_m)) for q in range(lo, hi - test_m + 1, test_m)]
+    pos = np.zeros((nS, nE)); cnt = np.zeros((nS, nE)); worst = np.full((nS, nE), np.inf)
+    for W in Q:
+        e, t, N, _ = window_stats(W)
+        v = (N >= 30) & np.isfinite(e)
+        pos += (v & (e > 0)); cnt += v; worst = np.where(v, np.minimum(worst, e), worst)
+    e_all, t_all, N_all, _ = window_stats(months)
+    rows = []
+    for si in range(nS):
+        for ei in range(nE):
+            if si != b and cnt[si, ei] >= max(4, len(Q) - 2) and N_all[si, ei] >= 300 and np.isfinite(e_all[si, ei]):
+                rows.append((pos[si, ei] / cnt[si, ei], worst[si, ei], e_all[si, ei], t_all[si, ei], int(N_all[si, ei]), sets[si], exits[ei]))
+    rows.sort(key=lambda r: (-r[0], -r[1]))
+    L += [f"## Stabilität über {len(Q)} Quartale (Varianten mit N >= 300 gesamt und fast allen Quartalen)", "",
+          "| Anteil Quartale Edge > 0 | schlechtestes Quartal | Edge gesamt | t gesamt | N | Einstieg \\| Filter | Ausstieg |", "|---|---|---|---|---|---|---|"]
+    L += [f"| {r[0]:.0%} | {r[1]:.0f} | {r[2]:.0f} | {r[3]:.1f} | {r[4]} | {r[5]} | {r[6]} |" for r in rows[:25]] + [""]
+    n_hi = sum(1 for r in rows if r[0] >= 0.75)
+    nq = len(Q); need = math.ceil(0.75 * nq)
+    p0 = sum(math.comb(nq, j) for j in range(need, nq + 1)) / 2 ** nq
+    L += [f"Varianten mit Edge > 0 in mindestens 75 % der Quartale: {n_hi} von {len(rows)}. Bei reinen Münzwürfen je Quartal "
+          f"(p = {p0:.1%}) wären es {len(rows) * p0:.0f}; die Varianten sind stark korreliert, die Zahl streut deshalb viel stärker.", ""]
+    # Regime
+    L += ["## Basislinie je Quartal (Marktdrift gegen Shorts)", "", "| Monate | Ø netto H5 | Ø netto H10 |", "|---|---|---|"]
+    h10 = exits.index("H10_nostop_P0") if "H10_nostop_P0" in exits else h5
+    for W in Q:
+        c = C[b, :, W].sum(0)
+        if c[h5] > 0:
+            L.append(f"| {ym(W[0])} bis {ym(W[-1])} | {S[b, h5, W].sum() / c[h5]:.0f} | {S[b, h10, W].sum() / max(c[h10], 1):.0f} |")
+    L += ["", "## Lesart", "",
+          "- Ein Walk-forward-Gewinn über Zufall in der Mehrzahl der Blöcke wäre der erste Hinweis auf eine überdauernde Short-Regel; "
+          "Ø Edge der Auswahl nahe der Zufallsauswahl oder negativ heisst: keine Persistenz.",
+          "- Hohe Anteile positiver Quartale bei kleinem N sind bei dieser Variantenzahl erwartbar; entscheidend sind Walk-forward und Basislinie je Quartal.", ""]
+    open(f"{OUT}/rolling.md", "w", encoding="utf-8").write("\n".join(L))
+    print("\n".join(L))
 
 
 def report():
@@ -339,10 +445,14 @@ if __name__ == "__main__":
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--limit", type=int, default=0, help="nur die ersten N Aktien (Rauchtest)")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--monthly", action="store_true", help="Stufe 1 mit vollem Ausstiegsraster, Monatsreihen nach results/H9/monthly.npz")
+    ap.add_argument("--rolling", action="store_true", help="rollierender Walk-forward auf results/H9/monthly.npz")
     a = ap.parse_args()
     if a.report:
         report()
+    elif a.rolling:
+        rolling_report()
     elif a.stage:
-        run_stage(a.stage, a.workers, a.limit)
+        run_stage(a.stage, a.workers, a.limit, monthly=a.monthly)
     else:
         ap.error("--stage 1|2 oder --report")
