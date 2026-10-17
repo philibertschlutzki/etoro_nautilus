@@ -1,0 +1,11 @@
+[Unit]
+Description=eToro Kalibrierung täglich 07:05 UTC
+
+[Timer]
+# Nach dem Gesundheitscheck (06:55) und nicht zur vollen Stunde (429-Rate-Limit mit dem Bot).
+OnCalendar=*-*-* 07:05:00 UTC
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

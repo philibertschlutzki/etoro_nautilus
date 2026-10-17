@@ -18,11 +18,12 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from automation.trade_estimate import estimate_usd, infer_exit_reason, net_result_usd
+from automation.trade_estimate import calibrated_fields, estimate_usd, infer_exit_reason, net_result_usd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LEDGER_PATH = PROJECT_ROOT / "data" / "state" / "demo_trades.jsonl"
 OPEN_PATH = PROJECT_ROOT / "data" / "state" / "demo_trades_open.json"
+CALIBRATION_PATH = PROJECT_ROOT / "data" / "state" / "estimate_calibration.json"   # von calibrate_estimates.py (systemd-Timer)
 EVENTS_PATH = PROJECT_ROOT / "data" / "state" / "trade_estimates.jsonl"    # je Trade ein ``open``- und ein ``close``-Eintrag
 
 
@@ -33,7 +34,7 @@ def _iso(ts: float) -> str:
 class TradeLedger:
     def __init__(self, instrument_ids, *, ledger_path: Path | None = None, open_path: Path | None = None,
                  clock=None, log=None, meta: dict | None = None, commission_rt_bps_fn=None,
-                 events_path: Path | None = None) -> None:
+                 events_path: Path | None = None, calibration_path: Path | None = None) -> None:
         self._ids = {int(i) for i in instrument_ids}
         self._ledger_path = Path(ledger_path or LEDGER_PATH)
         self._open_path = Path(open_path or OPEN_PATH)
@@ -43,6 +44,7 @@ class TradeLedger:
         self._meta = {str(k): v for k, v in (meta or {}).items()}
         self._commission_rt_bps = commission_rt_bps_fn or (lambda _iid: None)
         self._events_path = Path(events_path or EVENTS_PATH)
+        self._calibration_path = Path(calibration_path or CALIBRATION_PATH)
         self._lock = threading.Lock()
         self._open: dict[str, dict] = self._load()
         self._known_ledger: set[str] | None = None
@@ -89,11 +91,14 @@ class TradeLedger:
     def _open_event(self, pid: str, p, rec: dict, now: float) -> dict:
         meta = self._meta.get(str(p.instrument_id)) or {}
         est = meta.get("estimate")
+        if est:
+            est = {**est, **calibrated_fields(est, self._calibration_path, meta.get("asset_class"))}
+        rec["assetClass"] = meta.get("asset_class")
         rec["symbol"], rec["strategy"], rec["estimate"] = meta.get("symbol"), meta.get("strategy"), est
         rec["estimateUsd"] = estimate_usd(est, p.notional)
         return {"event": "open", "positionId": pid, "ts": _iso(now), "instrumentId": p.instrument_id,
                 "symbol": meta.get("symbol"), "strategy": meta.get("strategy"), "isBuy": p.is_buy,
-                "investment": p.amount, "notional": round(p.notional, 4), "openRate": p.open_rate,
+                "assetClass": meta.get("asset_class"), "investment": p.amount, "notional": round(p.notional, 4), "openRate": p.open_rate,
                 "stopLossRate": p.stop_loss_rate, "estimate": est, "estimateUsd": rec["estimateUsd"],
                 "estimateNote": None if est else "keine Backtest-Schätzung hinterlegt (Paar vor Einführung gestartet)"}
 
@@ -105,16 +110,22 @@ class TradeLedger:
         expected = est_usd.get("expected_usd")
         low, high = est_usd.get("ci95_low_usd"), est_usd.get("ci95_high_usd")
         delta = None if expected is None else round(res["net_usd"] - expected, 4)
+        cal_mean = (rec.get("estimate") or {}).get("calibrated_mean_bps")
+        cal_expected = None if cal_mean is None else round(cal_mean / 1e4 * lev * float(rec["investment"]), 4)
+        cal_delta = None if cal_expected is None else round(res["net_usd"] - cal_expected, 4)
         inside = None if None in (low, high) else bool(low <= res["net_usd"] <= high)
         ev = {"event": "close", "positionId": pid, "ts": _iso(now), "instrumentId": rec["instrumentId"],
               "symbol": rec.get("symbol"), "strategy": rec.get("strategy"), "isBuy": rec["isBuy"],
               "openTimestamp": rec["openTimestamp"], "estimate": rec.get("estimate"), "estimateUsd": est_usd or None,
-              "result": res, "deltaUsd": delta, "insideCi95": inside, "stopLossRate": rec.get("stopLossRate"),
+              "result": res, "deltaUsd": delta, "assetClass": rec.get("assetClass"),
+              "investment": float(rec["investment"]), "leverage": lev, "calibratedExpectedUsd": cal_expected,
+              "deltaCalibratedUsd": cal_delta, "insideCi95": inside, "stopLossRate": rec.get("stopLossRate"),
               "exitReason": infer_exit_reason(rec["isBuy"], rec.get("openRate"), rec.get("stopLossRate"),
                                               float(rec["investment"]), lev, float(rec.get("lastPnl", 0.0))),
               "exitReasonSource": "abgeleitet", "pnlAgeS": row["pnlAgeS"]}
         row.update({"netAfterFees": res["net_usd"], "exitReason": ev["exitReason"], "stopLossRate": rec.get("stopLossRate"),
-                    "estimatedUsd": expected, "deltaUsd": delta})
+                    "estimatedUsd": expected, "deltaUsd": delta,
+                    "deltaCalibratedUsd": cal_delta})
         return ev
 
     def observe(self, snapshot) -> list[dict]:
@@ -181,9 +192,10 @@ def _format_event(ev: dict) -> str:
                 f"{_fmt(est.get('mean_bps'))} bps = {_fmt(usd.get('expected_usd'))} USD, 95%-Band "
                 f"{_fmt(est.get('ci95_low_bps'))}..{_fmt(est.get('ci95_high_bps'))} bps, P(Erwartung>0) "
                 f"{_fmt(est.get('p_positive'), '.2f')}, Trefferquote {_fmt(est.get('win_rate'), '.2f')}, "
-                f"PF {_fmt(est.get('profit_factor'), '.2f')}, n={est.get('n_trades')}, Stop {ev.get('stopLossRate')}")
+                f"PF {_fmt(est.get('profit_factor'), '.2f')}, n={est.get('n_trades')}, Stop {ev.get('stopLossRate')}; kalibriert "
+                f"{_fmt(est.get('calibrated_mean_bps'))} bps (λ {_fmt(est.get('calibration_lambda'), '.2f')}, {est.get('calibration_basis')})")
     res = ev["result"]
     return (f"[TRADE_CLOSE] Position {ev['positionId']} {ev.get('symbol') or ev['instrumentId']}: Netto {res['net_usd']:+.2f} USD "
             f"(brutto {res['gross_usd']:+.2f}, Gebühren {res['open_fee_usd'] + res['close_fee_usd']:.2f}, {res['fee_source']}), "
-            f"Schätzung {_fmt((ev.get('estimateUsd') or {}).get('expected_usd'))} USD, Delta {_fmt(ev['deltaUsd'])} USD, "
+            f"Schätzung {_fmt((ev.get('estimateUsd') or {}).get('expected_usd'))} USD, Delta {_fmt(ev['deltaUsd'])} USD, Delta zur kalibrierten Schätzung {_fmt(ev.get('deltaCalibratedUsd'))} USD, "
             f"im 95%-Band: {ev['insideCi95'] if ev['insideCi95'] is not None else 'n/a'}, Austritt {ev['exitReason']}")

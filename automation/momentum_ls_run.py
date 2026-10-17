@@ -241,6 +241,15 @@ def _backtest_estimate_for(bot_spec: dict, tournament_data: dict) -> dict | None
     return build_backtest_estimate(winner) if winner.get("strategy") == bot_spec.get("strategy_class") else None
 
 
+def _asset_class_of(symbol: str) -> str:
+    try:
+        from automation import backtest_runner as br
+        cls = br._resolve_asset_class_for_symbol(symbol, policy="default")
+        return "DEFAULT" if cls == "UNKNOWN" else str(cls).upper()
+    except Exception:
+        return "DEFAULT"
+
+
 def _commission_rt_bps_resolver(symbol_by_instrument: dict):
     """Round-Trip-Kommission (bps) je eToro-Instrument aus ``backtest.json`` (Single Source of Truth des Kostenmodells)."""
     def resolve(instrument_id):
@@ -632,7 +641,8 @@ def main():
     trade_ledger = TradeLedger(
         {b["etoro_id"] for b in bots_config}, log=logger,
         meta={b["etoro_id"]: {"symbol": b["symbol"], "strategy": b["strategy_class"],
-                              "estimate": _backtest_estimate_for(b, tournament_data)} for b in bots_config},
+                              "estimate": _backtest_estimate_for(b, tournament_data),
+                              "asset_class": _asset_class_of(b["symbol"])} for b in bots_config},
         commission_rt_bps_fn=_commission_rt_bps_resolver({b["etoro_id"]: b["symbol"] for b in bots_config}))
     account_view = EToroAccountView(api_key, user_key, api_environment, log=logger, bot_capital=bot_capital,
                                     observers=[trade_ledger.observe])

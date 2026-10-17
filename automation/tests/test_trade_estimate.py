@@ -86,3 +86,39 @@ def test_whitelist_traegt_eingefrorene_schaetzung_und_fuellt_fehlende_nach(tmp_p
     out = inc.write_incubation_whitelist(stages, directory=tmp_path, path=tmp_path / "w.json", winners=cur)
     w = out["per_symbol_winners"]
     assert w["AAPL"]["backtest_estimate"]["mean_bps"] == 20.0 and w["MSFT"]["backtest_estimate"]["mean_bps"] == 5.0
+
+
+def _close(cls, est, net_usd, inv=1000.0):
+    return {"event": "close", "assetClass": cls, "estimate": {"mean_bps": est}, "investment": inv, "leverage": 1.0,
+            "result": {"net_usd": net_usd}}
+
+
+def test_kalibrierung_schrumpft_nur_mit_genug_trades(tmp_path):
+    from automation.trade_estimate import calibrate, calibrated_fields
+    few = calibrate([_close("EQUITY", 100.0, 1.0)] * 5)
+    assert few["global"] is None and few["by_class"] == {}
+    evs = [_close("EQUITY", 100.0, 5.0)] * 40 + [_close("FOREX", 20.0, 0.5)] * 5       # EQUITY: realisiert 50 bps
+    cal = calibrate(evs)
+    assert cal["by_class"]["EQUITY"]["lambda"] == 0.5 and cal["by_class"]["EQUITY"]["basis"] == "klasse"
+    assert cal["by_class"]["FOREX"]["basis"] == "gesamt"                               # zu wenige Trades: erbt global
+    neg = calibrate([_close("EQUITY", 100.0, -5.0)] * 40)
+    assert neg["by_class"]["EQUITY"]["lambda"] == 0.0 and neg["by_class"]["EQUITY"]["lambda_raw"] < 0
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(cal))
+    f = calibrated_fields({"mean_bps": 80.0}, path, "EQUITY")
+    assert f["calibrated_mean_bps"] == 40.0 and f["calibration_lambda"] == 0.5
+    assert calibrated_fields({"mean_bps": 80.0}, tmp_path / "fehlt.json", "EQUITY")["calibration_lambda"] == 1.0
+
+
+def test_kalibrierungs_cli_schreibt_datei_und_bericht(tmp_path, monkeypatch):
+    from automation import calibrate_estimates as ce
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    ev = tmp_path / "e.jsonl"
+    ev.write_text("\n".join(json.dumps({**_close("EQUITY", 100.0, 5.0), "ts": now, "deltaUsd": -5.0,
+                                        "estimateUsd": {"expected_usd": 10.0}, "result": {"net_usd": 5.0}}) for _ in range(31)))
+    monkeypatch.setattr(ce, "EVENTS_PATH", ev)
+    monkeypatch.setattr(ce, "CALIBRATION_PATH", tmp_path / "cal.json")
+    monkeypatch.setattr(ce, "REPORT_DIR", tmp_path / "rep")
+    assert ce.main() == 0
+    assert json.loads((tmp_path / "cal.json").read_text())["global"]["lambda"] == 0.5
+    assert list((tmp_path / "rep").glob("*.md"))
