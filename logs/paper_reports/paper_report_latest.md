@@ -1,12 +1,12 @@
 # Paper-Trading-Bericht
 
-Stand: 2026-10-17 10:00 UTC (Spielgeld-Konto, keine Evidenz)
+Stand: 2026-10-17 11:00 UTC (Spielgeld-Konto, keine Evidenz)
 
 | Kennzahl | Wert |
 |---|---|
 | Freies Guthaben | 88340.13 USD |
 | Investiert | 55944.56 USD in 31 Position(en) |
-| Unrealisierter PnL | +262.91 USD |
+| Unrealisierter PnL | +257.76 USD |
 | Bot | läuft |
 | Fehlerzeilen im heutigen Bot-Log | 0 |
 | Paare mit Evidenz-Ledger | 0 |
@@ -34,14 +34,14 @@ Stand: 2026-10-17 10:00 UTC (Spielgeld-Konto, keine Evidenz)
 | LLY.ETORO | Short | 1866.90 | 1261.42 | +4.60 |
 | CHFJPY.ETORO | Long | 1874.61 | 191.688 | +0.69 |
 | CRM.ETORO | Long | 1876.15 | 239.0 | +15.23 |
-| ETH.ETORO | Long | 100.00 | 2413.01 | +0.85 |
+| ETH.ETORO | Long | 100.00 | 2413.01 | +0.95 |
 | RGTI.ETORO | Long | 1873.80 | 12.02 | -34.30 |
 | ASTS.ETORO | Short | 1875.73 | 42.17 | +68.50 |
 | NZDJPY.ETORO | Long | 1875.53 | 89.311 | -0.44 |
 | PSN.US.ETORO | Long | 1962.23 | 43.96 | +8.93 |
-| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.03 |
+| EURUSD.ETORO | Long | 1009.99 | 1.11558 | +7.26 |
 | VSH.ETORO | Short | 1961.14 | 27.02 | -51.53 |
-| INJ.ETORO | Long | 1925.31 | 8.775 | -1.10 |
+| INJ.ETORO | Long | 1925.31 | 8.775 | -6.58 |
 | DFTX.ETORO | Short | 1961.71 | 34.2 | +119.31 |
 | MSTR.ETORO | Short | 1857.47 | 148.48 | +149.37 |
 | ZTS.ETORO | Short | 1875.45 | 77.85 | -35.65 |
