@@ -49,3 +49,18 @@ def test_validate_runs_and_main_writes_files(tmp_path, monkeypatch):
 
 def test_main_without_data_exits_2(tmp_path):
     assert dc.main(["--trades-dir", str(tmp_path), "--out", str(tmp_path / "o"), "--flags", str(tmp_path / "f.json")]) == 2
+
+
+def test_classes_merge_universe_and_instrument_map(tmp_path, monkeypatch):
+    u = tmp_path / "u.csv"
+    u.write_text("etoro_id,symbol,klasse\n1,EURUSD,K2\n2,AAPL,K1\n3,BTC,K5\n", "utf-8")
+    m = tmp_path / "m.json"
+    m.write_text(json.dumps({"instruments": {"3": {"asset_class": "crypto"}, "4": {"asset_class": "commodity"}}}), "utf-8")
+    monkeypatch.setattr(dc, "UNIVERSE_CSVS", (u, tmp_path / "fehlt.csv"))
+    monkeypatch.setattr(dc, "INSTRUMENT_MAP", m)
+    assert dc.classes() == {"1": "forex", "2": "equity", "3": "crypto", "4": "commodity"}
+
+
+def test_repo_universe_covers_most_ids():
+    ids = set(dc.classes())
+    assert len(ids) > 900 and set(dc.classes().values()) >= {"equity", "forex", "commodity", "crypto"}

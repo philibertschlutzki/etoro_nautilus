@@ -17,6 +17,7 @@ gehört in die Auswahl.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import pickle
 import sys
@@ -92,12 +93,26 @@ def analyse(pairs: dict, now_ns: int, recent_days: float) -> list[dict]:
     return rows
 
 
+UNIVERSE_CSVS = (PROJECT_ROOT / "results" / "H1" / "universe.csv", PROJECT_ROOT / "results" / "H4" / "universe_neu.csv")
+KLASSE = {"K1": "equity", "K2": "forex", "K3": "commodity", "K4": "index", "K5": "crypto"}
+
+
 def classes() -> dict[str, str]:
+    """etoro_id -> Anlageklasse. ``instrument_map.json`` kennt nur die ~460 Bot-Instrumente; die Tages-Spur rechnet ~1.150 und
+    bezieht den Rest aus den EBC-Universum-Tabellen (``klasse`` K1..K5)."""
+    out: dict[str, str] = {}
+    for path in UNIVERSE_CSVS:
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                out.update({r["etoro_id"]: KLASSE.get(r["klasse"], "?") for r in csv.DictReader(f)})
+        except (OSError, KeyError):
+            continue
     try:
         m = json.loads(INSTRUMENT_MAP.read_text("utf-8"))["instruments"]
+        out.update({k: v["asset_class"] for k, v in m.items() if v.get("asset_class")})
     except (OSError, ValueError, KeyError):
-        return {}
-    return {k: v.get("asset_class", "?") for k, v in m.items()}
+        pass
+    return out
 
 
 def by_class(rows: list[dict], cls: dict[str, str]) -> dict[str, dict]:
