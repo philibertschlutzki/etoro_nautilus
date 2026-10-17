@@ -137,3 +137,16 @@ def resolve_live_entry_cost_gate(symbol: str, *, ratio: float = DEFAULT_ENTRY_MI
     if not math.isfinite(cost) or cost <= 0.0 or ratio <= 0.0:
         return {}
     return {"entry_min_atr_to_cost_ratio": float(ratio), "entry_round_trip_cost_bps": cost}
+
+
+# Live-Entry-Randzeitgate (Minuten): Bot-Aktien haben in 14:30-19:30 UTC (= 60 min nach Eröffnung bis 30 min vor Schluss
+# der NYSE-Sitzung) 6-8 bps Spread, ausserhalb 40-70 bps (Messung 16.10.).
+ENTRY_OPEN_MARGIN_MIN = 60.0
+ENTRY_CLOSE_MARGIN_MIN = 30.0
+
+
+def resolve_live_entry_edge_gate(session_window: Any) -> dict[str, float]:
+    """Config-Kwargs fuer das Randzeitgate; leer fuer 24/7-Maerkte (``session_window`` None)."""
+    if not session_window:
+        return {}
+    return {"entry_open_margin_min": ENTRY_OPEN_MARGIN_MIN, "entry_close_margin_min": ENTRY_CLOSE_MARGIN_MIN}
