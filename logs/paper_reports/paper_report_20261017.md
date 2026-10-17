@@ -1,0 +1,1 @@
+- 2026-10-17 01:15 UTC ZUSAMMENFASSUNG Guthaben 86462.57 USD, 32 offene Position(en) (PnL +287.82), 0 Positionsänderung(en) seit dem letzten Bericht, Bot läuft, Ledger: noch keine Evidenz.
