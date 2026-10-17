@@ -17,6 +17,7 @@ gehört in die Auswahl.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import pickle
 import sys
@@ -93,12 +94,21 @@ def analyse(pairs: dict, now_ns: int, recent_days: float) -> list[dict]:
     return rows
 
 
+UNIVERSE_CSVS = (PROJECT_ROOT / "results" / "H1" / "universe.csv", PROJECT_ROOT / "results" / "H4" / "universe_neu.csv")
+KLASSE = {"K1": "equity", "K2": "forex", "K3": "commodity", "K4": "index", "K5": "crypto"}
 TYPE_CLASS = {1: "forex", 2: "commodity", 4: "index", 5: "equity", 6: "etf", 10: "crypto"}   # eToro InstrumentTypeID
 
 
 def classes(metadata: Path = METADATA) -> dict[str, str]:
-    """Anlageklasse je Instrument-ID: instrument_map.json zuerst, sonst eToro-Metadaten (InstrumentTypeID), damit keine Paare in '?' landen."""
+    """Anlageklasse je Instrument-ID, damit keine Paare in '?' landen. Rangfolge (spätere gewinnen): EBC-Universum-Tabellen im Repo
+    (``klasse`` K1..K5, ETFs zählen als equity), eToro-Metadaten auf dem Gerät (InstrumentTypeID, trennt ETF), ``instrument_map.json``."""
     out: dict[str, str] = {}
+    for path in UNIVERSE_CSVS:
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                out.update({r["etoro_id"]: KLASSE[r["klasse"]] for r in csv.DictReader(f) if r["klasse"] in KLASSE})
+        except (OSError, KeyError):
+            continue
     try:
         for d in json.loads(metadata.read_text("utf-8"))["InstrumentDisplayDatas"]:
             c = TYPE_CLASS.get(d.get("InstrumentTypeID"))

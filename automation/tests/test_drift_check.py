@@ -59,3 +59,18 @@ def test_classes_fallback_auf_metadaten(tmp_path):
     c = dc.classes(md)
     assert c["1"] == "forex" and c["25"] == "equity" and c["99"] == "crypto" and "987654" not in c
     assert dc.classes(tmp_path / "fehlt.json").get("22") == "commodity"      # Karte greift weiter
+
+
+def test_classes_universe_tables_fill_gaps_and_metadata_wins(tmp_path, monkeypatch):
+    u = tmp_path / "u.csv"
+    u.write_text("etoro_id,symbol,klasse\n7001,AAA,K1\n7002,BBB,K5\n7003,CCC,K9\n", "utf-8")
+    md = tmp_path / "metadata.json"
+    md.write_text(json.dumps({"InstrumentDisplayDatas": [{"InstrumentID": 7001, "InstrumentTypeID": 6}]}))
+    monkeypatch.setattr(dc, "UNIVERSE_CSVS", (u, tmp_path / "fehlt.csv"))
+    c = dc.classes(md)
+    assert c["7001"] == "etf" and c["7002"] == "crypto" and "7003" not in c
+
+
+def test_repo_universe_tables_cover_most_ids(monkeypatch):
+    c = dc.classes(dc.Path("/nicht/vorhanden.json"))
+    assert len(c) > 900 and {"equity", "forex", "commodity", "crypto"} <= set(c.values())
